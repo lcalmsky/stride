@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<stride-plugin>
+  <id>stride.lang.json</id>
+  <name>JSON</name>
+  <depends>stride.core</depends>
+  <extensions defaultExtensionNs="stride">
+    <fileType extension="json" language="json" implementationClass="stride.lang.json.JsonFileType"/>
+    <lang.syntaxHighlighterFactory language="json"
+                                   implementationClass="stride.lang.json.JsonSyntaxHighlighterFactory"/>
+    <lang.commenter language="json" implementationClass="stride.lang.json.JsonCommenter"/>
+  </extensions>
+</stride-plugin>

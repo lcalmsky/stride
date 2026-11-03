@@ -1,0 +1,1240 @@
+# stride app public API
+
+This document is the contract for `:app`: the Compose Desktop shell that wires `:core`,
+`:lang`, `:search` and the two language plugins into an IDE window. Everything here lives in
+`stride.app.*` and builds only on the APIs in `docs/api-core.md`, `docs/api-lang.md` and
+`docs/api-search.md`.
+
+## Descriptor
+
+`app/src/main/resources/META-INF/stride-plugin.xml` is the `stride.core` descriptor. It has
+no `<depends>` and declares the extension points that the other modules extend:
+
+```xml
+<stride-plugin>
+  <id>stride.core</id>
+  <name>stride core</name>
+  <extensionPoints>
+    <extensionPoint name="fileType" beanClass="stride.lang.FileTypeBean"/>
+    <extensionPoint name="lang.syntaxHighlighterFactory" beanClass="stride.lang.SyntaxHighlighterFactoryBean"/>
+    <extensionPoint qualifiedName="stride.searchEverywhereContributor"
+                    interface="stride.search.SearchEverywhereContributorFactory"/>
+    <extensionPoint name="fileEditorProvider" interface="stride.app.editor.FileEditorProvider"/>
+    <extensionPoint name="treeStructureProvider" interface="stride.app.tree.TreeStructureProvider"/>
+  </extensionPoints>
+  <extensions defaultExtensionNs="stride">
+    <searchEverywhereContributor implementation="stride.search.FileSearchContributorFactory"/>
+    <fileEditorProvider implementation="stride.app.editor.TextEditorProvider"/>
+    <treeStructureProvider implementation="stride.app.tree.HiddenDirectoriesTreeStructureProvider"/>
+  </extensions>
+</stride-plugin>
+```
+
+Because the id is `stride.core`, `name="x"` resolves to `stride.x`. The descriptor must not
+declare `stride.applicationService` / `stride.projectService`; `Application.init()` registers
+them in code and a second declaration makes `registerExtensionPoint` throw.
+
+## Startup order
+
+`main(args)`:
+
+1. `Application.init()` — replaces the extension area and application manager, then loads every
+   `META-INF/stride-plugin.xml` on the class path. The `LoadResult` is logged as
+   `LoadResult enabled=[...]` and `LoadResult disabled={...}`.
+2. `args.firstOrNull()` is the folder to open (`-PopenPath=<dir>` passes it; without the
+   property there is no argument).
+3. Opening a folder disposes the previous `Project` (if any), then
+   `ProjectSession.open(path)`, which runs in this order:
+   `Project(root)` → `project.service<VirtualFileManager>().start()` →
+   `project.service<FileNameIndex>()` (starts the index scan) →
+   `project.service<FileEditorManager>()` → `ProjectTreeModel(root, providers, project)`.
+
+A `Project` is only ever created after `Application.init()`; one created earlier would keep a
+reference to the replaced application manager.
+
+The window title is `strIDE — <root folder name>`; with no project the content is an empty
+state with an **Open Folder…** button. The folder chooser is `java.awt.FileDialog` with
+`apple.awt.fileDialogForDirectories=true` on macOS and `JFileChooser(DIRECTORIES_ONLY)`
+elsewhere.
+
+## Editor extension points
+
+```kotlin
+package stride.app.editor
+
+const val FILE_EDITOR_PROVIDER_EP: String = "stride.fileEditorProvider"
+
+interface FileEditorProvider {
+    fun accept(project: Project, file: VFile): Boolean
+    fun createEditor(project: Project, file: VFile): FileEditor
+    companion object { const val EP_NAME: String = FILE_EDITOR_PROVIDER_EP }
+}
+
+interface FileEditor : Disposable {
+    val file: VFile
+    val isModified: Boolean
+    fun save()
+    @Composable fun Content(modifier: Modifier)
+}
+```
+
+`FileEditorProvider` is the interface extension point `stride.fileEditorProvider`. Providers
+are consulted in extension-point order and the first one whose `accept` returns `true` creates
+the editor. State that must survive a tab switch (text, selection, highlighter) lives in the
+editor object, not in the composable.
+
+`TextEditorProvider` accepts every non-directory file and creates a `TextFileEditor`. Files
+larger than `TextFileEditor.MAX_HIGHLIGHTED_SIZE` (2 MB, 2 097 152 bytes) open read-only and
+without a highlighter.
+
+```kotlin
+class TextFileEditor(file: VFile, readOnly: Boolean = false) : FileEditor {
+    val isReadOnly: Boolean
+    val value: TextFieldValue                 // text + selection, Compose snapshot state
+    val spans: List<TokenSpan>                // current highlighter spans
+    val isDisposed: Boolean
+    fun updateValue(newValue: TextFieldValue) // feeds only the changed range to the highlighter
+    fun setText(newText: String)
+}
+```
+
+`TextFileEditor` resolves the file type through `FileTypeRegistry`, the highlighter through
+`SyntaxHighlighterFactory.forLanguage`, and wraps `LineStateHighlighter`. A text change is
+reduced to one `TextChange(offset, oldLength, newText)` by common prefix/suffix and passed to
+`LineStateHighlighter.edit`; plain-text files get no spans.
+
+```kotlin
+@Service(Service.Level.PROJECT)
+class FileEditorManager(project: Project) : Disposable {
+    val openFiles: List<FileEditor>           // Compose snapshot list
+    var selected: FileEditor?                 // Compose snapshot state
+    fun openFile(file: VFile): FileEditor?    // reuses an open tab and selects it
+    fun closeFile(file: VFile)                // selects the right neighbour, else the left, else none
+    fun selectNext()                          // cycles, does nothing with fewer than two tabs
+    fun selectPrevious()
+    fun saveSelected()
+    fun closeSelected()
+}
+```
+
+`FileEditorManager` is a project light service; `Project.dispose()` disposes every open
+editor.
+
+### Language commenters
+
+`TextFileEditor` resolves a `Commenter` for the file's language to drive ⌘/ and ⌘⌥/:
+
+```kotlin
+package stride.lang
+
+interface Commenter {
+    val lineCommentPrefix: String?
+    val blockCommentPrefix: String?
+    val blockCommentSuffix: String?
+    companion object {
+        const val EP_NAME = "stride.lang.commenter"
+        val EP: BeanExtensionPointName<CommenterBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): Commenter?
+    }
+}
+
+class CommenterBean : ExtensionBean() {
+    override val key: String?                 // attributes["language"]
+    fun commenter(): Commenter
+}
+```
+
+The app descriptor declares `<extensionPoint name="lang.commenter"
+beanClass="stride.lang.CommenterBean"/>`; because its id is `stride.core` the point resolves to
+`stride.lang.commenter`. The language plugins register one entry each:
+
+```xml
+<lang.commenter language="kotlin" implementationClass="stride.lang.kotlin.KotlinCommenter"/>
+<lang.commenter language="json" implementationClass="stride.lang.json.JsonCommenter"/>
+```
+
+Both register `//`, `/*` and `*/`. A language without a commenter (plain text) resolves to
+`null`; the editor then consumes the comment actions without changing the text.
+
+## Project tree
+
+```kotlin
+package stride.app.tree
+
+const val TREE_STRUCTURE_PROVIDER_EP: String = "stride.treeStructureProvider"
+
+interface TreeStructureProvider {
+    fun modify(parent: VFile, children: List<VFile>): List<VFile>
+    companion object { const val EP_NAME: String = TREE_STRUCTURE_PROVIDER_EP }
+}
+
+data class TreeRow(val file: VFile, val depth: Int, val isExpanded: Boolean)
+
+class ProjectTreeModel(
+    root: VFile,
+    providers: List<TreeStructureProvider>,
+    project: Project? = null,
+    childrenLoader: (VFile) -> List<VFile> = { it.children() },
+) : Disposable {
+    fun rows(): List<TreeRow>          // Compose snapshot state, root first
+    fun expand(file: VFile)
+    fun collapse(file: VFile)
+    fun toggle(file: VFile)
+    fun handleEvents(events: List<VFileEvent>)
+    fun children(directory: VFile): List<VFile>
+}
+```
+
+- `TreeStructureProvider` is the interface extension point `stride.treeStructureProvider`;
+  providers run in extension-point order (`CompoundTreeStructureProvider` shape), each
+  receiving the previous result.
+- `HiddenDirectoriesTreeStructureProvider` removes a `.git` entry whether it is a directory
+  or a file (worktrees and submodules use a gitdir pointer file), and removes directories
+  named `build`, `.gradle`, `node_modules`, `.kotlin`, `.idea`.
+- The model is lazy: a directory's children are read on first expansion and cached; `rows()`
+  is the flattened visible list for a `LazyColumn`. The root is expanded on construction.
+- With a `project`, the model subscribes to `VFS_CHANGES` on the project's message bus
+  (registered against the project disposable). Each event drops the cached children of the
+  event file's parent directory and rebuilds the rows; `handleEvents` is the same entry point
+  without a bus.
+- `childrenLoader` is injectable so tests can observe when a directory is read; production
+  code uses `VFile.children()`.
+- In the UI a directory row toggles on a single click and a file row opens on a single click.
+
+## Search Everywhere
+
+```kotlin
+package stride.app.search
+
+data class SearchResultEntry(
+    val contributor: SearchEverywhereContributor<*>,
+    val item: Any,
+    val presentationText: String,
+    val secondaryText: String,
+)
+
+class SearchEverywhere(project: Project) {
+    val displayName: String                   // primary contributor's display name, "Files" when none
+    fun fetch(query: String, limit: Int = MAX_RESULTS): List<SearchResultEntry>
+    fun process(entry: SearchResultEntry): Boolean
+    companion object { const val MAX_RESULTS: Int = 50 }
+}
+```
+
+The popup itself is:
+
+```kotlin
+@Composable fun SearchEverywherePopup(
+    search: SearchEverywhere,
+    onChoose: (SearchResultEntry) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    initialQuery: String = "",
+)
+```
+
+`initialQuery` seeds the query field and is `""` in the window; the snapshot renderer uses it.
+An empty query shows no result rows, only the header and footer.
+
+Contributors are created from every `stride.searchEverywhereContributor` factory with
+`createContributor(project)` and ordered by `sortWeight` descending. The popup fetches off the
+UI thread whenever the query changes (the previous run is cancelled by coroutine
+cancellation), shows presentation and secondary text, moves with Up/Down, chooses with Enter
+and closes on Esc or a click outside. Choosing calls `process(item)`; when it returns `false`
+and the item is a `VFile`, the file is opened through `FileEditorManager` and the popup closes.
+`⌘⇧O` (`GOTO_FILE`) opens this same popup through `state.searchVisible`.
+
+## Keys
+
+```kotlin
+package stride.app.keys
+
+enum class KeyEventType { DOWN, UP }
+
+data class KeyStroke(
+    val key: Key,
+    val meta: Boolean = false,
+    val ctrl: Boolean = false,
+    val alt: Boolean = false,
+    val shift: Boolean = false,
+) {
+    companion object {
+        fun parse(text: String): KeyStroke   // space-separated key stroke syntax
+        fun of(event: KeyEvent): KeyStroke
+    }
+}
+
+enum class ActionId {
+    OPEN_FOLDER, SAVE, CLOSE_TAB, SEARCH_EVERYWHERE, NEXT_TAB, PREVIOUS_TAB, HIDE_ACTIVE_WINDOW,
+    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
+    EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
+    GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
+    FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, RECENT_FILES,
+    ACTIVATE_TERMINAL_TOOL_WINDOW,
+}
+
+enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL }
+
+data class Binding(val action: ActionId, val context: KeyContext)
+
+class Keymap(val bindings: Map<KeyStroke, List<Binding>>) {
+    fun actionFor(stroke: KeyStroke, focus: KeyContext): ActionId?
+    fun strokesFor(action: ActionId): List<KeyStroke>
+    companion object { fun forPlatform(isMac: Boolean): Keymap }
+}
+
+object MacKeymap { val keymap: Keymap }
+
+class KeyRouter(keymap: Keymap, clock: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    constructor(isMac: Boolean, clock: () -> Long = { System.nanoTime() / 1_000_000 })
+    fun route(
+        type: KeyEventType,
+        key: Key,
+        meta: Boolean = false,
+        ctrl: Boolean = false,
+        alt: Boolean = false,
+        shift: Boolean = false,
+        focus: KeyContext = KeyContext.GLOBAL,
+    ): ActionId?
+}
+
+fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?): Boolean
+fun handleWindowKeyEvent(event: KeyEvent, router: KeyRouter, state: AppState, chooseFolder: () -> Path?): Boolean
+```
+
+`KeyStroke.parse` reads a space-separated key stroke grammar: modifier tokens
+(`meta`, `control`/`ctrl`, `alt`, `shift`) followed by one key token (`A`–`Z`, `0`–`9`, `TAB`,
+`BACK_SPACE`, `DELETE`, `ESCAPE`, `ENTER`, `UP`/`DOWN`/`LEFT`/`RIGHT`, `HOME`, `END`, `SLASH`,
+`DIVIDE`, `MULTIPLY`, `OPEN_BRACKET`, `CLOSE_BRACKET`, `INSERT`, `F1`–`F12`, `NUMPAD0`–`NUMPAD9`).
+Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
+
+`Keymap.actionFor` prefers a binding whose context equals `focus`, then a `GLOBAL` binding, then
+`null`. `Keymap.forPlatform(false)` is the macOS table with `meta` and `ctrl` swapped on every
+stroke. `SEARCH_EVERYWHERE` carries no stroke: `DoubleModifierDetector` produces it.
+
+### macOS bindings
+
+The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
+
+| ActionId | Context | macOS strokes | Action | Keymap.kt |
+|---|---|---|---|---|
+| `OPEN_FOLDER` | GLOBAL | ⌘O | (none) | :53 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :55 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :57 |
+| `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :59, :60 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :62, :63 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :65 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :67 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :69 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :71 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :73 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :75 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :77 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :79 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :81, :82 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :84 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :86 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :88 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :90 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :92 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :94 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :96 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :98 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :100 |
+| `FIND` | EDITOR | ⌘F | `Find` | :102 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :104 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :106 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :108 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :110 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :112 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :114 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :116 |
+
+`KeyRouter` has no window dependency and is unit-tested. Modifier keys map to `ModifierKey`; a
+repeated down of an already-pressed modifier is ignored. `DoubleModifierDetector` turns a double
+Shift into `SEARCH_EVERYWHERE` (on the second release), and any other key in between cancels it.
+Non-modifier downs call `otherKeyPressed()` and then `keymap.actionFor(stroke, focus)`.
+`KeyRouter.isMacOs()` reads `os.name`; `KeyRouter(isMac, clock)` builds the platform keymap.
+
+`Main` wires `Window(onPreviewKeyEvent = ...)` to `handleWindowKeyEvent`, which reads
+`state.focus`, routes the event and calls `dispatchAction`. `dispatchAction` returns `true` only
+when the event is consumed; an action with no implementation returns `false` so the key reaches
+the focused component. `OPEN_FOLDER`, `SAVE`, `CLOSE_TAB`, `SEARCH_EVERYWHERE`, `NEXT_TAB`,
+`PREVIOUS_TAB`, `ACTIVATE_RUN_TOOL_WINDOW`, `ACTIVATE_TERMINAL_TOOL_WINDOW`, `HIDE_ACTIVE_WINDOW`
+and `GOTO_FILE` are implemented; `UNDO` and `REDO` are consumed without an implementation because
+`BasicTextField` maps ⌘Z and ⌘⇧Z to its own undo and redo (Foundation `KeyMapping.kt:71,82`). The
+rest return `false`. The folder chooser is a parameter, so the handler runs in headless tests.
+
+`AppState.focus` is the reported focus context. `App` sets it to `EDITOR` from the box around the
+editor area, to the active window's context (or `GLOBAL` when it loses focus) from the tool window
+panel, and to `SEARCH_POPUP` from the box around the popup; a region resets it to `GLOBAL` only
+while the current value is still its own context.
+
+## Editing actions
+
+`stride.app.editor.EditActions` holds line-oriented pure functions over `(text, selection)`:
+
+```kotlin
+package stride.app.editor
+
+data class EditResult(val text: String, val selection: TextRange)
+
+object EditActions {
+    fun duplicateLineOrSelection(text: String, selection: TextRange): EditResult
+    fun deleteLines(text: String, selection: TextRange): EditResult
+    fun moveLines(text: String, selection: TextRange, up: Boolean): EditResult
+    fun toggleLineComment(text: String, selection: TextRange, prefix: String): EditResult
+    fun toggleBlockComment(text: String, selection: TextRange, prefix: String, suffix: String): EditResult
+    fun indent(text: String, selection: TextRange, unit: String = "    "): EditResult
+    fun unindent(text: String, selection: TextRange, unit: String = "    "): EditResult
+    fun gotoLine(text: String, line: Int, column: Int = 1): TextRange
+}
+```
+
+Line actions apply to every line the selection touches. Duplicate puts the
+line (or the selection) below and moves the caret into the copy; delete removes the touched lines
+with their newlines (the preceding newline for a last line without one); move swaps the touched
+block with the neighbouring line and returns the input unchanged at the first line (up) or the
+last line (down); line comments insert `prefix + " "` at the smallest indentation column and
+remove it again when every non-blank touched line is already commented (blank lines are left
+alone); block comments wrap the selection or strip an outer `prefix…suffix`; indent inserts the
+unit and widens the selection to the touched lines; unindent removes up to `unit.length` leading
+whitespace; `gotoLine` is 1-based and clamps to the nearest line end.
+
+`stride.app.editor.UndoManager` keeps the undo and redo stacks:
+
+```kotlin
+data class UndoEntry(
+    val offset: Int,
+    val oldText: String,
+    val newText: String,
+    val selectionBefore: TextRange,
+    val selectionAfter: TextRange,
+)
+
+class UndoManager(clock: () -> Long = System::currentTimeMillis, limit: Int = 1_000) {
+    val canUndo: Boolean
+    val canRedo: Boolean
+    fun record(entry: UndoEntry)   // clears the redo stack
+    fun undo(): UndoEntry?
+    fun redo(): UndoEntry?
+    fun breakMerge()
+    fun clear()
+}
+```
+
+`record` merges a new entry into the previous one only when both are pure insertions, the new
+insertion continues the previous one (`n.offset == p.offset + p.newText.length`), its text is
+exactly one non-whitespace character, and no more than 500 ms have passed. `breakMerge` makes the
+next `record` start a new entry; the editor calls it before and after every edit action so a whole
+action is one undo step.
+
+`TextFileEditor` records every text change through `updateValue` and applies undo/redo through the
+same path, so the highlighter stays in step with the text:
+
+```kotlin
+class TextFileEditor(file: VFile, readOnly: Boolean = false) : FileEditor {
+    val undo: UndoManager
+    val commenter: Commenter?
+    var gotoLineVisible: Boolean
+    fun updateValue(newValue: TextFieldValue)   // records the change
+    fun undo(): Boolean
+    fun redo(): Boolean
+    fun gotoLine(input: String): Boolean        // "12" or "12:5"; false for non-numeric input
+    fun applyAction(action: ActionId): Boolean
+}
+```
+
+`applyAction` handles `EDITOR_DUPLICATE`, `EDITOR_DELETE_LINE`, `MOVE_LINE_UP`,
+`MOVE_LINE_DOWN`, `INDENT`, `UNINDENT`, `COMMENT_LINE`, `COMMENT_BLOCK`, `UNDO`, `REDO`,
+`GOTO_LINE` and `EDITOR_ESCAPE`. A read-only editor consumes the edit actions without changing
+the text, and a file whose language has no commenter consumes the comment actions. Everything
+else returns `false`.
+
+`GOTO_LINE` sets `gotoLineVisible`, which draws a small `raised` panel in the editor's top-right
+corner with a `Go to line:` label and a `line[:column]` field. Enter calls `gotoLine(input)` and
+closes the panel on success; Esc closes it. The panel is inside the editor area, so
+`AppState.focus` stays `EDITOR`.
+
+`dispatchAction` sends `UNDO`/`REDO` to the selected `TextFileEditor` and always returns `true`
+(with no selected editor it does nothing): `BasicTextField` maps ⌘Z/⌘⇧Z to its own undo and
+redo (Foundation `KeyMapping.kt:71,82`), and consuming them here keeps the two stacks from
+diverging. The same table entry carries the other ten editor actions and returns their
+`applyAction` result, which is `false` when no editor is selected.
+
+### Caret following
+
+One effect watching `value.selection` keeps the caret visible on both axes, so every path
+that moves it — arrow keys, `gotoLine`, find-bar stepping, undo/redo and edit actions — scrolls
+the same way. When the caret leaves the viewport by more than a 24 dp margin the editor scrolls
+to bring it back; a horizontal scrollbar sits along the bottom edge next to the vertical one.
+The gutter (line numbers) follows only the vertical scroll and stays outside the horizontal
+scroll, which wraps the text body alone.
+
+## Tool windows
+
+```kotlin
+package stride.app.ui.toolwindow
+
+class ToolWindow(
+    val id: String,
+    val title: String,
+    val context: KeyContext,
+    val content: @Composable (Modifier) -> Unit,
+)
+
+class ToolWindowManager {
+    val windows: List<ToolWindow>   // Compose snapshot list, registration order
+    var activeId: String?
+    var visible: Boolean
+    var height: Dp                  // default 240.dp, never below 120.dp
+    var focusRequests: Int
+    fun register(window: ToolWindow)      // replaces an existing window with the same id
+    fun activate(id: String)              // visible = true, activeId = id, focusRequests++
+    fun toggle(id: String, focused: Boolean)
+    fun hide()                            // visible = false
+    fun active(): ToolWindow?
+}
+
+@Composable fun ToolWindowPanel(manager: ToolWindowManager, onFocusContext: (KeyContext) -> Unit, modifier: Modifier = Modifier)
+```
+
+`toggle` follows the `ActivateToolWindow` rule: hidden or a different active id → `activate`;
+visible, active and `focused` → `hide`; visible, active and not `focused` → only
+`focusRequests++`.
+
+`ToolWindowPanel` is a 28 dp tab strip (title, active tab in `text` with a 2 dp `accent` underline,
+inactive in `muted`) over the active window's content. The panel root is focusable and requests
+focus whenever `focusRequests` changes, reporting its context through `onFocusContext`.
+
+`AppState` registers two windows in its constructor: `run` (title Run, context `RUN_WINDOW`) and
+`terminal` (title Terminal, context `TERMINAL`), each showing a placeholder line. `⌘4`, `⌥F12`
+and `⇧Esc` drive them through `dispatchAction`. The panel sits below the tree/editor row and
+above the status bar, spanning the full window width; a 4 dp horizontal splitter carries the drag
+into `height` clamped to 120 dp … 80% of the window height. `closeSession()` hides the panel and
+resets `focus`.
+
+`stride.app.ui.LocalAnimationsEnabled` (`staticCompositionLocalOf { true }`) turns UI animations
+off in tests and snapshots.
+
+## Find and navigation
+
+```kotlin
+package stride.app.editor.find
+
+data class FindOptions(val caseSensitive: Boolean = false, val regex: Boolean = false)
+data class FindMatch(val start: Int, val end: Int)
+data class FindResult(val matches: List<FindMatch>, val error: String? = null)
+
+object FindModel {
+    fun search(text: String, query: String, options: FindOptions = FindOptions()): FindResult
+    fun nextIndex(matches: List<FindMatch>, caret: Int): Int?
+    fun previousIndex(matches: List<FindMatch>, caret: Int): Int?
+    fun replaceCurrent(text: String, match: FindMatch, replacement: String): TextChange
+    fun replaceAll(text: String, matches: List<FindMatch>, replacement: String): List<TextChange>
+}
+```
+
+`FindModel` is pure logic. An empty query has no matches, an invalid regular expression
+returns no matches plus `error`, and `replaceAll` returns changes back to front so applying
+them in order keeps every untouched offset valid. In regular-expression mode a replacement may
+refer to groups with `$1`; `FindBarState` expands them through `Regex.replace` rules.
+
+```kotlin
+class FindBarState {
+    var visible: Boolean
+    var replaceVisible: Boolean
+    var query: String
+    var replacement: String
+    var caseSensitive: Boolean
+    var regex: Boolean
+    var matches: List<FindMatch>
+    var currentIndex: Int?
+    var error: String?
+    fun open(editor: TextFileEditor?, replace: Boolean)
+    fun close()
+    fun refresh(editor: TextFileEditor?)
+    fun next(editor: TextFileEditor?): Boolean
+    fun previous(editor: TextFileEditor?): Boolean
+    fun replaceCurrent(editor: TextFileEditor?)
+    fun replaceAll(editor: TextFileEditor?)
+}
+
+@Composable fun FindBar(
+    state: FindBarState,
+    editor: TextFileEditor?,
+    onFocusContext: (KeyContext) -> Unit,
+    modifier: Modifier = Modifier,
+)
+```
+
+`open` seeds the query from a single-line selection, expands the replace row for `⌘R` and
+refreshes. `refresh` repaints every match through `TextFileEditor.searchSpans`: matches use
+`DesignTokens.neonAmberGlow`, the current match `neonPinkGlow`. `next`/`previous` select the
+current match through `updateValue` and then advance, wrapping around. `close` hides the bar
+and clears the spans of the last editor it painted.
+
+`FindBar` sits below the tab strip, on a `DesignTokens.surface` strip with an accent2
+`neonUnderline` on its bottom edge. The query field carries `testTag("find-query")`, the
+replacement field `testTag("find-replacement")`; both are single line. Enter/`⌘G` goes to the
+next match, ⇧Enter/`⌘⇧G` to the previous, and Esc closes the bar and hands focus back to the
+editor's `focusRequester`. The `Aa` and `.*` toggles show `accent2` glow when active. The
+counter reads `n / total`, `No matches`, or the regular-expression error in `neonPink`.
+
+Focus reporting: the query and replacement fields report `FIND_BAR` while they have focus and
+`EDITOR` when they leave. The editor area's outer focus box skips reporting while
+`state.findBar.visible`, so it cannot overwrite the find bar's report.
+
+```kotlin
+package stride.app.search
+
+data class FindInPathHit(
+    val file: VFile, val relativePath: String, val line: Int, val column: Int,
+    val lineText: String, val start: Int, val end: Int,
+)
+
+object FindInPathScanner {
+    const val MAX_FILE_SIZE: Long = 2L * 1024 * 1024
+    const val MAX_HITS: Int = 200
+    fun scan(
+        files: List<IndexedFile>, query: String, options: FindOptions,
+        limit: Int = MAX_HITS, shouldStop: () -> Boolean = { false },
+    ): List<FindInPathHit>
+}
+
+@Composable fun FindInPathPopup(
+    index: FileNameIndex,
+    initialQuery: String = "",
+    onChoose: (FindInPathHit) -> Unit,
+    onClose: () -> Unit,
+)
+
+@Composable fun RecentFilesPopup(
+    files: List<VFile>,
+    projectRoot: Path,
+    onChoose: (VFile) -> Unit,
+    onClose: () -> Unit,
+)
+```
+
+`⌘⇧F` opens `FindInPathPopup` over any project. It scans `FileNameIndex.snapshot()` on
+`Dispatchers.Default`, skipping files over 2 MB, files with a NUL byte in their first 8 KB and
+files that fail to read; a new query cancels the previous scan through coroutine cancellation.
+Rows read `relativePath:line` with the line body, the matched characters in `neonAmber`; the
+status line reads `n results`, `searching…` or `200+ results (truncated)`. Enter opens the
+file and selects the match in the editor.
+
+`⌘E` opens `RecentFilesPopup` with `FileEditorManager.recentFiles` — newest first, at most 50
+entries, closed files still listed. The first selection is the second entry; Up/Down move,
+Enter opens, Esc closes. Both popups follow the Search Everywhere popup frame: header, result
+list, footer hints and the neon selection signal.
+
+`FileEditorManager.recentFiles` is a snapshot list updated by `openFile` (new and existing
+tabs) and by `selectNext`/`selectPrevious`; `closeFile` leaves entries in place and `dispose`
+clears them. `AppState` adds `findBar`, `findInPathVisible` and `recentFilesVisible`, and
+`closeSession()` resets all three.
+
+## App composable
+
+```kotlin
+@Composable fun App(state: AppState, onOpenFolder: () -> Unit, searchInitialQuery: String = "")
+```
+
+`state` owns the open `ProjectSession`, `searchVisible`, `focus` and the `ToolWindowManager`;
+`onOpenFolder` runs the folder chooser. `searchInitialQuery` is forwarded to
+`SearchEverywherePopup` and is empty in the window; the snapshot renderer uses it to open the
+popup with a query in place.
+
+## Terminal
+
+The panel's Terminal tab runs the project's login shell over a real PTY. Two libraries are
+added for this: `org.jetbrains.pty4j:pty4j:0.14.0` from Maven Central and
+`org.jetbrains.jediterm:jediterm-core:3.76`, which is only published on JetBrains' Maven
+repository (`https://packages.jetbrains.team/maven/p/ij/intellij-dependencies`, added to
+`settings.gradle.kts`). Both are declared in `gradle/libs.versions.toml` and
+`app/build.gradle.kts`.
+
+```kotlin
+package stride.app.terminal
+
+class PtyTtyConnector(
+    private val process: PtyProcess,
+    private val charset: Charset = Charsets.UTF_8,
+) : TtyConnector
+
+object PtyShell {
+    fun start(
+        workingDir: Path,
+        columns: Int,
+        rows: Int,
+        env: Map<String, String> = System.getenv(),
+    ): PtyProcess
+}
+
+@Service(Service.Level.PROJECT)
+class TerminalSession(private val project: Project) : Disposable {
+    val buffer: TerminalTextBuffer
+    val styleState: StyleState
+    val terminal: JediTerminal
+    var columns: Int
+    var rows: Int
+    var revision: Int                  // Compose state, +1 on every model change
+    val isStarted: Boolean
+    val cursorX: Int                   // 0-based; jediterm's getCursorX() is 1-based
+    val cursorY: Int                   // 1-based
+    fun start(connector: TtyConnector)
+    fun startDefault()
+    fun write(text: String)
+    fun sendKey(key: Key, meta: Boolean, ctrl: Boolean, alt: Boolean, shift: Boolean, char: Char?): Boolean
+    fun resize(columns: Int, rows: Int)
+    fun lines(): List<String>
+    fun historyLines(): List<String>
+}
+
+@Composable fun TerminalView(session: TerminalSession, modifier: Modifier = Modifier, focusRequests: Int = 0)
+@Composable fun TerminalToolWindow(session: TerminalSession, modifier: Modifier = Modifier, focusRequests: Int = 0)
+```
+
+`TerminalSession` owns jediterm's `TerminalTextBuffer`, `StyleState` and `JediTerminal`, a
+`TerminalStarter` on a daemon emulator thread named `stride-terminal-<project>`, and a
+`TerminalDisplay` that only records the window title. The buffer's `TerminalModelListener`
+bumps `revision`, so a view repaints by reading that state. The session is a project service:
+`ProjectSession.dispose()` → `Project.dispose()` disposes it, which removes the listener,
+closes the connector, destroys and waits for the process, and drops the emulator thread.
+
+The shell is `$SHELL` (falling back to `/bin/zsh`) with `-l`, started in the project root with
+`TERM=xterm-256color`. `TerminalToolWindow` calls `startDefault()` the first time the tab is
+shown; `start()` is idempotent, so a session already started with a fake `TtyConnector` (tests,
+snapshots) keeps that connector. Sizing goes both ways: the view derives the cell grid from
+`codeFont`/`codeTextSize` and `codeLineHeight`, calls `TerminalSession.resize`, and the session
+resizes the buffer through `JediTerminal.resize` and the PTY through `TtyConnector.resize` →
+`PtyProcess.setWinSize`.
+
+`TerminalView` draws the screen and scrollback on a `Canvas`: per-cell foreground and
+background, bold and inverse, a neon cursor block with a glow when focused, and a whole-line
+selection copied with ⌘C. The wheel scrolls the history and new output returns to the bottom.
+ANSI indices 0–15 come from `TerminalPalette.ansi` (the same neon family as `DesignTokens`);
+256-color and truecolor values use the RGB `TerminalColor` directly.
+
+Key flow: `handleWindowKeyEvent` routes through the keymap first. In the `TERMINAL` context
+only GLOBAL bindings match (⌘S, ⌘W, ⌘O, ⌘⇧], ⌥F12, ⌘4, ⌘⇧F, ⌘⇧O, ⌘E, ⌃R, ⌘F2), so those never
+reach the shell. Everything else reaches the focused `TerminalView`. Special keys become xterm
+sequences (Enter `\r`, arrows `ESC[A`…, Backspace `0x7f`, ⌃C `0x03`, …); printable characters
+are written as text; keys with ⌘/⌃/⌥ that are neither mapped nor a control sequence are left
+unconsumed. ⌘V pastes the clipboard and ⌘C copies the selected lines; both follow the macOS
+convention rather than a keymap entry.
+
+Focus delivery: `ToolWindowPanel` requests focus on its root whenever `focusRequests` changes,
+which would leave the keyboard on the panel rather than in the shell. `AppState` passes
+`toolWindows.focusRequests` to `TerminalToolWindow`, which forwards it to `TerminalView`; the
+view's `LaunchedEffect(focusRequests)` requests focus on its own `FocusRequester` after a
+frame. The parent's effect starts and resumes first, so the view's later request wins. A click
+on the view also requests focus. `KeyFlowUiTest` pins this by typing into a fake connector.
+
+## Run
+
+The Run tool window runs a project's Gradle build as a child process and turns the test
+events its init script prints into a tree. It is a project service, like the terminal.
+
+### Process model
+
+`GradleProcessStarter` materializes the init script resource
+`stride/run/stride-test-events.init.gradle`, builds the command through `GradleCommand`,
+and starts it in the configuration's working directory with stdout and stderr merged.
+
+```kotlin
+package stride.app.run
+
+object GradleCommand {
+    fun build(
+        workingDir: Path,
+        args: List<String>,
+        initScript: Path,
+        shell: String = System.getenv("SHELL") ?: "/bin/zsh",
+        gradlewExists: (Path) -> Boolean = { Files.isExecutable(it) },
+    ): List<String>                       // ProcessBuilder command
+    fun display(command: List<String>): String
+    fun testArgs(gradlePath: String, filter: String): List<String>
+}
+
+object GradleInitScript {
+    fun materialize(): Path
+}
+
+data class RunConfiguration(
+    val name: String,
+    val workingDir: Path,
+    val args: List<String>,
+    val kind: RunKind,
+)
+
+enum class RunKind { TEST, TASK }
+```
+
+The command is `$SHELL -l -c 'exec "$@"' stride <gradlew> --console=plain --init-script
+<temp file> <args…>`. The login shell restores `JAVA_HOME`/`PATH` in a packaged `.app`;
+`gradlew` resolves to the absolute wrapper in the working directory or, when it is absent,
+to `gradle` on `PATH`. Arguments are not quoted in the command list because `exec "$@"`
+forwards each positional argument as one element. `display` quotes only elements holding
+whitespace or quotes for the console's first line. The child never gets `--no-daemon` or
+`--stop`. The init script disables up-to-date checks and the build cache for every `Test`
+task, so a repeated run still executes and reports its events instead of being skipped.
+
+### Event protocol
+
+The init script hooks `beforeTest`, `afterTest` and `onOutput` on every `Test` task and
+prints one line per event to stdout. Values escape `|` → `||`, `'` → `|'`, newline → `|n`,
+carriage return → `|r`, `[` → `|[` and `]` → `|]`; the parser reverses them.
+
+| moment | line |
+|---|---|
+| start | `##stride[test start class='<className>' name='<methodName>']` |
+| pass | `##stride[test pass class='…' name='…' duration='<ms>']` |
+| fail | `##stride[test fail class='…' name='…' duration='<ms>' message='…' stack='…']` |
+| skip | `##stride[test skip class='…' name='…']` |
+| output | `##stride[test out class='…' name='…' stream='stdout\|stderr' text='…']` |
+
+`className` and `name` come from `TestDescriptor.className`/`TestDescriptor.name`; composite
+suite descriptors are not printed, so only test methods reach the tree. A failure's stack is
+truncated to 20 lines. Lines that do not start with `##stride[test `, and prefixed lines that
+do not parse, are console output rather than events.
+
+```kotlin
+sealed class TestEvent { Start, Pass, Fail, Skip, Out }
+
+sealed class ParsedLine {
+    data class Event(val event: TestEvent) : ParsedLine()
+    data class Output(val text: String) : ParsedLine()
+}
+
+object TestEventParser {
+    fun parse(line: String): ParsedLine
+}
+```
+
+### Sessions and the tree
+
+```kotlin
+class RunSession(
+    val configuration: RunConfiguration,
+    process: Process,
+    displayCommand: String,
+) {
+    val consoleLines: SnapshotStateList<String>   // first line is displayCommand
+    val tree: TestTree
+    val exitCode: Int?                            // Compose state, set at EOF
+    val isRunning: Boolean                        // exitCode == null
+    fun start()                                   // one daemon "stride-run-reader" thread
+    fun stop()                                    // descendants, then the process
+}
+
+enum class TestStatus { RUNNING, PASSED, FAILED, SKIPPED }
+
+class TestMethodNode(val className: String, val name: String) {
+    val status: TestStatus
+    val message: String?
+    val stackTrace: String?
+    val output: SnapshotStateList<String>
+}
+
+class TestClassNode(val className: String) { val methods: SnapshotStateList<TestMethodNode> }
+
+class TestTree {
+    val classes: SnapshotStateList<TestClassNode>
+    val passed: Int
+    val failed: Int
+    val skipped: Int
+    fun apply(event: TestEvent)
+}
+```
+
+The reader thread sends event lines to the tree and the rest to `consoleLines`; it fills
+`exitCode` with `Process.waitFor()` after EOF. A class node is `FAILED` when any method
+failed, `RUNNING` while any is running, `SKIPPED` when every method was skipped, otherwise
+`PASSED`.
+
+```kotlin
+@Composable fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusRequests: Int = 0)
+@Composable fun TestGutterMarkers(session: ProjectSession, toolWindows: ToolWindowManager)
+
+fun runAtCaret(state: AppState): Boolean
+fun runTarget(state: AppState, file: Path, target: TestLocator.TestTarget): Boolean
+```
+
+`RunToolWindow` is a header (configuration name and `Running…`/`Passed n`/`Failed n of m`/
+`Exit code n`) over a 36/64 split of the test tree and console. Passed is `neonLime`,
+failed `neonPink`, running `accent2` and skipped `muted`; the glyph carries the state's
+glow. Selecting a method uses the neon selection signal and shows its message, stack and
+captured output below the console. The console uses `codeFont` and follows new lines. The
+view requests focus from `focusRequests`, as the terminal does; the running pulse only
+animates while `LocalAnimationsEnabled` is true.
+
+`TestGutterMarkers` puts a ▶ on the class line and every `@Test fun` of a `.kt` file under
+`/src/test/`; clicking one runs that target. `runAtCaret` locates the test under the caret
+and starts it. The four actions are:
+
+| ActionId | when | meaning |
+|---|---|---|
+| `RUN` | ⌃R in any context | rerun `lastRun`, else run the test at the caret, else `Nothing to run` |
+| `RUN_CONTEXT` | ⌃⇧R in the editor | run the test at the caret, else `No test at caret` |
+| `STOP` | ⌘F2 | destroy the process tree |
+| `RERUN` | ⌘R in the Run window | rerun `lastRun`, else `Nothing to rerun` |
+
+Starting a run opens the Run tool window with `activate("run")` and clears
+`AppState.statusMessage`; `StatusBar` shows that message in `neonAmber` before the focus
+chip.
+
+```kotlin
+object TestLocator {
+    data class TestTarget(val className: String, val methodName: String?)
+    data class TestMarker(val line: Int, val target: TestTarget)
+    fun locate(text: String, caretOffset: Int): TestTarget?
+    fun markers(text: String): List<TestMarker>
+    fun gradleProjectPath(file: Path, root: Path): String?
+}
+```
+
+`TestLocator` is regular expressions only (no PSI). The class is the nearest
+`class <Name>` at or above the caret, and the method is the nearest `fun` at or above it
+whose contiguous annotation lines include `@Test`. A caret between the class line and the
+first test resolves to the class; above the class it resolves to `null`. The filter is
+`<className>.<methodName>` with the backticked name unquoted. `gradleProjectPath` walks up
+to the nearest directory with `build.gradle.kts` or `build.gradle` and returns its path from
+the project root with `:` separators (`:plugins:lang-kotlin`, `""` for the root, `null`
+outside the root).
+
+```kotlin
+@Service(Service.Level.PROJECT)
+class RunManager(project: Project) : Disposable {
+    var starter: ProcessStarter                 // tests replace GradleProcessStarter
+    var lastRun: RunConfiguration?
+    var current: RunSession?
+    val isRunning: Boolean
+    fun run(configuration: RunConfiguration): RunSession
+    fun rerun(): RunSession?                    // null without lastRun
+    fun stop()
+}
+
+fun interface ProcessStarter { fun start(configuration: RunConfiguration): StartedProcess }
+data class StartedProcess(val process: Process, val displayCommand: String)
+object GradleProcessStarter : ProcessStarter
+```
+
+`RunManager` is a project service: `ProjectSession.dispose()` → `Project.dispose()` →
+`ComponentManager.dispose()` disposes it, which stops the child process.
+
+### Limits
+
+Nested classes are not located. The Gradle path is the directory path, so a project whose
+`settings.gradle.kts` `include` names a directory differently is reported under the
+directory path. Run configurations are not persisted; only `lastRun` lives in the session.
+
+## Look
+
+`stride.app.ui.theme.DesignTokens` is the single source of colors, type and spacing; UI
+files declare no colors of their own. The base palette is `ColorScheme.DARK_BACKGROUND`
+(#0F1117) with `surface` #151821 (tree panel, tab strip, status bar), `raised` #1B1F2A
+(popups, hover), `border` #262B3A, `text` #E6E8F0, `muted` #8A93A6, `subtle` #5A6274,
+`accent` (#7C5CFF, `DARK_ACCENT`), `accent2` (#00D1FF, `DARK_ACCENT_2`) and a selection of
+the accent at 22% alpha.
+
+Chrome text uses the default sans-serif at 13 sp. Code uses monospace at 13 sp with a 20 sp
+line height. Spacing follows a 4/8/12/16 dp scale; small controls use 6 dp radii and the
+Search Everywhere panel 12 dp.
+
+The window is 1280×820 dp, centered, with the icon from `logo/stride-icon-256.png`. It is a
+36 dp top bar (logo, project name, clickable Search pill with the `⇧⇧` hint), a 280 dp
+project tree with a draggable splitter clamped to 200–480 dp, a tab strip and editor, and a
+24 dp status bar showing the relative path, `Ln`/`Col`, the file type name, `UTF-8` and a
+`Read-only` badge when the editor is read-only.
+
+Chevrons, folder/file icons, the magnifier and the close × are drawn with `Canvas`. The empty
+states load `logo/stride-wordmark-dark.svg` through `loadSvgPainter` and fall back to the PNG
+icon. The wordmark SVG has a transparent background, so it sits directly on the mesh. No UI
+library beyond `compose.desktop.currentOs` is used.
+
+### Neon palette
+
+`DesignTokens` also carries the neon accents and glow values. They are added on top of the base
+palette; none of the original values change.
+
+| token | value |
+|---|---|
+| `neonPink` / `neonPinkGlow` | #FF2E97 / #FF2E97 at 55% alpha |
+| `neonLime` / `neonLimeGlow` | #B6FF3B / #B6FF3B at 55% alpha |
+| `neonAmber` / `neonAmberGlow` | #FFC83D / #FFC83D at 55% alpha |
+| `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha |
+| `selectionGlowBackground` | `accent2` at 14% alpha |
+| `selectionBar` | `accent2` |
+| `currentLineGlow` | `accent` at 10% alpha |
+| `glowRadius` / `glowRadiusLarge` | 10 dp / 18 dp |
+| `selectionBarWidth` | 3 dp |
+| `neonFadeMillis` | 150 |
+
+`selection` (the accent at 22%) stays the editor's text-selection color.
+
+### Neon modifiers
+
+`stride.app.ui.theme.Neon.kt` draws the glow with Skia's `MaskFilter.makeBlur` (sigma is half
+the radius). It is the only file that imports `org.jetbrains.skia.*`.
+
+```kotlin
+enum class NeonEdge { TOP, BOTTOM }
+
+fun Modifier.neonGlow(color: Color, radius: Dp = DesignTokens.glowRadius,
+                      shape: Shape = RectangleShape, alpha: Float = 1f): Modifier
+fun Modifier.neonBorder(color: Color, shape: Shape,
+                        radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f): Modifier
+fun Modifier.neonUnderline(color: Color, thickness: Dp = 2.dp,
+                           radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f,
+                           edge: NeonEdge = NeonEdge.BOTTOM): Modifier
+fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Modifier
+fun Modifier.neonSelectionBar(color: Color = DesignTokens.selectionBar, alpha: Float = 1f): Modifier
+@Composable fun rememberNeonAlpha(active: Boolean): Float
+```
+
+A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` draws nothing.
+
+### Selection signal language
+
+A selected tree row, tab, or popup entry is `selectionGlowBackground` plus an `accent2` neon
+bar on the left (the tab uses its bottom edge instead) plus `text`-colored label. A focused
+panel draws a `focusHalo` on its top edge. Unselected rows stay quiet. `StatusBar` takes an
+optional `focusLabel` and renders it as a right-aligned `accent2` `FocusChip`; `EditorArea` and
+`ProjectTreePanel` take `focused: Boolean = false` and draw the halo when true. `App` leaves
+both at their defaults.
+
+### Animation rules
+
+The only motion is the 150 ms glow fade when a selection changes, implemented by
+`rememberNeonAlpha`. When `stride.app.ui.LocalAnimationsEnabled` (a
+`staticCompositionLocalOf { true }`) is false, `rememberNeonAlpha` returns 0f/1f immediately and
+no animation keeps the test clock busy. `SnapshotRenderer` and the UI tests provide `false`.
+The wordmark caret blink keeps its own `LocalWordmarkCaretBlink` switch.
+`standardEasing` (`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is the easing for the motion tokens
+`motionShortMillis` 150, `motionMediumMillis` 200 and `motionPopupMillis` 250.
+
+### Glass, mesh and layered glow
+
+The surface is three layers: **L0 mesh → L1 glass → L2 neon**. `App` wraps its root in
+`MeshBackground`; panels drawn on it use `glassPanel`; transient surfaces use `backdropGlass`.
+Everything else is opaque: the editor, terminal and console use `contentTint`, one pre-blended
+opaque color, so the mesh is not drawn behind them.
+
+| token | value |
+|---|---|
+| `meshOrbAlpha` / `meshOrbRadiusFactor` | 0.18 / 0.75 of the window's short side |
+| `glassFill` / `glassFillStrong` | white 7% / 12% |
+| `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 22% / 14% / 10% |
+| `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp |
+| `contentTintAlpha` | 0.92 |
+| `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 |
+| `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
+| `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 |
+| `textSecondaryOnGlass` | `#B1B7C5` (muted→text at t=0.42; 4.54:1 on the worst strong glass) |
+| `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 |
+
+`scrollbarStyle` now uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
+`motionShortMillis` for the hover duration.
+
+`stride.app.ui.theme.Glass.kt` draws L0 and L1. It and `Neon.kt` are the only UI files that
+import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing cursor glow).
+
+```kotlin
+@Composable fun MeshBackground(modifier: Modifier = Modifier,
+                               content: @Composable BoxScope.() -> Unit)
+val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
+fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
+fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier
+fun Modifier.contentTint(): Modifier
+fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
+fun Modifier.neonGlowLayered(color: Color, shape: Shape = RectangleShape, alpha: Float = 1f): Modifier
+```
+
+`MeshBackground` draws `background` plus three radial orbs (accent top-left, accent2
+bottom-right, neonPink bottom-center) into a bitmap once per size and exposes it through
+`LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill` into
+an opaque cached image keyed by panel size, mesh size, root position and mesh version; each frame
+only draws that image and the border. `backdropGlass` blurs what is already drawn beneath it with
+Skia's `saveLayer(SaveLayerRec(backdrop = …))`, clipped to its shape. Its filter shrinks the
+backdrop to 1/4, blurs the small copy and scales it back up (`makeMatrixTransform` → `makeBlur` →
+`makeMatrixTransform`), so the scaling origin is the panel's top-left; `GlassModifiersTest`
+measures no pattern shift between 2 px outside and 2 px inside the panel's top and left edges. The
+backdrop path was measured on `ImageComposeScene`: **real**, not the bitmap fallback. Text on
+glass uses `textSecondaryOnGlass`; `muted` is 2.96:1 and `subtle`
+1.49:1 on the worst strong glass, so neither may carry information text there. `accent` is never
+text. `neonPink` reaches 3.14:1 over `glassFill` but only 2.65:1 over `glassFillStrong`, so it is
+limited to large text and graphics on `glassFill` panels.
+
+Those ratios come from `stride.app.ui.theme.Contrast.kt`, which the theme and surface tests share:
+
+```kotlin
+fun relativeLuminance(color: Color): Double
+fun contrastRatio(a: Color, b: Color): Double
+fun blendOver(fg: Color, bg: Color): Color
+```
+
+`relativeLuminance` linearises each sRGB channel at the 0.04045 threshold; `contrastRatio` returns
+the WCAG `(L1 + 0.05) / (L2 + 0.05)`; `blendOver` is the source-over composite and always returns
+an opaque color.
+
+The glass is deliberately cheap:
+
+- No `Modifier.blur` or `graphicsLayer { renderEffect }` on persistent panels; the blur is a
+  cached bitmap (`GlassCacheStats.panelBlurCount` must not grow frame to frame).
+- No constant animation and no blur-radius animation. The mesh is static.
+- One glass layer per region; a popup's scrim covers the glass beneath it.
+- The editor, terminal and console are `contentTint`, not glass. The tint is opaque, so it takes
+  the opaque fill path; its single color does not follow the mesh.
+- `neonBorder` and `glassPanel` go before `clip()` in a modifier chain.
+- The cached glass slice is opaque and already contains the fill, so a frame copies the image and
+  draws the border only.
+- The backdrop blur runs on a quarter-resolution copy of the backdrop, not at full resolution.
+
+`SnapshotFrameTimingTest` caps each scenario at `baseline × factor + 1.0 ms` (factor 1.5 for
+content, 2.0 for popups). The baselines were measured on a solid background, so they cost
+effectively 0 ms; one opaque full-screen mesh image at 2560×1640 costs 0.948 ms in the
+software-raster harness, which is what the 1.0 ms L0 budget admits.
+
+Frame-cost evidence for the three fixes (P probe, single condition, p50): a translucent fill costs
+1.28 ms/Mpx against 0.11 ms/Mpx for an opaque one, and one full-resolution `saveLayer` backdrop
+blur costs about 22.8 ms at 1.09 Mpx almost regardless of σ. After the phase-3 fixes the 12
+snapshot scenarios measure 1.42–17.0 ms, and the popup scenes drop from about 30 ms to 12–17 ms.
+The content tint under the mesh differs from the new opaque color by at most 4/255 in one channel
+across the whole 2560×1640 mesh.
+
+### Applied surfaces: tool windows, run and terminal
+
+The bottom tool window panel owns the reading tint: its `Column` is `contentTint()` for the
+whole panel, so `RunToolWindow` and `TerminalView` draw no background of their own. That leaves
+one opaque tint per pixel, and the terminal and console pixel assertions in `ToolWindowGlassTest`
+fix that single value.
+
+The tab strip `Row` is `glassPanel()` instead of an opaque `raised` fill plus a 1 px `border`
+line (the glass border replaces that line). Inactive tab labels are `textSecondaryOnGlass`; the
+active tab keeps `text` and its `accent2` underline.
+
+Run window text sits directly on the tint: the header status word (`accent2` while running,
+`neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
+panel. `MethodDetail` dropped its `raised` fill and stays transparent, so its text is read on
+the single tint layer; on the worst tint (the accent2 orb under `contentTintAlpha`) `neonPink`
+reaches 5.05:1 and `muted` 5.65:1, so no token changed. Selected rows keep
+`selectionGlowBackground`, `neonGlow` and `neonSelectionBar`.
+
+Status glyphs keep their shapes (✓ ✕ ●). The three-layer `neonGlowLayered` runs only on the
+selected method row's glyph (fade through `rememberNeonAlpha(selected)`) and on a running glyph
+(class or method); every other glyph draws no glow.
+
+The terminal no longer paints `TerminalPalette.background` as a full-canvas rect. Default cells
+are left unpainted so the panel tint shows through, while cells with an explicit non-default
+background are still filled. `TerminalPalette`, the cursor and the selection drawing are
+unchanged.
+
+### Applied surfaces: tree, tabs and editor
+
+The project tree and the tab strip are `glassPanel`; the tree keeps its `focusHalo`, now fed by
+an `onFocusChanged` read of the panel subtree in `App` instead of the unused `focused` default
+(`KeyContext` has no tree context, so `state.focus` is unchanged). Selected rows keep the neon
+language (`selectionGlowBackground`, `neonGlow`, `neonSelectionBar`); unselected rows and tabs are
+transparent, so only the hover tint (translucent `raised`) and the active tab's `neonUnderline`
+mark state. `PROJECT` and inactive tab labels use `textSecondaryOnGlass`; the splitter hairlines
+and tree indent guides use `glassBorderSide`.
+
+The editor body is `contentTint()`, never glass: `EditorArea` has no fill, so the opaque tint is
+painted once by `TextFileEditor`. The gutter no longer paints `DesignTokens.gutter`; it
+keeps the same tint and draws a 1 dp `glassBorderSide` separator, and its line numbers are
+`muted`, which clears 4.5:1 on the worst content tint (5.65:1). The go-to-line popup is
+`backdropGlass(shape)` behind the same `neonBorder`, with `textSecondaryOnGlass` text;
+`TreeEditorGlassTest` measures the backdrop as real (dense document, adjacent-pixel difference
+ratio 0.002) with the faint document still visible behind the fill.
+
+### Applied surfaces: popups and find bar
+
+Search Everywhere, Find in Path and Recent Files draw their panel with `backdropGlass` in place
+of the opaque `raised` fill; the full-screen `scrim` under them stays, so the blur samples the
+scrimmed surface beneath. The open fade runs for `motionPopupMillis` with `standardEasing` and
+is applied at draw time: the scrim alpha is multiplied by the fade, and only the panel contents
+carry a `graphicsLayer` alpha. The glass node and its ancestors stay layer-free, because an
+alpha layer above `backdropGlass` would leave the backdrop filter an empty layer (measured:
+adjacent-pixel ratio 0.81 against the 0.5 limit, versus 0.0032 with the draw-side fade). With
+animations enabled the content layer stays for the popup's lifetime; removing it mid-run
+re-breaks the backdrop. The `shadow` and `clip` that precede `backdropGlass` do not block the
+blur (ratios 0.0028 and 0.0008). Popup text uses `textSecondaryOnGlass`, chips and hovered rows
+use `glassFill` and `glassBorder`, and a selected row draws `neonGlowLayered(accent2)` behind an
+opaque `raised` base tinted with `selectionGlowBackground`, so the glow reads as a rim and the
+label keeps its contrast; the `neonSelectionBar` stays on top.
+
+The find bar uses `glassPanel()` (cached mesh slice) with its `neonUnderline`. Its labels and
+placeholders are `textSecondaryOnGlass`, the match counter turns `neonAmber` on a pattern error
+and the query field gains a `neonPink` border instead of pink text, and the row buttons use a
+`glassFill` fill instead of `raised`.
+
+## Offscreen snapshots
+
+`stride.app.ui.UiSnapshotTest` renders the real `App` through `ImageComposeScene` at
+2560×1640 px and density 2 (the 1280×820 dp default window) and writes PNGs to
+`app/build/ui-snapshots/`
+(`01-empty.png`, `02-editor-kotlin.png`, `03-editor-json.png`, `04-search.png`,
+`05-search-empty-results.png`, `06-selection-editor.png`, `07-selection-popup.png`,
+`08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
+`12-editor-scrolled.png`).
+`tasks.test` sets `java.awt.headless=true`, so the renderer never opens a window or touches
+the display.
+
+## Running
+
+```bash
+./gradlew :app:run                       # empty state
+./gradlew :app:run -PopenPath=<directory>  # opens the directory at startup
+```
+
+`-PopenPath` appends the directory as the first program argument (`compose.desktop
+.application.args`). The run task's `javaHome` is resolved from the JDK 21 toolchain, so the app
+runs on the same JVM as the build regardless of the Gradle daemon's JVM.
+
+`jediterm-core` resolves from the Maven repository declared in `settings.gradle.kts`;
+Maven Central alone does not carry it.
+
+## Test coverage
+
+| class | what it pins |
+|---|---|
+| `ProjectTreeModelTest` | hidden directories, lazy child loading, directories-first order, VFS invalidation |
+| `FileEditorManagerTest` | tab reuse, right-then-left neighbour selection, save, recent-file ordering and cap, dispose on project dispose |
+| `TextChangeTest` | common prefix/suffix insert/delete/replace and empty edges; incremental highlighter equals a fresh one |
+| `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
+| `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
+| `KeymapTest` | every macOS binding in its context, context-over-global resolution, non-mac meta↔control swap |
+| `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus |
+| `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
+| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor |
+| `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
+| `FindBarStateTest` | span painting and current match, next cycling, replace all, close clearing spans |
+| `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop |
+| `NeonModifiersTest` | glow pixels outside the shape, zero alpha, underline direction, `rememberNeonAlpha` with animations on and off |
+| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` limited to large text, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered mesh orbs staying under the worst single-orb luminance |
+| `GlassModifiersTest` | the panel taking the mesh color behind it, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint over the mesh, the cached slice being an opaque image, and the backdrop blur staying aligned with the panel edge |
+| `ToolWindowGlassTest` | the tab strip shows the mesh through glass, the terminal and run console paint exactly one opaque tint, only the selected row's glyph glows, run status colors clear 4.5 on the worst tint |
+| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent, the selected row's layered glow reaches beyond the row, the find bar takes the mesh color, and no fade runs with animations disabled |
+| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere, the find bar, recent files, the terminal, the run window and an editor scrolled to a far column |
+| `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
+| `EditorScrollUiTest` | caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, and the gutter keeps its position while the text scrolls horizontally |
+| `GradleCommandTest` | command order and `$0`, spaced test name as one argument, wrapper/PATH fallback, test args, shell fallback |
+| `GradleInitScriptTest` | every event line uses the parser prefix and the five kinds, synthesized lines parse as events, the test task cannot be skipped as up-to-date or cached |
+| `TestEventParserTest` | the five event kinds, TeamCity escape reversal, non-event and malformed lines as output, order preservation |
+| `TestLocatorTest` | caret-to-method/class resolution on real repository files, marker counts, Gradle project paths |
+| `RunSessionTest` | console versus event lines, tree statuses and failure details, exit code, stop on a fake process |
+| `RunManagerTest` | last run and starter, stopping the previous session, rerun without a run, dispose destroying the child |
+| `GradleRunIntegrationTest` | a real `:core:test` child Gradle through the init script (tagged `slow`, opt-in with `-Dstride.runIntegration=true`) |
+| `EditActionsTest` | duplicate, delete, move, line/block comment, indent and unindent with no selection, one line, many lines, the first line and a last line without a newline; `gotoLine` clamping |
+| `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections |
+| `TextFileEditorUndoTest` | undo restores text, selection and a freshly highlighted editor; duplicate undo; read-only actions; commenter resolution; goto line parsing and the popup flag |
+| `CommenterEpTest` | `lang.commenter` resolves kotlin and json to `//` and `/* */`, plain text to `null`, one registration per language plugin |
+| `TerminalSessionTest` | fake-connector output, ANSI styles, carriage return and erase, resize, write, key encoding, dispose |
+| `PtyShellIntegrationTest` | a real `/bin/zsh -lc` PTY writing into the terminal model (skipped when no PTY is available) |
+| `BuiltInPluginLoadingTest` | the three bundled descriptors enabled, kt/json file types and highlighter lexers through the extension points, one core extension per interface EP |
+| `TextEditorProviderTest` | a file at the highlighted-size limit stays editable and one byte above the limit is read-only |
+| `RepositoryAcceptanceTest` | repository tree top level with generated directories hidden, `Main.kt` as a selected highlighted tab, double-Shift search opening `docs/api-search.md`, and the repository Kotlin and search snapshots |
+| `TreeEditorGlassTest` | tree glass over the mesh, the editor tint over the same mesh pixel, the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search pill shortcut hint clearing 4.5:1 on its fill |

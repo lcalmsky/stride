@@ -1,0 +1,65 @@
+// Streams test events to the stride Run tool window as one line per event.
+// Values follow the TeamCity service-message escaping rules; see TestEventParser.kt.
+// The task is forced to rerun so a repeated run still reports events.
+
+import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.TestOutputEvent
+import org.gradle.api.tasks.testing.TestResult
+
+def escape = { String value ->
+    if (value == null) return ""
+    value
+        .replace("|", "||")
+        .replace("'", "|'")
+        .replace("\n", "|n")
+        .replace("\r", "|r")
+        .replace("[", "|[")
+        .replace("]", "|]")
+}
+
+def stackOf = { Throwable throwable ->
+    if (throwable == null) return ""
+    def writer = new java.io.StringWriter()
+    throwable.printStackTrace(new java.io.PrintWriter(writer))
+    def lines = writer.toString().readLines()
+    if (lines.size() > 20) lines = lines.subList(0, 20)
+    lines.join("\n")
+}
+
+allprojects {
+    tasks.withType(Test).configureEach { testTask ->
+        testTask.outputs.upToDateWhen { false }
+        testTask.outputs.cacheIf { false }
+
+        testTask.beforeTest { descriptor ->
+            if (descriptor.className == null || descriptor.composite) return
+            println "##stride[test start class='${escape(descriptor.className)}' name='${escape(descriptor.name)}']"
+        }
+
+        testTask.afterTest { descriptor, result ->
+            if (descriptor.className == null || descriptor.composite) return
+            def kind = descriptor.className
+            def name = descriptor.name
+            def duration = Math.max(0L, result.endTime - result.startTime)
+            switch (result.resultType) {
+                case TestResult.ResultType.SUCCESS:
+                    println "##stride[test pass class='${escape(kind)}' name='${escape(name)}' duration='${duration}']"
+                    break
+                case TestResult.ResultType.FAILURE:
+                    def message = result.exception?.message ?: ""
+                    def stack = stackOf(result.exception)
+                    println "##stride[test fail class='${escape(kind)}' name='${escape(name)}' duration='${duration}' message='${escape(message)}' stack='${escape(stack)}']"
+                    break
+                case TestResult.ResultType.SKIPPED:
+                    println "##stride[test skip class='${escape(kind)}' name='${escape(name)}']"
+                    break
+            }
+        }
+
+        testTask.onOutput { descriptor, event ->
+            if (descriptor.className == null || descriptor.composite) return
+            def stream = event.destination == TestOutputEvent.Destination.StdErr ? "stderr" : "stdout"
+            println "##stride[test out class='${escape(descriptor.className)}' name='${escape(descriptor.name)}' stream='${stream}' text='${escape(event.message)}']"
+        }
+    }
+}

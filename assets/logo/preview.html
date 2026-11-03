@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strIDE — logo preview</title>
+<style>
+  :root {
+    --dark-bg: #0F1117;
+    --light-bg: #F5F6F8;
+    --light-ink: #1B1F2A;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px;
+    font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+    background: #202430;
+    color: #C9CEDA;
+  }
+  h1 { font-size: 16px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 24px; color: #8A93A6; font-weight: 600; }
+  h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; margin: 0 0 20px; font-weight: 600; opacity: .6; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1180px; }
+  .panel { border-radius: 16px; padding: 32px; }
+  .panel.dark { background: var(--dark-bg); }
+  .panel.light { background: var(--light-bg); color: var(--light-ink); }
+  .panel h2 { color: inherit; }
+  .row { display: flex; flex-direction: column; gap: 28px; }
+  .item { display: flex; flex-direction: column; gap: 10px; }
+  .label { font-size: 11px; letter-spacing: .06em; opacity: .55; }
+  .wordmark { width: 100%; max-width: 520px; height: auto; display: block; }
+  .icon-lg { width: 160px; height: 160px; display: block; }
+  .sizes { display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  .sizes figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .sizes figcaption { font-size: 10px; opacity: .5; }
+  .sizes img { display: block; }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<h1>strIDE — logo variants</h1>
+
+<div class="grid">
+  <section class="panel dark">
+    <h2>Dark</h2>
+    <div class="row">
+      <div class="item">
+        <span class="label">stride-wordmark-dark.svg</span>
+        <img class="wordmark" src="stride-wordmark-dark.svg" alt="strIDE wordmark, dark background">
+      </div>
+      <div class="item">
+        <span class="label">stride-wordmark-animated.svg (caret blinks)</span>
+        <img class="wordmark" src="stride-wordmark-animated.svg" alt="strIDE animated wordmark">
+      </div>
+      <div class="item">
+        <span class="label">stride-icon.svg</span>
+        <img class="icon-lg" src="stride-icon.svg" alt="strIDE app icon">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel light">
+    <h2>Light</h2>
+    <div class="row">
+      <div class="item">
+        <span class="label">stride-wordmark-light.svg</span>
+        <img class="wordmark" src="stride-wordmark-light.svg" alt="strIDE wordmark, light theme">
+      </div>
+      <div class="item">
+        <span class="label">stride-wordmark-dark.svg on light</span>
+        <img class="wordmark" src="stride-wordmark-dark.svg" alt="strIDE dark wordmark shown on a light page">
+      </div>
+      <div class="item">
+        <span class="label">stride-icon.svg on light</span>
+        <img class="icon-lg" src="stride-icon.svg" alt="strIDE app icon on a light background">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel dark full">
+    <h2>Icon sizes</h2>
+    <div class="sizes">
+      <figure><img src="stride-icon-16.png" width="16" height="16" alt="16 px icon"><figcaption>16</figcaption></figure>
+      <figure><img src="stride-icon-32.png" width="32" height="32" alt="32 px icon"><figcaption>32</figcaption></figure>
+      <figure><img src="stride-icon-64.png" width="64" height="64" alt="64 px icon"><figcaption>64</figcaption></figure>
+      <figure><img src="stride-icon-128.png" width="128" height="128" alt="128 px icon"><figcaption>128</figcaption></figure>
+      <figure><img src="stride-icon-256.png" width="256" height="256" alt="256 px icon"><figcaption>256</figcaption></figure>
+      <figure><img src="stride-icon-512.png" width="512" height="512" style="width:96px;height:96px" alt="512 px icon"><figcaption>512</figcaption></figure>
+    </div>
+  </section>
+</div>
+</body>
+</html>

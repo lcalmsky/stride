@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<stride-plugin>
+  <id>stride.lang.kotlin</id>
+  <name>Kotlin</name>
+  <depends>stride.core</depends>
+  <extensions defaultExtensionNs="stride">
+    <fileType extension="kt" language="kotlin" implementationClass="stride.lang.kotlin.KotlinFileType"/>
+    <fileType extension="kts" language="kotlin" implementationClass="stride.lang.kotlin.KotlinFileType"/>
+    <lang.syntaxHighlighterFactory language="kotlin"
+                                   implementationClass="stride.lang.kotlin.KotlinSyntaxHighlighterFactory"/>
+    <lang.commenter language="kotlin" implementationClass="stride.lang.kotlin.KotlinCommenter"/>
+  </extensions>
+</stride-plugin>

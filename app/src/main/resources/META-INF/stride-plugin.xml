@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<stride-plugin>
+  <id>stride.core</id>
+  <name>stride core</name>
+  <extensionPoints>
+    <extensionPoint name="fileType" beanClass="stride.lang.FileTypeBean"/>
+    <extensionPoint name="lang.syntaxHighlighterFactory" beanClass="stride.lang.SyntaxHighlighterFactoryBean"/>
+    <extensionPoint name="lang.commenter" beanClass="stride.lang.CommenterBean"/>
+    <extensionPoint qualifiedName="stride.searchEverywhereContributor"
+                    interface="stride.search.SearchEverywhereContributorFactory"/>
+    <extensionPoint name="fileEditorProvider" interface="stride.app.editor.FileEditorProvider"/>
+    <extensionPoint name="treeStructureProvider" interface="stride.app.tree.TreeStructureProvider"/>
+  </extensionPoints>
+  <extensions defaultExtensionNs="stride">
+    <searchEverywhereContributor implementation="stride.search.FileSearchContributorFactory"/>
+    <fileEditorProvider implementation="stride.app.editor.TextEditorProvider"/>
+    <treeStructureProvider implementation="stride.app.tree.HiddenDirectoriesTreeStructureProvider"/>
+  </extensions>
+</stride-plugin>

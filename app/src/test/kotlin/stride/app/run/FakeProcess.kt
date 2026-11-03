@@ -1,0 +1,50 @@
+package stride.app.run
+
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
+
+/**
+ * A child process fed by bytes. With [blocking], its input stream never reaches EOF until
+ * [destroy] closes the pipe, so a run can stay running in tests.
+ */
+class FakeProcess(
+    output: ByteArray = ByteArray(0),
+    private val exitCode: Int = 0,
+    blocking: Boolean = false,
+) : Process() {
+    @Volatile
+    var destroyed = false
+        private set
+
+    private val writer: PipedOutputStream? = if (blocking) PipedOutputStream() else null
+
+    private val input: InputStream = if (blocking) {
+        PipedInputStream(requireNotNull(writer))
+    } else {
+        ByteArrayInputStream(output)
+    }
+
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+
+    override fun getInputStream(): InputStream = input
+
+    override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int = exitCode
+
+    override fun exitValue(): Int = exitCode
+
+    override fun destroy() {
+        destroyed = true
+        runCatching { writer?.close() }
+        runCatching { input.close() }
+    }
+
+    override fun destroyForcibly(): Process {
+        destroy()
+        return this
+    }
+}
