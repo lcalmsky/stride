@@ -174,7 +174,7 @@ fun SearchEverywherePopup(
                 if (query.isNotEmpty() && results.isEmpty() && !loading) {
                     Text(
                         "No matching results",
-                        color = DesignTokens.textSecondaryOnGlass,
+                        color = DesignTokens.textOnBusyGlass,
                         fontSize = DesignTokens.uiTextSize,
                         fontFamily = DesignTokens.uiFont,
                         modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -207,7 +207,7 @@ private fun PopupHeader(
             if (query.isEmpty()) {
                 Text(
                     "Search everywhere",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = 15.sp,
                     fontFamily = DesignTokens.uiFont,
                 )
@@ -217,10 +217,12 @@ private fun PopupHeader(
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = DesignTokens.text,
-                    fontSize = 15.sp,
-                    fontFamily = DesignTokens.uiFont,
+                textStyle = DesignTokens.chromeTextStyle.merge(
+                    TextStyle(
+                        color = DesignTokens.text,
+                        fontSize = 15.sp,
+                        fontFamily = DesignTokens.uiFont,
+                    ),
                 ),
                 cursorBrush = SolidColor(DesignTokens.accent),
             )
@@ -255,7 +257,7 @@ private fun TabRow(selected: SearchTab, onSelect: (SearchTab) -> Unit) {
             ) {
                 Text(
                     tab.title,
-                    color = if (tab == selected) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+                    color = if (tab == selected) DesignTokens.text else DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
                 )
@@ -351,7 +353,7 @@ private fun GroupHeader(label: String) {
     ) {
         Text(
             label,
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.labelTextSize,
             fontFamily = DesignTokens.uiFont,
         )
@@ -391,7 +393,7 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
             Spacer(Modifier.width(DesignTokens.space8))
             Text(
                 secondary,
-                color = DesignTokens.textSecondaryOnGlass,
+                color = DesignTokens.textOnBusyGlass,
                 fontSize = DesignTokens.smallTextSize,
                 fontFamily = DesignTokens.uiFont,
                 maxLines = 1,

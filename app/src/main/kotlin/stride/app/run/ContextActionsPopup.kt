@@ -137,7 +137,7 @@ internal fun ChoicePopup(
             title?.let { text ->
                 Text(
                     text,
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.labelTextSize,
                     fontFamily = DesignTokens.uiFont,
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space8),
@@ -183,7 +183,7 @@ private fun ChoiceRow(label: String, secondary: String?, selected: Boolean, onCl
         if (secondary != null) {
             Text(
                 secondary,
-                color = DesignTokens.textSecondaryOnGlass,
+                color = DesignTokens.textOnBusyGlass,
                 fontSize = DesignTokens.smallTextSize,
                 fontFamily = DesignTokens.uiFont,
                 maxLines = 1,

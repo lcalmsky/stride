@@ -24,6 +24,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -36,6 +38,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import stride.app.editor.EditorScrollState
+import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
 import stride.app.ui.FixedUiFontExtension
@@ -43,7 +47,10 @@ import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.blendOver
+import stride.app.ui.theme.glassSlabRims
 import stride.app.ui.theme.relativeLuminance
+import stride.app.ui.theme.slabShadow
 import stride.core.services.Project
 import stride.core.vfs.VFile
 
@@ -182,7 +189,7 @@ class PopupGlassTest {
         val dark = relativeLuminance(Color(pixels[index(630, 120, 800)]))
         val ratio = (maxOf(light, dark) + 0.05) / (minOf(light, dark) + 0.05)
         System.err.println("popup-detail light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
-        assertTrue(ratio >= 1.9, "backdrop detail through the popup is %.3f:1, expected at least 2:1".format(ratio))
+        assertTrue(ratio >= 2.0, "backdrop detail through the popup is %.3f:1, expected at least 2:1".format(ratio))
         assertTrue(ratio <= 3.2, "backdrop detail through the popup is %.3f:1, expected about 3:1".format(ratio))
     }
 
@@ -194,17 +201,51 @@ class PopupGlassTest {
             VFile(root.resolve("Beta.kt")),
             VFile(root.resolve("Gamma.kt")),
         )
-        val pixels = scenePixels(800, 400) {
+        val recentPixels = scenePixels(800, 400) {
             Box(Modifier.fillMaxSize().background(Color.White)) {
                 RecentFilesPopup(files = files, projectRoot = root, onChoose = {}, onClose = {})
             }
         }
-        // Row band of the first entry (header ends at 144, rows are 32 px tall).
-        var best = 0.0
-        for (y in 148 until 208) {
-            for (x in 100 until 700) {
-                val luma = relativeLuminance(Color(pixels[index(x, y, 800)]))
-                if (luma < 0.15) continue
+        // Rows of the first entries (header ends at 144, rows are 32 px tall).
+        assertGlyphContrast("recent-files", recentPixels, 100, 700, 148, 240)
+
+        // The query field is the largest label in Search Everywhere; it passes its own
+        // textStyle, which the finding 4 fix now merges with the chrome shadow.
+        val search = SearchEverywhere(Project(Path.of("build/tmp/popup-query-project")))
+        val queryPixels = scenePixels(800, 400) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                SearchEverywherePopup(
+                    search = search,
+                    onChoose = {},
+                    onClose = {},
+                    initialQuery = "analysis",
+                )
+            }
+        }
+        // The popup starts at y=96; the 52 dp header carries the query.
+        assertGlyphContrast("search-query", queryPixels, 110, 700, 104, 140)
+    }
+
+    /**
+     * The fifth percentile of the local contrast over glyph pixels. A maximum would let one
+     * well-shadowed glyph hide a label that has none.
+     */
+    private fun assertGlyphContrast(label: String, pixels: IntArray, left: Int, right: Int, top: Int, bottom: Int) {
+        val textTokens = listOf(
+            DesignTokens.text,
+            DesignTokens.selectedText,
+            DesignTokens.textOnBusyGlass,
+            DesignTokens.textSecondaryOnGlass,
+        )
+        val ratios = ArrayList<Double>()
+        for (y in top until bottom) {
+            for (x in left..right) {
+                val color = Color(pixels[index(x, y, 800)])
+                // Core glyph pixels carry the exact token color; antialiased edges and the
+                // background do not. A label without its shadow shows up here as a low ratio
+                // against the bright glass around it.
+                if (textTokens.none { matches(color, it) }) continue
+                val luma = relativeLuminance(color)
                 var local = 1.0
                 for (dy in -2..2) {
                     for (dx in -2..2) {
@@ -212,14 +253,24 @@ class PopupGlassTest {
                         if (localLuma < local) local = localLuma
                     }
                 }
-                val ratio = (luma + 0.05) / (local + 0.05)
-                if (ratio > best) best = ratio
+                ratios += (luma + 0.05) / (local + 0.05)
             }
         }
-        System.err.println("popup-text-bright best=%.3f".format(best))
+        ratios.sort()
+        assertTrue(ratios.size >= 50, "$label: expected glyph pixels, found ${ratios.size}")
+        val percentile = ratios[(ratios.size * 5 / 100).coerceAtMost(ratios.lastIndex)]
+        System.err.println(
+            "popup-text-bright %s p5=%.3f min=%.3f samples=%d".format(
+                label,
+                percentile,
+                ratios.first(),
+                ratios.size,
+            ),
+        )
         assertTrue(
-            best >= DesignTokens.contrastText,
-            "popup text on the bright glass tops out at %.3f:1".format(best),
+            percentile >= DesignTokens.contrastText,
+            "$label text on the bright glass reaches only %.3f:1 at the fifth percentile"
+                .format(percentile),
         )
     }
 
@@ -251,17 +302,41 @@ class PopupGlassTest {
     }
 
     @Test
-    fun `find bar is the neutral glass fill instead of the flat surface`() {
-        val pixels = scenePixels(600, 400) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                FindBar(
-                    state = FindBarState(),
-                    editor = null,
-                    onFocusContext = {},
-                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(),
-                )
-            }
-        }
+    fun `find bar glass matches its slab shape in both scroll branches`() {
+        val shape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
+        val panel = findBarPixels(shape, scrolled = false)
+        val chrome = findBarPixels(shape, scrolled = true)
+
+        assertFindBarBand(
+            label = "panel",
+            pixels = panel,
+            lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom)),
+            highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift)),
+        )
+        // The chrome branch paints glassBase + chromeBackdropMix of the field, not the panel fill.
+        assertFindBarBand(
+            label = "chrome",
+            pixels = chrome,
+            lowest = relativeLuminance(chromeOver(DesignTokens.fieldBottom)),
+            highest = relativeLuminance(chromeOver(DesignTokens.backgroundLift)),
+        )
+
+        // A corner of the slab's bounding box lies outside the rounded fill; with a rectangle
+        // shape the same pixel is glass. This is the pixel check for the shape threading.
+        val rectangular = findBarPixels(RectangleShape, scrolled = false)
+        val roundedCorner = relativeLuminance(Color(panel[index(2, 2, 600)]))
+        val squareCorner = relativeLuminance(Color(rectangular[index(2, 2, 600)]))
+        System.err.println(
+            "find-bar corner rounded=%.4f square=%.4f".format(roundedCorner, squareCorner),
+        )
+        assertTrue(
+            roundedCorner < squareCorner - 0.005,
+            "the rounded corner should not paint the glass fill: rounded %.4f vs square %.4f"
+                .format(roundedCorner, squareCorner),
+        )
+    }
+
+    private fun assertFindBarBand(label: String, pixels: IntArray, lowest: Double, highest: Double) {
         var widest = -1
         var widestX = -1
         var widestY = -1
@@ -277,19 +352,50 @@ class PopupGlassTest {
             }
         }
         val pixel = pixels[index(widestX, widestY, 600)]
-        val lowest = relativeLuminance(chromeOver(DesignTokens.fieldBottom))
-        val highest = relativeLuminance(chromeOver(DesignTokens.backgroundLift))
         val luminance = relativeLuminance(Color(pixel))
         System.err.println(
-            "find-bar widest=$widest at ($widestX,$widestY) pixel=${hex(pixel)} luminance=%.4f band=%.4f..%.4f"
-                .format(luminance, lowest, highest),
+            "find-bar %s widest=%d at (%d,%d) pixel=%s luminance=%.4f band=%.4f..%.4f".format(
+                label,
+                widest,
+                widestX,
+                widestY,
+                hex(pixel),
+                luminance,
+                lowest,
+                highest,
+            ),
         )
-        // The cooler chrome glass keeps the field's graphite tint; anything wider would be a hue.
+        // The cooler glass keeps the field's graphite tint; anything wider would be a hue.
         assertTrue(widest <= 15, "the find bar should stay neutral, widest channel spread = $widest")
         assertTrue(
             luminance >= lowest - 0.003 && luminance <= highest + 0.004,
-            "the find bar luminance %.4f is outside the bar glass band %.4f..%.4f".format(luminance, lowest, highest),
+            "the $label find bar luminance %.4f is outside the glass band %.4f..%.4f"
+                .format(luminance, lowest, highest),
         )
+    }
+
+    private fun findBarPixels(shape: Shape, scrolled: Boolean): IntArray {
+        val scroll = EditorScrollState().apply {
+            updateBounds(contentSize = 1_000, viewportSize = 100)
+            if (scrolled) dispatchRawDelta(50f)
+        }
+        return scenePixels(600, 400) {
+            MeshBackground(Modifier.fillMaxSize()) {
+                CompositionLocalProvider(LocalEditorScrollState provides scroll) {
+                    FindBar(
+                        state = FindBarState(),
+                        editor = null,
+                        onFocusContext = {},
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .slabShadow(shape)
+                            .glassSlabRims(shape),
+                        shape = shape,
+                    )
+                }
+            }
+        }
     }
 
     /** The chrome glass over a neutral field color: the base plus its share of the field. */
@@ -457,6 +563,11 @@ class PopupGlassTest {
     }
 
     private fun index(x: Int, y: Int, width: Int): Int = y * width + x
+
+    private fun matches(pixel: Color, token: Color): Boolean =
+        abs(pixel.red - token.red) * 255f <= 6f &&
+            abs(pixel.green - token.green) * 255f <= 6f &&
+            abs(pixel.blue - token.blue) * 255f <= 6f
 
     private fun channelDistance(first: Int, second: Int): Int =
         maxOf(

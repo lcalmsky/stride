@@ -149,7 +149,7 @@ fun RecentFilesPopup(
                 if (files.isEmpty()) {
                     Text(
                         "No recent files",
-                        color = DesignTokens.textSecondaryOnGlass,
+                        color = DesignTokens.textOnBusyGlass,
                         fontSize = DesignTokens.uiTextSize,
                         fontFamily = DesignTokens.uiFont,
                         modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -217,7 +217,7 @@ private fun RecentRow(file: VFile, projectRoot: Path, selected: Boolean, onClick
         Spacer(Modifier.width(DesignTokens.space12))
         Text(
             relativePath(projectRoot, file),
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,

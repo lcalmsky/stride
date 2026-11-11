@@ -160,7 +160,7 @@ object DesignTokens {
     val chromeLabelScrim = Color.Black.copy(alpha = 0.45f)
     val chromeLabelScrimInset = 2.dp
 
-    /** Labels on a bar over the editor: brighter than [textSecondaryOnGlass] for busy backdrops. */
+    /** Secondary labels on busy glass (a bar over code, a popup over the editor). */
     val textOnBusyGlass = Color(0xFFC4CBDA)
 
     /** The search pill's dark glass fill on the title bar slab. */
@@ -170,11 +170,14 @@ object DesignTokens {
     val glassGridSpacing = 40.dp
     val glassGrid = Color.White.copy(alpha = 0.06f)
 
-    /** Soft shadow under chrome and popup text, which carries its own contrast on thin glass. */
+    /**
+     * Shadow under chrome and popup text. On thin glass the text is read against this plate, so
+     * it is opaque black with a tight blur; the measured worst case is in `PopupGlassTest`.
+     */
     val chromeTextShadow = Shadow(
-        color = Color.Black.copy(alpha = 0.78f),
+        color = Color.Black.copy(alpha = 1f),
         offset = Offset(0f, 1f),
-        blurRadius = 3.5f,
+        blurRadius = 2f,
     )
     val chromeTextStyle = TextStyle(shadow = chromeTextShadow)
 

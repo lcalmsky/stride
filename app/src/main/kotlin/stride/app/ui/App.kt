@@ -43,6 +43,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -918,6 +919,7 @@ private fun EditorArea(
                     .fillMaxWidth()
                     .slabShadow(findShape)
                     .glassSlabRims(findShape),
+                shape = findShape,
             )
         }
     }
@@ -926,8 +928,15 @@ private fun EditorArea(
 @Composable
 private fun TabBar(manager: FileEditorManager, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
-    // Only a scrolled editor has code under the bar; otherwise the cached field slice is enough.
-    val scrolled = LocalEditorScrollState.current?.let { it.value > 0 } == true
+    val editorScroll = LocalEditorScrollState.current
+    // Only a layer-free, scrolled editor has code under the bar for the filter to sample;
+    // otherwise the cached field slice is enough. Derived state keeps a scroll step from
+    // recomposing the bar unless the answer changes.
+    val scrolled by remember(editorScroll) {
+        derivedStateOf {
+            editorScroll != null && editorScroll.value > 0 && !editorScroll.layered
+        }
+    }
     var tabBounds by remember { mutableStateOf<Map<String, Rect>>(emptyMap()) }
     val selectedKey = manager.selected?.let { pathKey(it.file) }
     LaunchedEffect(selectedKey, tabBounds, scrollState.viewportSize) {
@@ -1058,7 +1067,13 @@ private fun StatusBar(
     val editor = session.editors.selected
     val textEditor = editor as? TextFileEditor
     val scroll = LocalEditorScrollState.current
-    val overCode = overlapsEditor && scroll != null && scroll.value > 0 && scroll.value < scroll.maxValue
+    // Sampled glass needs a layer-free editor with code above and below the visible viewport.
+    val overCode by remember(scroll, overlapsEditor) {
+        derivedStateOf {
+            overlapsEditor && scroll != null && scroll.value > 0 &&
+                scroll.value < scroll.maxValue && !scroll.layered
+        }
+    }
     val shape = RoundedCornerShape(DesignTokens.slabRadiusStatus)
     Row(
         modifier
@@ -1068,6 +1083,13 @@ private fun StatusBar(
             .glassSlabRims(shape)
             .then(if (overCode) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
             .labelScrim(overCode)
+            // A press on the pill must not reach the text field's full-document hit bounds
+            // underneath it; a passive pointer node is enough to stop the sibling hit test.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) awaitPointerEvent()
+                }
+            }
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {

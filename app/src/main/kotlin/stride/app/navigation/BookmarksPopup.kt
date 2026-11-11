@@ -144,7 +144,7 @@ fun BookmarksPopup(
             if (bookmarks.isEmpty()) {
                 Text(
                     "No bookmarks",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -199,7 +199,7 @@ private fun BookmarkRow(bookmark: Bookmark, selected: Boolean, onClick: () -> Un
         Spacer(Modifier.width(DesignTokens.space12))
         Text(
             bookmark.lineText,
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,

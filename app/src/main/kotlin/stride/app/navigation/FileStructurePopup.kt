@@ -143,7 +143,7 @@ fun FileStructurePopup(
                     if (query.isEmpty()) {
                         Text(
                             "Filter declarations",
-                            color = DesignTokens.textSecondaryOnGlass,
+                            color = DesignTokens.textOnBusyGlass,
                             fontSize = DesignTokens.uiTextSize,
                             fontFamily = DesignTokens.uiFont,
                         )
@@ -159,10 +159,12 @@ fun FileStructurePopup(
                             .focusRequester(focusRequester)
                             .testTag(FILE_STRUCTURE_FIELD_TAG),
                         singleLine = true,
-                        textStyle = TextStyle(
-                            color = DesignTokens.text,
-                            fontSize = DesignTokens.uiTextSize,
-                            fontFamily = DesignTokens.uiFont,
+                        textStyle = DesignTokens.chromeTextStyle.merge(
+                            TextStyle(
+                                color = DesignTokens.text,
+                                fontSize = DesignTokens.uiTextSize,
+                                fontFamily = DesignTokens.uiFont,
+                            ),
                         ),
                         cursorBrush = SolidColor(DesignTokens.accent),
                     )
@@ -171,7 +173,7 @@ fun FileStructurePopup(
             if (items.isEmpty()) {
                 Text(
                     "No matching declarations",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -229,7 +231,7 @@ private fun StructureRow(entry: FileStructureEntry, selected: Boolean, onClick: 
         )
         Text(
             (entry.line + 1).toString(),
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.labelTextSize,
             fontFamily = DesignTokens.uiFont,
         )

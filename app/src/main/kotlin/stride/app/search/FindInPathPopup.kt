@@ -166,7 +166,7 @@ fun FindInPathPopup(
                         searching && hits.isEmpty() -> Unit
                         hits.isEmpty() -> Text(
                             "No results",
-                            color = DesignTokens.textSecondaryOnGlass,
+                            color = DesignTokens.textOnBusyGlass,
                             fontSize = DesignTokens.uiTextSize,
                             fontFamily = DesignTokens.uiFont,
                             modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -210,7 +210,7 @@ private fun Header(
             if (query.isEmpty()) {
                 Text(
                     "Search text in project",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = 15.sp,
                     fontFamily = DesignTokens.uiFont,
                 )
@@ -223,10 +223,12 @@ private fun Header(
                     .testTag("find-in-path-query")
                     .focusRequester(focusRequester),
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = DesignTokens.text,
-                    fontSize = 15.sp,
-                    fontFamily = DesignTokens.uiFont,
+                textStyle = DesignTokens.chromeTextStyle.merge(
+                    TextStyle(
+                        color = DesignTokens.text,
+                        fontSize = 15.sp,
+                        fontFamily = DesignTokens.uiFont,
+                    ),
                 ),
                 cursorBrush = SolidColor(DesignTokens.accent),
             )
@@ -242,7 +244,7 @@ private fun Header(
 private fun Toggle(label: String, active: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        color = if (active) DesignTokens.accent2 else DesignTokens.textSecondaryOnGlass,
+        color = if (active) DesignTokens.accent2 else DesignTokens.textOnBusyGlass,
         fontSize = DesignTokens.smallTextSize,
         fontFamily = DesignTokens.uiFont,
         modifier = Modifier
@@ -260,7 +262,7 @@ private fun StatusLine(searching: Boolean, hits: List<FindInPathHit>) {
     }
     Text(
         text,
-        color = DesignTokens.textSecondaryOnGlass,
+        color = DesignTokens.textOnBusyGlass,
         fontSize = DesignTokens.labelTextSize,
         fontFamily = DesignTokens.uiFont,
         modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = 4.dp),
@@ -320,7 +322,7 @@ private fun HitRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit) {
         Spacer(Modifier.width(DesignTokens.space12))
         Text(
             hitLine(hit),
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.codeFont,
             maxLines = 1,

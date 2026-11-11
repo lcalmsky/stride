@@ -51,6 +51,7 @@ import stride.app.ui.CloseIcon
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.glassCapsule
+import stride.app.ui.theme.labelScrim
 import stride.app.ui.theme.rememberNeonAlpha
 import stride.app.ui.theme.selectionRow
 
@@ -185,6 +186,11 @@ private fun RunHeader(session: RunSession) {
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
+            // neonPink alone is 4.09:1 on the glass slab; the label band keeps the status word
+            // at 4.5:1, the same local compensation the chrome bars use.
+            modifier = Modifier
+                .labelScrim(true)
+                .padding(horizontal = DesignTokens.space8, vertical = 2.dp),
         )
     }
 }

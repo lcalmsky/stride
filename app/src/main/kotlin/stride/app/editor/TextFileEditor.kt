@@ -154,6 +154,12 @@ class TextFileEditor(
     /** Horizontal scroll position of the text body. */
     val horizontalScroll = EditorScrollState()
 
+    /**
+     * Test hook: forces the scroll layering policy so the frame harness can measure both paths on
+     * the same document. Production code leaves it null and follows [shouldLayerScroll].
+     */
+    internal var scrollLayerOverride: Boolean? = null
+
     var gotoLineVisible: Boolean by mutableStateOf(false)
 
     /** Increments on every GO_TO_LINE request so an already-open popup takes focus again. */
@@ -524,6 +530,11 @@ class TextFileEditor(
         var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
         val latestLayout = rememberUpdatedState(layout)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
+        var layeredScroll by remember { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
+        LaunchedEffect(lineCount) {
+            layeredScroll = shouldLayerScroll(lineCount, layeredScroll)
+        }
+        val layered = scrollLayerOverride ?: layeredScroll
         val gutterWidth = (lineCount.toString().length.coerceAtLeast(2) * 9 + 16 + 14).dp
         val codeStyle = TextStyle(
             fontFamily = DesignTokens.codeFont,
@@ -594,7 +605,7 @@ class TextFileEditor(
                     )
                 }
             }
-            VerticalScrollViewport(vertical, Modifier.fillMaxSize()) {
+            VerticalScrollViewport(vertical, Modifier.fillMaxSize(), layered = layered) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -665,7 +676,7 @@ class TextFileEditor(
                         }
                     }
                 }
-                HorizontalScrollViewport(horizontal, Modifier.weight(1f)) {
+                HorizontalScrollViewport(horizontal, Modifier.weight(1f), layered = layered) {
                     CompositionLocalProvider(
                         LocalTextSelectionColors provides TextSelectionColors(
                             handleColor = DesignTokens.accent,
@@ -714,7 +725,10 @@ class TextFileEditor(
             }
             }
             VerticalScrollbar(
-                adapter = rememberEditorScrollbarAdapter(vertical),
+                adapter = rememberEditorScrollbarAdapter(
+                    vertical,
+                    insetPx = with(density) { (chromeInsets.top + chromeInsets.bottom).toPx() },
+                ),
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
@@ -754,7 +768,14 @@ class TextFileEditor(
                 .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
-                .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8),
+                .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8)
+                // The popup floats over the text field; a passive node keeps a press in its
+                // padding from moving the caret underneath.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent()
+                    }
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
@@ -812,10 +833,12 @@ class TextFileEditor(
                             }
                         },
                     singleLine = true,
-                    textStyle = TextStyle(
-                        color = DesignTokens.text,
-                        fontSize = DesignTokens.uiTextSize,
-                        fontFamily = DesignTokens.uiFont,
+                    textStyle = DesignTokens.chromeTextStyle.merge(
+                        TextStyle(
+                            color = DesignTokens.text,
+                            fontSize = DesignTokens.uiTextSize,
+                            fontFamily = DesignTokens.uiFont,
+                        ),
                     ),
                     cursorBrush = SolidColor(DesignTokens.accent),
                 )

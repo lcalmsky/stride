@@ -11,11 +11,13 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -89,6 +91,28 @@ class EditorScrollUiTest {
         waitForIdle()
         waitUntil(timeoutMillis = 5_000) { verticalValue() == 0f }
         assertEquals(0f, verticalValue())
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `large documents layer their scroll and shrink back to the sampling path`() = runComposeUiTest {
+        val editor = openEditor("Growing.kt", (1..50).joinToString("\n") { "line $it" })
+
+        setContent {
+            CompositionLocalProvider(LocalAnimationsEnabled provides false) {
+                editor.Content(Modifier.size(480.dp, 240.dp))
+            }
+        }
+        waitForIdle()
+        assertFalse(editor.verticalScroll.layered, "a 50-line document should stay layer-free")
+
+        editor.updateValue(TextFieldValue((1..3_000).joinToString("\n") { "line $it" }))
+        waitForIdle()
+        assertTrue(editor.verticalScroll.layered, "a 3 000-line document should scroll in a layer")
+
+        editor.updateValue(TextFieldValue((1..40).joinToString("\n") { "line $it" }))
+        waitForIdle()
+        assertFalse(editor.verticalScroll.layered, "shrinking below the hysteresis should restore sampling")
     }
 
     @OptIn(ExperimentalTestApi::class)

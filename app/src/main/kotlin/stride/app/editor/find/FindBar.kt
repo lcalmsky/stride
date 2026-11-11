@@ -19,6 +19,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -36,6 +39,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -64,6 +68,7 @@ fun FindBar(
     editor: TextFileEditor?,
     onFocusContext: (KeyContext) -> Unit,
     modifier: Modifier = Modifier,
+    shape: Shape = RectangleShape,
 ) {
     val queryFocus = remember { FocusRequester() }
     var queryValue by remember {
@@ -80,12 +85,28 @@ fun FindBar(
         runCatching { queryFocus.requestFocus() }
     }
 
-    val scrolled = LocalEditorScrollState.current?.let { it.value > 0 } == true
+    val scroll = LocalEditorScrollState.current
+    // Only a layer-free, scrolled editor has code under the fill for the glass to sample.
+    val scrolled by remember(scroll) {
+        derivedStateOf { scroll != null && scroll.value > 0 && !scroll.layered }
+    }
     Column(
         modifier
             .fillMaxWidth()
-            .then(if (scrolled) Modifier.chromeGlass() else Modifier.glassPanel())
-            .neonUnderline(DesignTokens.accent2, thickness = 1.dp),
+            // The bar is a slab: keep the fill, the filter clip and the underline inside its rim.
+            .then(if (scrolled) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
+            .neonUnderline(
+                DesignTokens.accent2,
+                thickness = 1.dp,
+                insetX = DesignTokens.slabRadiusTitle,
+            )
+            // Hit testing stops at the topmost pointer node, so a press in the bar's padding
+            // does not reach the editor under it. Nothing is consumed.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) awaitPointerEvent()
+                }
+            },
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
         Row(
@@ -144,10 +165,12 @@ fun FindBar(
                             }
                         },
                     singleLine = true,
-                    textStyle = TextStyle(
-                        color = DesignTokens.text,
-                        fontSize = DesignTokens.uiTextSize,
-                        fontFamily = DesignTokens.uiFont,
+                    textStyle = DesignTokens.chromeTextStyle.merge(
+                        TextStyle(
+                            color = DesignTokens.text,
+                            fontSize = DesignTokens.uiTextSize,
+                            fontFamily = DesignTokens.uiFont,
+                        ),
                     ),
                     cursorBrush = SolidColor(DesignTokens.accent2),
                 )
@@ -208,10 +231,12 @@ fun FindBar(
                                 }
                             },
                         singleLine = true,
-                        textStyle = TextStyle(
-                            color = DesignTokens.text,
-                            fontSize = DesignTokens.uiTextSize,
-                            fontFamily = DesignTokens.uiFont,
+                        textStyle = DesignTokens.chromeTextStyle.merge(
+                            TextStyle(
+                                color = DesignTokens.text,
+                                fontSize = DesignTokens.uiTextSize,
+                                fontFamily = DesignTokens.uiFont,
+                            ),
                         ),
                         cursorBrush = SolidColor(DesignTokens.accent2),
                     )

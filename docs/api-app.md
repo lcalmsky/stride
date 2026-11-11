@@ -613,6 +613,8 @@ One effect watching `value.selection` keeps the caret visible on both axes, so e
 that moves it — arrow keys, `gotoLine`, find-bar stepping, undo/redo and edit actions — scrolls
 the same way. When the caret leaves the viewport by more than a 24 dp margin the editor scrolls
 to bring it back; a horizontal scrollbar sits along the bottom edge next to the vertical one.
+The vertical scrollbar's adapter subtracts the chrome insets from its track, so the thumb reaches
+the track's end at `maxValue` instead of stopping short by the inset height.
 The gutter (line numbers) follows only the vertical scroll and stays outside the horizontal
 scroll, which wraps the text body alone.
 
@@ -1399,8 +1401,8 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% |
 | `slabInnerRimInset` / `slabInnerRim` | 2 dp / white 6% |
 | `chromeLabelScrim` / `chromeLabelScrimInset` | black 45% / 2 dp |
-| `textOnBusyGlass` | `#C4CBDA` (tab labels over code) |
-| `chromeTextShadow` / `chromeTextStyle` | black 78%, 3.5 px blur / the style carrying it |
+| `textOnBusyGlass` | `#C4CBDA` (tab labels over code and secondary popup runs) |
+| `chromeTextShadow` / `chromeTextStyle` | black 100%, 2 px blur / the style carrying it |
 | `contentTintAlpha` | 0.92 |
 | `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 |
 | `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
@@ -1553,6 +1555,11 @@ the four floating slabs (a cached shadow blit and rim paths each) and the tool w
 one millisecond. Popup scenes stay under their 2.0× limits because the lens filter runs on a
 1/4-resolution copy; the GPU path evaluates the same SkSL as one shader pass.
 
+The scene-12 pair reported in 54203d9 (2.38 → 6.95 ms) is not like-for-like: that commit also
+changed the scene to 340-character lines, so the jump mixes the layer removal and the two bar
+filters with a document that draws about ten times more glyphs per line. Only the 1a2d671 pair
+(5.50 → 7.29 ms) measured the same scene on both trees.
+
 The material and the lens are built from three generic effects: a thin base (a neutral floor
 carrying a visible luminance and hue impression of the blurred backdrop), lens refraction at the
 panel edge (the sample point bends inward along the rounded-rect normal inside the bezel,
@@ -1573,9 +1580,11 @@ a line. Inactive tab labels are `textSecondaryOnGlass`.
 
 Run window text sits directly on the slab: the header status word (`accent2` while running,
 `neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
-panel. `MethodDetail` stays transparent, so its text is read on the single tint layer; on the
-worst tint (the lift under `contentTintAlpha`) `neonPink` reaches 5.25:1 and `muted` 5.86:1.
-The selected method row is a `selectionRow` capsule with the accent2 line.
+panel. The panel paints no opaque tint; text is read on the glass slice, whose brightest value
+is `glassFill` over the field's lift. There `text`, `muted`, `accent2` and `neonLime` clear
+4.5:1, while `neonPink` alone reaches only 4.09:1; the header status word therefore sits on the
+same black 45% `labelScrim` band the chrome bars use, which puts it at 5.14:1. `MethodDetail`
+stays transparent. The selected method row is a `selectionRow` capsule with the accent2 line.
 
 Status glyphs keep their shapes and colors (✓ ✕ ●) and draw no halo; the running pulse was
 removed.
@@ -1607,12 +1616,31 @@ so line 1 and the last line stay reachable while code scrolled past them draws u
 chrome. The tab bar (radius 13), find bar (radius 14) and status pill (radius 12) float 8 dp in
 from the editor edges with `slabShadow` and `glassSlabRims`, and use `chromeGlass()` — the thin
 backdrop glass without an edge lens — only while their editor scroll position is above zero
-(or, for the status bar, not yet at the end), and the cached `glassPanel` slice otherwise. Over
-scrolled code the status pill draws a black 45% `labelScrim` band behind its label run and the
-tab labels switch to `textOnBusyGlass`; the status label run measures 6.6:1 there. The vertical
-and horizontal scroll views (`VerticalScrollViewport` / `HorizontalScrollViewport`,
-`EditorScrollState`) translate content without a render layer: a `verticalScroll` layer would be
-invisible to the bars' backdrop filter.
+(or, for the status bar, not yet at the end) and the content is layer-free, and the cached
+`glassPanel` slice otherwise. Over scrolled code the status pill draws a black 45% `labelScrim`
+band behind its label run and the tab labels switch to `textOnBusyGlass`; the status label run
+measures 6.6:1 there. The bars' state is read through `derivedStateOf`, so a scroll step only
+recomposes them when `scrolled` / `overCode` actually changes. The bars register a passive
+pointer node, so a press on their glass (including the find bar's padding) stops at the bar
+instead of reaching the text field's full-document hit bounds under it. The find bar passes its
+14 dp slab shape to the glass fill, so the fill and the filter clip stop at the rounded rim, and
+its neon underline is inset by the slab radius instead of running under the rounded corners.
+
+The vertical and horizontal scroll views (`VerticalScrollViewport` / `HorizontalScrollViewport`,
+`EditorScrollState`) have two paths. Below `LAYERED_SCROLL_ENTER_LINES` (1 000) the content is
+placed without a render layer, so the bars' backdrop filter can sample the code scrolling under
+them. At or above it the viewport places the content with `placeRelativeWithLayer`, which drops
+the per-scroll-frame cost but is invisible to a backdrop filter, so the bars fall back to the
+cached `glassPanel` slab and stop showing code through. The mode has hysteresis
+(`LAYERED_SCROLL_EXIT_LINES`, 800): once layered, a document must shrink below 800 lines before
+the sampling path returns, so editing around the threshold does not flip it. The switch leaves
+the caret, the selection and `EditorScrollState.value` alone. The threshold comes from
+`ScrollFrameTimingTest`: on the 2× snapshot harness the layer-free path costs 8.2 ms per scroll
+frame at 1 000 lines (8.3 at 750; the harness floor is ~8.3) and 8.9 / 9.1 / 11.5 ms at
+1 200 / 2 400 / 5 000, while the layered path is 6.1 / 6.0 / 6.6 / 8.3 ms. A 10 000-line
+document is measured at density 1 (12.3 ms layer-free, 8.8 ms layered): at density 2 its
+400 000 px content exceeds Compose's 262 143 px layout limit in the gutter, so it cannot be laid
+out on that density at all.
 The gutter keeps the same tint and draws a 1 dp `glassBorderSide` separator, and its line numbers
 are `muted`, which clears 4.5:1 on the worst content tint (5.86:1). The go-to-line popup is
 `backdropGlass(shape)` with `textSecondaryOnGlass` text, placed below the chrome insets;
@@ -1626,8 +1654,14 @@ Search Everywhere, Find in Path and Recent Files draw their panel with `backdrop
 of the opaque `raised` fill; a full-screen `scrim` (black 30%) keeps the modal focus while the
 blurred backdrop's detail still reaches the interior at about 3.1:1 on the popup path and
 3.8:1 on the bare shader path, so code behind a popup reads as a soft, bent impression. Every
-popup wraps its text in `CompositionLocalProvider(LocalTextStyle provides chromeTextStyle)`, so
-the shadow, not an opaque base, keeps the labels at 4.5:1 on the brightest glass. The open fade
+popup wraps its text in `CompositionLocalProvider(LocalTextStyle provides chromeTextStyle)`, and
+every popup text field merges its own size and colour with `chromeTextStyle` instead of passing a
+bare `TextStyle`, so the input glyphs carry the shadow too. On the brightest glass (a scrimmed
+white backdrop) the worst core glyph pixel of the Recent Files rows measures 4.9:1 at the fifth
+percentile and the Search Everywhere query 8.6:1 (`PopupGlassTest`); secondary popup labels use
+`textOnBusyGlass`, because `textSecondaryOnGlass` reaches only about 1.7:1 without the shadow and
+about 2.9:1 with it on that backdrop, which is below body contrast. The shadow is an opaque black
+2 px blur, which is the compensation the measurement counts. The open fade
 runs for `motionPopupMillis` with `standardEasing` and
 is applied at draw time: the scrim alpha is multiplied by the fade, and only the panel contents
 carry a `graphicsLayer` alpha. The glass node and its ancestors stay layer-free, because an
@@ -1635,8 +1669,9 @@ alpha layer above `backdropGlass` would leave the backdrop filter an empty layer
 adjacent-pixel ratio 0.81 against the 0.5 limit, versus 0.0032 with the draw-side fade). With
 animations enabled the content layer stays for the popup's lifetime; removing it mid-run
 re-breaks the backdrop. The `shadow` and `clip` that precede `backdropGlass` do not block the
-blur (ratios 0.0028 and 0.0008). Popup text uses `textSecondaryOnGlass`; the panel is the
-liquid glass with radius 18 dp and a soft neutral shadow, with no neon border. A selected row
+blur (ratios 0.0028 and 0.0008). Popup labels use `text` for primary and `textOnBusyGlass` for
+secondary runs; the panel is the liquid glass with radius 18 dp and a soft neutral shadow, with
+no neon border. A selected row
 is a `selectionRow` capsule inset 6/2 dp with the accent2 line on its left edge; hover is a
 `hoverFill` step. The Find in Path toggles and the Search Everywhere tab chips follow the same
 capsule-and-line language, and no popup draws an outer glow.
@@ -1698,13 +1733,16 @@ Maven Central alone does not carry it.
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
 | `NeonModifiersTest` | underline glow direction and `rememberNeonAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
-| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered field staying neutral inside its luminance band |
+| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), and the rendered field staying neutral inside its luminance band |
 | `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, and the blur-only fallback when the shader is unavailable |
-| `ToolWindowGlassTest` | the tab strip is the neutral glass fill over the field, the terminal and run console paint the slab glass over the field, status glyphs draw no halo, run status colors clear 4.5 on the worst tint |
-| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, popup text clears 4.5:1 on a bright backdrop, the selected row carries the neon line on its capsule edge, the find bar is the chrome glass over the field, and no fade runs with animations disabled |
+| `ToolWindowGlassTest` | the tab strip is the neutral glass fill over the field, the terminal and run console paint the slab glass over the field, status glyphs draw no halo, run status colors clear 4.5 on the painted glass slab, and the failed-status word clears it on its label band |
+| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected row carries the neon line on its capsule edge, the find bar glass matches its rounded slab in both the panel and chrome branches with a corner check, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
-| `EditorScrollUiTest` | `EditorScrollState` viewports: caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, and the gutter keeps its position while the text scrolls horizontally |
+| `EditorScrollUiTest` | `EditorScrollState` viewports: caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, the gutter keeps its position while the text scrolls horizontally, and a small document stays layer-free while a large one layers and shrinks back across the hysteresis |
+| `EditorScrollStateTest` | sub-pixel wheel deltas accumulate, an edge-clamped delta is dropped, the scrollbar adapter excludes the chrome insets from its track, and the layer threshold has hysteresis |
+| `ScrollFrameTimingTest` | scroll frames (not static frames) at 1 000 / 5 000 / 10 000 lines on both viewport paths, three sequential runs each, and the layered path cheaper past the threshold |
+| `OverlayHitTest` | a press on the status pill over a scrolled document does not move the caret |
 | `GradleCommandTest` | command order and `$0`, spaced test name as one argument, wrapper/PATH fallback, test args, shell fallback |
 | `GradleInitScriptTest` | every event line uses the parser prefix and the five kinds, synthesized lines parse as events, the test task cannot be skipped as up-to-date or cached, `strideRunMain` registered for every project and its message without the java plugin |
 | `TestEventParserTest` | the five event kinds, TeamCity escape reversal, non-event and malformed lines as output, order preservation |

@@ -35,7 +35,7 @@ fun PopupHintBar(vararg hints: String) {
             if (index > 0) Spacer(Modifier.width(20.dp))
             Text(
                 hint,
-                color = DesignTokens.textSecondaryOnGlass,
+                color = DesignTokens.textOnBusyGlass,
                 fontSize = DesignTokens.labelTextSize,
                 fontFamily = DesignTokens.uiFont,
             )

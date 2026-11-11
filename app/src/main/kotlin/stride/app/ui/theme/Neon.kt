@@ -46,12 +46,15 @@ fun Modifier.neonUnderline(
     radius: Dp = DesignTokens.glowRadius,
     alpha: Float = 1f,
     edge: NeonEdge = NeonEdge.BOTTOM,
+    insetX: Dp = 0.dp,
 ): Modifier = drawBehind {
     if (alpha <= 0f) return@drawBehind
     val width = thickness.toPx()
     val y = if (edge == NeonEdge.TOP) width / 2f else size.height - width / 2f
-    val start = Offset(0f, y)
-    val end = Offset(size.width, y)
+    val inset = insetX.toPx()
+    if (size.width - inset * 2f <= 0f) return@drawBehind
+    val start = Offset(inset, y)
+    val end = Offset(size.width - inset, y)
     val glowPaint = strokePaint(color.glow(alpha), width * 2f).apply {
         asFrameworkPaint().maskFilter = MaskFilter.makeBlur(FilterBlurMode.NORMAL, radius.toPx() / 2f)
     }

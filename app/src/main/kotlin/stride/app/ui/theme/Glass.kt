@@ -72,6 +72,12 @@ private const val CHROME_DOWNSCALE = 8
 /** The lens displacement fades to zero over this distance from the outer rim. */
 private val LENS_TAPER = 2.dp
 
+/** Slab size buckets: a splitter drag rebuilds the baked shadow and rim at most every 4 dp. */
+private val CACHE_GRID = 4.dp
+
+private fun quantize(value: Float, grid: Float): Float =
+    if (grid <= 0f) value else (value / grid).roundToInt() * grid
+
 private val contentTintColor = blendOver(
     DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
     DesignTokens.background,
@@ -246,7 +252,8 @@ fun Modifier.glassSlabRims(shape: Shape): Modifier = composed {
 /**
  * The soft neutral shadow under a floating slab. Unlike `Modifier.shadow` it does not create a
  * render layer: the blurred rounded rect is baked into one image per slab size and every frame
- * only draws that image, so static slabs cost a single image blit.
+ * only draws that image, so static slabs cost a single image blit. The size is bucketed to a
+ * 4 dp grid, so dragging a splitter rebuilds the image only every 4 dp instead of every frame.
  */
 fun Modifier.slabShadow(shape: Shape): Modifier = composed {
     val cache = remember { SlabShadowCache() }
@@ -258,12 +265,8 @@ fun Modifier.slabShadow(shape: Shape): Modifier = composed {
             is Outline.Rectangle -> 0f
             is Outline.Generic -> 0f
         }
-        cache.update(size.width, size.height, radius, DesignTokens.slabShadow.toPx())
-        cache.image?.let { image ->
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawImage(image, -cache.margin.toFloat(), -cache.margin.toFloat())
-            }
-        }
+        cache.update(size.width, size.height, radius, DesignTokens.slabShadow.toPx(), CACHE_GRID.toPx())
+        cache.draw(drawContext.canvas.nativeCanvas, size.width, size.height)
     }
 }
 
@@ -711,9 +714,9 @@ private fun Modifier.liquidBackdrop(
             )
         }
         if (liquid == null) {
-            // Same frosted base as the shader path, over the blur-only backdrop.
+            // Same frosted base as the shader path, over the blur-only backdrop. The border is
+            // drawn once after the layer for both paths.
             drawRect(DesignTokens.glassBase.copy(alpha = 1f - backdropMix), size = size)
-            drawGlassBorder()
         }
         native.restore()
         if (border) drawGlassBorder()
@@ -816,6 +819,8 @@ private class SlabShadowCache {
     private var key: SlabShadowKey? = null
     var image: Image? = null
     var margin: Int = 0
+    private var bakedWidth = 0f
+    private var bakedHeight = 0f
 
     fun dispose() {
         image?.close()
@@ -823,14 +828,16 @@ private class SlabShadowCache {
         key = null
     }
 
-    fun update(width: Float, height: Float, radius: Float, elevation: Float) {
+    fun update(width: Float, height: Float, radius: Float, elevation: Float, grid: Float) {
         val margin = (elevation * 2f).roundToInt().coerceAtLeast(4)
-        val next = SlabShadowKey(width.roundToInt(), height.roundToInt(), radius.roundToInt(), elevation, margin)
+        val bakedW = quantize(width, grid).coerceAtLeast(1f)
+        val bakedH = quantize(height, grid).coerceAtLeast(1f)
+        val next = SlabShadowKey(bakedW.roundToInt(), bakedH.roundToInt(), radius.roundToInt(), elevation, margin)
         if (next == key) return
         dispose()
         key = next
-        val w = width.roundToInt().coerceAtLeast(1) + margin * 2
-        val h = height.roundToInt().coerceAtLeast(1) + margin * 2
+        val w = bakedW.roundToInt() + margin * 2
+        val h = bakedH.roundToInt() + margin * 2
         if (w <= 0 || h <= 0) return
         val surface = Surface.makeRaster(ImageInfo(w, h, ColorType.N32, ColorAlphaType.PREMUL))
         val path = org.jetbrains.skia.Path().apply {
@@ -838,8 +845,8 @@ private class SlabShadowCache {
                 RRect.makeLTRB(
                     margin.toFloat(),
                     margin + elevation * 0.3f,
-                    (margin + width).toFloat(),
-                    (margin + height + elevation * 0.3f).toFloat(),
+                    (margin + bakedW).toFloat(),
+                    (margin + bakedH + elevation * 0.3f).toFloat(),
                     radius,
                 ),
             )
@@ -857,10 +864,30 @@ private class SlabShadowCache {
             surface.canvas.drawPath(path, paint)
             image = surface.makeImageSnapshot()
             this.margin = margin
+            bakedWidth = bakedW
+            bakedHeight = bakedH
         } finally {
             paint.close()
             path.close()
             surface.close()
+        }
+    }
+
+    fun draw(canvas: org.jetbrains.skia.Canvas, width: Float, height: Float) {
+        val image = image ?: return
+        if (width == bakedWidth && height == bakedHeight) {
+            canvas.drawImage(image, -margin.toFloat(), -margin.toFloat())
+        } else {
+            canvas.drawImageRect(
+                image,
+                org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+                org.jetbrains.skia.Rect.makeLTRB(
+                    -margin.toFloat(),
+                    -margin.toFloat(),
+                    width + margin,
+                    height + margin,
+                ),
+            )
         }
     }
 
@@ -879,6 +906,8 @@ private class SlabRimCache {
     private var innerPath: org.jetbrains.skia.Path? = null
     private var innerPaint: Paint? = null
     private var shaders: List<Shader> = emptyList()
+    private var bakedWidth = 0f
+    private var bakedHeight = 0f
 
     fun dispose() {
         outerPaint?.close()
@@ -898,28 +927,38 @@ private class SlabRimCache {
         key = null
     }
 
-    fun update(width: Float, height: Float, radius: Float, stroke: Float, innerInset: Float) {
-        val next = SlabRimKey(width.roundToInt(), height.roundToInt(), radius.roundToInt(), stroke, innerInset.roundToInt())
+    fun update(width: Float, height: Float, radius: Float, stroke: Float, innerInset: Float, grid: Float) {
+        val bakedW = quantize(width, grid).coerceAtLeast(1f)
+        val bakedH = quantize(height, grid).coerceAtLeast(1f)
+        val next = SlabRimKey(
+            bakedW.roundToInt(),
+            bakedH.roundToInt(),
+            radius.roundToInt(),
+            stroke,
+            innerInset.roundToInt(),
+        )
         if (next == key) return
         dispose()
         key = next
-        if (width <= stroke || height <= stroke) return
+        bakedWidth = bakedW
+        bakedHeight = bakedH
+        if (bakedW <= stroke || bakedH <= stroke) return
         val half = stroke / 2f
         val outerRadius = (radius - half).coerceAtLeast(0f)
         val outerShader = Shader.makeLinearGradient(
-            0f, 0f, 0f, height,
+            0f, 0f, 0f, bakedH,
             intArrayOf(DesignTokens.slabRimTop.toArgb(), DesignTokens.slabRimTop.toArgb(), DesignTokens.slabRimBottom.toArgb()),
             floatArrayOf(0f, 0.35f, 1f),
         )
         val leftShader = Shader.makeLinearGradient(
-            0f, 0f, 0f, height * 0.55f,
+            0f, 0f, 0f, bakedH * 0.55f,
             intArrayOf(DesignTokens.slabRimLeft.toArgb(), DesignTokens.slabRimLeft.copy(alpha = 0f).toArgb()),
             floatArrayOf(0f, 1f),
         )
-        val inner = innerInset.coerceAtMost(min(width, height) / 2f - stroke)
+        val inner = innerInset.coerceAtMost(min(bakedW, bakedH) / 2f - stroke)
         val innerRadius = (radius - inner).coerceAtLeast(1f)
         val innerShader = Shader.makeLinearGradient(
-            0f, 0f, 0f, height,
+            0f, 0f, 0f, bakedH,
             intArrayOf(
                 DesignTokens.slabInnerRim.copy(alpha = 0f).toArgb(),
                 DesignTokens.slabInnerRim.copy(alpha = 0f).toArgb(),
@@ -929,28 +968,36 @@ private class SlabRimCache {
         )
         shaders = listOf(outerShader, leftShader, innerShader)
         outerPath = org.jetbrains.skia.Path().apply {
-            addRRect(RRect.makeLTRB(half, half, width - half, height - half, outerRadius))
+            addRRect(RRect.makeLTRB(half, half, bakedW - half, bakedH - half, outerRadius))
         }
         outerPaint = strokePaint(outerShader, stroke)
         leftPath = org.jetbrains.skia.Path().apply {
-            moveTo(half, outerRadius.coerceAtMost(height / 2f))
-            lineTo(half, height - outerRadius.coerceAtMost(height / 2f))
+            moveTo(half, outerRadius.coerceAtMost(bakedH / 2f))
+            lineTo(half, bakedH - outerRadius.coerceAtMost(bakedH / 2f))
         }
         leftPaint = strokePaint(leftShader, stroke)
-        if (inner > 0f && width - inner * 2f > 0f && height - inner * 2f > 0f) {
+        if (inner > 0f && bakedW - inner * 2f > 0f && bakedH - inner * 2f > 0f) {
             innerPath = org.jetbrains.skia.Path().apply {
                 addRRect(
-                    RRect.makeLTRB(inner, inner, width - inner, height - inner, innerRadius),
+                    RRect.makeLTRB(inner, inner, bakedW - inner, bakedH - inner, innerRadius),
                 )
             }
             innerPaint = strokePaint(innerShader, stroke)
         }
     }
 
-    fun draw(canvas: org.jetbrains.skia.Canvas) {
+    fun draw(canvas: org.jetbrains.skia.Canvas, width: Float, height: Float) {
+        val scaleX = if (bakedWidth > 0f) width / bakedWidth else 1f
+        val scaleY = if (bakedHeight > 0f) height / bakedHeight else 1f
+        val scaled = scaleX != 1f || scaleY != 1f
+        if (scaled) {
+            canvas.save()
+            canvas.scale(scaleX, scaleY)
+        }
         outerPath?.let { path -> outerPaint?.let { canvas.drawPath(path, it) } }
         leftPath?.let { path -> leftPaint?.let { canvas.drawPath(path, it) } }
         innerPath?.let { path -> innerPaint?.let { canvas.drawPath(path, it) } }
+        if (scaled) canvas.restore()
     }
 
     private fun strokePaint(shader: Shader, width: Float): Paint = Paint().apply {
@@ -974,8 +1021,9 @@ private fun DrawScope.drawSlabRims(shape: Shape, cache: SlabRimCache) {
         radius = radius,
         stroke = 1.dp.toPx(),
         innerInset = DesignTokens.slabInnerRimInset.toPx(),
+        grid = CACHE_GRID.toPx(),
     )
-    drawIntoCanvas { canvas -> cache.draw(canvas.nativeCanvas) }
+    drawIntoCanvas { canvas -> cache.draw(canvas.nativeCanvas, size.width, size.height) }
 }
 
 /** The crisp top rim of a capsule: lit at the top edge and fading down the sides. */

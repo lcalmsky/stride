@@ -90,9 +90,40 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `popup text carries its own contrast over the thin glass`() {
-        // The glass is thin, so the text shadow, not the base, guarantees contrast on a bright
-        // backdrop. Pure white and pure black move the surface the most.
+    fun `popup text on the unshadowed thin glass states its floor`() {
+        // The worst read of the thin glass: a scrimmed white backdrop under glassBase +
+        // glassBackdropMix. Primary text must still clear 4.5 without the shadow; the secondary
+        // token cannot, which is why every popup label and input carries chromeTextStyle.
+        val backdrop = blendOver(DesignTokens.scrim, Color.White)
+        val surface = Color(
+            (DesignTokens.glassBase.red + DesignTokens.glassBackdropMix * backdrop.red).coerceIn(0f, 1f),
+            (DesignTokens.glassBase.green + DesignTokens.glassBackdropMix * backdrop.green).coerceIn(0f, 1f),
+            (DesignTokens.glassBase.blue + DesignTokens.glassBackdropMix * backdrop.blue).coerceIn(0f, 1f),
+        )
+        val text = contrastRatio(DesignTokens.text, surface)
+        val selected = contrastRatio(DesignTokens.selectedText, surface)
+        val secondary = contrastRatio(DesignTokens.textSecondaryOnGlass, surface)
+        System.err.println(
+            "popup-floor text=%.3f selected=%.3f secondary=%.3f".format(text, selected, secondary),
+        )
+        // Floors without the shadow: only white still clears 4.5; body text is just below it and
+        // the secondary token is far below. The shadowed assertions above are the 4.5 guarantee.
+        assertTrue(text >= 3.85, "text on the unshadowed thin glass = %.3f, below its 3.85 floor".format(text))
+        assertTrue(
+            selected >= DesignTokens.contrastText,
+            "selectedText on the unshadowed thin glass = %.3f".format(selected),
+        )
+        assertTrue(
+            secondary >= 1.65,
+            "textSecondaryOnGlass on the unshadowed thin glass = %.3f, below its 1.65 floor".format(secondary),
+        )
+    }
+
+    @Test
+    fun `popup text on its shadow plate clears 4_5`() {
+        // The glass is thin, so the text is read against its own shadow plate on a bright
+        // backdrop. The real rendered worst case is asserted in PopupGlassTest; this states the
+        // model at the token level. Pure white and pure black move the surface the most.
         val backdrops = mapOf("brightest" to 1f, "darkest" to 0f)
         val tokens = mapOf(
             "text" to DesignTokens.text,

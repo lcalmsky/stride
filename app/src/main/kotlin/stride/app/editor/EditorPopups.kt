@@ -166,7 +166,7 @@ fun CompletionPopup(
             if (items.isEmpty()) {
                 Text(
                     if (candidates == null) "Loading…" else "No matching names",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
@@ -206,7 +206,7 @@ private fun CompletionHeader(
     ) {
         Text(
             "Completion",
-            color = DesignTokens.textSecondaryOnGlass,
+            color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.labelTextSize,
             fontFamily = DesignTokens.uiFont,
         )
@@ -219,10 +219,12 @@ private fun CompletionHeader(
                     .focusRequester(focusRequester)
                     .testTag(COMPLETION_FIELD_TAG),
                 singleLine = true,
-                textStyle = TextStyle(
-                    color = DesignTokens.text,
-                    fontSize = DesignTokens.uiTextSize,
-                    fontFamily = DesignTokens.uiFont,
+                textStyle = DesignTokens.chromeTextStyle.merge(
+                    TextStyle(
+                        color = DesignTokens.text,
+                        fontSize = DesignTokens.uiTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                    ),
                 ),
                 cursorBrush = SolidColor(DesignTokens.accent),
             )
@@ -318,7 +320,7 @@ fun RenamePopup(
             CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
                 "Rename",
-                color = DesignTokens.textSecondaryOnGlass,
+                color = DesignTokens.textOnBusyGlass,
                 fontSize = DesignTokens.labelTextSize,
                 fontFamily = DesignTokens.uiFont,
                 modifier = Modifier.padding(
@@ -338,17 +340,19 @@ fun RenamePopup(
                         .focusRequester(focusRequester)
                         .testTag(RENAME_FIELD_TAG),
                     singleLine = true,
-                    textStyle = TextStyle(
-                        color = DesignTokens.text,
-                        fontSize = DesignTokens.uiTextSize,
-                        fontFamily = DesignTokens.uiFont,
+                    textStyle = DesignTokens.chromeTextStyle.merge(
+                        TextStyle(
+                            color = DesignTokens.text,
+                            fontSize = DesignTokens.uiTextSize,
+                            fontFamily = DesignTokens.uiFont,
+                        ),
                     ),
                     cursorBrush = SolidColor(DesignTokens.accent),
                 )
                 if (input.text.isEmpty()) {
                     Text(
                         "new name",
-                        color = DesignTokens.textSecondaryOnGlass,
+                        color = DesignTokens.textOnBusyGlass,
                         fontSize = DesignTokens.uiTextSize,
                         fontFamily = DesignTokens.uiFont,
                     )

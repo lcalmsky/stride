@@ -51,21 +51,38 @@ class TreeEditorGlassTest {
             val pixels = renderAppPixels(state)
             val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
             val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-            // The slab spans x 8..288 and y 52..772 at density 1; stay between the baked grid lines.
+            // The slab spans x 8..288 and y 52..772 at density 1. Scan the whole upper band, not
+            // one pixel: a hue or a leak anywhere there must fail.
+            var widest = -1
+            var widestPixel = 0
+            var widestX = -1
+            var widestY = -1
+            for (y in 40..64) {
+                for (x in 120..276) {
+                    val candidate = spread(pixels[index(x, y)])
+                    if (candidate > widest) {
+                        widest = candidate
+                        widestPixel = pixels[index(x, y)]
+                        widestX = x
+                        widestY = y
+                    }
+                }
+            }
             val pixel = pixels[index(150, 300)]
-            val spread = spread(pixel)
             val luminance = relativeLuminance(Color(pixel))
             System.err.println(
-                "tree-glass pixel=#%06X spread=%d luminance=%.4f band=%.4f..%.4f".format(
-                    pixel and 0xFFFFFF,
-                    spread,
+                "tree-glass widest=%d at (%d,%d) pixel=#%06X luminance=%.4f band=%.4f..%.4f".format(
+                    widest,
+                    widestX,
+                    widestY,
+                    widestPixel and 0xFFFFFF,
                     luminance,
                     lowest,
                     highest,
                 ),
             )
             // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
-            assertTrue(spread <= 12, "the tree glass should stay neutral, channel spread = $spread")
+            assertTrue(widest <= 12, "the tree glass should stay neutral, widest channel spread = $widest")
             assertTrue(
                 luminance >= lowest - 0.002 && luminance <= highest + 0.004,
                 "tree glass luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),

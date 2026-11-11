@@ -139,7 +139,7 @@ fun <T> TargetChooserPopup(
             if (rows.isEmpty()) {
                 Text(
                     "No matches",
-                    color = DesignTokens.textSecondaryOnGlass,
+                    color = DesignTokens.textOnBusyGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),

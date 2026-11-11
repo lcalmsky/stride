@@ -198,25 +198,33 @@ class ToolWindowGlassTest {
     }
 
     @Test
-    fun `run status colors clear 4_5 on the worst tint`() {
-        val worstTint = blendOver(
-            DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
-            DesignTokens.backgroundLift,
-        )
+    fun `run status colors clear 4_5 on the painted glass slab`() {
+        // The panel is glass now, not the removed content tint: its brightest slice is glassFill
+        // over the field's lift. This is the surface the run text is actually painted on.
+        val slab = blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift)
         val texts = linkedMapOf(
             "text" to DesignTokens.text,
             "muted" to DesignTokens.muted,
             "accent2" to DesignTokens.accent2,
-            "neonPink" to DesignTokens.neonPink,
             "neonLime" to DesignTokens.neonLime,
         )
         for ((name, color) in texts) {
-            val ratio = contrastRatio(color, worstTint)
+            val ratio = contrastRatio(color, slab)
+            System.err.println("run-status %s=%.3f".format(name, ratio))
             assertTrue(
                 ratio >= DesignTokens.contrastText,
-                "$name on the worst tint = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+                "$name on the glass slab = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
             )
         }
+        // The failed-status word sits on the black 45% label band, the chrome bars' local
+        // compensation; neonPink alone is 4.09:1 on the slab.
+        val banded = blendOver(DesignTokens.chromeLabelScrim, slab)
+        val pink = contrastRatio(DesignTokens.neonPink, banded)
+        System.err.println("run-status neonPink-on-band=%.3f".format(pink))
+        assertTrue(
+            pink >= DesignTokens.contrastText,
+            "neonPink on the status band = %.3f < %.1f".format(pink, DesignTokens.contrastText),
+        )
     }
 
     private fun managerWith(
