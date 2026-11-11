@@ -126,14 +126,18 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 <td valign="top">
 
 - **Background** a neutral graphite base with a soft top-to-bottom luminance falloff sits behind the window content. Color is reserved for emphasis
-- **Liquid glass** the project tree, tab strip, find bar, status bar, and tool windows are frosted slabs; popups are glass that blurs the content behind them and refracts at the edges. Each pane has an edge lens, a specular rim, and a neutral shadow, and falls back to blur plus hairlines when the shader is unavailable
-- **Selection signal** a selected row, tab, or result gets a capsule lift, a specular top rim, a 2 dp cyan bar on the left (bottom for tabs), a bleeding glow, and white text. A focused panel draws a thin line around its border
-- **Motion and cost** a fade runs for 150 ms only when the selection changes; nothing animates continuously. Panel blur is computed once per size and cached, and the popup lens runs on a quarter-resolution copy. The editor, terminal, and console use an opaque tint, so the background does not show through them
+- **Floating glass slabs** the sidebar, tab strip, find bar, status bar, title bar, and tool windows are rounded glass slabs inset 8 dp from the window edge. Each slab has a specular rim and a cached neutral shadow, and the window base shows through the gaps between them
+- **Code under glass** the editor runs under the tab strip and status bar, so scrolled code shows through the glass. Popups are thin glass that shows the code behind and bends it at the rim, and a strong text shadow keeps labels legible; they fall back to blur plus hairlines when the shader is unavailable
+- **Selection signal** a selected tree row and the active tab float as capsules with a small lens, a specular top rim, a 2 dp cyan bar, a bleeding glow, and white text. A focused panel draws a thin line around its border
+- **Large files** documents of 1,000 lines or more scroll through a constant-cost layer, and the bars become static glass; the layer is released once the document shrinks below 800 lines
+- **Motion and cost** a fade runs for 150 ms only when the selection changes; nothing animates continuously. Slab blur is computed once per size and cached, and the popup lens runs on a lower-resolution copy
 - **UI font** the bundled UI font can be swapped for the system font with `Switch UI Font` in the Actions tab. The choice is saved for the next launch
 
 </td>
 </tr>
 </table>
+
+<p align="center"><img src="docs/images/glass.png" alt="The Search Everywhere glass popup over code" width="720"></p>
 
 <br>
 
@@ -244,6 +248,8 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, and commenter APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, and file types.
 
 Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
+
+The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the bars are drawn over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 
 <br>
 

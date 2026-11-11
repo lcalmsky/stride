@@ -7,5 +7,6 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `find.png` 찾기 바 (`08-find-bar.png`)
 - `terminal.png` 터미널 (`10-terminal.png`)
 - `run.png` Run 창 (`11-run-window.png`)
+- `glass.png` 코드 위에 뜬 Search Everywhere 유리 팝업 (`13-search-over-code.png`)
 
 한국어판과 영어판 README 가 같은 그림을 씁니다. `UiSnapshotTest` 의 시나리오가 바뀌면 `app/build/ui-snapshots/` 의 PNG 를 이 디렉터리로 다시 복사합니다.
