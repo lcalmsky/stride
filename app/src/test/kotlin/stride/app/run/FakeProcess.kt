@@ -1,6 +1,7 @@
 package stride.app.run
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.PipedInputStream
@@ -19,6 +20,11 @@ class FakeProcess(
     var destroyed = false
         private set
 
+    private val written = ByteArrayOutputStream()
+
+    /** Everything written to the child's stdin, decoded as UTF-8. */
+    val stdin: String get() = written.toString(Charsets.UTF_8.name())
+
     private val writer: PipedOutputStream? = if (blocking) PipedOutputStream() else null
 
     private val input: InputStream = if (blocking) {
@@ -27,7 +33,7 @@ class FakeProcess(
         ByteArrayInputStream(output)
     }
 
-    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+    override fun getOutputStream(): OutputStream = written
 
     override fun getInputStream(): InputStream = input
 

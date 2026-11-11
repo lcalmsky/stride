@@ -102,6 +102,17 @@ class RunSession(
         exitCode = code
     }
 
+    /** Writes [line] and a newline to the child's stdin and echoes it in the console. */
+    fun writeInput(line: String): Boolean {
+        if (!isRunning) return false
+        return runCatching {
+            process.outputStream.write((line + "\n").toByteArray(Charsets.UTF_8))
+            process.outputStream.flush()
+            consoleLines.add(line)
+            true
+        }.getOrDefault(false)
+    }
+
     fun stop() {
         runCatching {
             process.toHandle().descendants().forEach { it.destroyForcibly() }

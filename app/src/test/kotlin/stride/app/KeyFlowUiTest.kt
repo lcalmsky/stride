@@ -50,6 +50,7 @@ import stride.app.keys.handleWindowKeyEvent
 import stride.app.run.FakeProcess
 import stride.app.run.ProcessStarter
 import stride.app.run.RunConfiguration
+import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
 import stride.app.run.TestStatus
@@ -672,7 +673,7 @@ class KeyFlowUiTest {
         Files.createDirectories(root.resolve("src/test/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
         val file = root.resolve("src/test/kotlin/demo/Main.kt")
-        Files.writeString(file, "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        Files.writeString(file, "package demo\n\nval answer = 42\n")
         val state = AppState()
         try {
             state.openFolder(root)
@@ -682,7 +683,7 @@ class KeyFlowUiTest {
             setContent { KeyFlowHarness(state) }
             onNode(hasSetTextAction()).performClick()
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
-            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.length)))
 
             onRoot().performKeyInput {
                 keyDown(Key.CtrlLeft)
@@ -692,8 +693,45 @@ class KeyFlowUiTest {
                 keyUp(Key.CtrlLeft)
             }
 
-            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "No test at caret" }
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "Nothing to run here" }
             onNodeWithTag("status-message").assertExists()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `alt enter opens context actions and enter runs the main`() = runComposeUiTest {
+        val root = temp.resolve("context-actions-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val manager = session.project.service<RunManager>()
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+            val before = editor.value.text
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { pressKey(Key.Enter) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.contextActionsVisible }
+            assertEquals(before, editor.value.text)
+            onNodeWithText("Run 'MainKt.main()'").assertExists()
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { manager.lastRun?.kind == RunKind.APPLICATION }
+            assertFalse(state.contextActionsVisible)
         } finally {
             state.dispose()
         }

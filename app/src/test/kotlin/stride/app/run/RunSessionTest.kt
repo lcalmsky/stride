@@ -52,6 +52,25 @@ class RunSessionTest {
     }
 
     @Test
+    fun `writes stdin lines and echoes them until the process ends`() {
+        val process = FakeProcess(blocking = true)
+        val session = RunSession(
+            RunConfiguration(name = "MainKt", workingDir = temp, kind = RunKind.APPLICATION, command = listOf("run")),
+            process,
+            "run",
+        )
+        session.start()
+
+        assertTrue(session.writeInput("hello"))
+        assertEquals("hello\n", process.stdin)
+        assertEquals(listOf("run", "hello"), session.consoleLines.toList())
+
+        session.stop()
+        waitUntil { !session.isRunning }
+        assertFalse(session.writeInput("after"))
+    }
+
+    @Test
     fun `stop destroys the process even when toHandle is unsupported`() {
         val process = FakeProcess(blocking = true)
 

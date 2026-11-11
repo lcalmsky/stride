@@ -85,6 +85,12 @@ class KeymapTest {
         assertEquals(ActionId.RECENT_FILES, action("meta E", KeyContext.GLOBAL))
         // ActivateTerminalToolWindow alt F12
         assertEquals(ActionId.ACTIVATE_TERMINAL_TOOL_WINDOW, action("alt F12", KeyContext.GLOBAL))
+        // ShowIntentionActions alt ENTER
+        assertEquals(ActionId.SHOW_INTENTION_ACTIONS, action("alt ENTER", KeyContext.EDITOR))
+        // ChooseRunConfiguration control alt R
+        assertEquals(ActionId.CHOOSE_RUN_CONFIGURATION, action("control alt R", KeyContext.GLOBAL))
+        // CompileDirty control F9 (→meta)
+        assertEquals(ActionId.BUILD_PROJECT, action("meta F9", KeyContext.GLOBAL))
     }
 
     @Test

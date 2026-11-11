@@ -57,6 +57,35 @@ class GradleRunIntegrationTest {
         }
     }
 
+    @Test
+    fun `runs a main through strideRunMain and reports its stdout`() {
+        assumeTrue(System.getProperty("stride.runIntegration") == "true", "needs -Dstride.runIntegration=true")
+        val root = Path.of(requireNotNull(System.getProperty("stride.repoRoot")) { "stride.repoRoot is not set" })
+        val project = Project(root)
+        try {
+            val manager = project.service<RunManager>()
+            val args = RunCommands.gradleMainArgs(":app", "stride.app.run.MainFixture", "test")
+            val session = manager.run(
+                RunConfiguration(
+                    name = "MainFixture",
+                    workingDir = root,
+                    args = args,
+                    kind = RunKind.APPLICATION,
+                ),
+            )
+
+            val outcome = await(session, TIMEOUT_MILLIS)
+
+            assertEquals(Outcome.DONE, outcome, "child Gradle did not finish: ${tail(session)}")
+            assertEquals(0, session.exitCode, "child Gradle failed: ${tail(session)}")
+            assertTrue(session.consoleLines.any { it.contains("stride-main-ok") }, tail(session))
+            assertTrue(session.tree.classes.isEmpty(), "an application run must not report tests")
+        } finally {
+            runCatching { project.service<RunManager>().stop() }
+            project.dispose()
+        }
+    }
+
     private fun configuration(root: Path, args: List<String>) = RunConfiguration(
         name = "core DisposerTest",
         workingDir = root,

@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import stride.app.editor.FileEditorManager
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
+import stride.app.run.ContextAction
+import stride.app.run.RunConfiguration
 import stride.app.run.RunManager
 import stride.app.run.RunToolWindow
 import stride.app.terminal.TerminalSession
@@ -71,6 +73,12 @@ class AppState {
     var findInPathVisible by mutableStateOf(false)
 
     var recentFilesVisible by mutableStateOf(false)
+
+    var contextActions: List<ContextAction> by mutableStateOf(emptyList())
+    var contextActionsVisible by mutableStateOf(false)
+
+    var runConfigurationChoices: List<RunConfiguration> by mutableStateOf(emptyList())
+    var runConfigurationsVisible by mutableStateOf(false)
 
     var statusMessage: String? by mutableStateOf(null)
 
@@ -138,6 +146,10 @@ class AppState {
         findBar.close()
         findInPathVisible = false
         recentFilesVisible = false
+        contextActions = emptyList()
+        contextActionsVisible = false
+        runConfigurationChoices = emptyList()
+        runConfigurationsVisible = false
         statusMessage = null
         toolWindows.hide()
         focus = KeyContext.GLOBAL

@@ -2,15 +2,17 @@ package stride.app.run
 
 import java.nio.file.Path
 
-enum class RunKind { TEST, TASK }
+enum class RunKind { TEST, TASK, APPLICATION }
 
 /**
- * One run: the Gradle arguments after the wrapper, in [args]. `--console=plain` and
- * `--init-script` are not part of [args]; [GradleCommand] adds them.
+ * One run. For a Gradle run, [args] holds the Gradle arguments after the wrapper;
+ * `--console=plain` and `--init-script` are not part of [args] because [GradleCommand]
+ * adds them. For a direct run, [command] is the full command line and [args] is empty.
  */
 data class RunConfiguration(
     val name: String,
     val workingDir: Path,
-    val args: List<String>,
+    val args: List<String> = emptyList(),
     val kind: RunKind,
+    val command: List<String>? = null,
 )

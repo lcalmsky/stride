@@ -75,7 +75,11 @@ import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
+import stride.app.run.ContextActionsPopup
+import stride.app.run.RunConfigurationPopup
+import stride.app.run.RunManager
 import stride.app.run.TestGutterMarkers
+import stride.app.run.runContextAction
 import stride.app.search.FindInPathPopup
 import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
@@ -270,6 +274,60 @@ fun App(
                 )
             }
         }
+        if (state.contextActionsVisible && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) {
+                            state.focus = KeyContext.CONTEXT_POPUP
+                        }
+                    },
+            ) {
+                ContextActionsPopup(
+                    actions = state.contextActions,
+                    onChoose = { action ->
+                        state.contextActionsVisible = false
+                        runContextAction(state, action.kind)
+                    },
+                    onClose = {
+                        state.contextActionsVisible = false
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        if (state.runConfigurationsVisible && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) {
+                            state.focus = KeyContext.CONTEXT_POPUP
+                        }
+                    },
+            ) {
+                RunConfigurationPopup(
+                    configurations = state.runConfigurationChoices,
+                    onChoose = { configuration ->
+                        state.runConfigurationsVisible = false
+                        session.project.service<RunManager>().run(configuration)
+                        state.toolWindows.activate("run")
+                    },
+                    onClose = {
+                        state.runConfigurationsVisible = false
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun refocusEditor(state: AppState) {
+    state.focus = KeyContext.EDITOR
+    (state.session?.editors?.selected as? TextFileEditor)?.let { editor ->
+        runCatching { editor.focusRequester.requestFocus() }
     }
 }
 
@@ -906,6 +964,7 @@ private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.SEARCH_POPUP -> "Search"
     KeyContext.RUN_WINDOW -> "Run"
     KeyContext.TERMINAL -> "Terminal"
+    KeyContext.CONTEXT_POPUP -> null
 }
 
 private fun relativePath(session: ProjectSession, file: VFile?): String {

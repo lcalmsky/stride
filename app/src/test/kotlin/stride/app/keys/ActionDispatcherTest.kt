@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
@@ -14,7 +15,15 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
+import stride.app.run.ContextActionKind
+import stride.app.run.FakeProcess
+import stride.app.run.ProcessStarter
+import stride.app.run.RunConfiguration
+import stride.app.run.RunKind
+import stride.app.run.RunManager
+import stride.app.run.StartedProcess
 import stride.core.services.Application
+import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.search.SearchTab
 import java.nio.file.Files
@@ -178,6 +187,128 @@ class ActionDispatcherTest {
         assertFalse(state.recentFilesVisible)
         assertTrue(dispatchAction(ActionId.FIND_IN_PATH, state) { null })
         assertFalse(state.findInPathVisible)
+    }
+
+    @Test
+    fun `context actions need an editor and report when nothing applies`() {
+        state.focus = KeyContext.EDITOR
+        assertFalse(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })
+
+        val session = openProjectWith("notes.txt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("plain text", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })
+        assertEquals("No context actions here", state.statusMessage)
+        assertFalse(state.contextActionsVisible)
+    }
+
+    @Test
+    fun `context actions open with the main first under the caret`() {
+        val root = temp.resolve("context-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+
+        assertTrue(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })
+
+        assertTrue(state.contextActionsVisible)
+        assertEquals(ContextActionKind.RUN_MAIN, state.contextActions.first().kind)
+    }
+
+    @Test
+    fun `run context falls back from the test to the file main`() {
+        val root = temp.resolve("main-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.RUN_CONTEXT, state) { null })
+
+        val configuration = requireNotNull(manager.lastRun)
+        assertEquals(RunKind.APPLICATION, configuration.kind)
+        assertEquals(
+            listOf(":strideRunMain", "-Pstride.mainClass=demo.MainKt", "-Pstride.sourceSet=main"),
+            configuration.args,
+        )
+        assertTrue(state.toolWindows.visible)
+    }
+
+    @Test
+    fun `run without a previous run behaves like run context and reports nothing to run`() {
+        val session = openProjectWith("notes.txt")
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+
+        assertTrue(dispatchAction(ActionId.RUN, state) { null })
+        assertEquals("Nothing to run here", state.statusMessage)
+
+        val root = temp.resolve("plain-run-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n}\n")
+        state.openFolder(root)
+        val mainEditor = requireNotNull(state.session).editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        mainEditor.updateValue(TextFieldValue(mainEditor.value.text, TextRange(mainEditor.value.text.indexOf("fun main"))))
+        val mainManager = requireNotNull(state.session).project.service<RunManager>()
+        mainManager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+
+        assertTrue(dispatchAction(ActionId.RUN, state) { null })
+        assertEquals(RunKind.APPLICATION, mainManager.lastRun?.kind)
+        assertNull(state.statusMessage)
+    }
+
+    @Test
+    fun `build project runs classes and test classes as a task`() {
+        val session = openProjectWith()
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+
+        assertTrue(dispatchAction(ActionId.BUILD_PROJECT, state) { null })
+
+        val configuration = requireNotNull(manager.lastRun)
+        assertEquals("Build", configuration.name)
+        assertEquals(listOf("classes", "testClasses"), configuration.args)
+        assertEquals(RunKind.TASK, configuration.kind)
+        assertTrue(state.toolWindows.visible)
+    }
+
+    @Test
+    fun `choose run configuration lists the file entries then the recent runs`() {
+        val root = temp.resolve("choose-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+        manager.run(
+            RunConfiguration(
+                name = "previous",
+                workingDir = root,
+                args = listOf(":test"),
+                kind = RunKind.TEST,
+            ),
+        )
+        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+
+        assertTrue(dispatchAction(ActionId.CHOOSE_RUN_CONFIGURATION, state) { null })
+
+        assertTrue(state.runConfigurationsVisible)
+        assertEquals(listOf("MainKt", "previous"), state.runConfigurationChoices.map { it.name })
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

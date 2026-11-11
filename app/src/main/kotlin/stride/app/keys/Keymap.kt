@@ -2,14 +2,15 @@ package stride.app.keys
 
 enum class ActionId {
     OPEN_FOLDER, SAVE, CLOSE_TAB, SEARCH_EVERYWHERE, NEXT_TAB, PREVIOUS_TAB, HIDE_ACTIVE_WINDOW,
-    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
+    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW, SHOW_INTENTION_ACTIONS,
+    CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
     EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
     FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
     GOTO_ACTION, RECENT_FILES, ACTIVATE_TERMINAL_TOOL_WINDOW,
 }
 
-enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL }
+enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP }
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
@@ -118,4 +119,10 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta E", ActionId.RECENT_FILES, KeyContext.GLOBAL)
     // ActivateTerminalToolWindow alt F12
     bind("alt F12", ActionId.ACTIVATE_TERMINAL_TOOL_WINDOW, KeyContext.GLOBAL)
+    // ShowIntentionActions alt ENTER
+    bind("alt ENTER", ActionId.SHOW_INTENTION_ACTIONS, KeyContext.EDITOR)
+    // ChooseRunConfiguration control alt R
+    bind("control alt R", ActionId.CHOOSE_RUN_CONFIGURATION, KeyContext.GLOBAL)
+    // CompileDirty control F9 (→meta)
+    bind("meta F9", ActionId.BUILD_PROJECT, KeyContext.GLOBAL)
 }

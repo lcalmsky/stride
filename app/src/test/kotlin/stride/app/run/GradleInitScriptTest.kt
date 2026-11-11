@@ -41,6 +41,17 @@ class GradleInitScriptTest {
         assertTrue(script.contains("outputs.cacheIf { false }"))
     }
 
+    @Test
+    fun `registers the strideRunMain task lazily for java projects`() {
+        assertTrue(script.contains("pluginManager.withPlugin('java')"))
+        assertTrue(script.contains("tasks.register('strideRunMain', JavaExec)"))
+        assertTrue(script.contains("gradleProperty('stride.mainClass')"))
+        assertTrue(script.contains("gradleProperty('stride.sourceSet')"))
+        assertTrue(script.contains("runtimeClasspath"))
+        assertTrue(script.contains("standardInput = System.in"))
+        assertTrue(script.contains("workingDir = project.projectDir"))
+    }
+
     companion object {
         private val PREFIX = Regex("""##stride\[(\w+) (\w+) """)
         private val PLACEHOLDER = Regex("""\$\{[^}]*\}""")

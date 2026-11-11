@@ -50,6 +50,9 @@ object ActionNames {
         ActionId.GOTO_ACTION to "Go to Action",
         ActionId.RECENT_FILES to "Recent Files",
         ActionId.ACTIVATE_TERMINAL_TOOL_WINDOW to "Terminal Window",
+        ActionId.SHOW_INTENTION_ACTIONS to "Show Context Actions",
+        ActionId.CHOOSE_RUN_CONFIGURATION to "Choose Run Configuration",
+        ActionId.BUILD_PROJECT to "Build Project",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

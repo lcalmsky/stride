@@ -2,6 +2,7 @@
 // Values follow the TeamCity service-message escaping rules; see TestEventParser.kt.
 // The task is forced to rerun so a repeated run still reports events.
 
+import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestOutputEvent
 import org.gradle.api.tasks.testing.TestResult
@@ -26,7 +27,20 @@ def stackOf = { Throwable throwable ->
     lines.join("\n")
 }
 
-allprojects {
+allprojects { project ->
+    // Runs one main from the runtime classpath of the chosen source set. Registered lazily
+    // and only for java projects, so an ordinary build never sees it.
+    project.pluginManager.withPlugin('java') {
+        project.tasks.register('strideRunMain', JavaExec) {
+            def mainClassName = project.providers.gradleProperty('stride.mainClass').getOrElse('')
+            def sourceSetName = project.providers.gradleProperty('stride.sourceSet').getOrElse('main')
+            mainClass.set(mainClassName)
+            classpath = project.sourceSets.getByName(sourceSetName).runtimeClasspath
+            standardInput = System.in
+            workingDir = project.projectDir
+        }
+    }
+
     tasks.withType(Test).configureEach { testTask ->
         testTask.outputs.upToDateWhen { false }
         testTask.outputs.cacheIf { false }

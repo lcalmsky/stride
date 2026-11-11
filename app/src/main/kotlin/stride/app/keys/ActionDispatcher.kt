@@ -2,8 +2,14 @@ package stride.app.keys
 
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
+import stride.app.run.MainLocator
+import stride.app.run.RunConfiguration
+import stride.app.run.RunKind
 import stride.app.run.RunManager
+import stride.app.run.openContextActions
+import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
+import stride.app.run.runMain
 import stride.core.services.service
 import stride.search.SearchTab
 import java.nio.file.Path
@@ -107,18 +113,34 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
                 state.statusMessage = null
                 state.toolWindows.activate("run")
             }
-            runAtCaret(state) -> state.statusMessage = null
-            else -> state.statusMessage = "Nothing to run"
+            runContext(state) -> state.statusMessage = null
+            else -> state.statusMessage = "Nothing to run here"
         }
         true
     }
     ActionId.RUN_CONTEXT -> {
         if (state.session == null) return false
-        if (runAtCaret(state)) {
+        if (runContext(state)) {
             state.statusMessage = null
         } else {
-            state.statusMessage = "No test at caret"
+            state.statusMessage = "Nothing to run here"
         }
+        true
+    }
+    ActionId.SHOW_INTENTION_ACTIONS -> openContextActions(state)
+    ActionId.CHOOSE_RUN_CONFIGURATION -> openRunConfigurationChooser(state)
+    ActionId.BUILD_PROJECT -> {
+        val session = state.session ?: return false
+        session.project.service<RunManager>().run(
+            RunConfiguration(
+                name = "Build",
+                workingDir = session.project.root,
+                args = listOf("classes", "testClasses"),
+                kind = RunKind.TASK,
+            ),
+        )
+        state.statusMessage = null
+        state.toolWindows.activate("run")
         true
     }
     ActionId.STOP -> {
@@ -136,4 +158,15 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         }
         true
     }
+}
+
+/** The test at the caret, else the file's main or script entry point. */
+private fun runContext(state: AppState): Boolean {
+    if (runAtCaret(state)) return true
+    val session = state.session ?: return false
+    val editor = session.editors.selected as? TextFileEditor ?: return false
+    val main = MainLocator.locate(editor.value.text, editor.file.name)
+    val started = runMain(session, editor.file.path, main)
+    if (started) state.toolWindows.activate("run")
+    return started
 }

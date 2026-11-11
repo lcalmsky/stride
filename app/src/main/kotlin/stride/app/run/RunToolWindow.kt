@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +36,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,9 +91,13 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
             .focusable(),
     ) {
         RunHeader(session)
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            TestTreePane(session, selected, onSelect = { selected = it }, Modifier.weight(0.36f).fillMaxHeight())
-            ConsolePane(session, selected, Modifier.weight(0.64f).fillMaxHeight())
+        if (session.configuration.kind == RunKind.TEST) {
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                TestTreePane(session, selected, onSelect = { selected = it }, Modifier.weight(0.36f).fillMaxHeight())
+                ConsolePane(session, selected, Modifier.weight(0.64f).fillMaxHeight())
+            }
+        } else {
+            ConsolePane(session, null, Modifier.weight(1f).fillMaxWidth())
         }
     }
 }
@@ -220,6 +232,55 @@ private fun ConsolePane(session: RunSession, selected: TestMethodNode?, modifier
         if (selected != null) {
             MethodDetail(selected)
         }
+        if (session.configuration.kind == RunKind.APPLICATION) {
+            ConsoleInput(session)
+        }
+    }
+}
+
+const val RUN_INPUT_TAG: String = "run-stdin"
+
+/** Writes Enter-terminated lines to the child's stdin; disabled once the process ends. */
+@Composable
+private fun ConsoleInput(session: RunSession) {
+    var line by remember(session) { mutableStateOf("") }
+    val enabled = session.isRunning
+    Row(
+        Modifier.fillMaxWidth().padding(top = DesignTokens.space4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            ">",
+            style = consoleStyle.copy(color = if (enabled) DesignTokens.accent2 else DesignTokens.muted),
+        )
+        Spacer(Modifier.width(DesignTokens.space8))
+        BasicTextField(
+            value = line,
+            onValueChange = { if (enabled) line = it },
+            modifier = Modifier
+                .weight(1f)
+                .testTag(RUN_INPUT_TAG)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) {
+                        false
+                    } else {
+                        when (event.key) {
+                            Key.Enter, Key.NumPadEnter -> {
+                                if (enabled) {
+                                    session.writeInput(line)
+                                    line = ""
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                },
+            enabled = enabled,
+            singleLine = true,
+            textStyle = consoleStyle.copy(color = if (enabled) DesignTokens.text else DesignTokens.muted),
+            cursorBrush = SolidColor(if (enabled) DesignTokens.accent2 else DesignTokens.muted),
+        )
     }
 }
 
