@@ -25,69 +25,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import org.junit.jupiter.api.Assertions.assertArrayEquals
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import stride.app.ui.LocalAnimationsEnabled
 
 class GlassModifiersTest {
-    @Test
-    fun `glass panel is the neutral fill over the field`() {
-        val withMesh = pixelArray(200, 120) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        val withoutMesh = pixelArray(200, 120) {
-            Box(Modifier.fillMaxSize().background(DesignTokens.background), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        var widest = -1
-        var bestX = -1
-        var bestY = -1
-        for (y in 24 until 96) {
-            for (x in 54 until 146) {
-                val width = spread(withMesh[index(x, y, 200)])
-                if (width > widest) {
-                    widest = width
-                    bestX = x
-                    bestY = y
-                }
-            }
-        }
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
-        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-        val luminance = relativeLuminance(Color(withMesh[index(bestX, bestY, 200)]))
-        // The field carries the documented cool-graphite tint, so a few levels of channel spread
-        // are expected; anything wider would be a hue rather than a neutral surface.
-        assertTrue(widest <= 10, "widest channel spread inside the panel = $widest, expected neutral glass")
-        assertTrue(
-            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
-            "panel luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),
-        )
-        assertNotEquals(
-            withoutMesh[index(bestX, bestY, 200)],
-            withMesh[index(bestX, bestY, 200)],
-            "the glass pixel should differ from a panel without the field",
-        )
-    }
-
-    @Test
-    fun `glass top border is brighter than the bottom border`() {
-        val pixels = pixelArray(200, 120) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        val top = relativeLuminance(Color(pixels[index(100, 20, 200)]))
-        val bottom = relativeLuminance(Color(pixels[index(100, 99, 200)]))
-        assertTrue(top > bottom, "top border %.4f should be brighter than bottom %.4f".format(top, bottom))
-    }
-
     @Test
     fun `backdrop glass blurs the sibling behind it`() {
         val pixels = pixelArray(200, 120) {
@@ -119,23 +63,6 @@ class GlassModifiersTest {
     }
 
     @Test
-    fun `glass panel blurs once per size and position`() {
-        GlassCacheStats.panelBlurCount = 0
-        renderFrames(200, 120, 30) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        assertEquals(1, GlassCacheStats.panelBlurCount, "a stable panel blurs once across 30 frames")
-        renderFrames(300, 200, 3) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        assertEquals(2, GlassCacheStats.panelBlurCount, "a new scene size blurs again once")
-    }
-
-    @Test
     fun `content tint over the mesh is the opaque tint color`() {
         val pixels = pixelArray(200, 120) {
             MeshBackground(Modifier.fillMaxSize()) {
@@ -155,17 +82,6 @@ class GlassModifiersTest {
             "content tint over the mesh should be the opaque blend, not the mesh: " +
                 "dR=%.2f dG=%.2f dB=%.2f".format(red, green, blue),
         )
-    }
-
-    @Test
-    fun `cached glass panel slice is an opaque image`() {
-        GlassCacheStats.lastSliceOpaque = false
-        renderFrames(200, 120, 3) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
-            }
-        }
-        assertTrue(GlassCacheStats.lastSliceOpaque, "the cached panel slice should be opaque")
     }
 
     @Test
@@ -540,7 +456,7 @@ class GlassModifiersTest {
     @Composable
     private fun deterministicScene() {
         MeshBackground(Modifier.fillMaxSize()) {
-            Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
+            Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).backdropGlass())
             Box(Modifier.align(Alignment.TopStart).size(60.dp, 40.dp).backdropGlass())
         }
     }
@@ -560,7 +476,7 @@ class GlassModifiersTest {
                             .offset(x = 100.dp)
                             .size(100.dp, 120.dp)
                             .backgroundExtension(
-                                key = "mirror",
+                                key = { "mirror" },
                                 cache = cache,
                                 sourceLeft = 200.dp,
                                 sourceTop = 0.dp,
@@ -593,6 +509,54 @@ class GlassModifiersTest {
                     .format(mirroredWhite, mirroredBlack),
             )
             assertTrue(source > 0.9, "the source strip should stay unpainted: %.4f".format(source))
+        } finally {
+            cache.dispose()
+        }
+    }
+
+    @Test
+    fun `the background extension mirrors across the sidebar edge, not the element edge`() {
+        val width = 400
+        val height = 120
+        val cache = MirroredStripCache()
+        try {
+            val pixels = pixelArray(width, height) {
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    Box(
+                        // The element right edge (250) is 50 px past the mirror axis (200), the
+                        // sidebar's edge; the mirror must still be centred on 200.
+                        Modifier
+                            .offset(x = 100.dp)
+                            .size(150.dp, 120.dp)
+                            .backgroundExtension(
+                                key = { "axis" },
+                                cache = cache,
+                                sourceLeft = 200.dp,
+                                sourceTop = 0.dp,
+                                sourceWidth = 100.dp,
+                                shapeLeft = 0.dp,
+                                shapeWidth = 150.dp,
+                                shapeRadius = 0.dp,
+                                blurRadius = 0.dp,
+                            ) { canvas ->
+                                canvas.drawRect(
+                                    200f,
+                                    0f,
+                                    240f,
+                                    120f,
+                                    Paint().apply { color = Color.White },
+                                )
+                            },
+                    )
+                }
+            }
+            // Source 205 is white and folds to window 195; source 180 (left of the strip) folds to
+            // 220 and must stay black.
+            val inside = relativeLuminance(Color(pixels[index(195, 60, width)]))
+            val beyond = relativeLuminance(Color(pixels[index(220, 60, width)]))
+            System.err.println("extension axis inside=%.4f beyond=%.4f".format(inside, beyond))
+            assertTrue(inside > 0.9, "the content right of the sidebar edge should mirror at 195: %.4f".format(inside))
+            assertTrue(beyond < 0.1, "the axis must be the sidebar edge, content at 220 should stay black: %.4f".format(beyond))
         } finally {
             cache.dispose()
         }

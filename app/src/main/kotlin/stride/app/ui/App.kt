@@ -193,6 +193,8 @@ fun App(
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
+            // The floating sidebar spans the window with chromeInset above and below it.
+            val sidebarHeight = (maxHeight - DesignTokens.chromeInset * 2).coerceAtLeast(0.dp)
             val treeVisible = session != null && state.projectTreeVisible
             // Content runs edge to edge; the text column starts right of the floating sidebar.
             val contentLeft = DesignTokens.chromeInset +
@@ -200,7 +202,7 @@ fun App(
             val topBand = DesignTokens.chromeInset + DesignTokens.capsuleHeight + DesignTokens.chromeGap
             val bottomBand = DesignTokens.chromeInset + DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap
             if (session == null) {
-                WelcomeScreen(onOpenFolder, onSearch = { state.openSearch(SearchTab.ALL) })
+                WelcomeScreen(onOpenFolder)
             } else {
                 CompositionLocalProvider(
                     LocalEditorScrollState provides (session.editors.selected as? TextFileEditor)?.verticalScroll,
@@ -243,7 +245,6 @@ fun App(
                                     onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
                                     modifier = Modifier.fillMaxSize(),
-                                    focused = state.focus == KeyContext.EDITOR,
                                     focusRequests = state.editorFocusRequests,
                                     leftInset = contentLeft,
                                     topBand = topBand,
@@ -280,8 +281,9 @@ fun App(
                                 Modifier
                                     .offset(x = DesignTokens.chromeInset, y = DesignTokens.chromeInset)
                                     .width(treeWidth)
-                                    .fillMaxHeight()
-                                    .padding(bottom = DesignTokens.chromeInset)
+                                    // The panel floats chromeInset in from the bottom edge too, so
+                                    // its rounded bottom corners stay inside the window.
+                                    .height(sidebarHeight)
                                     .onFocusChanged { treeFocused = it.hasFocus },
                                 focused = treeFocused,
                                 focusRequests = state.treeFocusRequests,
@@ -298,8 +300,7 @@ fun App(
                                         y = DesignTokens.chromeInset,
                                     )
                                     .width(DesignTokens.chromeGap)
-                                    .fillMaxHeight()
-                                    .padding(bottom = DesignTokens.chromeInset),
+                                    .height(sidebarHeight),
                             )
                         }
                         TopChromeRow(
@@ -955,7 +956,6 @@ private fun EditorArea(
     onGoToDeclaration: (TextFileEditor, Int) -> Unit,
     onJump: (TextFileEditor) -> Unit,
     modifier: Modifier,
-    focused: Boolean = false,
     focusRequests: Int = 0,
     leftInset: Dp = 0.dp,
     topBand: Dp = 0.dp,
@@ -966,8 +966,10 @@ private fun EditorArea(
         withFrameNanos { }
         (session.editors.selected as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
     }
-    // The editor fills the area and draws under the chrome; the floating controls only reserve insets.
-    Box(modifier.focusHalo(focused)) {
+    // The editor fills the area and draws under the chrome; the floating controls only reserve
+    // insets. The editor has no focus halo: its area reaches the window edge, where the line
+    // would read as a bar across the whole title row.
+    Box(modifier) {
         val barHeight = if (findBar.visible) findBarHeight(findBar) else 0.dp
         val topInset = if (findBar.visible) topBand + DesignTokens.chromeGap + barHeight else topBand
         CompositionLocalProvider(
@@ -1304,9 +1306,12 @@ private fun EmptyEditor(leftInset: Dp = 0.dp) {
     }
 }
 
-/** The no-project screen: the wordmark is the content; the controls float over it as glass. */
+/**
+ * The no-project screen: the wordmark is the content. There is no Search capsule: with no session
+ * the popup would not render, and taking the modal focus would stop the global shortcuts.
+ */
 @Composable
-private fun WelcomeScreen(onOpenFolder: () -> Unit, onSearch: () -> Unit) {
+private fun WelcomeScreen(onOpenFolder: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize(),
@@ -1318,13 +1323,6 @@ private fun WelcomeScreen(onOpenFolder: () -> Unit, onSearch: () -> Unit) {
             OpenFolderButton(onOpenFolder)
             Spacer(Modifier.height(28.dp))
             ShortcutList(hasProject = false)
-        }
-        Box(
-            Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = DesignTokens.chromeInset, end = DesignTokens.chromeInset),
-        ) {
-            SearchCapsule(onSearch)
         }
     }
 }

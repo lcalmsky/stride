@@ -269,6 +269,9 @@ class AppState {
 
     fun openFolder(path: Path) {
         closeSession()
+        // A new folder always starts on the global context: no modal focus from the previous
+        // (possibly project-less) screen may outlive the switch.
+        focus = KeyContext.GLOBAL
         session = ProjectSession.open(path)
     }
 

@@ -80,12 +80,25 @@ class ToolWindowGlassTest {
         )
         // Inside the switcher capsule: glass over that plane, so the pixel differs from it.
         val capsule = Color(pixels[index(35, 294, SCENE)])
-        System.err.println("tool-window switcher=%s".format(hex(capsule)))
+        // The capsule's top specular rim and its flat interior: a flat fill would draw both the
+        // same, the capsule lens does not.
+        val rim = Color(pixels[index(10, 289, SCENE)])
+        val interior = Color(pixels[index(10, 301, SCENE)])
+        System.err.println(
+            "tool-window switcher=%s rim=%s interior=%s".format(hex(capsule), hex(rim), hex(interior)),
+        )
         assertTrue(
-            channelDistance(capsule.toArgb(), plane.toArgb()) > 2,
+            channelDistance(capsule.toArgb(), plane.toArgb()) > 12,
             "the switcher should be a floating capsule, not the plane: %s vs %s".format(
                 hex(capsule),
                 hex(plane),
+            ),
+        )
+        assertTrue(
+            relativeLuminance(rim) > relativeLuminance(interior) + 0.01,
+            "the capsule's top rim should be a specular highlight, not a flat fill: %s vs %s".format(
+                hex(rim),
+                hex(interior),
             ),
         )
     }

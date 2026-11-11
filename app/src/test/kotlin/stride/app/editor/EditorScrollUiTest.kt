@@ -1,7 +1,12 @@
 package stride.app.editor
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -24,6 +29,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ui.LocalAnimationsEnabled
+import stride.app.ui.theme.EditorInsets
+import stride.app.ui.theme.LocalEditorInsets
 import stride.core.services.Application
 import stride.core.vfs.VFile
 
@@ -113,6 +120,42 @@ class EditorScrollUiTest {
         editor.updateValue(TextFieldValue((1..40).joinToString("\n") { "line $it" }))
         waitForIdle()
         assertFalse(editor.verticalScroll.layered, "shrinking below the hysteresis should restore sampling")
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `widening the left inset scrolls the caret back into the viewport`() = runComposeUiTest {
+        val editor = openEditor("Long.kt", buildString {
+            append("x".repeat(600))
+            repeat(5) { append("\nshort $it") }
+        })
+        var leftInset by mutableStateOf(0.dp)
+
+        setContent {
+            CompositionLocalProvider(LocalAnimationsEnabled provides false) {
+                Box(Modifier.size(480.dp, 240.dp)) {
+                    CompositionLocalProvider(
+                        LocalEditorInsets provides EditorInsets(left = leftInset),
+                    ) {
+                        editor.Content(Modifier.fillMaxSize())
+                    }
+                }
+            }
+        }
+        waitForIdle()
+        editor.gotoLine("1:180")
+        waitForIdle()
+        val before = horizontalValue()
+        assertTrue(before > 0f, "the caret should have scrolled into view, offset $before")
+
+        // Toggling the tree pushes the text column right; the same caret must stay visible.
+        leftInset = 220.dp
+        waitForIdle()
+        waitUntil(timeoutMillis = 5_000) { horizontalValue() > before + 100f }
+        assertTrue(
+            horizontalValue() > before + 100f,
+            "the horizontal offset stayed ${horizontalValue()} after the inset grew from $before",
+        )
     }
 
     @OptIn(ExperimentalTestApi::class)

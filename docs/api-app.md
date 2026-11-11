@@ -1431,9 +1431,8 @@ files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing 
 @Composable fun MeshBackground(modifier: Modifier = Modifier,
                                content: @Composable BoxScope.() -> Unit)
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
-fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
 fun Modifier.capsuleGlass(shape: Shape): Modifier
-fun Modifier.scrollEdgeBands(key: Any, cache: EdgeBandCache, topBand: Dp, bottomBand: Dp,
+fun Modifier.scrollEdgeBands(key: () -> Any, cache: EdgeBandCache, topBand: Dp, bottomBand: Dp,
                              clipStart: Dp, blurRadius: Dp = DesignTokens.scrollEdgeBlur,
                              tail: Dp = DesignTokens.scrollEdgeTail,
                              source: (Canvas) -> Unit): Modifier
@@ -1452,7 +1451,7 @@ fun Modifier.glassSlabRims(shape: Shape): Modifier
 fun Modifier.labelScrim(active: Boolean): Modifier
 fun Modifier.contentTint(): Modifier
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
-fun Modifier.backgroundExtension(key: Any, cache: MirroredStripCache,
+fun Modifier.backgroundExtension(key: () -> Any, cache: MirroredStripCache,
                                  sourceLeft: Dp, sourceTop: Dp, sourceWidth: Dp,
                                  shapeLeft: Dp, shapeWidth: Dp, shapeRadius: Dp,
                                  luminanceCap: Double = Double.MAX_VALUE,
@@ -1463,14 +1462,12 @@ class MirroredStripCache
 data class SidebarChrome(val left: Dp, val width: Dp, val top: Dp, val bottom: Dp)
 val LocalSidebarChrome: ProvidableCompositionLocal<SidebarChrome?>
 data class EditorInsets(val top: Dp = 0.dp, val bottom: Dp = 0.dp,
-                        val left: Dp = 0.dp, val right: Dp = 0.dp)
+                        val left: Dp = 0.dp)
 val LocalEditorInsets: ProvidableCompositionLocal<EditorInsets>
 ```
 
 `MeshBackground` draws the field into a bitmap once per size and exposes it through
-`LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill`
-into an opaque cached image, unchanged from the previous design; nothing on the new chrome uses
-it, but it remains the cached field-slice primitive. `glassCapsule` draws the lift and rim
+`LocalMeshBitmap`. `glassCapsule` draws the lift and rim
 directly and never samples the backdrop; `glassLensCapsule` replaces it on the selected tree
 row and on the tab group's selection pill: the same capsule over a small 6 dp bezel lens of
 3.5 dp whose displacement fades to zero at the capsule ends, so the neon line stays crisp and
@@ -1496,7 +1493,11 @@ background extension, plus the same shadow and rim.
 the sidebar's edge into a small offscreen image, mirrors it horizontally across that edge,
 blurs it at `backgroundExtensionBlur` (56 dp), and caches it (`MirroredStripCache`) keyed by the
 text layout, the spans, both scroll offsets, the sidebar geometry and the editor size. A static
-frame only blits the cached image; scrolling or editing rebuilds it once. `SidebarChrome` is
+frame only blits the cached image; scrolling or editing rebuilds it once. The mirror axis is
+`sourceLeft`, the sidebar's right edge: the source pixel at that edge lands on the edge itself,
+and the strip is drawn one screen pixel per source pixel. A rebuild measures and paints only the
+lines that intersect the visible rows, and the two raster surfaces are reused across rebuilds,
+so the pass costs the same on a 1 000-line and a 10 000-line document. `SidebarChrome` is
 provided by `App` so the editor knows where the sidebar sits; a layered editor skips the pass.
 The strip is painted at 1/16 resolution before the blur, so only a low-frequency colour field
 survives: no line rhythm, glyph shape or stripe. The field is drawn only inside the sidebar's
@@ -1508,10 +1509,14 @@ code's soft variation stays in the field. The editor passes `editorFieldLuminanc
 field's own luminance; its current-line glow stops at the sidebar's left edge.
 
 **Scroll edge effect.** A backdrop filter cannot sample the text-field's own drawing, so the
-editor paints the effect itself: `scrollEdgeBands` renders the visible document (text layout and
-gutter numbers) into a small offscreen image, blurs it at `scrollEdgeBlur` (14 dp), masks it
-opaque under the top and bottom bands and fades it out over `scrollEdgeTail` (24 dp) past each
-band's inner edge, then blits it. The blurred copy covers the content instead of stacking glyphs
+editor paints the effect itself: `scrollEdgeBands` renders the visible lines (text layout and
+gutter numbers) into a small offscreen copy of each band, blurs it at `scrollEdgeBlur` (14 dp),
+masks it opaque under the band and fades it out over `scrollEdgeTail` (24 dp) past the band's
+inner edge, then blits it. Only the lines intersecting the viewport rows are measured and painted
+(plus a few for the blur to sample), and each band is its own strip, so the blurred area does not
+grow with the window or the document; the raster surfaces are reused and `LineSliceCache` keeps
+the measured paragraph across scroll frames, so a scroll step costs the same whatever the file
+length. The blurred copy covers the content instead of stacking glyphs
 on glyphs, and its soft tail means sharpness never ends on a straight line. `EdgeBandCache` is
 keyed by the layout, both scroll offsets and the editor geometry, so a static frame only blits;
 scrolling or editing rebuilds it once. The bands are 52 dp (top) and 50 dp (bottom), inside the
@@ -1589,8 +1594,8 @@ an opaque color.
 
 The glass is deliberately cheap:
 
-- No `Modifier.blur` or `graphicsLayer { renderEffect }` on persistent panels; the blur is a
-  cached bitmap (`GlassCacheStats.panelBlurCount` must not grow frame to frame).
+- No `Modifier.blur` or `graphicsLayer { renderEffect }` on persistent panels; a blurred field
+  is a cached bitmap that a static frame only blits.
 - No looping animation and no blur-radius animation. The field is static.
 - One glass layer per region; a popup's scrim covers the glass beneath it.
 - No floating surface uses `Modifier.shadow` or `Modifier.clip`: each bakes one shadow image
@@ -1637,7 +1642,9 @@ chromatic split directly; no third-party shader, asset or material library is us
 The bottom tool window panel is edge-to-edge content: its `Box` paints `contentTint()` (the same
 opaque plane as the editor), the active window's content gets a start inset matching the editor's
 text column, a top inset for the switcher row and a bottom inset for the status capsules, and the
-panel ends at the window edges with no slab. `ToolWindowGlassTest` fixes the empty cell to the
+panel ends at the window edges with no slab. This is a deliberate deviation from "content to the
+edge" under the floating sidebar: the console and terminal keep their text and grid right of the
+sidebar's column so they stay readable while the 30% sidebar glass covers that strip. `ToolWindowGlassTest` fixes the empty cell to the
 content plane and checks that the switcher is one floating capsule over it.
 
 The tool-window switcher is a capsule group (`capsuleGlass`, radius half its height) offset

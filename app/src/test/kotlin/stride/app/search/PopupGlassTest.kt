@@ -314,6 +314,16 @@ class PopupGlassTest {
                 .format(darkInterior, brightInterior),
         )
 
+        // The frosted glass stays neutral: the field's cool tint must not become a hue.
+        val interior = dark[index(300, 18, 600)]
+        val spread = maxOf(
+            abs(red(interior) - green(interior)),
+            abs(green(interior) - blue(interior)),
+            abs(red(interior) - blue(interior)),
+        )
+        System.err.println("find-bar interior=%s channel-spread=%d".format(hex(interior), spread))
+        assertTrue(spread <= 15, "the find bar glass should stay neutral, spread $spread in ${hex(interior)}")
+
         // A corner of the capsule's bounding box lies outside the rounded fill.
         val roundedCorner = relativeLuminance(Color(dark[index(2, 2, 600)]))
         val center = relativeLuminance(Color(dark[index(300, 18, 600)]))

@@ -54,6 +54,20 @@ class EditorScrollStateTest {
     }
 
     @Test
+    fun `the horizontal adapter excludes the sidebar and gutter from the track`() {
+        val state = EditorScrollState()
+        // A 3 000 px line in a 1 200 px window: 1 800 px of scroll.
+        state.updateBounds(contentSize = 3_000, viewportSize = 1_200)
+        val inset = 350f
+        val adapter = EditorScrollbarAdapter(state, insetPx = inset)
+
+        // The track starts at the inset, so its container is 350 px narrower than the viewport.
+        // Without the inset the adapter would advertise 1 800 + 350 px and the thumb could never
+        // reach the track's end.
+        assertEquals(1_800f, adapter.maxScrollOffset(containerSize = 1_200 - 350))
+    }
+
+    @Test
     fun `the scroll layer switches at the threshold with hysteresis`() {
         assertFalse(shouldLayerScroll(lineCount = 100, currentlyLayered = false))
         assertFalse(shouldLayerScroll(lineCount = LAYERED_SCROLL_ENTER_LINES - 1, currentlyLayered = false))

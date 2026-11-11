@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
+import stride.app.editor.EditorBandPaintStats
 import stride.app.editor.LAYERED_SCROLL_ENTER_LINES
 import stride.app.editor.TextFileEditor
 import stride.app.ui.theme.UiFont
@@ -59,6 +60,73 @@ class ScrollFrameTimingTest {
                         "(%.3f ms)".format(Locale.ROOT, layered, layerFree),
                 )
             }
+        }
+    }
+
+    /**
+     * The band and mirror sources must paint the viewport's lines only: the same two documents,
+     * one short and one long, may not change how many lines a scrolled frame measures and draws.
+     * This is the deterministic form of the length-independence requirement; frame time itself
+     * moves with machine load.
+     */
+    @Test
+    fun `the band and mirror sources paint only the visible lines`() {
+        val short = paintedLines(1_000)
+        val long = paintedLines(5_000)
+        System.err.println(
+            "band-lines short=$short long=$long",
+        )
+        for ((name, pair) in listOf("short" to short, "long" to long)) {
+            val (band, mirror) = pair
+            assertTrue(band in 1..VISIBLE_LINE_BOUND, "the $name band source painted $band lines")
+            assertTrue(mirror in 1..VISIBLE_LINE_BOUND, "the $name mirror source painted $mirror lines")
+        }
+        assertTrue(
+            kotlin.math.abs(short.first - long.first) <= 2,
+            "the band source painted ${short.first} lines on 1 000 and ${long.first} on 5 000",
+        )
+        assertTrue(
+            kotlin.math.abs(short.second - long.second) <= 2,
+            "the mirror source painted ${short.second} lines on 1 000 and ${long.second} on 5 000",
+        )
+    }
+
+    /** Lines the band and mirror sources painted for one non-layered frame after a scroll step. */
+    private fun paintedLines(lines: Int): Pair<Int, Int> {
+        val root = temp.resolve("painted-$lines")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Large.kt"), kotlinLines(lines))
+        val state = AppState()
+        var scene: ImageComposeScene? = null
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Large.kt"))) as TextFileEditor
+            // Non-layered so the background extension paints too; production layers at 1 000.
+            editor.scrollLayerOverride = false
+            scene = ImageComposeScene(2560, 1640, Density(2f)) {
+                CompositionLocalProvider(
+                    LocalWordmarkCaretBlink provides false,
+                    LocalAnimationsEnabled provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            var nanos = 0L
+            repeat(WARMUP_FRAMES) {
+                scene.render(nanos).close()
+                nanos += FRAME_NANOS
+            }
+            // The caret starts at the end of the file, so reset to the top before the fixed step.
+            editor.verticalScroll.dispatchRawDelta(-1_000_000f)
+            editor.verticalScroll.dispatchRawDelta(START_OFFSET_PX)
+            EditorBandPaintStats.bandLines = 0
+            EditorBandPaintStats.mirrorLines = 0
+            scene.render(nanos).close()
+            return EditorBandPaintStats.bandLines to EditorBandPaintStats.mirrorLines
+        } finally {
+            scene?.close()
+            state.dispose()
         }
     }
 
@@ -139,6 +207,9 @@ class ScrollFrameTimingTest {
         private const val FRAME_NANOS = 16_000_000L
         private const val START_OFFSET_PX = 2_000f
         private const val SCROLL_STEP_PX = 160f
+
+        /** The 1640 px window shows ~41 code lines; the margin and the gutter stay far below. */
+        private const val VISIBLE_LINE_BOUND = 120
 
         private data class Scene(val lines: Int, val density: Float)
 

@@ -3,6 +3,7 @@ package stride.app.ui
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runSkikoComposeUiTest
@@ -11,12 +12,18 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
+import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
+import stride.app.keys.KeyStroke
+import stride.app.keys.MacKeymap
+import stride.app.keys.dispatchAction
 import stride.core.services.Application
 import stride.core.vfs.VFile
 
@@ -64,6 +71,54 @@ class OverlayHitTest {
             state.dispose()
         }
     }
+
+    /**
+     * The no-project screen has no Search capsule: opening the popup there would take the modal
+     * focus while nothing renders, and every global shortcut would stop answering.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `without a project there is no search capsule and command-O still dispatches`() =
+        runSkikoComposeUiTest(size = Size(1280f, 820f), density = Density(1f)) {
+            val state = AppState()
+            try {
+                setContent {
+                    CompositionLocalProvider(
+                        LocalAnimationsEnabled provides false,
+                        LocalWordmarkCaretBlink provides false,
+                    ) {
+                        App(state, onOpenFolder = {})
+                    }
+                }
+                waitForIdle()
+
+                assertEquals(KeyContext.GLOBAL, state.focus, "the welcome screen must not take modal focus")
+                assertEquals(
+                    0,
+                    onAllNodesWithText("Search", useUnmergedTree = true).fetchSemanticsNodes().size,
+                    "the welcome screen should not offer the Search capsule",
+                )
+
+                val stroke = KeyStroke.parse("meta O")
+                assertEquals(ActionId.GOTO_CLASS, MacKeymap.keymap.actionFor(stroke, state.focus))
+
+                val root = temp.resolve("opened-project")
+                Files.createDirectories(root)
+                var asked = false
+                assertTrue(dispatchAction(ActionId.GOTO_CLASS, state) { asked = true; root })
+                assertTrue(asked, "command-O should ask for a folder with no project open")
+                assertEquals(root.toAbsolutePath().normalize(), requireNotNull(state.session).project.root)
+
+                // A focus left in a modal context by any earlier screen must not survive.
+                state.focus = KeyContext.SEARCH_POPUP
+                val second = temp.resolve("second-project")
+                Files.createDirectories(second)
+                state.openFolder(second)
+                assertEquals(KeyContext.GLOBAL, state.focus)
+            } finally {
+                state.dispose()
+            }
+        }
 
     companion object {
         @BeforeAll

@@ -6,10 +6,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -37,7 +34,6 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -117,18 +113,12 @@ data class EditorInsets(
     val top: Dp = 0.dp,
     val bottom: Dp = 0.dp,
     val left: Dp = 0.dp,
-    val right: Dp = 0.dp,
 )
 
 val LocalEditorInsets = staticCompositionLocalOf { EditorInsets() }
 
-/**
- * Test-only observation point: how many times [glassPanel] actually ran a blur, whether its
- * last cached slice image was opaque, and whether the last liquid glass surface used the shader.
- */
+/** Test-only observation point: whether the last liquid glass surface used the shader. */
 internal object GlassCacheStats {
-    var panelBlurCount: Int = 0
-    var lastSliceOpaque: Boolean = false
     var lastSurfaceLiquid: Boolean = false
 }
 
@@ -194,57 +184,6 @@ private fun buildFieldBitmap(width: Int, height: Int): ImageBitmap {
     }
     image.asSkiaBitmap().setImmutable()
     return image
-}
-
-private data class GlassBounds(val left: Int, val top: Int, val width: Int, val height: Int)
-
-private class GlassPanelState {
-    var bounds by mutableStateOf<GlassBounds?>(null)
-
-    fun update(position: Offset, width: Int, height: Int) {
-        val next = GlassBounds(position.x.roundToInt(), position.y.roundToInt(), width, height)
-        if (bounds != next) bounds = next
-    }
-}
-
-private data class GlassKey(
-    val width: Int,
-    val height: Int,
-    val meshWidth: Int,
-    val meshHeight: Int,
-    val left: Int,
-    val top: Int,
-    val meshVersion: Int,
-)
-
-private class GlassPanelCache {
-    var key: GlassKey? = null
-    var image: Image? = null
-}
-
-/**
- * A cached glass panel: its slice of the field blurred once together with the
- * [DesignTokens.glassFill] fill, and the hairline rim. The blur is cached by panel size, field
- * size, root position and field version.
- */
-fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
-    val mesh = LocalMeshBitmap.current
-    val state = remember { GlassPanelState() }
-    val cache = remember { GlassPanelCache() }
-    DisposableEffect(cache) {
-        onDispose {
-            cache.image?.close()
-            cache.image = null
-            cache.key = null
-        }
-    }
-    this
-        .onGloballyPositioned { coordinates ->
-            state.update(coordinates.boundsInRoot().topLeft, coordinates.size.width, coordinates.size.height)
-        }
-        .drawBehind {
-            drawGlassPanel(state.bounds, shape, mesh, cache)
-        }
 }
 
 /**
@@ -415,51 +354,6 @@ fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier = glass
     lineAlpha = rememberNeonAlpha(selected),
 )
 
-private fun DrawScope.drawGlassPanel(
-    bounds: GlassBounds?,
-    shape: Shape,
-    mesh: MeshBitmapHolder?,
-    cache: GlassPanelCache,
-) {
-    val slice = if (bounds != null && mesh?.bitmap != null && mesh.width > 0 && mesh.height > 0) {
-        val key = GlassKey(
-            width = size.width.roundToInt(),
-            height = size.height.roundToInt(),
-            meshWidth = mesh.width,
-            meshHeight = mesh.height,
-            left = bounds.left,
-            top = bounds.top,
-            meshVersion = mesh.version,
-        )
-        if (cache.key != key) {
-            cache.image?.close()
-            cache.image = glassSliceImage(
-                mesh = mesh,
-                bounds = bounds,
-                size = size,
-                sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE,
-            )
-            cache.key = key
-            GlassCacheStats.panelBlurCount += 1
-        }
-        cache.image
-    } else {
-        null
-    }
-
-    val innerPath = capsulePath(shape, size)
-    clipPath(innerPath) {
-        if (slice != null) {
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.drawImage(slice, 0f, 0f)
-            }
-        } else {
-            drawRect(DesignTokens.glassFill, size = size)
-        }
-        drawHairlineRim(shape, size, 0f, 0f)
-    }
-}
-
 private fun DrawScope.capsulePath(shape: Shape, size: Size): Path {
     val outline = shape.createOutline(size, layoutDirection, this)
     return when (outline) {
@@ -467,57 +361,6 @@ private fun DrawScope.capsulePath(shape: Shape, size: Size): Path {
         is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
         is Outline.Generic -> Path().apply { addPath(outline.path) }
     }
-}
-
-/** The cached panel image: the blurred field slice with the [DesignTokens.glassFill] fill. */
-private fun glassSliceImage(
-    mesh: MeshBitmapHolder,
-    bounds: GlassBounds,
-    size: Size,
-    sigma: Float,
-): Image {
-    val width = size.width.roundToInt().coerceAtLeast(1)
-    val height = size.height.roundToInt().coerceAtLeast(1)
-    val sourceLeft = max(0f, bounds.left.toFloat())
-    val sourceTop = max(0f, bounds.top.toFloat())
-    val sourceRight = min(mesh.width.toFloat(), bounds.left + width.toFloat())
-    val sourceBottom = min(mesh.height.toFloat(), bounds.top + height.toFloat())
-
-    val surface = Surface.makeRaster(ImageInfo(width, height, ColorType.N32, ColorAlphaType.OPAQUE))
-    surface.canvas.clear(DesignTokens.background.toArgb())
-    if (sourceRight > sourceLeft && sourceBottom > sourceTop) {
-        val image = Image.makeFromBitmap(checkNotNull(mesh.bitmap).asSkiaBitmap())
-        val paint = Paint().apply {
-            imageFilter = ImageFilter.makeBlur(sigma, sigma, FilterTileMode.CLAMP)
-        }
-        try {
-            surface.canvas.drawImageRect(
-                image,
-                org.jetbrains.skia.Rect(sourceLeft, sourceTop, sourceRight, sourceBottom),
-                org.jetbrains.skia.Rect(
-                    sourceLeft - bounds.left,
-                    sourceTop - bounds.top,
-                    sourceRight - bounds.left,
-                    sourceBottom - bounds.top,
-                ),
-                paint,
-                true,
-            )
-        } finally {
-            paint.close()
-            image.close()
-        }
-    }
-    val fill = Paint().apply { color = DesignTokens.glassFill.toArgb() }
-    val base = try {
-        surface.canvas.drawRect(org.jetbrains.skia.Rect(0f, 0f, width.toFloat(), height.toFloat()), fill)
-        surface.makeImageSnapshot()
-    } finally {
-        fill.close()
-        surface.close()
-    }
-    GlassCacheStats.lastSliceOpaque = base.isOpaque
-    return base
 }
 
 /** The liquid glass filter, rebuilt only when the panel's size or lens geometry changes. */
@@ -800,28 +643,62 @@ data class SidebarChrome(val left: Dp, val width: Dp, val top: Dp, val bottom: D
 
 val LocalSidebarChrome = staticCompositionLocalOf<SidebarChrome?> { null }
 
+/** Two raster surfaces reused across rebuilds, so a scroll step does not allocate them. */
+internal class BandSurfaces {
+    private var sharp: Surface? = null
+    private var blurred: Surface? = null
+    private var width = 0
+    private var height = 0
+
+    fun obtain(width: Int, height: Int): Pair<Surface, Surface> {
+        val currentSharp = sharp
+        val currentBlurred = blurred
+        if (currentSharp != null && currentBlurred != null && this.width == width && this.height == height) {
+            return currentSharp to currentBlurred
+        }
+        dispose()
+        val info = ImageInfo(width, height, ColorType.N32, ColorAlphaType.PREMUL)
+        sharp = Surface.makeRaster(info)
+        blurred = Surface.makeRaster(info)
+        this.width = width
+        this.height = height
+        return checkNotNull(sharp) to checkNotNull(blurred)
+    }
+
+    fun dispose() {
+        sharp?.close()
+        sharp = null
+        blurred?.close()
+        blurred = null
+        width = 0
+        height = 0
+    }
+}
+
 /** One cached mirror of the content strip right of the sidebar; a frame only blits it. */
 class MirroredStripCache {
     internal var key: Any? = null
     internal var image: Image? = null
+    internal val surfaces = BandSurfaces()
 
     fun dispose() {
         image?.close()
         image = null
         key = null
+        surfaces.dispose()
     }
 }
 
 /**
- * The background extension: the strip of real content right of this element is mirrored back
- * across its edge and drawn into the element, blurred. [source] paints that content in window
- * coordinates; it is rendered into a small offscreen image once per [key] and blurred once, so a
- * static frame only blits it. Only the rounded shape at [shapeLeft]/[shapeWidth] receives the
- * field, so outside it the editor's own background stays untouched and no rectangle shows. The
- * element must cover the shape and be drawn after the content.
+ * The background extension: the strip of real content right of [sourceLeft] is mirrored back
+ * across that vertical axis and drawn into the element, blurred. [source] paints that content in
+ * window coordinates; it is rendered into a small offscreen image once per [key] and blurred
+ * once, so a static frame only blits it. Only the rounded shape at [shapeLeft]/[shapeWidth]
+ * receives the field, so outside it the editor's own background stays untouched and no rectangle
+ * shows. The element must cover the shape and be drawn after the content.
  */
 fun Modifier.backgroundExtension(
-    key: Any,
+    key: () -> Any,
     cache: MirroredStripCache,
     sourceLeft: Dp,
     sourceTop: Dp,
@@ -832,44 +709,53 @@ fun Modifier.backgroundExtension(
     luminanceCap: Double = Double.MAX_VALUE,
     blurRadius: Dp = DesignTokens.backgroundExtensionBlur,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
-): Modifier = drawBehind {
-    if (size.width <= 0f || size.height <= 0f) return@drawBehind
-    val image = cache.imageFor(
-        key = key,
-        width = size.width,
-        height = size.height,
-        sourceLeft = sourceLeft.toPx(),
-        sourceTop = sourceTop.toPx(),
-        sourceWidth = sourceWidth.toPx(),
-        sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
-        luminanceCap = luminanceCap,
-        source = source,
-    ) ?: return@drawBehind
-    val native = drawContext.canvas.nativeCanvas
-    val radius = shapeRadius.toPx()
-    native.save()
-    native.clipRRect(
-        RRect.makeLTRB(
-            shapeLeft.toPx(),
-            0f,
-            (shapeLeft + shapeWidth).toPx(),
-            size.height,
-            radius,
-        ),
-    )
-    // The image's left edge is the content adjacent to the element's right edge; the flip
-    // reverses it across that edge.
-    native.translate(size.width, 0f)
-    native.scale(-1f, 1f)
-    native.drawImageRect(
-        image,
-        org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
-        org.jetbrains.skia.Rect.makeWH(size.width, size.height),
-        SamplingMode.LINEAR,
-        null,
-        true,
-    )
-    native.restore()
+): Modifier = composed {
+    // The source is painted in window coordinates while this modifier draws in the element's
+    // local frame, so the root position converts the mirror axis into local coordinates.
+    val rootLeft = remember { FloatArray(1) }
+    this
+        .onGloballyPositioned { rootLeft[0] = it.boundsInRoot().left }
+        .drawBehind {
+            if (size.width <= 0f || size.height <= 0f) return@drawBehind
+            val sourceLeftPx = sourceLeft.toPx()
+            val sourceWidthPx = sourceWidth.toPx()
+            val image = cache.imageFor(
+                key = key(),
+                width = size.width,
+                height = size.height,
+                sourceLeft = sourceLeftPx,
+                sourceTop = sourceTop.toPx(),
+                sourceWidth = sourceWidthPx,
+                sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
+                luminanceCap = luminanceCap,
+                source = source,
+            ) ?: return@drawBehind
+            val native = drawContext.canvas.nativeCanvas
+            val radius = shapeRadius.toPx()
+            native.save()
+            native.clipRRect(
+                RRect.makeLTRB(
+                    shapeLeft.toPx(),
+                    0f,
+                    (shapeLeft + shapeWidth).toPx(),
+                    size.height,
+                    radius,
+                ),
+            )
+            // Mirror across the sidebar's right edge: the source pixel at the axis lands on the
+            // axis, and the content right of it folds left, at one screen pixel per source pixel.
+            native.translate(sourceLeftPx - rootLeft[0], 0f)
+            native.scale(-1f, 1f)
+            native.drawImageRect(
+                image,
+                org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+                org.jetbrains.skia.Rect.makeWH(sourceWidthPx, size.height),
+                SamplingMode.LINEAR,
+                null,
+                true,
+            )
+            native.restore()
+        }
 }
 
 private data class StripKey(
@@ -911,14 +797,28 @@ private fun MirroredStripCache.imageFor(
         luminanceCap = luminanceCap,
     )
     if (next == this.key) return image
-    val built = buildMirroredStrip(width, height, sourceLeft, sourceTop, sourceWidth, sigma, luminanceCap, source)
-    dispose()
+    // Close the previous snapshot before drawing into the shared surfaces: otherwise Skia copies
+    // the surface on the first write so the old image keeps its pixels.
+    image?.close()
+    image = null
+    val built = buildMirroredStrip(
+        surfaces = surfaces,
+        width = width,
+        height = height,
+        sourceLeft = sourceLeft,
+        sourceTop = sourceTop,
+        sourceWidth = sourceWidth,
+        sigma = sigma,
+        luminanceCap = luminanceCap,
+        source = source,
+    )
     this.key = next
     image = built
     return image
 }
 
 private fun buildMirroredStrip(
+    surfaces: BandSurfaces,
     width: Float,
     height: Float,
     sourceLeft: Float,
@@ -932,33 +832,28 @@ private fun buildMirroredStrip(
     val stripWidth = (width / MIRROR_DOWNSCALE).roundToInt().coerceAtLeast(1)
     val stripHeight = (height / MIRROR_DOWNSCALE).roundToInt().coerceAtLeast(1)
     val scale = stripWidth / sourceWidth
-    val sharp = Surface.makeRaster(ImageInfo(stripWidth, stripHeight, ColorType.N32, ColorAlphaType.PREMUL))
-    val blurred = Surface.makeRaster(ImageInfo(stripWidth, stripHeight, ColorType.N32, ColorAlphaType.PREMUL))
+    val (sharp, blurred) = surfaces.obtain(stripWidth, stripHeight)
+    sharp.canvas.clear(contentTintColor.toArgb())
+    sharp.canvas.scale(scale, scale)
+    sharp.canvas.translate(-sourceLeft, -sourceTop)
+    source(sharp.canvas.asComposeCanvas())
+    val snapshot = sharp.makeImageSnapshot()
+    val paint = Paint().apply {
+        imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
+    }
     try {
-        sharp.canvas.clear(contentTintColor.toArgb())
-        sharp.canvas.scale(scale, scale)
-        sharp.canvas.translate(-sourceLeft, -sourceTop)
-        source(sharp.canvas.asComposeCanvas())
-        val snapshot = sharp.makeImageSnapshot()
-        val paint = Paint().apply {
-            imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
-        }
-        try {
-            blurred.canvas.clear(0)
-            blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
-        } finally {
-            paint.close()
-            snapshot.close()
-        }
-        val blurredImage = blurred.makeImageSnapshot()
-        try {
-            return clampFieldLuminance(blurredImage, luminanceCap)
-        } finally {
-            blurredImage.close()
-        }
+        blurred.canvas.clear(0)
+        blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
     } finally {
-        sharp.close()
-        blurred.close()
+        paint.close()
+        snapshot.close()
+    }
+    val blurredImage = blurred.makeImageSnapshot()
+    try {
+        val result = clampFieldLuminance(blurredImage, luminanceCap)
+        return result
+    } finally {
+        blurredImage.close()
     }
 }
 
@@ -1035,15 +930,22 @@ private fun shiftedChannel(channel: Int, offset: Double): Byte {
     return (linearToSrgb(linear.toFloat()).coerceIn(0f, 1f) * 255f).roundToInt().toByte()
 }
 
-/** One cached blurred copy of the editor viewport, drawn by [scrollEdgeBands]. */
+/** One cached blurred copy of each scroll band, drawn by [scrollEdgeBands]. */
 class EdgeBandCache {
     internal var key: Any? = null
-    internal var image: Image? = null
+    internal var top: Image? = null
+    internal var bottom: Image? = null
+    internal val topSurfaces = BandSurfaces()
+    internal val bottomSurfaces = BandSurfaces()
 
     fun dispose() {
-        image?.close()
-        image = null
+        top?.close()
+        top = null
+        bottom?.close()
+        bottom = null
         key = null
+        topSurfaces.dispose()
+        bottomSurfaces.dispose()
     }
 }
 
@@ -1051,12 +953,14 @@ class EdgeBandCache {
  * The scroll edge effect: a blurred copy of the editor content, opaquely covering the top and
  * bottom bands and easing out [tail] beyond each band's inner edge, so the content under the
  * control rows softens toward the window edge without a cut line. [source] paints the editor
- * content in the element's coordinates at full resolution; it is rendered into a small offscreen
- * image and masked once per [key], so a static frame only blits it. Nothing is drawn left of
- * [clipStart] (the gutter), where the sidebar's background extension owns the pixels.
+ * content in the element's coordinates at full resolution; each band is rendered into its own
+ * small offscreen image and masked once per [key], so a static frame only blits them. Only the
+ * bands and their tails are rendered, so the blurred area does not grow with the window. Nothing
+ * is drawn left of [clipStart] (the gutter), where the sidebar's background extension owns the
+ * pixels.
  */
 fun Modifier.scrollEdgeBands(
-    key: Any,
+    key: () -> Any,
     cache: EdgeBandCache,
     topBand: Dp,
     bottomBand: Dp,
@@ -1066,50 +970,45 @@ fun Modifier.scrollEdgeBands(
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
 ): Modifier = drawBehind {
     if (size.width <= 0f || size.height <= 0f) return@drawBehind
-    val image = cache.imageFor(
-        key = key,
+    val sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE
+    // The blur samples a few sigma past the tail; the strip carries that margin so the fade
+    // still sees the real content.
+    val margin = (sigma * EDGE_BLUR_MARGIN_SIGMAS).coerceAtMost(size.height)
+    val topRows = (topBand.toPx() + tail.toPx() + margin).coerceAtMost(size.height)
+    val bottomRows = (bottomBand.toPx() + tail.toPx() + margin).coerceAtMost(size.height)
+    val bands = cache.imageFor(
+        key = key(),
         width = size.width,
         height = size.height,
+        topRows = topRows,
+        bottomRows = bottomRows,
         topBand = topBand.toPx(),
         bottomBand = bottomBand.toPx(),
         tail = tail.toPx(),
-        sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
+        sigma = sigma,
         source = source,
     ) ?: return@drawBehind
     val native = drawContext.canvas.nativeCanvas
     native.save()
     native.clipRect(org.jetbrains.skia.Rect.makeLTRB(clipStart.toPx(), 0f, size.width, size.height))
-    // Only the two bands (plus their tails) are visible; blitting the whole viewport would
-    // upscale a full window of pixels every frame.
-    blitBand(
-        native, image, 0f, (topBand + tail).toPx().coerceAtMost(size.height), size.width, size.height,
-    )
-    blitBand(
-        native,
-        image,
-        (size.height - (bottomBand + tail).toPx()).coerceAtLeast(0f),
-        size.height,
-        size.width,
-        size.height,
-    )
+    drawStrip(native, bands.first, 0f, size.width, topRows)
+    drawStrip(native, bands.second, size.height - bottomRows, size.width, bottomRows)
     native.restore()
 }
 
-/** Draws the `top..bottom` slice of the band image, upscaled to the element's `top..bottom`. */
-private fun blitBand(
+/** Draws a masked band strip, upscaled from its downscaled copy to the element's pixels. */
+private fun drawStrip(
     native: org.jetbrains.skia.Canvas,
     image: Image,
     top: Float,
-    bottom: Float,
     width: Float,
-    height: Float,
+    rows: Float,
 ) {
-    if (bottom <= top) return
-    val scaleY = image.height / height
+    if (rows <= 0f) return
     native.drawImageRect(
         image,
-        Rect.makeLTRB(0f, top * scaleY, image.width.toFloat(), bottom * scaleY),
-        Rect.makeLTRB(0f, top, width, bottom),
+        Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+        Rect.makeLTRB(0f, top, width, top + rows),
         SamplingMode.LINEAR,
         null,
         true,
@@ -1117,12 +1016,17 @@ private fun blitBand(
 }
 
 /** 1/[EDGE_BAND_DOWNSCALE] copy is blurred once; the full-size blit upsamples it back. */
-private const val EDGE_BAND_DOWNSCALE = 8
+private const val EDGE_BAND_DOWNSCALE = 16
+
+/** How far past the tail (in blur sigmas) a strip keeps real content for the blur to sample. */
+private const val EDGE_BLUR_MARGIN_SIGMAS = 3f
 
 private data class EdgeBandKey(
     val key: Any,
     val width: Int,
     val height: Int,
+    val topRows: Int,
+    val bottomRows: Int,
     val topBand: Int,
     val bottomBand: Int,
     val tail: Int,
@@ -1133,102 +1037,117 @@ private fun EdgeBandCache.imageFor(
     key: Any,
     width: Float,
     height: Float,
+    topRows: Float,
+    bottomRows: Float,
     topBand: Float,
     bottomBand: Float,
     tail: Float,
     sigma: Float,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
-): Image? {
+): Pair<Image, Image>? {
     val next = EdgeBandKey(
         key = key,
         width = width.roundToInt(),
         height = height.roundToInt(),
+        topRows = topRows.roundToInt(),
+        bottomRows = bottomRows.roundToInt(),
         topBand = topBand.roundToInt(),
         bottomBand = bottomBand.roundToInt(),
         tail = tail.roundToInt(),
         sigma = sigma.roundToInt(),
     )
-    if (next == this.key) return image
-    val built = buildEdgeBand(width, height, topBand, bottomBand, tail, sigma, source)
-    dispose()
+    if (next == this.key) {
+        val cachedTop = top
+        val cachedBottom = bottom
+        return if (cachedTop != null && cachedBottom != null) cachedTop to cachedBottom else null
+    }
+    // Close the previous snapshots before drawing into the shared surfaces: otherwise Skia
+    // copies the surface on the first write so the old image keeps its pixels.
+    top?.close()
+    top = null
+    bottom?.close()
+    bottom = null
+    val opaque = Color.White.toArgb()
+    val clear = Color.White.copy(alpha = 0f).toArgb()
+    val builtTop = buildEdgeStrip(
+        surfaces = topSurfaces,
+        width = width,
+        stripRows = topRows,
+        stripTop = 0f,
+        stops = floatArrayOf(0f, topBand, topBand + tail, topRows),
+        alphas = intArrayOf(opaque, opaque, clear, clear),
+        sigma = sigma,
+        source = source,
+    )
+    val bottomTop = height - bottomRows
+    val builtBottom = buildEdgeStrip(
+        surfaces = bottomSurfaces,
+        width = width,
+        stripRows = bottomRows,
+        stripTop = bottomTop,
+        // Local positions: clear until the tail starts, opaque from the band's edge down.
+        stops = floatArrayOf(0f, bottomRows - bottomBand - tail, bottomRows - bottomBand, bottomRows),
+        alphas = intArrayOf(clear, clear, opaque, opaque),
+        sigma = sigma,
+        source = source,
+    )
     this.key = next
-    image = built
-    return built
+    top = builtTop
+    bottom = builtBottom
+    return if (builtTop != null && builtBottom != null) builtTop to builtBottom else null
 }
 
-private fun buildEdgeBand(
+/**
+ * Blurs and masks one band strip. [stops] are local element rows for [alphas], ascending; the
+ * strip is painted with the source, blurred, then multiplied by that vertical alpha ramp.
+ */
+private fun buildEdgeStrip(
+    surfaces: BandSurfaces,
     width: Float,
-    height: Float,
-    topBand: Float,
-    bottomBand: Float,
-    tail: Float,
+    stripRows: Float,
+    stripTop: Float,
+    stops: FloatArray,
+    alphas: IntArray,
     sigma: Float,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
 ): Image? {
-    if (width <= 0f || height <= 0f) return null
+    if (width <= 0f || stripRows <= 0f || stripTop < 0f) return null
     val scale = 1f / EDGE_BAND_DOWNSCALE
-    val bandWidth = (width * scale).roundToInt().coerceAtLeast(1)
-    val bandHeight = (height * scale).roundToInt().coerceAtLeast(1)
-    val sharp = Surface.makeRaster(ImageInfo(bandWidth, bandHeight, ColorType.N32, ColorAlphaType.PREMUL))
-    val blurred = Surface.makeRaster(ImageInfo(bandWidth, bandHeight, ColorType.N32, ColorAlphaType.PREMUL))
-    try {
-        // The field behind the code is opaque, so the band replaces the content instead of
-        // stacking a second set of glyphs on top of the sharp ones.
-        sharp.canvas.clear(contentTintColor.toArgb())
-        sharp.canvas.scale(scale, scale)
-        source(sharp.canvas.asComposeCanvas())
-        val snapshot = sharp.makeImageSnapshot()
-        val paint = Paint().apply {
-            imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
-        }
-        try {
-            blurred.canvas.clear(0)
-            blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
-        } finally {
-            paint.close()
-            snapshot.close()
-        }
-        maskEdgeBands(blurred, width, height, topBand, bottomBand, tail)
-        return blurred.makeImageSnapshot()
-    } finally {
-        sharp.close()
-        blurred.close()
-    }
-}
-
-/** Keeps the blurred copy under the bands, fading it out [tail] past each band's inner edge. */
-private fun maskEdgeBands(
-    surface: Surface,
-    width: Float,
-    height: Float,
-    topBand: Float,
-    bottomBand: Float,
-    tail: Float,
-) {
-    val scale = 1f / EDGE_BAND_DOWNSCALE
-    val h = (height * scale).coerceAtLeast(1f)
-    val topEnd = ((topBand + tail) * scale / h).coerceIn(0f, 1f)
-    val bottomStart = ((height - bottomBand - tail) * scale / h).coerceIn(0f, 1f)
-    if (topEnd > bottomStart) return // The bands meet in a short window: keep the field opaque.
-    val topFull = (topBand * scale / h).coerceIn(0f, topEnd)
-    val bottomFull = ((height - bottomBand) * scale / h).coerceIn(bottomStart, 1f)
-    val opaque = Color.White.toArgb()
-    val clear = Color.White.copy(alpha = 0f).toArgb()
-    val shader = Shader.makeLinearGradient(
-        0f, 0f, 0f, h,
-        intArrayOf(opaque, opaque, clear, clear, opaque, opaque),
-        floatArrayOf(0f, topFull, topEnd, bottomStart, bottomFull, 1f),
-    )
+    val stripWidth = (width * scale).roundToInt().coerceAtLeast(1)
+    val stripHeight = (stripRows * scale).roundToInt().coerceAtLeast(1)
+    val (sharp, blurred) = surfaces.obtain(stripWidth, stripHeight)
+    // The field behind the code is opaque, so the band replaces the content instead of
+    // stacking a second set of glyphs on top of the sharp ones.
+    sharp.canvas.clear(contentTintColor.toArgb())
+    sharp.canvas.scale(scale, scale)
+    sharp.canvas.translate(0f, -stripTop)
+    source(sharp.canvas.asComposeCanvas())
+    val snapshot = sharp.makeImageSnapshot()
     val paint = Paint().apply {
+        imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
+    }
+    try {
+        blurred.canvas.clear(0)
+        blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
+    } finally {
+        paint.close()
+        snapshot.close()
+    }
+    val positions = FloatArray(stops.size) { index ->
+        (stops[index] * scale / stripHeight).coerceIn(0f, 1f)
+    }
+    val shader = Shader.makeLinearGradient(0f, 0f, 0f, stripHeight.toFloat(), alphas, positions)
+    val mask = Paint().apply {
         blendMode = org.jetbrains.skia.BlendMode.DST_IN
         this.shader = shader
     }
     try {
-        surface.canvas.drawRect(Rect.makeWH(width * scale, h), paint)
+        blurred.canvas.drawRect(Rect.makeWH(stripWidth.toFloat(), stripHeight.toFloat()), mask)
     } finally {
-        paint.close()
+        mask.close()
         shader.close()
     }
+    return blurred.makeImageSnapshot()
 }
 
 /**
@@ -1254,46 +1173,6 @@ private fun DrawScope.drawGlassBorder() {
         val side = Size(stroke, size.height - stroke * 2f)
         drawRect(DesignTokens.glassBorderSide, topLeft = Offset(0f, stroke), size = side)
         drawRect(DesignTokens.glassBorderSide, topLeft = Offset(size.width - stroke, stroke), size = side)
-    }
-}
-
-private fun DrawScope.drawHairlineRim(shape: Shape, innerSize: Size, insetX: Float, insetY: Float) {
-    val outline = shape.createOutline(innerSize, layoutDirection, this)
-    val paint = Paint().apply {
-        isAntiAlias = true
-        color = DesignTokens.glassBorderTop.toArgb()
-        mode = org.jetbrains.skia.PaintMode.STROKE
-        strokeWidth = 1.dp.toPx()
-    }
-    try {
-        drawIntoCanvas { canvas ->
-            canvas.nativeCanvas.save()
-            canvas.nativeCanvas.translate(insetX, insetY)
-            when (outline) {
-                is Outline.Rounded -> {
-                    val rect = outline.roundRect
-                    canvas.nativeCanvas.drawRRect(
-                        RRect.makeLTRB(
-                            rect.left,
-                            rect.top,
-                            rect.right,
-                            rect.bottom,
-                            rect.topLeftCornerRadius.x,
-                            rect.topLeftCornerRadius.y,
-                        ),
-                        paint,
-                    )
-                }
-                is Outline.Rectangle -> canvas.nativeCanvas.drawRect(
-                    org.jetbrains.skia.Rect(0f, 0f, innerSize.width, innerSize.height),
-                    paint,
-                )
-                is Outline.Generic -> canvas.nativeCanvas.drawPath(outline.path.asSkiaPath(), paint)
-            }
-            canvas.nativeCanvas.restore()
-        }
-    } finally {
-        paint.close()
     }
 }
 
@@ -1695,18 +1574,30 @@ internal object GlassShader {
                 SamplingMode.LINEAR,
                 null,
             )
-            val input = ImageFilter.makeBlur(
-                sigma / downscale,
-                sigma / downscale,
-                FilterTileMode.CLAMP,
-                downscaleFilter,
-            )
-            val runtime = ImageFilter.makeRuntimeShader(builder, "content", input)
-            ImageFilter.makeMatrixTransform(
-                Matrix33.makeScale(downscale.toFloat()),
-                SamplingMode.LINEAR,
-                runtime,
-            )
+            val input = try {
+                ImageFilter.makeBlur(
+                    sigma / downscale,
+                    sigma / downscale,
+                    FilterTileMode.CLAMP,
+                    downscaleFilter,
+                )
+            } finally {
+                downscaleFilter.close()
+            }
+            val runtime = try {
+                ImageFilter.makeRuntimeShader(builder, "content", input)
+            } finally {
+                input.close()
+            }
+            try {
+                ImageFilter.makeMatrixTransform(
+                    Matrix33.makeScale(downscale.toFloat()),
+                    SamplingMode.LINEAR,
+                    runtime,
+                )
+            } finally {
+                runtime.close()
+            }
         }.getOrNull()
     }
 

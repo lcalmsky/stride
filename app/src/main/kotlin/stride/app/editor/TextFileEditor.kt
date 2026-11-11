@@ -63,6 +63,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.MultiParagraph
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
@@ -70,6 +71,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
@@ -102,6 +104,66 @@ import java.util.logging.Logger
 
 /** A clickable ▶ drawn in the gutter of [line] (0-based). */
 data class GutterMarker(val line: Int, val onClick: () -> Unit)
+
+/**
+ * Test seam: how many document lines the edge band and the background extension painted in
+ * their last draw. A scroll frame must keep both bounded by the visible line count.
+ */
+internal object EditorBandPaintStats {
+    var bandLines: Int = 0
+    var mirrorLines: Int = 0
+}
+
+/** Extra lines painted past the visible range, so the band blur still samples nearby content. */
+private const val BAND_LINE_MARGIN = 4
+
+/** Lines per cached slice; scrolling inside a slice only translates it. */
+private const val SLICE_LINES = 64
+
+/**
+ * Keeps the measured paragraph for a run of lines across scroll frames. A scroll step changes
+ * which lines are visible, but the glyphs of the lines it skips are unchanged; only crossing a
+ * slice boundary (every [SLICE_LINES] lines) measures a new one.
+ */
+internal class LineSliceCache {
+    private var layout: TextLayoutResult? = null
+    private var first = -1
+    private var last = -1
+    private var paragraph: MultiParagraph? = null
+
+    /** The paragraph holding [range] and the line its first line starts at. */
+    fun slice(layout: TextLayoutResult, range: IntRange): Pair<MultiParagraph, Int> {
+        if (this.layout === layout && range.first >= first && range.last <= last) {
+            return checkNotNull(paragraph) to first
+        }
+        val chunkFirst = (range.first / SLICE_LINES) * SLICE_LINES
+        val chunkLast = minOf(
+            layout.lineCount - 1,
+            (range.last / SLICE_LINES) * SLICE_LINES + SLICE_LINES - 1,
+        )
+        val text = layout.layoutInput.text
+        val start = layout.getLineStart(chunkFirst)
+        val end = layout.getLineEnd(chunkLast, visibleEnd = false).coerceAtLeast(start)
+        val built = MultiParagraph(
+            annotatedString = text.subSequence(start, end),
+            style = layout.layoutInput.style,
+            // The slice is measured at the same maximum as the full layout; the minimums must be
+            // zero, which the field's own layout does not guarantee.
+            constraints = androidx.compose.ui.unit.Constraints(
+                maxWidth = layout.layoutInput.constraints.maxWidth,
+            ),
+            density = layout.layoutInput.density,
+            fontFamilyResolver = layout.layoutInput.fontFamilyResolver,
+            maxLines = layout.layoutInput.maxLines,
+            overflow = layout.layoutInput.overflow,
+        )
+        this.layout = layout
+        this.first = chunkFirst
+        this.last = chunkLast
+        paragraph = built
+        return built to chunkFirst
+    }
+}
 
 /** Everything the cached mirror of the content strip depends on. */
 private data class ExtensionKey(
@@ -564,6 +626,9 @@ class TextFileEditor(
         // Keyed on the editor: switching tabs reuses this composition slot with a new document.
         var layout by remember(this) { mutableStateOf<TextLayoutResult?>(null) }
         var gutterLayout by remember(this) { mutableStateOf<TextLayoutResult?>(null) }
+        val mirrorSlices = remember(this) { LineSliceCache() }
+        val bandSlices = remember(this) { LineSliceCache() }
+        val gutterSlices = remember(this) { LineSliceCache() }
         val latestLayout = rememberUpdatedState(layout)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
         var layeredScroll by remember(this) { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
@@ -591,7 +656,7 @@ class TextFileEditor(
             val bottomPad = 8.dp + chromeInsets.bottom
             val topPadPx = with(density) { topPad.toPx() }
             val viewportHeightPx = with(density) { (maxHeight - topPad - bottomPad).coerceAtLeast(0.dp).toPx() }
-            LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight) {
+            LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight, leftPad) {
                 val textLayout = layout ?: return@LaunchedEffect
                 // The layout can still be the previous document's for one frame after a tab switch.
                 val caretOffset = currentValue.selection.end
@@ -803,16 +868,20 @@ class TextFileEditor(
             val textLayout = layout
             if (sidebar != null && textLayout != null && !layered) {
                 val extensionWidth = (maxHeight - sidebar.top - sidebar.bottom).coerceAtLeast(0.dp)
-                val extensionKey = ExtensionKey(
-                    layout = textLayout,
-                    spans = currentSpans,
-                    searchSpans = currentSearchSpans,
-                    horizontal = horizontal.value,
-                    vertical = vertical.value,
-                    chrome = sidebar,
-                    width = maxWidth,
-                    height = maxHeight,
-                )
+                // Read at draw time: recomposing the editor for every scroll offset would cost
+                // more than the cached rebuild the key decides.
+                val extensionKey = {
+                    ExtensionKey(
+                        layout = textLayout,
+                        spans = currentSpans,
+                        searchSpans = currentSearchSpans,
+                        horizontal = horizontal.value,
+                        vertical = vertical.value,
+                        chrome = sidebar,
+                        width = maxWidth,
+                        height = maxHeight,
+                    )
+                }
                 val stripCache = remember { MirroredStripCache() }
                 DisposableEffect(stripCache) {
                     onDispose { stripCache.dispose() }
@@ -821,6 +890,8 @@ class TextFileEditor(
                     (leftPad + gutterWidth + DesignTokens.space16).toPx()
                 }
                 val extensionLeft = sidebar.left + sidebar.width
+                val extensionTopPx = with(density) { sidebar.top.toPx() }
+                val extensionBottomPx = with(density) { (sidebar.top + extensionWidth).toPx() }
                 Box(
                     Modifier
                         .offset(x = 0.dp, y = sidebar.top)
@@ -833,7 +904,7 @@ class TextFileEditor(
                             cache = stripCache,
                             sourceLeft = extensionLeft,
                             sourceTop = sidebar.top,
-                            sourceWidth = extensionLeft,
+                            sourceWidth = leftPad,
                             shapeLeft = sidebar.left,
                             shapeWidth = sidebar.width,
                             shapeRadius = DesignTokens.sidebarRadius,
@@ -841,7 +912,14 @@ class TextFileEditor(
                         ) { canvas ->
                             canvas.save()
                             canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
-                            textLayout.multiParagraph.paint(canvas)
+                            paintVisibleLines(
+                                canvas,
+                                textLayout,
+                                top = extensionTopPx - topPadPx + vertical.value,
+                                bottom = extensionBottomPx - topPadPx + vertical.value,
+                                cache = mirrorSlices,
+                                onPainted = { EditorBandPaintStats.mirrorLines = it },
+                            )
                             canvas.restore()
                         },
                 )
@@ -854,17 +932,19 @@ class TextFileEditor(
                 DisposableEffect(bandCache) {
                     onDispose { bandCache.dispose() }
                 }
-                val bandKey = BandKey(
-                    layout = bandLayout,
-                    gutter = gutterLayout,
-                    horizontal = horizontal.value,
-                    vertical = vertical.value,
-                    width = maxWidth,
-                    height = maxHeight,
-                    top = chromeInsets.top,
-                    bottom = chromeInsets.bottom,
-                    left = leftPad,
-                )
+                val bandKey = {
+                    BandKey(
+                        layout = bandLayout,
+                        gutter = gutterLayout,
+                        horizontal = horizontal.value,
+                        vertical = vertical.value,
+                        width = maxWidth,
+                        height = maxHeight,
+                        top = chromeInsets.top,
+                        bottom = chromeInsets.bottom,
+                        left = leftPad,
+                    )
+                }
                 val textStartPx = with(density) {
                     (leftPad + gutterWidth + DesignTokens.space16).toPx()
                 }
@@ -882,16 +962,27 @@ class TextFileEditor(
                             bottomBand = chromeInsets.bottom,
                             clipStart = leftPad,
                         ) { canvas ->
+                            // The bands only keep the window's top and bottom rows, so the
+                            // painted lines are those of the viewport, not the whole document.
+                            val layoutTop = vertical.value - topPadPx
+                            val layoutBottom = bandHeightPx - topPadPx + vertical.value
                             canvas.save()
                             // Same clip as the live field: the copy carries no glyphs left of the gutter.
                             canvas.clipRect(gutterRightPx, 0f, bandWidthPx, bandHeightPx, ClipOp.Intersect)
                             canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
-                            bandLayout.multiParagraph.paint(canvas)
+                            paintVisibleLines(
+                                canvas,
+                                bandLayout,
+                                top = layoutTop,
+                                bottom = layoutBottom,
+                                cache = bandSlices,
+                                onPainted = { EditorBandPaintStats.bandLines = it },
+                            )
                             canvas.restore()
                             gutterLayout?.let { gutter ->
                                 canvas.save()
                                 canvas.translate(gutterLeftPx, topPadPx - vertical.value)
-                                gutter.multiParagraph.paint(canvas)
+                                paintVisibleLines(canvas, gutter, layoutTop, layoutBottom, gutterSlices)
                                 canvas.restore()
                             }
                         },
@@ -909,7 +1000,12 @@ class TextFileEditor(
                 style = DesignTokens.scrollbarStyle,
             )
             HorizontalScrollbar(
-                adapter = rememberEditorScrollbarAdapter(horizontal),
+                // The track starts right of the sidebar and gutter; without the inset the thumb
+                // would advertise that much scroll the state does not have.
+                adapter = rememberEditorScrollbarAdapter(
+                    horizontal,
+                    insetPx = with(density) { (leftPad + gutterWidth).toPx() },
+                ),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .padding(start = leftPad + gutterWidth, bottom = chromeInsets.bottom)
@@ -1057,6 +1153,50 @@ class TextFileEditor(
         const val GOTO_LINE_TAG: String = "goto-line"
         private const val MAX_SELECTION_STEPS: Int = 64
     }
+}
+
+/**
+ * The lines of [layout] that intersect the layout rows [top]..[bottom], widened by [margin]
+ * lines. The result is bounded by the viewport, not by the document, so painting it keeps a
+ * scroll frame independent of the file length.
+ */
+internal fun visibleLineRange(
+    layout: TextLayoutResult,
+    top: Float,
+    bottom: Float,
+    margin: Int = BAND_LINE_MARGIN,
+): IntRange? {
+    if (layout.lineCount == 0) return null
+    if (bottom < top) return null
+    val first = layout.getLineForVerticalPosition(top)
+    val last = layout.getLineForVerticalPosition(bottom)
+    val start = (first - margin).coerceAtLeast(0)
+    val end = (last + margin).coerceAtMost(layout.lineCount - 1)
+    return if (end < start) null else start..end
+}
+
+/**
+ * Paints the lines of [layout] that intersect the layout rows [top]..[bottom] into [canvas],
+ * which is already translated to the layout origin. Only a bounded run of lines is measured and
+ * drawn; [cache] keeps that run across scroll frames. [onPainted] receives the painted line count
+ * for the frame observation point.
+ */
+internal fun paintVisibleLines(
+    canvas: androidx.compose.ui.graphics.Canvas,
+    layout: TextLayoutResult,
+    top: Float,
+    bottom: Float,
+    cache: LineSliceCache,
+    margin: Int = BAND_LINE_MARGIN,
+    onPainted: (Int) -> Unit = {},
+) {
+    val range = visibleLineRange(layout, top, bottom, margin) ?: return
+    val (slice, firstLine) = cache.slice(layout, range)
+    canvas.save()
+    canvas.translate(0f, layout.getLineTop(firstLine))
+    slice.paint(canvas)
+    canvas.restore()
+    onPainted(range.last - range.first + 1)
 }
 
 /**

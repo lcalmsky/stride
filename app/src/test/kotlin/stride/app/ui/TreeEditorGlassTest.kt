@@ -104,7 +104,8 @@ class TreeEditorGlassTest {
                 "the sidebar should follow the mirrored code (difference %.5f)".format(difference),
             )
             assertTrue(
-                brightest - darkest > 0.002,
+                // Measured 0.0034..0.0057 across the scenes; a flat fill is ~0.
+                brightest - darkest > 0.0025,
                 "the sidebar should not be a flat fill (range %.5f)".format(brightest - darkest),
             )
         } finally {
@@ -547,7 +548,8 @@ class TreeEditorGlassTest {
                     textPixels,
                 ),
             )
-            assertTrue(textPixels > 20, "expected label pixels in the status capsule, found $textPixels")
+            // Measured 102; a flat capsule would have almost none.
+            assertTrue(textPixels > 51, "expected label pixels in the status capsule, found $textPixels")
             assertTrue(
                 ratio >= DesignTokens.contrastText,
                 "status capsule text over scrolled code = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
@@ -831,6 +833,88 @@ class TreeEditorGlassTest {
      * The window inset left of and above the sidebar is the editor's own field colour; the
      * extension never paints a slab or a strip there.
      */
+    /**
+     * The floating sidebar spans `chromeInset` .. `H - chromeInset`: the strip under it is the
+     * editor's field and its rounded bottom corners stay inside the window, so the background
+     * extension never ends on a line inside the glass.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the sidebar ends chromeInset above the window bottom`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("bottom-inset-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+
+            val inset = DesignTokens.chromeInset.value.toInt()
+            val bottomTop = HEIGHT - inset
+            // The window inset left of the sidebar is the field outside the sidebar's shadow.
+            fun insetMean(fromY: Int, toY: Int): Double {
+                var total = 0.0
+                for (y in fromY until toY) {
+                    for (x in 1 until 9) total += relativeLuminance(Color(pixels[index(x, y)]))
+                }
+                return total / ((toY - fromY) * 8.0)
+            }
+
+            // The bottom strip under the sidebar's columns is the editor field (plus the panel's
+            // soft shadow), not the sidebar glass, which would be several times brighter.
+            var under = 0.0
+            var count = 0
+            for (y in bottomTop + 1 until HEIGHT) {
+                for (x in 40 until 260) {
+                    under += relativeLuminance(Color(pixels[index(x, y)]))
+                }
+                count += 1
+            }
+            under /= count * 220.0
+            val field = insetMean(bottomTop + 1, HEIGHT)
+            System.err.println(
+                "bottom-strip under=%.5f field=%.5f delta=%.5f".format(under, field, abs(under - field)),
+            )
+            assertTrue(
+                abs(under - field) < 0.002,
+                "the strip under the sidebar should be the editor field (%.5f vs %.5f)".format(under, field),
+            )
+
+            // A point inside the sidebar's bounding rect but outside its rounded bottom-left
+            // corner: only the field may show there.
+            val corner = relativeLuminance(Color(pixels[index(12, bottomTop - 2)]))
+            System.err.println("bottom-corner=%.5f field=%.5f delta=%.5f".format(corner, field, abs(corner - field)))
+            assertTrue(
+                abs(corner - field) < 0.002,
+                "the rounded bottom corner should show the field (%.5f vs %.5f)".format(corner, field),
+            )
+
+            // No second horizontal boundary inside the glass near its bottom edge.
+            val upper = rowMeans(pixels, 100, 200, bottomTop - 16, bottomTop - 12).average()
+            val lower = rowMeans(pixels, 100, 200, bottomTop - 8, bottomTop - 4).average()
+            System.err.println("bottom-seam upper=%.5f lower=%.5f delta=%.5f".format(upper, lower, abs(upper - lower)))
+            assertTrue(
+                abs(upper - lower) < 0.01,
+                "the glass should stay continuous above its bottom edge (%.5f vs %.5f)".format(upper, lower),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun `the window inset beside the sidebar is the editor field`() = runSkikoComposeUiTest(
