@@ -29,6 +29,8 @@ import stride.app.run.RunManager
 import stride.app.run.StartedProcess
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
+import stride.app.ui.theme.UiFont
+import stride.app.ui.theme.UiFontPreference
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
@@ -481,6 +483,7 @@ class SnapshotFrameTimingTest {
         @JvmStatic
         fun loadPlugins() {
             System.setProperty("java.awt.headless", "true")
+            UiFont.preference = UiFontPreference(null)
             Application.resetForTests()
             Application.init(SnapshotFrameTimingTest::class.java.classLoader)
         }

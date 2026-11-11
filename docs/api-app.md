@@ -1255,9 +1255,15 @@ files declare no colors of their own. The base palette is `ColorScheme.DARK_BACK
 `accent` (#7C5CFF, `DARK_ACCENT`), `accent2` (#00D1FF, `DARK_ACCENT_2`) and a selection of
 the accent at 22% alpha.
 
-Chrome text uses the default sans-serif at 13 sp. Code uses monospace at 13 sp with a 20 sp
-line height. Spacing follows a 4/8/12/16 dp scale; small controls use 6 dp radii and the
-Search Everywhere panel 12 dp.
+Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.uiFont` reads
+`UiFont.family`, so the whole UI follows a runtime choice between Pretendard and the system
+default. `ActionId.TOGGLE_UI_FONT` (`Switch UI Font`, no default stroke, reachable from the
+Actions tab) flips it immediately and stores the choice with `java.util.prefs.Preferences` in
+node `stride` under `uiFont` (`pretendard` / `system`), then shows `UI font: Pretendard` or
+`UI font: System` in the status bar. `UiFontPreference` takes the node so tests inject their
+own. The font files live in `app/src/main/resources/fonts/pretendard/` with `OFL.txt`. Code
+uses monospace at 13 sp with a 20 sp line height. Spacing follows a 4/8/12/16 dp scale; small
+controls use 6 dp radii and the Search Everywhere panel 12 dp.
 
 The window is 1280×820 dp, centered, with the icon from `logo/stride-icon-256.png`. It is a
 36 dp top bar (logo, project name, clickable Search pill with the `⇧⇧` hint), a 280 dp
@@ -1535,6 +1541,7 @@ Maven Central alone does not carry it.
 | `BookmarksTest` | toggle add/remove, per-file lines, remove, line index and text |
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
 | `NeonModifiersTest` | glow pixels outside the shape, zero alpha, underline direction, `rememberNeonAlpha` with animations on and off |
+| `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
 | `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` limited to large text, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered mesh orbs staying under the worst single-orb luminance |
 | `GlassModifiersTest` | the panel taking the mesh color behind it, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint over the mesh, the cached slice being an opaque image, and the backdrop blur staying aligned with the panel edge |
 | `ToolWindowGlassTest` | the tab strip shows the mesh through glass, the terminal and run console paint exactly one opaque tint, only the selected row's glyph glows, run status colors clear 4.5 on the worst tint |

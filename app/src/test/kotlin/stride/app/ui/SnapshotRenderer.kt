@@ -5,6 +5,8 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.unit.Density
 import org.jetbrains.skia.EncodedImageFormat
 import stride.app.AppState
+import stride.app.ui.theme.UiFont
+import stride.app.ui.theme.UiFontPreference
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -22,6 +24,8 @@ object SnapshotRenderer {
         renderMillis: Long = 800,
     ) {
         Files.createDirectories(output.parent)
+        // The docs images must not depend on the developer's stored UI font choice.
+        UiFont.preference = UiFontPreference(null)
         var scene: ImageComposeScene? = null
         try {
             // 2560×1640 px at density 2 is the real 1280×820 dp default window.

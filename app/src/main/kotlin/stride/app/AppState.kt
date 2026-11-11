@@ -26,6 +26,8 @@ import stride.app.tree.ProjectTreeModel
 import stride.app.tree.TREE_STRUCTURE_PROVIDER_EP
 import stride.app.tree.TreeStructureProvider
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.UiFont
+import stride.app.ui.theme.UiFontChoice
 import stride.app.ui.toolwindow.ToolWindow
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.core.Disposable
@@ -261,6 +263,9 @@ class AppState {
     fun requestTreeReveal() {
         revealRequests++
     }
+
+    /** Switches the UI font between Pretendard and the system default, remembering it. */
+    fun toggleUiFont(): UiFontChoice = UiFont.toggle()
 
     fun openFolder(path: Path) {
         closeSession()

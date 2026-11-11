@@ -45,7 +45,7 @@ object DesignTokens {
     val selectionBarWidth = 3.dp
     const val neonFadeMillis = 150
 
-    val uiFont = FontFamily.Default
+    val uiFont: FontFamily get() = UiFont.family
     val codeFont = FontFamily.Monospace
     val uiTextSize = 13.sp
     val codeTextSize = 13.sp

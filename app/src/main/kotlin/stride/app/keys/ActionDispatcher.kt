@@ -145,6 +145,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         session.editors.closeOthers()
         true
     }
+    ActionId.TOGGLE_UI_FONT -> {
+        state.statusMessage = "UI font: ${state.toggleUiFont().label}"
+        true
+    }
     // BasicTextField already binds meta Z and meta shift Z to its own undo and redo
     // (Foundation KeyMapping.kt:71,82); consuming them here keeps that from running.
     ActionId.UNDO, ActionId.REDO -> {
