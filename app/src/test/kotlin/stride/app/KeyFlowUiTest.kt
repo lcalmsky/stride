@@ -1202,6 +1202,29 @@ class KeyFlowUiTest {
             state.dispose()
         }
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `moving the caret keeps the history entry in step`() = runComposeUiTest {
+        val root = temp.resolve("caret-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Notes.kt"), "one\ntwo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Notes.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            waitForIdle()
+
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(4)))
+
+            waitUntil(timeoutMillis = 5_000) { session.history.current?.offset == 4 }
+        } finally {
+            state.dispose()
+        }
+    }
 }
 
 @Composable

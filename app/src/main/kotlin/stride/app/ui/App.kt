@@ -46,6 +46,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +73,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.CompletionPopup
@@ -87,10 +90,12 @@ import stride.app.keys.KeyContext
 import stride.app.navigation.BookmarksPopup
 import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructure
+import stride.app.navigation.FileStructureEntry
 import stride.app.navigation.FileStructurePopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.navigation.goToDeclaration
 import stride.app.navigation.navigationLocation
+import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtLine
 import stride.app.run.ContextActionsPopup
@@ -143,17 +148,22 @@ fun App(
     var treeFocused by remember { mutableStateOf(false) }
     val gotoLineEditor = session?.editors?.selected as? TextFileEditor
     val selectedEditor = session?.editors?.selected
-    val caretOffset = (selectedEditor as? TextFileEditor)?.value?.selection?.start
     LaunchedEffect(gotoLineEditor, gotoLineEditor?.gotoLineVisible) {
         // The goto-line field removes itself on close without a focus-lost event.
         if (state.focus == KeyContext.EDITOR_FIELD && gotoLineEditor?.gotoLineVisible != true) {
             state.focus = KeyContext.EDITOR
         }
     }
-    LaunchedEffect(session, selectedEditor, caretOffset) {
-        val editor = selectedEditor ?: return@LaunchedEffect
-        val path = editor.file.path.toAbsolutePath().normalize()
-        session.history.updateCurrent(path, caretOffset ?: 0)
+    // The caret is observed outside composition; reading it while composing would make the
+    // whole window recompose on every arrow key and click.
+    LaunchedEffect(session) {
+        val current = session ?: return@LaunchedEffect
+        snapshotFlow {
+            val editor = current.editors.selected as? TextFileEditor ?: return@snapshotFlow null
+            editor.file.path.toAbsolutePath().normalize() to editor.value.selection.start
+        }.collect { location ->
+            if (location != null) current.history.updateCurrent(location.first, location.second)
+        }
     }
     val bookmarkEntries = session?.bookmarks?.entries?.toList()
     LaunchedEffect(session, selectedEditor, bookmarkEntries) {
@@ -216,6 +226,7 @@ fun App(
                                 onJump = { editor -> session.history.record(navigationLocation(editor)) },
                                 modifier = Modifier.fillMaxSize(),
                                 focused = state.focus == KeyContext.EDITOR,
+                                focusRequests = state.editorFocusRequests,
                             )
                             TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
                         }
@@ -390,31 +401,8 @@ fun App(
             }
         }
         if (state.fileStructureVisible && session != null) {
-            val structureEditor = session.editors.selected as? TextFileEditor
-            if (structureEditor != null) {
-                val entries = remember(structureEditor, structureEditor.value.text) {
-                    FileStructure.entries(structureEditor.file.name, structureEditor.value.text)
-                }
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .onFocusChanged { focus ->
-                            if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
-                        },
-                ) {
-                    FileStructurePopup(
-                        entries = entries,
-                        onChoose = { entry ->
-                            state.fileStructureVisible = false
-                            structureEditor.gotoLine((entry.line + 1).toString())
-                            refocusEditor(state)
-                        },
-                        onClose = {
-                            state.fileStructureVisible = false
-                            refocusEditor(state)
-                        },
-                    )
-                }
+            (session.editors.selected as? TextFileEditor)?.let { editor ->
+                FileStructureHost(state, editor)
             }
         }
         if (state.bookmarksVisible && session != null) {
@@ -430,7 +418,7 @@ fun App(
                     bookmarks = rows,
                     onChoose = { bookmark ->
                         state.bookmarksVisible = false
-                        openFileAtLine(state, session, VFile(bookmark.path), bookmark.line)
+                        openBookmark(state, bookmark)
                         refocusEditor(state)
                     },
                     onRemove = { bookmark -> session.bookmarks.remove(bookmark) },
@@ -537,6 +525,36 @@ fun App(
                 )
             }
         }
+    }
+}
+
+/** Parses the selected file off the UI thread and shows the File Structure popup over it. */
+@Composable
+private fun FileStructureHost(state: AppState, editor: TextFileEditor) {
+    var entries by remember(editor) { mutableStateOf(emptyList<FileStructureEntry>()) }
+    LaunchedEffect(editor, editor.value.text) {
+        val text = editor.value.text
+        entries = withContext(Dispatchers.Default) { FileStructure.entries(editor.file.name, text) }
+    }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onFocusChanged { focus ->
+                if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+            },
+    ) {
+        FileStructurePopup(
+            entries = entries,
+            onChoose = { entry ->
+                state.fileStructureVisible = false
+                editor.gotoLine((entry.line + 1).toString())
+                refocusEditor(state)
+            },
+            onClose = {
+                state.fileStructureVisible = false
+                refocusEditor(state)
+            },
+        )
     }
 }
 
@@ -801,7 +819,13 @@ private fun EditorArea(
     onJump: (TextFileEditor) -> Unit,
     modifier: Modifier,
     focused: Boolean = false,
+    focusRequests: Int = 0,
 ) {
+    LaunchedEffect(focusRequests) {
+        if (focusRequests == 0) return@LaunchedEffect
+        withFrameNanos { }
+        (session.editors.selected as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
+    }
     Column(modifier.focusHalo(focused)) {
         TabBar(session.editors)
         if (findBar.visible) {

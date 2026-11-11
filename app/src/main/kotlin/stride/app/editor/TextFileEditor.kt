@@ -87,6 +87,8 @@ import stride.lang.SyntaxHighlighterFactory
 import stride.lang.TextAttributes
 import stride.lang.TextAttributesKey
 import stride.lang.TokenSpan
+import stride.search.DeclarationParser
+import stride.search.ParsedDeclaration
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -115,6 +117,8 @@ class TextFileEditor(
     private var identifierSnapshot: IdentifierSnapshot? = null
     private var declarationLinesText: String? = null
     private var declarationLinesCache: List<Int> = emptyList()
+    private var parsedDeclarationsText: String? = null
+    private var parsedDeclarationsCache: List<ParsedDeclaration> = emptyList()
 
     /** Reports the focus context of editor sub-fields, such as the goto-line input. */
     var onFocusContext: (KeyContext) -> Unit = {}
@@ -179,6 +183,17 @@ class TextFileEditor(
                 declarationLinesCache = DeclarationScan.lines(file.name, current)
             }
             return declarationLinesCache
+        }
+
+    /** Parsed declarations of the current text, computed once per text revision. */
+    internal val parsedDeclarations: List<ParsedDeclaration>
+        get() {
+            val current = text
+            if (parsedDeclarationsText != current) {
+                parsedDeclarationsText = current
+                parsedDeclarationsCache = DeclarationParser.parse(file.name, current)
+            }
+            return parsedDeclarationsCache
         }
 
     init {
@@ -601,7 +616,8 @@ class TextFileEditor(
                             val linePx = lineHeight.toPx()
                             val glyphWidth = 7.dp.toPx()
                             val glyphHeight = 10.dp.toPx()
-                            val left = 11.dp.toPx()
+                            // The run marker owns 2..12 dp; the bookmark glyph takes the next column.
+                            val left = 13.dp.toPx()
                             val notch = 3.dp.toPx()
                             for (line in bookmarked) {
                                 val top = line * linePx + (linePx - glyphHeight) / 2
@@ -661,6 +677,14 @@ class TextFileEditor(
                                             if (!event.keyboardModifiers.isMetaPressed) continue
                                             val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
                                             val textLayout = latestLayout.value ?: continue
+                                            val line = textLayout.getLineForVerticalPosition(change.position.y)
+                                            val inside = insideLine(
+                                                change.position,
+                                                textLayout.getLineTop(line),
+                                                textLayout.getLineBottom(line),
+                                                textLayout.getLineRight(line),
+                                            )
+                                            if (!inside) continue
                                             val offset = textLayout.getOffsetForPosition(change.position)
                                                 .coerceIn(0, text.length)
                                             change.consume()
@@ -822,6 +846,17 @@ class TextFileEditor(
         private const val MAX_SELECTION_STEPS: Int = 64
     }
 }
+
+/**
+ * Whether [position] falls on the text of a line and not in the blank area after it or below the
+ * last line, where a ⌘-click would otherwise take the nearest identifier.
+ */
+internal fun insideLine(
+    position: Offset,
+    lineTop: Float,
+    lineBottom: Float,
+    lineRight: Float,
+): Boolean = position.y >= lineTop && position.y < lineBottom && position.x <= lineRight
 
 /** The prefix replaced by hippie completion and the candidate it currently shows. */
 private data class HippieState(

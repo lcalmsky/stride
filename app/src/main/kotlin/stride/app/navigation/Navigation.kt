@@ -56,6 +56,16 @@ class NavigationHistory(private val maxEntries: Int = MAX_ENTRIES) {
         return entries[index]
     }
 
+    /**
+     * Removes the entry the last [back] or [forward] moved to, leaving the index on the entry
+     * before it; used when that entry's file no longer exists.
+     */
+    fun dropCurrent() {
+        if (index !in entries.indices) return
+        entries.removeAt(index)
+        index--
+    }
+
     fun clear() {
         entries.clear()
         index = -1

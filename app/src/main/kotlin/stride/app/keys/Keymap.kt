@@ -200,8 +200,9 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta shift C", ActionId.COPY_PATHS, KeyContext.GLOBAL)
     // CopyReference control alt shift C (→meta)
     bind("meta alt shift C", ActionId.COPY_REFERENCE, KeyContext.GLOBAL)
-    // Switcher control TAB
+    // Switcher control TAB; control shift TAB opens it and steps up
     bind("control TAB", ActionId.SWITCHER, KeyContext.GLOBAL)
+    bind("control shift TAB", ActionId.SWITCHER, KeyContext.GLOBAL)
     // SelectInProjectView has no macOS default stroke; alt F1 reveals the current file
     bind("alt F1", ActionId.SELECT_IN_PROJECT_VIEW, KeyContext.GLOBAL)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.

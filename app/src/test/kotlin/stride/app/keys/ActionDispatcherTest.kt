@@ -17,6 +17,7 @@ import stride.app.ProjectSession
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyRename
+import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.run.ContextActionKind
 import stride.app.run.FakeProcess
@@ -579,6 +580,8 @@ class ActionDispatcherTest {
         Files.writeString(file, "fun main() {\n    missing()\n}\n")
         state.openFolder(root)
         val session = requireNotNull(state.session)
+        // The definitive message is only reported once the initial scan has finished.
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
         val editor = session.editors.openFile(VFile(file)) as TextFileEditor
         editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("missing") + 1)))
 
@@ -599,6 +602,55 @@ class ActionDispatcherTest {
         assertTrue(dispatchAction(ActionId.FORWARD, state) { null })
         assertEquals("b.kt", session.editors.selected?.file?.name)
         assertEquals(root.resolve("b.kt").toAbsolutePath().normalize(), session.editors.selected?.file?.path)
+    }
+
+    @Test
+    fun `back to a deleted file drops the entry and reports it`() {
+        val session = openProjectWith("a.kt", "b.kt")
+        val root = temp.resolve("project")
+        Files.delete(root.resolve("a.kt"))
+
+        assertTrue(dispatchAction(ActionId.BACK, state) { null })
+
+        assertEquals("File not found: a.kt", state.statusMessage)
+        assertEquals("b.kt", session.editors.selected?.file?.name)
+        assertEquals(1, session.history.size)
+    }
+
+    @Test
+    fun `forward to a deleted file drops the entry and reports it`() {
+        val session = openProjectWith("a.kt", "b.kt", "c.kt")
+        val root = temp.resolve("project")
+        assertTrue(dispatchAction(ActionId.BACK, state) { null })
+        assertTrue(dispatchAction(ActionId.BACK, state) { null })
+        Files.delete(root.resolve("b.kt"))
+
+        assertTrue(dispatchAction(ActionId.FORWARD, state) { null })
+
+        assertEquals("File not found: b.kt", state.statusMessage)
+        assertEquals("a.kt", session.editors.selected?.file?.name)
+
+        assertTrue(dispatchAction(ActionId.FORWARD, state) { null })
+        assertEquals("c.kt", session.editors.selected?.file?.name)
+    }
+
+    @Test
+    fun `a bookmark whose file is gone is dropped with a message`() {
+        val session = openProjectWith("a.kt", "b.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one\n", TextRange(0)))
+        assertTrue(dispatchAction(ActionId.TOGGLE_BOOKMARK, state) { null })
+        session.editors.openFile(VFile(root.resolve("b.kt")))
+        val tabs = session.editors.openFiles.map { it.file.name }
+        Files.delete(root.resolve("a.kt"))
+
+        openBookmark(state, session.bookmarks.entries.single())
+
+        assertEquals("File not found: a.kt", state.statusMessage)
+        assertTrue(session.bookmarks.isEmpty())
+        assertEquals("b.kt", session.editors.selected?.file?.name)
+        assertEquals(tabs, session.editors.openFiles.map { it.file.name })
     }
 
     @Test
@@ -675,6 +727,54 @@ class ActionDispatcherTest {
         assertTrue(dispatchAction(ActionId.HIDE_ALL_WINDOWS, state) { null })
         assertTrue(state.projectTreeVisible)
         assertTrue(state.toolWindows.visible)
+    }
+
+    @Test
+    fun `hide all windows hands the keyboard back to the selected editor`() {
+        openProjectWith("a.kt")
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(dispatchAction(ActionId.HIDE_ALL_WINDOWS, state) { null })
+
+        assertFalse(state.projectTreeVisible)
+        assertEquals(KeyContext.EDITOR, state.focus)
+        assertEquals(1, state.editorFocusRequests)
+    }
+
+    @Test
+    fun `hide all windows with nothing visible shows nothing`() {
+        openProjectWith("a.kt")
+        state.projectTreeVisible = false
+
+        assertTrue(dispatchAction(ActionId.HIDE_ALL_WINDOWS, state) { null })
+
+        assertFalse(state.projectTreeVisible)
+        assertFalse(state.toolWindows.visible)
+    }
+
+    @Test
+    fun `hiding the project tree hands the keyboard back to the editor`() {
+        openProjectWith("a.kt")
+        state.focus = KeyContext.GLOBAL
+
+        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
+
+        assertFalse(state.projectTreeVisible)
+        assertEquals(KeyContext.EDITOR, state.focus)
+        assertEquals(1, state.editorFocusRequests)
+    }
+
+    @Test
+    fun `hide active window hands the keyboard back to the editor`() {
+        openProjectWith("a.kt")
+        state.toolWindows.activate("run")
+        state.focus = KeyContext.RUN_WINDOW
+
+        assertTrue(dispatchAction(ActionId.HIDE_ACTIVE_WINDOW, state) { null })
+
+        assertFalse(state.toolWindows.visible)
+        assertEquals(KeyContext.EDITOR, state.focus)
+        assertEquals(1, state.editorFocusRequests)
     }
 
     @Test

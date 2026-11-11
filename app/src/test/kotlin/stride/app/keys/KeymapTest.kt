@@ -148,8 +148,9 @@ class KeymapTest {
         assertEquals(ActionId.COPY_PATHS, action("meta shift C", KeyContext.GLOBAL))
         // CopyReference control alt shift C (→meta)
         assertEquals(ActionId.COPY_REFERENCE, action("meta alt shift C", KeyContext.GLOBAL))
-        // Switcher control TAB
+        // Switcher control TAB; control shift TAB steps up
         assertEquals(ActionId.SWITCHER, action("control TAB", KeyContext.GLOBAL))
+        assertEquals(ActionId.SWITCHER, action("control shift TAB", KeyContext.GLOBAL))
         // SelectInProjectView has no macOS default stroke; alt F1 reveals the file
         assertEquals(ActionId.SELECT_IN_PROJECT_VIEW, action("alt F1", KeyContext.GLOBAL))
     }

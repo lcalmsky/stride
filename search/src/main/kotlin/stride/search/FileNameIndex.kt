@@ -17,6 +17,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -41,6 +42,10 @@ class FileNameIndex(private val project: Project) : Disposable {
     private val files = ConcurrentHashMap<String, IndexedFile>()
     private val ready = CountDownLatch(1)
     private val scanThread = Thread({ scan() }, "stride-file-name-index").apply { isDaemon = true }
+    private val version = AtomicLong(0)
+
+    @Volatile
+    private var cachedSnapshot: CachedSnapshot? = null
 
     @Volatile
     private var disposed = false
@@ -59,8 +64,17 @@ class FileNameIndex(private val project: Project) : Disposable {
     fun awaitReady(timeoutMillis: Long = WAIT_TIMEOUT_MILLIS): Boolean =
         ready.await(timeoutMillis, TimeUnit.MILLISECONDS)
 
-    /** Current files sorted by relative path. */
-    fun snapshot(): List<IndexedFile> = files.values.sortedBy { it.relativePath }
+    /**
+     * Current files sorted by relative path. The same list is returned while the index does not
+     * change, so callers can run it on every keystroke without re-sorting the whole project.
+     */
+    fun snapshot(): List<IndexedFile> {
+        cachedSnapshot?.let { cached -> if (cached.version == version.get()) return cached.files }
+        val start = version.get()
+        val sorted = files.values.sortedBy { it.relativePath }
+        if (version.get() == start) cachedSnapshot = CachedSnapshot(start, sorted)
+        return sorted
+    }
 
     override fun dispose() {
         disposed = true
@@ -108,6 +122,7 @@ class FileNameIndex(private val project: Project) : Disposable {
         if (isExcluded(absolute, isDirectory = false)) return
         val relativePath = relativePath(absolute) ?: return
         files[absolute.toString()] = IndexedFile(VFile(absolute), relativePath)
+        changed()
     }
 
     private fun addDirectory(directory: Path) {
@@ -137,6 +152,12 @@ class FileNameIndex(private val project: Project) : Disposable {
         files.remove(key)
         val prefix = key + File.separator
         files.keys.removeIf { it.startsWith(prefix) }
+        changed()
+    }
+
+    private fun changed() {
+        version.incrementAndGet()
+        cachedSnapshot = null
     }
 
     private fun isExcluded(absolute: Path, isDirectory: Boolean): Boolean {
@@ -160,6 +181,8 @@ class FileNameIndex(private val project: Project) : Disposable {
         if (relative.toString().isEmpty() || relative.any { it.toString() == ".." }) return null
         return relative.joinToString("/") { it.toString() }
     }
+
+    private class CachedSnapshot(val version: Long, val files: List<IndexedFile>)
 
     companion object {
         const val WAIT_TIMEOUT_MILLIS: Long = 5_000L

@@ -1,5 +1,6 @@
 package stride.app.editor
 
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import org.junit.jupiter.api.AfterAll
@@ -297,6 +298,26 @@ class TextFileEditorActionsTest {
         }
 
         assertTrue(failures.isEmpty(), "mixed revisions: ${failures.take(3)}")
+    }
+
+    @Test
+    fun `parsed declarations are cached per text revision`() {
+        val editor = editor("fun helper() {}\n")
+        val first = editor.parsedDeclarations
+        assertSame(first, editor.parsedDeclarations)
+        assertEquals(listOf("helper"), first.map { it.name })
+
+        editor.updateValue(TextFieldValue("fun helper() {}\nfun other() {}\n", TextRange(0)))
+
+        assertEquals(listOf("helper", "other"), editor.parsedDeclarations.map { it.name })
+    }
+
+    @Test
+    fun `a command click past the line end or below the last line is outside the line`() {
+        assertTrue(insideLine(Offset(40f, 5f), lineTop = 0f, lineBottom = 18f, lineRight = 60f))
+        assertFalse(insideLine(Offset(61f, 5f), lineTop = 0f, lineBottom = 18f, lineRight = 60f))
+        assertFalse(insideLine(Offset(40f, 18f), lineTop = 0f, lineBottom = 18f, lineRight = 60f))
+        assertFalse(insideLine(Offset(40f, -1f), lineTop = 0f, lineBottom = 18f, lineRight = 60f))
     }
 
     @Test

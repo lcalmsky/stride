@@ -1,6 +1,8 @@
 package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -105,6 +107,30 @@ class FileNameIndexTest {
                 listOf("doomed2.txt", "keep/keep.kt"),
                 index.snapshot().map { it.relativePath },
             )
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `an unchanged index reuses the sorted snapshot`() {
+        Application.resetForTests()
+        Files.writeString(tempDir.resolve("B.kt"), "")
+        Files.writeString(tempDir.resolve("A.kt"), "")
+
+        val project = Project(tempDir)
+        try {
+            val index = project.service<FileNameIndex>()
+            assertTrue(index.awaitReady(5_000), "initial scan did not finish")
+
+            val first = index.snapshot()
+            assertSame(first, index.snapshot())
+
+            project.messageBus.syncPublisher(VFS_CHANGES)
+                .after(listOf(VFileEvent.Deleted(VFile(tempDir.resolve("A.kt")))))
+
+            assertEquals(listOf("B.kt"), index.snapshot().map { it.relativePath })
+            assertNotSame(first, index.snapshot())
         } finally {
             project.dispose()
         }

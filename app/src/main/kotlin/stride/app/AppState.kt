@@ -10,6 +10,7 @@ import stride.app.editor.FileEditorManager
 import stride.app.editor.RenameRequest
 import stride.app.editor.SystemTextClipboard
 import stride.app.editor.TextClipboard
+import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
 import stride.app.navigation.BookmarkManager
@@ -122,6 +123,10 @@ class AppState {
     var treeFocusRequests by mutableStateOf(0)
         private set
 
+    /** Incremented to hand the keyboard back to the selected text editor. */
+    var editorFocusRequests by mutableStateOf(0)
+        private set
+
     /** Incremented to scroll the project tree to the selected file. */
     var revealRequests by mutableStateOf(0)
         private set
@@ -208,10 +213,10 @@ class AppState {
         focus = KeyContext.SEARCH_POPUP
     }
 
-    /** Shows or hides the project tree; showing it also asks for the tree's focus. */
+    /** Shows or hides the project tree; showing it asks for the tree's focus, hiding hands it back. */
     fun toggleProjectTree() {
         projectTreeVisible = !projectTreeVisible
-        if (projectTreeVisible) treeFocusRequests++
+        if (projectTreeVisible) treeFocusRequests++ else handFocusToEditor()
     }
 
     /** Hides the tree and the tool window panel; the next call restores the layout it hid. */
@@ -221,16 +226,35 @@ class AppState {
             toolWindowBeforeHide = toolWindows.visible
             projectTreeVisible = false
             toolWindows.hide()
+            handFocusToEditor()
+            return
+        }
+        val tree = treeBeforeHide ?: return
+        val tools = toolWindowBeforeHide ?: false
+        treeBeforeHide = null
+        toolWindowBeforeHide = null
+        projectTreeVisible = tree
+        if (tools) toolWindows.visible = true
+        if (projectTreeVisible) treeFocusRequests++
+    }
+
+    /**
+     * Moves the focus context to the selected text editor and asks it to take the keyboard, so
+     * hiding the panel that owned focus does not leave both the context and the real focus gone.
+     */
+    private fun handFocusToEditor() {
+        if (session?.editors?.selected !is TextFileEditor) {
             focus = KeyContext.GLOBAL
             return
         }
-        val tree = treeBeforeHide
-        val tools = toolWindowBeforeHide
-        treeBeforeHide = null
-        toolWindowBeforeHide = null
-        projectTreeVisible = tree ?: true
-        if (tools == true) toolWindows.visible = true
-        if (projectTreeVisible) treeFocusRequests++
+        focus = KeyContext.EDITOR
+        editorFocusRequests++
+    }
+
+    /** Hides the active tool window and hands the keyboard back to the selected text editor. */
+    fun hideActiveWindow() {
+        toolWindows.hide()
+        handFocusToEditor()
     }
 
     /** Asks the project tree to scroll to the selected file. */

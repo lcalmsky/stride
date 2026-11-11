@@ -12,10 +12,33 @@ import stride.core.vfs.VFile
 import stride.search.Declaration
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
+import java.nio.file.Files
+import java.nio.file.Path
+
+/** Shown when a lookup cannot answer yet because the background index is still scanning. */
+const val INDEXING_MESSAGE: String = "Indexing… try again in a moment"
 
 /** The text editor the action acts on, or `null` when something else is selected. */
 fun selectedTextEditor(state: AppState): TextFileEditor? =
     state.session?.editors?.selected as? TextFileEditor
+
+/**
+ * The identifier touching [offset]. In Kotlin a leading `$` introduces a string template, so it
+ * is not part of the name; in Java `$` is an ordinary identifier character and stays.
+ */
+internal fun identifierAt(text: String, fileName: String, offset: Int): String? {
+    val word = EditActions.wordAt(text, offset) ?: return null
+    val name = text.substring(word.min, word.max)
+    val result = if (fileName.substringAfterLast('.', "").equals("java", ignoreCase = true)) {
+        name
+    } else {
+        name.trimStart('$')
+    }
+    return result.ifEmpty { null }
+}
+
+private fun missingFileMessage(session: ProjectSession, path: Path): String =
+    "File not found: ${relativePath(session, VFile(path))}"
 
 fun relativePath(session: ProjectSession, file: VFile): String {
     val path = file.path.toAbsolutePath().normalize()
@@ -32,9 +55,14 @@ fun openFileAtLine(state: AppState, session: ProjectSession, file: VFile, line: 
     (editor as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
 }
 
-private fun openLocation(state: AppState, location: NavigationLocation) {
-    val session = state.session ?: return
-    val editor = session.history.withoutRecording { session.editors.openFile(VFile(location.path)) } ?: return
+/** Opens [location]; a target whose file is gone is reported and dropped from the history. */
+private fun openLocation(state: AppState, session: ProjectSession, location: NavigationLocation): Boolean {
+    if (!Files.exists(location.path)) {
+        session.history.dropCurrent()
+        state.statusMessage = missingFileMessage(session, location.path)
+        return false
+    }
+    val editor = session.history.withoutRecording { session.editors.openFile(VFile(location.path)) } ?: return true
     val textEditor = editor as? TextFileEditor
     if (textEditor != null) {
         val offset = location.offset.coerceIn(0, textEditor.value.text.length)
@@ -42,19 +70,32 @@ private fun openLocation(state: AppState, location: NavigationLocation) {
         runCatching { textEditor.focusRequester.requestFocus() }
     }
     state.focus = KeyContext.EDITOR
+    return true
 }
 
 fun navigateBack(state: AppState): Boolean {
     val session = state.session ?: return false
     val location = session.history.back() ?: return true
-    openLocation(state, location)
+    openLocation(state, session, location)
     return true
 }
 
 fun navigateForward(state: AppState): Boolean {
     val session = state.session ?: return false
     val location = session.history.forward() ?: return true
-    openLocation(state, location)
+    openLocation(state, session, location)
+    return true
+}
+
+/** Opens [bookmark]; a bookmark whose file is gone is dropped with a status message. */
+fun openBookmark(state: AppState, bookmark: Bookmark): Boolean {
+    val session = state.session ?: return false
+    if (!Files.exists(bookmark.path)) {
+        session.bookmarks.remove(bookmark)
+        state.statusMessage = "File not found: ${bookmark.relativePath}"
+        return true
+    }
+    openFileAtLine(state, session, VFile(bookmark.path), bookmark.line)
     return true
 }
 
@@ -63,12 +104,11 @@ fun goToDeclaration(state: AppState, offset: Int = selectedTextEditor(state)?.va
     val session = state.session ?: return false
     val editor = selectedTextEditor(state) ?: return false
     val text = editor.value.text
-    val word = EditActions.wordAt(text, offset) ?: return false
-    val name = text.substring(word.min, word.max)
+    val name = identifierAt(text, editor.file.name, offset) ?: return false
     val path = editor.file.path.toAbsolutePath().normalize()
     val relative = relativePath(session, editor.file)
 
-    val local = DeclarationNavigator.localTarget(editor.file.name, text, name, BookmarkManager.lineIndex(text, offset))
+    val local = DeclarationNavigator.localTarget(editor.parsedDeclarations, name, BookmarkManager.lineIndex(text, offset))
     if (local != null) {
         session.history.withoutRecording { editor.gotoLine((local.line + 1).toString()) }
         session.history.push(navigationLocation(editor))
@@ -77,7 +117,12 @@ fun goToDeclaration(state: AppState, offset: Int = selectedTextEditor(state)?.va
         return true
     }
 
-    val candidates = session.project.service<DeclarationIndex>().snapshot()
+    val index = session.project.service<DeclarationIndex>()
+    if (!index.isReady) {
+        state.statusMessage = INDEXING_MESSAGE
+        return true
+    }
+    val candidates = index.snapshot()
         .filter { it.name == name && it.file.path.toAbsolutePath().normalize() != path }
     val ranked = DeclarationNavigator.ranked(
         candidates,
@@ -106,10 +151,15 @@ fun openDeclaration(state: AppState, session: ProjectSession, declaration: Decla
 fun goToTest(state: AppState): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected ?: return false
+    val index = session.project.service<FileNameIndex>()
+    if (!index.isReady) {
+        state.statusMessage = INDEXING_MESSAGE
+        return true
+    }
     val candidates = TestNavigation.candidates(
         editor.file.name,
         relativePath(session, editor.file),
-        session.project.service<FileNameIndex>().snapshot(),
+        index.snapshot(),
     ).map { it.file }
     state.statusMessage = null
     when {
@@ -139,8 +189,8 @@ fun openFileStructure(state: AppState): Boolean {
 /** Find in Path prefilled with the identifier at the caret and whole-word matching on. */
 fun findUsages(state: AppState): Boolean {
     val editor = selectedTextEditor(state) ?: return false
-    val word = EditActions.wordAt(editor.value.text, editor.value.selection.start) ?: return false
-    state.openFindInPath(editor.value.text.substring(word.min, word.max), wholeWord = true)
+    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start) ?: return false
+    state.openFindInPath(name, wholeWord = true)
     state.statusMessage = null
     return true
 }

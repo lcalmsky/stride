@@ -7,10 +7,14 @@ import stride.search.ParsedDeclaration
 /** Picks where Go to Declaration lands: the current file first, then the declaration index. */
 object DeclarationNavigator {
     /** The declaration of [name] nearest before [caretLine], else the first one in the file. */
-    fun localTarget(fileName: String, text: String, name: String, caretLine: Int): ParsedDeclaration? {
-        val declarations = DeclarationParser.parse(fileName, text).filter { it.name == name }
-        if (declarations.isEmpty()) return null
-        return declarations.filter { it.line < caretLine }.maxByOrNull { it.line } ?: declarations.first()
+    fun localTarget(fileName: String, text: String, name: String, caretLine: Int): ParsedDeclaration? =
+        localTarget(DeclarationParser.parse(fileName, text), name, caretLine)
+
+    /** [localTarget] over declarations the caller has already parsed. */
+    fun localTarget(declarations: List<ParsedDeclaration>, name: String, caretLine: Int): ParsedDeclaration? {
+        val matches = declarations.filter { it.name == name }
+        if (matches.isEmpty()) return null
+        return matches.filter { it.line < caretLine }.maxByOrNull { it.line } ?: matches.first()
     }
 
     /**

@@ -92,4 +92,29 @@ class NavigationHistoryTest {
         assertEquals(0, history.size)
         assertNull(history.current)
     }
+
+    @Test
+    fun `dropCurrent removes the reached entry and keeps walking from before it`() {
+        val history = NavigationHistory()
+        history.push(location("/project/a.kt", 1))
+        history.push(location("/project/b.kt", 2))
+        history.push(location("/project/c.kt", 3))
+        history.back()
+
+        history.dropCurrent()
+
+        assertEquals(location("/project/a.kt", 1), history.current)
+        assertEquals(listOf("/project/a.kt", "/project/c.kt"), history.locations().map { it.path.toString() })
+        assertEquals(location("/project/c.kt", 3), history.forward())
+    }
+
+    @Test
+    fun `dropCurrent on an empty history changes nothing`() {
+        val history = NavigationHistory()
+
+        history.dropCurrent()
+
+        assertEquals(0, history.size)
+        assertNull(history.current)
+    }
 }

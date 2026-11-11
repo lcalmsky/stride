@@ -65,8 +65,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.HIDE_ACTIVE_WINDOW -> {
-        state.toolWindows.hide()
-        state.focus = KeyContext.GLOBAL
+        state.hideActiveWindow()
         true
     }
     ActionId.GOTO_FILE -> {

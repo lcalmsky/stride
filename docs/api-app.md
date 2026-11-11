@@ -399,7 +399,7 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :198 |
 | `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :200 |
 | `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :202 |
-| `SWITCHER` | GLOBAL | ⌃Tab | `Switcher` | :204 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :204, :205 |
 | `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :206 |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
 | `CLOSE_OTHER_TABS` | — | (none) | — | — |
@@ -419,7 +419,10 @@ runs in headless tests.
 `AppState.focus` is the reported focus context. `App` sets it to `EDITOR` from the box around the
 editor area, to the active window's context (or `GLOBAL` when it loses focus) from the tool window
 panel, and to `SEARCH_POPUP` from the box around the popup; a region resets it to `GLOBAL` only
-while the current value is still its own context.
+while the current value is still its own context. Hiding the tree or a tool window sets `EDITOR`
+and bumps `editorFocusRequests`, which `EditorArea` consumes by requesting focus on the selected
+text editor, so removing the panel that owned focus does not leave the context and the real
+keyboard focus apart.
 
 ## Editing actions
 
@@ -856,35 +859,45 @@ data class ChooserRow<T>(val text: String, val value: T)
 `ProjectSession` owns one `NavigationHistory` and one `BookmarkManager`; it records every
 selection change through `FileEditorManager.onSelectionChanged`, so a tab switch, a history
 restore and a jump all land in the same stack. `App` keeps the current entry's caret in step
-with `updateCurrent` and gives `TextFileEditor.onJump` a recorder, so `GOTO_LINE`, the file
-structure popup and every other `gotoLine` path add an entry. `withoutRecording` keeps the
-`openFile` a `back`/`forward` performs from truncating the forward stack.
+with `updateCurrent`, observing the caret and the selected editor through `snapshotFlow` so a
+caret move never recomposes the window, and gives `TextFileEditor.onJump` a recorder, so
+`GOTO_LINE`, the file structure popup and every other `gotoLine` path add an entry.
+`withoutRecording` keeps the `openFile` a `back`/`forward` performs from truncating the forward
+stack. A history entry whose file no longer exists is dropped when it is reached and reports
+`File not found: <path>` instead of opening an empty tab.
 
 `GOTO_DECLARATION` (`⌘B`, and `⌘`-click through `TextFileEditor.onGoToDeclarationAt`) reads
-the word at the caret. A declaration of that name in the current file wins (nearest preceding
-line, else the first one). Otherwise the `DeclarationIndex` snapshot is filtered to the name
-and ordered by the current package, the current module, then the path: one hit opens it, several
-open `TargetChooserPopup` (`name — path:line`), none sets `Cannot find declaration to go to`.
-A package comes from the file's `package` line, else from the path below `src/<set>/kotlin|java`;
-a module is the path before `/src/`.
+the word at the caret; a leading `$` is a string-template marker in every language but Java, so
+it is left out of the name. A declaration of that name in the current file wins (nearest
+preceding line, else the first one), using the declarations `TextFileEditor` parses once per
+text revision. Otherwise the `DeclarationIndex` snapshot is filtered to the name and ordered by
+the current package, the current module, then the path: one hit opens it, several open
+`TargetChooserPopup` (`name — path:line`), none sets `Cannot find declaration to go to`. While
+the initial scan has not finished the action reports `Indexing… try again in a moment` instead
+of claiming the declaration does not exist. A package comes from the file's `package` line, else
+from the path below `src/<set>/kotlin|java`; a module is the path before `/src/`.
 
 `GOTO_TEST` maps `Foo.kt` to `FooTest.kt`, `FooTests.kt` or `TestFoo.kt` and a test name back to
-its subject through `FileNameIndex`; several candidates open the chooser, none sets
-`No test found for Foo`. `FILE_STRUCTURE_POPUP` lists `DeclarationParser` declarations indented
-by their container depth and filters them with `NameMatcher`. `TOGGLE_BOOKMARK` marks the caret
-line in the editor gutter (`TextFileEditor.bookmarkLines`); bookmarks live in the session, so
-they survive a tab close, and they do not move when lines above them are edited.
-`SHOW_BOOKMARKS` lists `path:line — text`; Enter opens the line and Delete/Backspace removes
-the selected bookmark.
+its subject through `FileNameIndex` (which caches its sorted snapshot); several candidates open
+the chooser, none sets `No test found for Foo`, and an unfinished scan reports the same
+`Indexing…` message. `FILE_STRUCTURE_POPUP` lists `DeclarationParser` declarations indented
+by their container depth and filters them with `NameMatcher`; the parse runs on
+`Dispatchers.Default`. `TOGGLE_BOOKMARK` marks the caret line in the editor gutter
+(`TextFileEditor.bookmarkLines`); bookmarks live in the session, so they survive a tab close, and
+they do not move when lines above them are edited. `SHOW_BOOKMARKS` lists `path:line — text`;
+Enter opens the line, Delete/Backspace removes the selected bookmark, and a bookmark whose file
+is gone is dropped with `File not found: <path>`.
 
 `COPY_PATHS` writes the absolute path and `COPY_REFERENCE` writes `relative/path:line` through
 `AppState.clipboard` (replaced in tests), both reporting `Copied <text>`. `SELECT_IN_PROJECT_VIEW`
 shows the tree, calls `ProjectTreeModel.reveal` and bumps `revealRequests`, which scrolls the
 list to the selected row. `ACTIVATE_PROJECT_TOOL_WINDOW` toggles `projectTreeVisible`;
-`HIDE_ALL_WINDOWS` hides the tree and the tool window panel and the next press restores the
-layout it saved. `SWITCHER` opens `RecentFilesPopup` (which starts on the second entry and steps
-down on Tab), and `REOPEN_CLOSED_TAB`/`CLOSE_OTHER_TABS` use `FileEditorManager`'s closed-tab
-stack. All new popups are modal: they open with `state.focus` set to `CONTEXT_POPUP`, Escape
+hiding the tree, the active tool window (`AppState.hideActiveWindow`) or both panels
+(`HIDE_ALL_WINDOWS`) hands the focus context and the keyboard back to the selected text editor
+through `editorFocusRequests`, and `HIDE_ALL_WINDOWS` restores only a layout its previous press
+actually hid. `SWITCHER` opens `RecentFilesPopup` (which starts on the second entry and steps
+down on Tab, up on ⇧Tab; `⌃⇧Tab` uses the same stroke), and
+`REOPEN_CLOSED_TAB`/`CLOSE_OTHER_TABS` use `FileEditorManager`'s closed-tab stack. All new popups are modal: they open with `state.focus` set to `CONTEXT_POPUP`, Escape
 closes them, and every close hands focus back to the editor.
 
 ## App composable
