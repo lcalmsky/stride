@@ -23,8 +23,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import stride.app.ui.CloseIcon
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.labelScrim
 import stride.app.ui.theme.rememberNeonAlpha
@@ -115,40 +118,48 @@ internal fun showRunTabs(sessions: List<RunSession>): Boolean =
 @Composable
 private fun RunTabs(manager: RunManager, current: RunSession) {
     if (!showRunTabs(manager.sessions)) return
-    Row(Modifier.fillMaxWidth().height(DesignTokens.tabStripHeight)) {
-        for (session in manager.sessions) {
-            val active = session === current
-            val lineAlpha = rememberNeonAlpha(active)
-            Row(
-                Modifier
-                    .fillMaxHeight()
-                    .glassCapsule(
-                        shape = RoundedCornerShape(DesignTokens.radiusSmall),
-                        insetX = 2.dp,
-                        insetY = 4.dp,
-                        lineEdge = CapsuleEdge.BOTTOM,
-                        lineAlpha = lineAlpha,
-                    )
-                    .clickable { manager.select(session) }
-                    .padding(start = DesignTokens.space8, end = DesignTokens.space4),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    session.configuration.name,
-                    color = if (active) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
-                    fontSize = DesignTokens.smallTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(DesignTokens.space4))
-                Box(
+    Row(
+        Modifier
+            .height(DesignTokens.capsuleHeight)
+            .capsuleGlass(RoundedCornerShape(percent = 50))
+            .padding(horizontal = DesignTokens.space4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            for (session in manager.sessions) {
+                val active = session === current
+                val lineAlpha = rememberNeonAlpha(active)
+                Row(
                     Modifier
-                        .size(16.dp)
-                        .clickable { manager.close(session) },
-                    contentAlignment = Alignment.Center,
+                        .fillMaxHeight()
+                        .glassCapsule(
+                            shape = RoundedCornerShape(percent = 50),
+                            insetX = 2.dp,
+                            insetY = 3.dp,
+                            lineEdge = CapsuleEdge.BOTTOM,
+                            lineAlpha = lineAlpha,
+                        )
+                        .clickable { manager.select(session) }
+                        .padding(start = DesignTokens.space8, end = DesignTokens.space4),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    CloseIcon(Modifier.size(9.dp))
+                    Text(
+                        session.configuration.name,
+                        color = if (active) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
+                        fontSize = DesignTokens.smallTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.width(DesignTokens.space4))
+                    Box(
+                        Modifier
+                            .size(16.dp)
+                            .clickable { manager.close(session) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CloseIcon(Modifier.size(9.dp))
+                    }
                 }
             }
         }

@@ -1,10 +1,14 @@
 package stride.app.ui
 
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.VerticalScrollbar
@@ -19,6 +23,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -43,7 +49,6 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -62,12 +67,15 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -115,20 +123,20 @@ import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
 import stride.app.tree.TreeRow
+import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.EditorInsets
 import stride.app.ui.theme.LocalEditorInsets
+import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MeshBackground
-import stride.app.ui.theme.chromeGlass
+import stride.app.ui.theme.SidebarChrome
+import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
-import stride.app.ui.theme.glassPanel
-import stride.app.ui.theme.glassSlabRims
-import stride.app.ui.theme.labelScrim
 import stride.app.ui.theme.rememberNeonAlpha
-import stride.app.ui.theme.slabShadow
+import stride.app.ui.theme.sidebarGlass
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
 import stride.core.services.service
@@ -185,80 +193,63 @@ fun App(
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
-            // Without a tool window the editor runs to the bottom and the status bar floats over it.
-            val statusBarOverlaps = !state.toolWindows.visible
-            // Status slab, the gap above it and the window margin: content stops above all three.
-            val statusBarGap = DesignTokens.statusBarHeight + DesignTokens.slabMargin * 2
-            val statusBarInset = if (statusBarOverlaps) statusBarGap else DesignTokens.slabMargin
-            Column(Modifier.fillMaxSize().padding(DesignTokens.slabMargin)) {
-                TopBar(
-                    projectName = session?.displayName() ?: "strIDE",
-                    searchEnabled = session != null,
-                    onSearch = { state.openSearch(SearchTab.ALL) },
-                )
-                Spacer(Modifier.height(DesignTokens.slabMargin))
-                if (session == null) {
-                    NoProjectState(onOpenFolder, Modifier.weight(1f))
-                } else {
-                    CompositionLocalProvider(
-                        LocalEditorScrollState provides (session.editors.selected as? TextFileEditor)?.verticalScroll,
-                    ) {
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .padding(bottom = if (statusBarOverlaps) 0.dp else statusBarGap),
-                        ) {
-                            Row(Modifier.weight(1f).fillMaxWidth()) {
-                                if (state.projectTreeVisible) {
-                                    ProjectTreePanel(
-                                        session,
-                                        Modifier
-                                            .width(treeWidth)
-                                            .fillMaxHeight()
-                                            .padding(bottom = if (statusBarOverlaps) statusBarGap else 0.dp)
-                                            .onFocusChanged { treeFocused = it.hasFocus },
-                                        focused = treeFocused,
-                                        focusRequests = state.treeFocusRequests,
-                                        revealRequests = state.revealRequests,
-                                    )
-                                    Splitter(onResize = { delta ->
-                                        treeWidth = (treeWidth + delta)
-                                            .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
-                                    })
-                                }
-                                Box(
-                                    Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .onFocusChanged { focus ->
-                                            // The find bar sits inside this box and reports FIND_BAR itself.
-                                            if (!state.findBar.visible) {
-                                                if (focus.hasFocus) {
-                                                    if (state.focus != KeyContext.EDITOR_FIELD) {
-                                                        state.focus = KeyContext.EDITOR
-                                                    }
-                                                } else if (state.focus == KeyContext.EDITOR ||
-                                                    state.focus == KeyContext.EDITOR_FIELD
-                                                ) {
-                                                    state.focus = KeyContext.GLOBAL
+            val treeVisible = session != null && state.projectTreeVisible
+            // Content runs edge to edge; the text column starts right of the floating sidebar.
+            val contentLeft = DesignTokens.chromeInset +
+                (if (treeVisible) treeWidth + DesignTokens.contentGap else 0.dp)
+            val topBand = DesignTokens.chromeInset + DesignTokens.capsuleHeight + DesignTokens.chromeGap
+            val bottomBand = DesignTokens.chromeInset + DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap
+            if (session == null) {
+                WelcomeScreen(onOpenFolder, onSearch = { state.openSearch(SearchTab.ALL) })
+            } else {
+                CompositionLocalProvider(
+                    LocalEditorScrollState provides (session.editors.selected as? TextFileEditor)?.verticalScroll,
+                    LocalSidebarChrome provides if (treeVisible) {
+                        SidebarChrome(
+                            left = DesignTokens.chromeInset,
+                            width = treeWidth,
+                            top = DesignTokens.chromeInset,
+                            bottom = DesignTokens.chromeInset,
+                        )
+                    } else {
+                        null
+                    },
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        Column(Modifier.fillMaxSize()) {
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .onFocusChanged { focus ->
+                                        // The find bar sits inside this box and reports FIND_BAR itself.
+                                        if (!state.findBar.visible) {
+                                            if (focus.hasFocus) {
+                                                if (state.focus != KeyContext.EDITOR_FIELD) {
+                                                    state.focus = KeyContext.EDITOR
                                                 }
+                                            } else if (state.focus == KeyContext.EDITOR ||
+                                                state.focus == KeyContext.EDITOR_FIELD
+                                            ) {
+                                                state.focus = KeyContext.GLOBAL
                                             }
-                                        },
-                                ) {
-                                    EditorArea(
-                                        session,
-                                        state.findBar,
-                                        onFocusContext = { state.focus = it },
-                                        onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
-                                        onJump = { editor -> session.history.record(navigationLocation(editor)) },
-                                        modifier = Modifier.fillMaxSize(),
-                                        focused = state.focus == KeyContext.EDITOR,
-                                        focusRequests = state.editorFocusRequests,
-                                        bottomInset = statusBarInset,
-                                    )
-                                    TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
-                                }
+                                        }
+                                    },
+                            ) {
+                                EditorArea(
+                                    session,
+                                    state.findBar,
+                                    onFocusContext = { state.focus = it },
+                                    onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
+                                    onJump = { editor -> session.history.record(navigationLocation(editor)) },
+                                    modifier = Modifier.fillMaxSize(),
+                                    focused = state.focus == KeyContext.EDITOR,
+                                    focusRequests = state.editorFocusRequests,
+                                    leftInset = contentLeft,
+                                    topBand = topBand,
+                                    bottomInset = if (state.toolWindows.visible) DesignTokens.chromeGap else bottomBand,
+                                )
+                                TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
                             }
                             if (state.toolWindows.visible) {
                                 VerticalSplitter(onResize = { delta ->
@@ -277,19 +268,53 @@ fun App(
                                         }
                                     },
                                     modifier = Modifier.height(state.toolWindows.height).fillMaxWidth(),
+                                    contentInset = contentLeft,
+                                    contentBottomInset = bottomBand,
                                 )
                             }
                         }
-                        StatusBar(
-                            session,
+                        ContentEdgeFade(topBand = topBand, bottomBand = bottomBand)
+                        if (treeVisible) {
+                            ProjectTreePanel(
+                                session,
+                                Modifier
+                                    .offset(x = DesignTokens.chromeInset, y = DesignTokens.chromeInset)
+                                    .width(treeWidth)
+                                    .fillMaxHeight()
+                                    .padding(bottom = DesignTokens.chromeInset)
+                                    .onFocusChanged { treeFocused = it.hasFocus },
+                                focused = treeFocused,
+                                focusRequests = state.treeFocusRequests,
+                                revealRequests = state.revealRequests,
+                            )
+                            Splitter(
+                                onResize = { delta ->
+                                    treeWidth = (treeWidth + delta)
+                                        .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
+                                },
+                                modifier = Modifier
+                                    .offset(
+                                        x = DesignTokens.chromeInset + treeWidth - DesignTokens.space4,
+                                        y = DesignTokens.chromeInset,
+                                    )
+                                    .width(DesignTokens.chromeGap)
+                                    .fillMaxHeight()
+                                    .padding(bottom = DesignTokens.chromeInset),
+                            )
+                        }
+                        TopChromeRow(
+                            projectName = session.displayName(),
+                            manager = session.editors,
+                            onSearch = { state.openSearch(SearchTab.ALL) },
+                            leftInset = contentLeft,
+                        )
+                        BottomChromeRow(
+                            session = session,
                             focusLabel = focusLabel(state.focus),
                             message = state.statusMessage,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = DesignTokens.slabMargin),
-                            overlapsEditor = statusBarOverlaps,
+                            leftInset = contentLeft,
+                            modifier = Modifier.align(Alignment.BottomStart),
                         )
-                    }
                     }
                 }
             }
@@ -612,33 +637,90 @@ private fun refocusEditor(state: AppState) {
     }
 }
 
+/**
+ * The scroll edge effect: the content under the floating control rows fades into the dark field
+ * toward the window edge and stays sharp at the band's inner edge, so there is no painted bar.
+ */
 @Composable
-private fun TopBar(projectName: String, searchEnabled: Boolean, onSearch: () -> Unit) {
-    val shape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
+private fun BoxScope.ContentEdgeFade(topBand: Dp, bottomBand: Dp) {
+    Canvas(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(topBand)) {
+        drawRect(
+            Brush.verticalGradient(
+                0f to DesignTokens.scrim,
+                1f to Color.Transparent,
+            ),
+        )
+    }
+    Canvas(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomBand)) {
+        drawRect(
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                1f to DesignTokens.scrim,
+            ),
+        )
+    }
+}
+
+/** The floating top row: project capsule, tab group, search capsule; the content shows between. */
+@Composable
+private fun TopChromeRow(
+    projectName: String,
+    manager: FileEditorManager?,
+    onSearch: () -> Unit,
+    leftInset: Dp,
+) {
     Row(
         Modifier
             .fillMaxWidth()
-            .height(DesignTokens.topBarHeight)
-            .slabShadow(shape)
-            .glassSlabRims(shape)
-            .glassPanel(shape)
+            .padding(
+                top = DesignTokens.chromeInset,
+                start = leftInset,
+                end = DesignTokens.chromeInset,
+            )
+            .height(DesignTokens.capsuleHeight),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
+    ) {
+        ProjectCapsule(projectName)
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            if (manager != null && manager.openFiles.isNotEmpty()) {
+                TabGroup(manager, Modifier.align(Alignment.CenterStart))
+            }
+        }
+        SearchCapsule(onSearch)
+    }
+}
+
+/** Keeps a press on a floating capsule from reaching the editor under it; nothing is consumed. */
+private fun Modifier.editorPressBlocker(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent()
+    }
+}
+
+@Composable
+private fun ProjectCapsule(name: String) {
+    val shape = RoundedCornerShape(percent = 50)
+    Row(
+        Modifier
+            .height(DesignTokens.capsuleHeight)
+            .capsuleGlass(shape)
+            .editorPressBlocker()
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LogoMark(Modifier.size(18.dp))
+        LogoMark(Modifier.size(16.dp))
         Spacer(Modifier.width(DesignTokens.space8))
-        Text(
-            projectName,
-            color = DesignTokens.text,
-            fontSize = DesignTokens.uiTextSize,
-            fontFamily = DesignTokens.uiFont,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.weight(1f))
-        if (searchEnabled) {
-            SearchPill(onSearch)
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            Text(
+                name,
+                color = DesignTokens.text,
+                fontSize = DesignTokens.uiTextSize,
+                fontFamily = DesignTokens.uiFont,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -654,45 +736,51 @@ private fun LogoMark(modifier: Modifier) {
 }
 
 @Composable
-private fun SearchPill(onClick: () -> Unit) {
+private fun SearchCapsule(onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val shape = RoundedCornerShape(DesignTokens.radiusSmall)
+    val shape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
-            .height(24.dp)
-            .background(DesignTokens.searchPillFill.copy(alpha = if (hovered) 0.2f else 0.3f), shape)
-            .glassSlabRims(shape)
-            .then(if (hovered) Modifier.border(1.dp, DesignTokens.accent2, shape) else Modifier)
+            .height(DesignTokens.capsuleHeight)
+            .capsuleGlass(shape)
+            .then(
+                if (hovered) {
+                    Modifier.border(1.dp, DesignTokens.accent2.copy(alpha = 0.6f), shape)
+                } else {
+                    Modifier
+                },
+            )
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = DesignTokens.space8),
+            .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SearchIcon(Modifier.size(12.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            "Search",
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.smallTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
-        Spacer(Modifier.width(DesignTokens.space8))
-        Text(
-            KeyRouter.SEARCH_EVERYWHERE_GESTURE,
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.labelTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            SearchIcon(Modifier.size(12.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Search",
+                color = DesignTokens.textSecondaryOnGlass,
+                fontSize = DesignTokens.smallTextSize,
+                fontFamily = DesignTokens.uiFont,
+            )
+            Spacer(Modifier.width(DesignTokens.space8))
+            Text(
+                KeyRouter.SEARCH_EVERYWHERE_GESTURE,
+                color = DesignTokens.textSecondaryOnGlass,
+                fontSize = DesignTokens.labelTextSize,
+                fontFamily = DesignTokens.uiFont,
+            )
+        }
     }
 }
 
+/** The invisible drag handle on the floating sidebar's right edge. */
 @Composable
-private fun Splitter(onResize: (Dp) -> Unit) {
+private fun Splitter(onResize: (Dp) -> Unit, modifier: Modifier = Modifier) {
     Box(
-        Modifier
-            .width(DesignTokens.slabMargin)
-            .fillMaxHeight()
+        modifier
             .pointerHoverIcon(resizeCursor)
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
@@ -700,10 +788,7 @@ private fun Splitter(onResize: (Dp) -> Unit) {
                     onResize(dragAmount.x.toDp())
                 }
             },
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.width(1.dp).fillMaxHeight().background(DesignTokens.glassBorderSide))
-    }
+    )
 }
 
 @Composable
@@ -711,7 +796,7 @@ private fun VerticalSplitter(onResize: (Dp) -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(DesignTokens.slabMargin)
+            .height(DesignTokens.chromeGap)
             .pointerHoverIcon(horizontalResizeCursor)
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
@@ -732,7 +817,6 @@ private fun ProjectTreePanel(
     focused: Boolean = false,
     focusRequests: Int = 0,
     revealRequests: Int = 0,
-    bottomInset: Dp = 0.dp,
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusRequests) {
@@ -740,49 +824,50 @@ private fun ProjectTreePanel(
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
     }
-    val slabShape = RoundedCornerShape(DesignTokens.slabRadiusSide)
-    Column(
-        modifier
-            .slabShadow(slabShape)
-            .glassSlabRims(slabShape)
-            .glassPanel(slabShape, grid = true)
-            .focusHalo(focused)
-            .focusRequester(focusRequester)
-            .focusable(),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(DesignTokens.treeHeaderHeight)
-                .padding(horizontal = DesignTokens.space12),
-            verticalAlignment = Alignment.CenterVertically,
+    val shape = RoundedCornerShape(DesignTokens.sidebarRadius)
+    CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+        Column(
+            modifier
+                .sidebarGlass(shape)
+                .editorPressBlocker()
+                .focusHalo(focused)
+                .focusRequester(focusRequester)
+                .focusable(),
         ) {
-            Text(
-                "Project",
-                color = DesignTokens.textSecondaryOnGlass,
-                fontSize = DesignTokens.uiTextSize,
-                fontFamily = DesignTokens.uiFont,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-        val listState = rememberLazyListState()
-        LaunchedEffect(revealRequests) {
-            withFrameNanos { }
-            val key = session.editors.selected?.let { pathKey(it.file) } ?: return@LaunchedEffect
-            val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
-            if (index >= 0) listState.scrollToItem(index)
-        }
-        Box(Modifier.weight(1f).fillMaxWidth().padding(bottom = bottomInset)) {
-            LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                items(session.tree.rows(), key = { it.file.path.toString() }) { row ->
-                    TreeRowItem(session, row)
-                }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(DesignTokens.treeHeaderHeight)
+                    .padding(horizontal = DesignTokens.space12),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Project",
+                    color = DesignTokens.textSecondaryOnGlass,
+                    fontSize = DesignTokens.uiTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                    fontWeight = FontWeight.Medium,
+                )
             }
-            VerticalScrollbar(
-                adapter = rememberScrollbarAdapter(listState),
-                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                style = DesignTokens.scrollbarStyle,
-            )
+            val listState = rememberLazyListState()
+            LaunchedEffect(revealRequests) {
+                withFrameNanos { }
+                val key = session.editors.selected?.let { pathKey(it.file) } ?: return@LaunchedEffect
+                val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
+                if (index >= 0) listState.scrollToItem(index)
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(Modifier.fillMaxSize(), state = listState) {
+                    items(session.tree.rows(), key = { it.file.path.toString() }) { row ->
+                        TreeRowItem(session, row)
+                    }
+                }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(listState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    style = DesignTokens.scrollbarStyle,
+                )
+            }
         }
     }
 }
@@ -872,6 +957,8 @@ private fun EditorArea(
     modifier: Modifier,
     focused: Boolean = false,
     focusRequests: Int = 0,
+    leftInset: Dp = 0.dp,
+    topBand: Dp = 0.dp,
     bottomInset: Dp = 0.dp,
 ) {
     LaunchedEffect(focusRequests) {
@@ -879,15 +966,16 @@ private fun EditorArea(
         withFrameNanos { }
         (session.editors.selected as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
     }
-    // The editor fills the area and draws under the chrome; the floating bars only reserve insets.
-    val tabBottom = DesignTokens.slabMargin + DesignTokens.tabStripHeight
+    // The editor fills the area and draws under the chrome; the floating controls only reserve insets.
     Box(modifier.focusHalo(focused)) {
         val barHeight = if (findBar.visible) findBarHeight(findBar) else 0.dp
-        val topInset = if (findBar.visible) tabBottom + DesignTokens.slabMargin + barHeight else tabBottom
-        CompositionLocalProvider(LocalEditorInsets provides EditorInsets(top = topInset, bottom = bottomInset)) {
+        val topInset = if (findBar.visible) topBand + DesignTokens.chromeGap + barHeight else topBand
+        CompositionLocalProvider(
+            LocalEditorInsets provides EditorInsets(top = topInset, bottom = bottomInset, left = leftInset),
+        ) {
             val selected = session.editors.selected
             if (selected == null) {
-                EmptyEditor()
+                EmptyEditor(leftInset)
             } else {
                 if (selected is TextFileEditor) {
                     selected.onFocusContext = onFocusContext
@@ -897,46 +985,31 @@ private fun EditorArea(
                 selected.Content(Modifier.fillMaxSize())
             }
         }
-        TabBar(
-            session.editors,
-            Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = DesignTokens.slabMargin, start = DesignTokens.slabMargin, end = DesignTokens.slabMargin),
-        )
         if (findBar.visible) {
-            val findShape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
+            val findShape = RoundedCornerShape(DesignTokens.capsuleHeight / 2)
             FindBar(
                 findBar,
                 session.editors.selected as? TextFileEditor,
                 onFocusContext,
                 Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(
-                        top = tabBottom + DesignTokens.slabMargin,
-                        start = DesignTokens.slabMargin,
-                        end = DesignTokens.slabMargin,
-                    )
-                    .fillMaxWidth()
-                    .slabShadow(findShape)
-                    .glassSlabRims(findShape),
+                    .align(Alignment.TopStart)
+                    .padding(top = topBand, start = leftInset, end = DesignTokens.chromeInset)
+                    .fillMaxWidth(),
                 shape = findShape,
             )
         }
     }
 }
 
+/**
+ * The open tabs as one glass capsule group. The selected tab is a glass pill that slides and
+ * stretches to the newly selected tab; the pill's cyan line keeps the selection instant.
+ */
 @Composable
-private fun TabBar(manager: FileEditorManager, modifier: Modifier = Modifier) {
+private fun TabGroup(manager: FileEditorManager, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
-    val editorScroll = LocalEditorScrollState.current
-    // Only a layer-free, scrolled editor has code under the bar for the filter to sample;
-    // otherwise the cached field slice is enough. Derived state keeps a scroll step from
-    // recomposing the bar unless the answer changes.
-    val scrolled by remember(editorScroll) {
-        derivedStateOf {
-            editorScroll != null && editorScroll.value > 0 && !editorScroll.layered
-        }
-    }
+    val groupShape = RoundedCornerShape(percent = 50)
+    val pillShape = RoundedCornerShape(percent = 50)
     var tabBounds by remember { mutableStateOf<Map<String, Rect>>(emptyMap()) }
     val selectedKey = manager.selected?.let { pathKey(it.file) }
     LaunchedEffect(selectedKey, tabBounds, scrollState.viewportSize) {
@@ -952,26 +1025,53 @@ private fun TabBar(manager: FileEditorManager, modifier: Modifier = Modifier) {
         }
         scrollState.scrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
-    val shape = RoundedCornerShape(DesignTokens.slabRadiusTab)
-    Row(
+    val density = LocalDensity.current
+    val selectedBounds = selectedKey?.let { tabBounds[it] }
+    val targetLeft = selectedBounds?.let {
+        with(density) { (it.left - scrollState.value).toDp() }
+    } ?: 0.dp
+    val targetWidth = selectedBounds?.let { with(density) { it.width.toDp() } } ?: 0.dp
+    val morph: AnimationSpec<Dp> = if (LocalAnimationsEnabled.current) {
+        tween(DesignTokens.motionMediumMillis, easing = DesignTokens.standardEasing)
+    } else {
+        snap()
+    }
+    val pillLeft by animateDpAsState(targetLeft, morph, label = "tab-pill-left")
+    val pillWidth by animateDpAsState(targetWidth, morph, label = "tab-pill-width")
+    Box(
         modifier
-            .fillMaxWidth()
-            .height(DesignTokens.tabStripHeight)
-            .slabShadow(shape)
-            .glassSlabRims(shape)
-            .then(if (scrolled) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
-            .horizontalScroll(scrollState),
+            .height(DesignTokens.capsuleHeight)
+            .capsuleGlass(groupShape)
+            .editorPressBlocker()
+            .padding(horizontal = DesignTokens.space4),
     ) {
+        if (selectedBounds != null && pillWidth > 0.dp) {
+            Box(
+                Modifier
+                    .offset(x = pillLeft, y = 3.dp)
+                    .width(pillWidth)
+                    .height(DesignTokens.capsuleHeight - 6.dp)
+                    .glassLensCapsule(
+                        shape = pillShape,
+                        insetX = 1.dp,
+                        insetY = 1.dp,
+                        lineEdge = CapsuleEdge.BOTTOM,
+                        lineAlpha = 1f,
+                    ),
+            )
+        }
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
-            manager.openFiles.forEach { editor ->
-                val key = pathKey(editor.file)
-                Box(
-                    Modifier.onGloballyPositioned { coordinates ->
-                        val bounds = coordinates.boundsInParent()
-                        if (tabBounds[key] != bounds) tabBounds = tabBounds + (key to bounds)
-                    },
-                ) {
-                    TabItem(manager, editor)
+            Row(Modifier.fillMaxHeight().horizontalScroll(scrollState)) {
+                manager.openFiles.forEach { editor ->
+                    val key = pathKey(editor.file)
+                    Box(
+                        Modifier.onGloballyPositioned { coordinates ->
+                            val bounds = coordinates.boundsInParent()
+                            if (tabBounds[key] != bounds) tabBounds = tabBounds + (key to bounds)
+                        },
+                    ) {
+                        TabItem(manager, editor)
+                    }
                 }
             }
         }
@@ -983,31 +1083,24 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
     val interaction = remember(editor.file.path) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val active = editor === manager.selected
-    val neon = rememberNeonAlpha(active)
-    val capsuleShape = RoundedCornerShape(DesignTokens.radiusCapsule)
-    val capsule = if (active) {
-        Modifier.glassLensCapsule(
-            shape = capsuleShape,
-            insetX = 4.dp,
-            insetY = 4.dp,
-            lineEdge = CapsuleEdge.BOTTOM,
-            lineAlpha = neon,
-        )
-    } else {
-        Modifier.glassCapsule(
-            shape = capsuleShape,
-            insetX = 4.dp,
-            insetY = 4.dp,
-            fillAlpha = if (hovered) 1f else 0f,
-            lineEdge = CapsuleEdge.BOTTOM,
-            lineAlpha = 0f,
-        )
-    }
+    val hoverShape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
             .fillMaxHeight()
             .widthIn(max = DesignTokens.tabMaxWidth)
-            .then(capsule)
+            .then(
+                if (hovered && !active) {
+                    Modifier.glassCapsule(
+                        shape = hoverShape,
+                        insetX = 2.dp,
+                        insetY = 4.dp,
+                        fillAlpha = 1f,
+                        lineAlpha = 0f,
+                    )
+                } else {
+                    Modifier
+                },
+            )
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
                 manager.openFile(editor.file)
@@ -1056,53 +1149,80 @@ private fun TabCloseButton(
     }
 }
 
+/** The floating bottom row: the file path capsule at the left, one status capsule group right. */
 @Composable
-private fun StatusBar(
+private fun BottomChromeRow(
     session: ProjectSession,
     focusLabel: String? = null,
     message: String? = null,
+    leftInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
-    overlapsEditor: Boolean = false,
 ) {
-    val editor = session.editors.selected
-    val textEditor = editor as? TextFileEditor
-    val scroll = LocalEditorScrollState.current
-    // Sampled glass needs a layer-free editor with code above and below the visible viewport.
-    val overCode by remember(scroll, overlapsEditor) {
-        derivedStateOf {
-            overlapsEditor && scroll != null && scroll.value > 0 &&
-                scroll.value < scroll.maxValue && !scroll.layered
-        }
-    }
-    val shape = RoundedCornerShape(DesignTokens.slabRadiusStatus)
     Row(
         modifier
             .fillMaxWidth()
-            .height(DesignTokens.statusBarHeight)
-            .slabShadow(shape)
-            .glassSlabRims(shape)
-            .then(if (overCode) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
-            .labelScrim(overCode)
-            // A press on the pill must not reach the text field's full-document hit bounds
-            // underneath it; a passive pointer node is enough to stop the sibling hit test.
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) awaitPointerEvent()
-                }
-            }
+            .padding(
+                start = leftInset,
+                end = DesignTokens.chromeInset,
+                bottom = DesignTokens.chromeInset,
+            )
+            .height(DesignTokens.statusCapsuleHeight),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
+    ) {
+        val editor = session.editors.selected
+        val path = relativePath(session, editor?.file)
+        if (path.isNotEmpty()) {
+            PathCapsule(path, Modifier.weight(1f, fill = false))
+        }
+        Spacer(Modifier.weight(1f))
+        StatusCapsule(session, focusLabel, message)
+    }
+}
+
+@Composable
+private fun PathCapsule(path: String, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(percent = 50)
+    Row(
+        modifier
+            .height(DesignTokens.statusCapsuleHeight)
+            .capsuleGlass(shape)
+            .editorPressBlocker()
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
-                relativePath(session, editor?.file),
+                path,
                 color = DesignTokens.textSecondaryOnGlass,
                 fontSize = DesignTokens.statusTextSize,
                 fontFamily = DesignTokens.uiFont,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
             )
+        }
+    }
+}
+
+@Composable
+private fun StatusCapsule(
+    session: ProjectSession,
+    focusLabel: String? = null,
+    message: String? = null,
+) {
+    val editor = session.editors.selected
+    val textEditor = editor as? TextFileEditor
+    val shape = RoundedCornerShape(percent = 50)
+    Row(
+        Modifier
+            .height(DesignTokens.statusCapsuleHeight)
+            .capsuleGlass(shape)
+            .editorPressBlocker()
+            .padding(horizontal = DesignTokens.space12),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(DesignTokens.space16),
+    ) {
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             if (editor != null) {
                 if (textEditor != null) {
                     val (line, column) = lineAndColumn(textEditor.value.text, textEditor.value.selection.start)
@@ -1115,7 +1235,6 @@ private fun StatusBar(
                 }
             }
             if (message != null) {
-                Spacer(Modifier.width(DesignTokens.space16))
                 Text(
                     message,
                     color = DesignTokens.neonAmber,
@@ -1134,7 +1253,6 @@ private fun StatusBar(
 
 @Composable
 private fun FocusChip(label: String) {
-    Spacer(Modifier.width(DesignTokens.space16))
     Box(Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
         Text(
             label,
@@ -1148,7 +1266,6 @@ private fun FocusChip(label: String) {
 
 @Composable
 private fun StatusItem(text: String) {
-    Spacer(Modifier.width(DesignTokens.space16))
     Text(
         text,
         color = DesignTokens.textSecondaryOnGlass,
@@ -1160,10 +1277,8 @@ private fun StatusItem(text: String) {
 
 @Composable
 private fun ReadOnlyBadge() {
-    Spacer(Modifier.width(DesignTokens.space16))
     Box(
         Modifier
-            .background(DesignTokens.raised, RoundedCornerShape(DesignTokens.radiusSmall))
             .border(1.dp, DesignTokens.border, RoundedCornerShape(DesignTokens.radiusSmall))
             .padding(horizontal = 6.dp, vertical = 1.dp),
     ) {
@@ -1177,9 +1292,9 @@ private fun ReadOnlyBadge() {
 }
 
 @Composable
-private fun EmptyEditor() {
+private fun EmptyEditor(leftInset: Dp = 0.dp) {
     Column(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().padding(start = leftInset),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -1189,18 +1304,28 @@ private fun EmptyEditor() {
     }
 }
 
+/** The no-project screen: the wordmark is the content; the controls float over it as glass. */
 @Composable
-private fun NoProjectState(onOpenFolder: () -> Unit, modifier: Modifier) {
-    Column(
-        modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Wordmark(alpha = 1f, width = 320.dp)
-        Spacer(Modifier.height(24.dp))
-        OpenFolderButton(onOpenFolder)
-        Spacer(Modifier.height(28.dp))
-        ShortcutList(hasProject = false)
+private fun WelcomeScreen(onOpenFolder: () -> Unit, onSearch: () -> Unit) {
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Wordmark(alpha = 1f, width = 420.dp)
+            Spacer(Modifier.height(28.dp))
+            OpenFolderButton(onOpenFolder)
+            Spacer(Modifier.height(28.dp))
+            ShortcutList(hasProject = false)
+        }
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = DesignTokens.chromeInset, end = DesignTokens.chromeInset),
+        ) {
+            SearchCapsule(onSearch)
+        }
     }
 }
 
@@ -1283,23 +1408,30 @@ private fun rememberWordmarkCaretAlpha(): Float {
 private fun OpenFolderButton(onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val shape = RoundedCornerShape(percent = 50)
     Box(
         Modifier
+            .height(DesignTokens.capsuleHeight + DesignTokens.space8)
+            .capsuleGlass(shape)
             .background(
-                if (hovered) DesignTokens.accentHover else DesignTokens.accent,
-                RoundedCornerShape(DesignTokens.radiusSmall),
+                DesignTokens.accent.copy(alpha = if (hovered) 0.30f else 0.18f),
+                shape,
             )
+            .border(1.dp, DesignTokens.accent.copy(alpha = 0.55f), shape)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = DesignTokens.space16 + DesignTokens.space4, vertical = DesignTokens.space8),
+            .padding(horizontal = DesignTokens.space16 + DesignTokens.space8),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(
-            "Open Folder…",
-            color = DesignTokens.onAccent,
-            fontSize = DesignTokens.uiTextSize,
-            fontFamily = DesignTokens.uiFont,
-            fontWeight = FontWeight.Medium,
-        )
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            Text(
+                "Open Folder…",
+                color = DesignTokens.selectedText,
+                fontSize = DesignTokens.uiTextSize,
+                fontFamily = DesignTokens.uiFont,
+                fontWeight = FontWeight.Medium,
+            )
+        }
     }
 }
 

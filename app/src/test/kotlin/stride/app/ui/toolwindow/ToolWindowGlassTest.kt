@@ -12,6 +12,7 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -55,7 +56,7 @@ class ToolWindowGlassTest {
     lateinit var temp: Path
 
     @Test
-    fun `tool window tab strip is the glass fill over the neutral field`() {
+    fun `tool window content is a content plane with one floating switcher capsule`() {
         val toolWindows = managerWith("test", "Test") { modifier -> Box(modifier) }
         val pixels = renderScene(SCENE, SCENE) {
             MeshBackground(Modifier.fillMaxSize()) {
@@ -66,32 +67,31 @@ class ToolWindowGlassTest {
                 )
             }
         }
-        val pixel = pixels[index(380, 295, SCENE)]
-        val spread = spread(pixel)
-        val luminance = relativeLuminance(Color(pixel))
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
-        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-        System.err.println(
-            "tab-strip pixel=(%d,%d,%d) spread=%d luminance=%.4f band=%.4f..%.4f".format(
-                red(pixel),
-                green(pixel),
-                blue(pixel),
-                spread,
-                luminance,
-                lowest,
-                highest,
-            ),
+        // Far from the switcher: the panel paints the editor's content plane, not a slab.
+        val plane = Color(pixels[index(380, 320, SCENE)])
+        val expected = blendOver(
+            DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
+            DesignTokens.background,
         )
-        // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
-        assertTrue(spread <= 12, "tab strip channel spread = $spread, expected neutral glass")
+        System.err.println("tool-window plane=%s expected=%s".format(hex(plane), hex(expected)))
         assertTrue(
-            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
-            "tab strip luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),
+            channelDistance(plane.toArgb(), expected.toArgb()) <= 2,
+            "the tool window should be the content plane: %s vs %s".format(hex(plane), hex(expected)),
+        )
+        // Inside the switcher capsule: glass over that plane, so the pixel differs from it.
+        val capsule = Color(pixels[index(35, 294, SCENE)])
+        System.err.println("tool-window switcher=%s".format(hex(capsule)))
+        assertTrue(
+            channelDistance(capsule.toArgb(), plane.toArgb()) > 2,
+            "the switcher should be a floating capsule, not the plane: %s vs %s".format(
+                hex(capsule),
+                hex(plane),
+            ),
         )
     }
 
     @Test
-    fun `terminal empty cell is the glass fill over the mesh`() {
+    fun `terminal empty cell is the content plane`() {
         val root = Files.createDirectories(temp.resolve("terminal-project"))
         val project = Project(root)
         val session = TerminalSession(project)
@@ -104,7 +104,7 @@ class ToolWindowGlassTest {
                     ToolWindowPanel(toolWindows, onFocusContext = {}, modifier = Modifier.fillMaxSize())
                 }
             }
-            assertGlassOverMesh("terminal", rendered, 380, 380)
+            assertContentPlane("terminal", rendered, 380, 380)
         } finally {
             session.dispose()
             project.dispose()
@@ -112,7 +112,7 @@ class ToolWindowGlassTest {
     }
 
     @Test
-    fun `run console empty cell is the glass fill over the mesh`() {
+    fun `run console empty cell is the content plane`() {
         val root = Files.createDirectories(temp.resolve("run-project"))
         val project = Project(root)
         val runManager = RunManager(project)
@@ -129,7 +129,7 @@ class ToolWindowGlassTest {
                     ToolWindowPanel(toolWindows, onFocusContext = {}, modifier = Modifier.fillMaxSize())
                 }
             }
-            assertGlassOverMesh("run console", rendered, 380, 380)
+            assertContentPlane("run console", rendered, 380, 380)
         } finally {
             runManager.dispose()
             project.dispose()
@@ -198,10 +198,12 @@ class ToolWindowGlassTest {
     }
 
     @Test
-    fun `run status colors clear 4_5 on the painted glass slab`() {
-        // The panel is glass now, not the removed content tint: its brightest slice is glassFill
-        // over the field's lift. This is the surface the run text is actually painted on.
-        val slab = blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift)
+    fun `run status colors clear 4_5 on the content plane`() {
+        // The run content is no longer on glass: it paints the same opaque plane as the editor.
+        val plane = blendOver(
+            DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
+            DesignTokens.background,
+        )
         val texts = linkedMapOf(
             "text" to DesignTokens.text,
             "muted" to DesignTokens.muted,
@@ -209,16 +211,15 @@ class ToolWindowGlassTest {
             "neonLime" to DesignTokens.neonLime,
         )
         for ((name, color) in texts) {
-            val ratio = contrastRatio(color, slab)
+            val ratio = contrastRatio(color, plane)
             System.err.println("run-status %s=%.3f".format(name, ratio))
             assertTrue(
                 ratio >= DesignTokens.contrastText,
-                "$name on the glass slab = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+                "$name on the content plane = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
             )
         }
-        // The failed-status word sits on the black 45% label band, the chrome bars' local
-        // compensation; neonPink alone is 4.09:1 on the slab.
-        val banded = blendOver(DesignTokens.chromeLabelScrim, slab)
+        // The failed-status word sits on the black 45% label band.
+        val banded = blendOver(DesignTokens.chromeLabelScrim, plane)
         val pink = contrastRatio(DesignTokens.neonPink, banded)
         System.err.println("run-status neonPink-on-band=%.3f".format(pink))
         assertTrue(
@@ -237,28 +238,18 @@ class ToolWindowGlassTest {
         activate(id)
     }
 
-    private fun assertGlassOverMesh(name: String, rendered: IntArray, x: Int, y: Int) {
+    private fun assertContentPlane(name: String, rendered: IntArray, x: Int, y: Int) {
         val actual = Color(rendered[index(x, y, SCENE)])
-        val luminance = relativeLuminance(actual)
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
-        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-        System.err.println(
-            "%s glass pixel=(%d,%d,%d) luminance=%.4f band=%.4f..%.4f".format(
-                name,
-                (actual.red * 255f).toInt(),
-                (actual.green * 255f).toInt(),
-                (actual.blue * 255f).toInt(),
-                luminance,
-                lowest,
-                highest,
-            ),
+        val expected = blendOver(
+            DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
+            DesignTokens.background,
         )
+        System.err.println("%s pixel=%s expected=%s".format(name, hex(actual), hex(expected)))
         assertTrue(
-            luminance >= lowest - 0.002 && luminance <= highest + 0.004,
-            "$name glass luminance %.4f is outside the fill band %.4f..%.4f at ($x, $y)".format(
-                luminance,
-                lowest,
-                highest,
+            channelDistance(actual.toArgb(), expected.toArgb()) <= 2,
+            "$name should paint the content plane: %s vs %s at ($x, $y)".format(
+                hex(actual),
+                hex(expected),
             ),
         )
     }
@@ -301,6 +292,7 @@ class ToolWindowGlassTest {
     private fun red(pixel: Int): Int = (pixel shr 16) and 0xFF
     private fun green(pixel: Int): Int = (pixel shr 8) and 0xFF
     private fun blue(pixel: Int): Int = pixel and 0xFF
+    private fun hex(color: Color): String = "#%06X".format(color.toArgb() and 0xFFFFFF)
 
     private companion object {
         const val SCENE = 400

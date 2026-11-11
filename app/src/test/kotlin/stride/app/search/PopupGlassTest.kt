@@ -38,19 +38,14 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
-import stride.app.editor.EditorScrollState
-import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.blendOver
-import stride.app.ui.theme.glassSlabRims
 import stride.app.ui.theme.relativeLuminance
-import stride.app.ui.theme.slabShadow
 import stride.core.services.Project
 import stride.core.vfs.VFile
 
@@ -302,108 +297,45 @@ class PopupGlassTest {
     }
 
     @Test
-    fun `find bar glass matches its slab shape in both scroll branches`() {
-        val shape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
-        val panel = findBarPixels(shape, scrolled = false)
-        val chrome = findBarPixels(shape, scrolled = true)
-
-        assertFindBarBand(
-            label = "panel",
-            pixels = panel,
-            lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom)),
-            highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift)),
-        )
-        // The chrome branch paints glassBase + chromeBackdropMix of the field, not the panel fill.
-        assertFindBarBand(
-            label = "chrome",
-            pixels = chrome,
-            lowest = relativeLuminance(chromeOver(DesignTokens.fieldBottom)),
-            highest = relativeLuminance(chromeOver(DesignTokens.backgroundLift)),
-        )
-
-        // A corner of the slab's bounding box lies outside the rounded fill; with a rectangle
-        // shape the same pixel is glass. This is the pixel check for the shape threading.
-        val rectangular = findBarPixels(RectangleShape, scrolled = false)
-        val roundedCorner = relativeLuminance(Color(panel[index(2, 2, 600)]))
-        val squareCorner = relativeLuminance(Color(rectangular[index(2, 2, 600)]))
+    fun `find bar is a floating capsule whose glass follows the backdrop`() {
+        val shape = RoundedCornerShape(DesignTokens.capsuleHeight / 2)
+        val dark = findBarPixels(shape, DesignTokens.background)
+        val bright = findBarPixels(shape, Color(0xFFE8E8E8))
+        // The liquid glass carries the backdrop's luminance, so a bright backdrop lifts it.
+        val darkInterior = relativeLuminance(Color(dark[index(300, 18, 600)]))
+        val brightInterior = relativeLuminance(Color(bright[index(300, 18, 600)]))
         System.err.println(
-            "find-bar corner rounded=%.4f square=%.4f".format(roundedCorner, squareCorner),
+            "find-bar backdrop dark=%.4f bright=%.4f".format(darkInterior, brightInterior),
         )
         assertTrue(
-            roundedCorner < squareCorner - 0.005,
-            "the rounded corner should not paint the glass fill: rounded %.4f vs square %.4f"
-                .format(roundedCorner, squareCorner),
+            brightInterior > darkInterior + 0.1,
+            "the find bar glass should follow its backdrop: dark %.4f bright %.4f"
+                .format(darkInterior, brightInterior),
         )
-    }
 
-    private fun assertFindBarBand(label: String, pixels: IntArray, lowest: Double, highest: Double) {
-        var widest = -1
-        var widestX = -1
-        var widestY = -1
-        // Below the top rim and above the underline glow, so only the panel fill is measured.
-        for (y in 6 until 18) {
-            for (x in 60 until 400) {
-                val spread = spread(pixels[index(x, y, 600)])
-                if (spread > widest) {
-                    widest = spread
-                    widestX = x
-                    widestY = y
-                }
-            }
-        }
-        val pixel = pixels[index(widestX, widestY, 600)]
-        val luminance = relativeLuminance(Color(pixel))
-        System.err.println(
-            "find-bar %s widest=%d at (%d,%d) pixel=%s luminance=%.4f band=%.4f..%.4f".format(
-                label,
-                widest,
-                widestX,
-                widestY,
-                hex(pixel),
-                luminance,
-                lowest,
-                highest,
-            ),
-        )
-        // The cooler glass keeps the field's graphite tint; anything wider would be a hue.
-        assertTrue(widest <= 15, "the find bar should stay neutral, widest channel spread = $widest")
+        // A corner of the capsule's bounding box lies outside the rounded fill.
+        val roundedCorner = relativeLuminance(Color(dark[index(2, 2, 600)]))
+        val center = relativeLuminance(Color(dark[index(300, 18, 600)]))
+        System.err.println("find-bar corner=%.4f interior=%.4f".format(roundedCorner, center))
         assertTrue(
-            luminance >= lowest - 0.003 && luminance <= highest + 0.004,
-            "the $label find bar luminance %.4f is outside the glass band %.4f..%.4f"
-                .format(luminance, lowest, highest),
+            roundedCorner < center - 0.005,
+            "the rounded corner should not paint the fill: corner %.4f vs interior %.4f"
+                .format(roundedCorner, center),
         )
     }
 
-    private fun findBarPixels(shape: Shape, scrolled: Boolean): IntArray {
-        val scroll = EditorScrollState().apply {
-            updateBounds(contentSize = 1_000, viewportSize = 100)
-            if (scrolled) dispatchRawDelta(50f)
-        }
-        return scenePixels(600, 400) {
-            MeshBackground(Modifier.fillMaxSize()) {
-                CompositionLocalProvider(LocalEditorScrollState provides scroll) {
-                    FindBar(
-                        state = FindBarState(),
-                        editor = null,
-                        onFocusContext = {},
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .fillMaxWidth()
-                            .slabShadow(shape)
-                            .glassSlabRims(shape),
-                        shape = shape,
-                    )
-                }
+    private fun findBarPixels(shape: Shape, background: Color): IntArray =
+        scenePixels(600, 400) {
+            Box(Modifier.fillMaxSize().background(background)) {
+                FindBar(
+                    state = FindBarState(),
+                    editor = null,
+                    onFocusContext = {},
+                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth(),
+                    shape = shape,
+                )
             }
         }
-    }
-
-    /** The chrome glass over a neutral field color: the base plus its share of the field. */
-    private fun chromeOver(field: Color): Color = Color(
-        (DesignTokens.glassBase.red + DesignTokens.chromeBackdropMix * field.red).coerceIn(0f, 1f),
-        (DesignTokens.glassBase.green + DesignTokens.chromeBackdropMix * field.green).coerceIn(0f, 1f),
-        (DesignTokens.glassBase.blue + DesignTokens.chromeBackdropMix * field.blue).coerceIn(0f, 1f),
-    )
 
     @Test
     fun `popup draws without a fade when animations are disabled`() {

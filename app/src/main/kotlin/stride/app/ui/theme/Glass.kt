@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asComposeCanvas
 import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.asSkiaPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -66,9 +67,6 @@ private const val BACKDROP_BLUR_DOWNSCALE = 8
 /** The lens blur runs on a 1/[LENS_DOWNSCALE] copy of the backdrop; the bend stays soft. */
 private const val LENS_DOWNSCALE = 4
 
-/** Chrome bars downscale further: they sit over text and their blur is soft anyway. */
-private const val CHROME_DOWNSCALE = 8
-
 /** The lens displacement fades to zero over this distance from the outer rim. */
 private val LENS_TAPER = 2.dp
 
@@ -100,10 +98,16 @@ class MeshBitmapHolder {
 val LocalMeshBitmap = staticCompositionLocalOf<MeshBitmapHolder?> { null }
 
 /**
- * How far the tab bar, find bar and status bar overlay the editor viewport. The editor keeps
- * drawing under them; these insets only keep the first and last lines reachable.
+ * How far the floating control rows (and the find bar between them) overlay the editor
+ * viewport, and where the text column starts beside the sidebar. The editor keeps drawing under
+ * them; these insets only keep the first and last lines and the caret reachable.
  */
-data class EditorInsets(val top: Dp = 0.dp, val bottom: Dp = 0.dp)
+data class EditorInsets(
+    val top: Dp = 0.dp,
+    val bottom: Dp = 0.dp,
+    val left: Dp = 0.dp,
+    val right: Dp = 0.dp,
+)
 
 val LocalEditorInsets = staticCompositionLocalOf { EditorInsets() }
 
@@ -200,7 +204,6 @@ private data class GlassKey(
     val left: Int,
     val top: Int,
     val meshVersion: Int,
-    val grid: Boolean,
 )
 
 private class GlassPanelCache {
@@ -211,10 +214,9 @@ private class GlassPanelCache {
 /**
  * A cached glass panel: its slice of the field blurred once together with the
  * [DesignTokens.glassFill] fill, and the hairline rim. The blur is cached by panel size, field
- * size, root position and field version. [grid] bakes a faint neutral hairline grid into the
- * slice, so small lenses over the panel have structure to bend.
+ * size, root position and field version.
  */
-fun Modifier.glassPanel(shape: Shape = RectangleShape, grid: Boolean = false): Modifier = composed {
+fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
     val mesh = LocalMeshBitmap.current
     val state = remember { GlassPanelState() }
     val cache = remember { GlassPanelCache() }
@@ -230,7 +232,7 @@ fun Modifier.glassPanel(shape: Shape = RectangleShape, grid: Boolean = false): M
             state.update(coordinates.boundsInRoot().topLeft, coordinates.size.width, coordinates.size.height)
         }
         .drawBehind {
-            drawGlassPanel(state.bounds, shape, mesh, cache, grid)
+            drawGlassPanel(state.bounds, shape, mesh, cache)
         }
 }
 
@@ -407,7 +409,6 @@ private fun DrawScope.drawGlassPanel(
     shape: Shape,
     mesh: MeshBitmapHolder?,
     cache: GlassPanelCache,
-    grid: Boolean,
 ) {
     val slice = if (bounds != null && mesh?.bitmap != null && mesh.width > 0 && mesh.height > 0) {
         val key = GlassKey(
@@ -418,7 +419,6 @@ private fun DrawScope.drawGlassPanel(
             left = bounds.left,
             top = bounds.top,
             meshVersion = mesh.version,
-            grid = grid,
         )
         if (cache.key != key) {
             cache.image?.close()
@@ -427,9 +427,6 @@ private fun DrawScope.drawGlassPanel(
                 bounds = bounds,
                 size = size,
                 sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE,
-                grid = grid,
-                gridSpacing = DesignTokens.glassGridSpacing.toPx(),
-                gridStroke = 1.dp.toPx(),
             )
             cache.key = key
             GlassCacheStats.panelBlurCount += 1
@@ -467,9 +464,6 @@ private fun glassSliceImage(
     bounds: GlassBounds,
     size: Size,
     sigma: Float,
-    grid: Boolean,
-    gridSpacing: Float,
-    gridStroke: Float,
 ): Image {
     val width = size.width.roundToInt().coerceAtLeast(1)
     val height = size.height.roundToInt().coerceAtLeast(1)
@@ -504,33 +498,11 @@ private fun glassSliceImage(
         }
     }
     val fill = Paint().apply { color = DesignTokens.glassFill.toArgb() }
-    val gridPaint = if (grid) Paint().apply { color = DesignTokens.glassGrid.toArgb() } else null
     val base = try {
         surface.canvas.drawRect(org.jetbrains.skia.Rect(0f, 0f, width.toFloat(), height.toFloat()), fill)
-        if (gridPaint != null) {
-            val spacing = gridSpacing.coerceAtLeast(1f)
-            val stroke = gridStroke
-            var offset = spacing
-            while (offset < width) {
-                surface.canvas.drawRect(
-                    org.jetbrains.skia.Rect(offset, 0f, offset + stroke, height.toFloat()),
-                    gridPaint,
-                )
-                offset += spacing
-            }
-            offset = spacing
-            while (offset < height) {
-                surface.canvas.drawRect(
-                    org.jetbrains.skia.Rect(0f, offset, width.toFloat(), offset + stroke),
-                    gridPaint,
-                )
-                offset += spacing
-            }
-        }
         surface.makeImageSnapshot()
     } finally {
         fill.close()
-        gridPaint?.close()
         surface.close()
     }
     GlassCacheStats.lastSliceOpaque = base.isOpaque
@@ -646,19 +618,31 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = liquidBack
 )
 
 /**
- * Glass for a chrome bar over the editor: a lighter blur than the floating glass, no edge lens
- * (the bar is barely taller than the bezel), a lighter tint so the code under it stays readable,
- * and the hairline frame on top.
+ * A floating control capsule: a tinted glass fill, the specular rim and the soft shadow. It
+ * carries no backdrop pass of its own: the scroll edge effect has already blurred the content
+ * band it floats over, so the capsule reads as the same material at a fraction of the cost.
  */
-fun Modifier.chromeGlass(shape: Shape = RectangleShape): Modifier = liquidBackdrop(
-    shape,
-    lensBezel = DesignTokens.chromeGlassBezel,
-    lensStrength = 0.dp,
-    blurRadius = DesignTokens.chromeGlassBlurRadius,
-    backdropMix = DesignTokens.chromeBackdropMix,
-    downscale = CHROME_DOWNSCALE,
-    border = true,
-)
+fun Modifier.capsuleGlass(shape: Shape): Modifier = slabShadow(shape)
+    .glassSlabRims(shape)
+    .drawBehind {
+        clipPath(capsulePath(shape, size)) {
+            drawRect(DesignTokens.capsuleFill)
+            drawRect(DesignTokens.capsuleLift)
+        }
+    }
+
+/**
+ * The floating sidebar: a translucent tint over the background extension, so the mirrored,
+ * blurred content shows through it with the same specular rim and shadow as the capsules.
+ */
+fun Modifier.sidebarGlass(shape: Shape): Modifier = slabShadow(shape)
+    .glassSlabRims(shape)
+    .drawBehind {
+        clipPath(capsulePath(shape, size)) {
+            drawRect(DesignTokens.sidebarFill)
+        }
+    }
+
 
 private fun Modifier.liquidBackdrop(
     shape: Shape,
@@ -742,6 +726,145 @@ private fun backdropImageFilter(sigma: Float): ImageFilter {
         SamplingMode.LINEAR,
         blur,
     )
+}
+
+/** The floating sidebar's placement, so the editor can mirror its real content behind the glass. */
+data class SidebarChrome(val left: Dp, val width: Dp, val top: Dp, val bottom: Dp)
+
+val LocalSidebarChrome = staticCompositionLocalOf<SidebarChrome?> { null }
+
+/** One cached mirror of the content strip right of the sidebar; a frame only blits it. */
+class MirroredStripCache {
+    internal var key: Any? = null
+    internal var image: Image? = null
+
+    fun dispose() {
+        image?.close()
+        image = null
+        key = null
+    }
+}
+
+/**
+ * The background extension: the strip of real content right of this element is mirrored back
+ * across its edge and drawn into the element, blurred. [source] paints that content in window
+ * coordinates; it is rendered into a small offscreen image once per [key] and blurred once, so a
+ * static frame only blits it. The element must cover the sidebar and be drawn after the content.
+ */
+fun Modifier.backgroundExtension(
+    key: Any,
+    cache: MirroredStripCache,
+    sourceLeft: Dp,
+    sourceTop: Dp,
+    sourceWidth: Dp,
+    blurRadius: Dp = DesignTokens.backgroundExtensionBlur,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Modifier = drawBehind {
+    if (size.width <= 0f || size.height <= 0f) return@drawBehind
+    val image = cache.imageFor(
+        key = key,
+        width = size.width,
+        height = size.height,
+        sourceLeft = sourceLeft.toPx(),
+        sourceTop = sourceTop.toPx(),
+        sourceWidth = sourceWidth.toPx(),
+        sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
+        source = source,
+    ) ?: return@drawBehind
+    val native = drawContext.canvas.nativeCanvas
+    native.save()
+    native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
+    // The image's left edge is the content adjacent to the element's right edge; the flip
+    // reverses it across that edge.
+    native.translate(size.width, 0f)
+    native.scale(-1f, 1f)
+    native.drawImageRect(
+        image,
+        org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+        org.jetbrains.skia.Rect.makeWH(size.width, size.height),
+        SamplingMode.LINEAR,
+        null,
+        true,
+    )
+    native.restore()
+}
+
+private data class StripKey(
+    val key: Any,
+    val width: Int,
+    val height: Int,
+    val sourceLeft: Int,
+    val sourceTop: Int,
+    val sourceWidth: Int,
+    val sigma: Float,
+)
+
+/** 1/[MIRROR_DOWNSCALE] copy of the source strip; the blur hides the rest of the detail. */
+private const val MIRROR_DOWNSCALE = 3
+
+private fun MirroredStripCache.imageFor(
+    key: Any,
+    width: Float,
+    height: Float,
+    sourceLeft: Float,
+    sourceTop: Float,
+    sourceWidth: Float,
+    sigma: Float,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Image? {
+    val next = StripKey(
+        key = key,
+        width = width.roundToInt(),
+        height = height.roundToInt(),
+        sourceLeft = sourceLeft.roundToInt(),
+        sourceTop = sourceTop.roundToInt(),
+        sourceWidth = sourceWidth.roundToInt(),
+        sigma = sigma,
+    )
+    if (next == this.key) return image
+    val built = buildMirroredStrip(width, height, sourceLeft, sourceTop, sourceWidth, sigma, source)
+    dispose()
+    this.key = next
+    image = built
+    return image
+}
+
+private fun buildMirroredStrip(
+    width: Float,
+    height: Float,
+    sourceLeft: Float,
+    sourceTop: Float,
+    sourceWidth: Float,
+    sigma: Float,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Image? {
+    if (sourceWidth <= 0f || width <= 0f || height <= 0f) return null
+    val stripWidth = (width / MIRROR_DOWNSCALE).roundToInt().coerceAtLeast(1)
+    val stripHeight = (height / MIRROR_DOWNSCALE).roundToInt().coerceAtLeast(1)
+    val scale = stripWidth / sourceWidth
+    val sharp = Surface.makeRaster(ImageInfo(stripWidth, stripHeight, ColorType.N32, ColorAlphaType.PREMUL))
+    val blurred = Surface.makeRaster(ImageInfo(stripWidth, stripHeight, ColorType.N32, ColorAlphaType.PREMUL))
+    try {
+        sharp.canvas.clear(contentTintColor.toArgb())
+        sharp.canvas.scale(scale, scale)
+        sharp.canvas.translate(-sourceLeft, -sourceTop)
+        source(sharp.canvas.asComposeCanvas())
+        val snapshot = sharp.makeImageSnapshot()
+        val paint = Paint().apply {
+            imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
+        }
+        try {
+            blurred.canvas.clear(0)
+            blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
+        } finally {
+            paint.close()
+            snapshot.close()
+        }
+        return blurred.makeImageSnapshot()
+    } finally {
+        sharp.close()
+        blurred.close()
+    }
 }
 
 /**
@@ -861,6 +984,9 @@ private class SlabShadowCache {
         }
         try {
             surface.canvas.clear(0)
+            // Only the outside of the shape casts a shadow; a translucent fill must not show a
+            // black plate behind it.
+            surface.canvas.clipPath(path, org.jetbrains.skia.ClipMode.DIFFERENCE)
             surface.canvas.drawPath(path, paint)
             image = surface.makeImageSnapshot()
             this.margin = margin

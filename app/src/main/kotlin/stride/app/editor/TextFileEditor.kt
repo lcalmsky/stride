@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.rememberTextFieldVerticalScrollState
@@ -28,6 +27,7 @@ import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -73,7 +73,11 @@ import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.LocalEditorInsets
+import stride.app.ui.theme.LocalSidebarChrome
+import stride.app.ui.theme.MirroredStripCache
+import stride.app.ui.theme.SidebarChrome
 import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.backgroundExtension
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.neonBorder
 import stride.core.vfs.VFile
@@ -93,6 +97,18 @@ import java.util.logging.Logger
 
 /** A clickable ▶ drawn in the gutter of [line] (0-based). */
 data class GutterMarker(val line: Int, val onClick: () -> Unit)
+
+/** Everything the cached mirror of the content strip depends on. */
+private data class ExtensionKey(
+    val layout: TextLayoutResult,
+    val spans: List<TokenSpan>,
+    val searchSpans: List<BackgroundSpan>,
+    val horizontal: Int,
+    val vertical: Int,
+    val chrome: SidebarChrome,
+    val width: androidx.compose.ui.unit.Dp,
+    val height: androidx.compose.ui.unit.Dp,
+)
 
 /**
  * Single-file text editor backed by [LineStateHighlighter]. Files larger than
@@ -527,10 +543,11 @@ class TextFileEditor(
         val vertical = verticalScroll
         val horizontal = horizontalScroll
         val fieldScroll = rememberTextFieldVerticalScrollState()
-        var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+        // Keyed on the editor: switching tabs reuses this composition slot with a new document.
+        var layout by remember(this) { mutableStateOf<TextLayoutResult?>(null) }
         val latestLayout = rememberUpdatedState(layout)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
-        var layeredScroll by remember { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
+        var layeredScroll by remember(this) { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
         LaunchedEffect(lineCount) {
             layeredScroll = shouldLayerScroll(lineCount, layeredScroll)
         }
@@ -550,26 +567,32 @@ class TextFileEditor(
         BoxWithConstraints(modifier.contentTint()) {
             val density = LocalDensity.current
             val chromeInsets = LocalEditorInsets.current
+            val leftPad = chromeInsets.left
             val topPad = 8.dp + chromeInsets.top
             val bottomPad = 8.dp + chromeInsets.bottom
             val topPadPx = with(density) { topPad.toPx() }
             val viewportHeightPx = with(density) { (maxHeight - topPad - bottomPad).coerceAtLeast(0.dp).toPx() }
             LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight) {
                 val textLayout = layout ?: return@LaunchedEffect
-                val caretOffset = currentValue.selection.end.coerceIn(0, currentValue.text.length)
+                // The layout can still be the previous document's for one frame after a tab switch.
+                val caretOffset = currentValue.selection.end
+                    .coerceIn(0, textLayout.layoutInput.text.length)
                 val rect = textLayout.getCursorRect(caretOffset)
-                val contentLeft = with(density) { DesignTokens.space16.toPx() }
+                // The text field spans the window; the glyph column starts past the gutter and the
+                // visible region starts at the gutter's right edge.
+                val contentLeft = with(density) { (leftPad + gutterWidth + DesignTokens.space16).toPx() }
+                val visibleLeft = with(density) { (leftPad + gutterWidth).toPx() }
+                val visibleRight = with(density) { maxWidth.toPx() }
                 val contentTop = topPadPx
-                val viewportWidth = with(density) { (maxWidth - gutterWidth).toPx() }
                 val margin = with(density) { 24.dp.toPx() }
 
                 val left = contentLeft + rect.left
                 val right = contentLeft + rect.right
                 val targetX = when {
-                    right + margin > horizontal.value + viewportWidth ->
-                        horizontal.value + (right + margin - horizontal.value - viewportWidth)
+                    right + margin > horizontal.value + visibleRight ->
+                        horizontal.value + (right + margin - horizontal.value - visibleRight)
                     rect.left == 0f -> 0f
-                    left - margin < horizontal.value -> left - margin
+                    left - margin < horizontal.value + visibleLeft -> left - margin - visibleLeft
                     else -> horizontal.value.toFloat()
                 }
                 val targetXPx = targetX.toInt().coerceIn(0, horizontal.maxValue)
@@ -588,7 +611,7 @@ class TextFileEditor(
                 if (targetYPx != vertical.value) vertical.scrollTo(targetYPx)
             }
             val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * lineCount)
-            val textMinWidth = (maxWidth - gutterWidth - 32.dp).coerceAtLeast(0.dp)
+            val textMinWidth = (maxWidth - leftPad - gutterWidth - 32.dp).coerceAtLeast(0.dp)
             Canvas(Modifier.matchParentSize()) {
                 val linePx = DesignTokens.codeLineHeight.toPx()
                 val top = topPadPx + caretLine * linePx - vertical.value
@@ -606,23 +629,89 @@ class TextFileEditor(
                 }
             }
             VerticalScrollViewport(vertical, Modifier.fillMaxSize(), layered = layered) {
-            Row(
+            Box(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = topPad, bottom = bottomPad),
             ) {
+                HorizontalScrollViewport(horizontal, Modifier.fillMaxWidth(), layered = layered) {
+                    CompositionLocalProvider(
+                        LocalTextSelectionColors provides TextSelectionColors(
+                            handleColor = DesignTokens.accent,
+                            backgroundColor = DesignTokens.selection,
+                        ),
+                    ) {
+                        BasicTextField(
+                            value = currentValue,
+                            onValueChange = ::updateValue,
+                            modifier = Modifier
+                                .focusRequester(focusRequester)
+                                .widthIn(min = textMinWidth)
+                                .padding(
+                                    start = leftPad + gutterWidth + DesignTokens.space16,
+                                    end = DesignTokens.space16,
+                                )
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            if (event.type != PointerEventType.Press) continue
+                                            if (!event.keyboardModifiers.isMetaPressed) continue
+                                            val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
+                                            val textLayout = latestLayout.value ?: continue
+                                            val line = textLayout.getLineForVerticalPosition(change.position.y)
+                                            val inside = insideLine(
+                                                change.position,
+                                                textLayout.getLineTop(line),
+                                                textLayout.getLineBottom(line),
+                                                textLayout.getLineRight(line),
+                                            )
+                                            if (!inside) continue
+                                            val offset = textLayout.getOffsetForPosition(change.position)
+                                                .coerceIn(0, text.length)
+                                            change.consume()
+                                            onGoToDeclarationAt?.invoke(offset)
+                                        }
+                                    }
+                                },
+                            textStyle = codeStyle,
+                            readOnly = isReadOnly,
+                            visualTransformation = transformation,
+                            cursorBrush = SolidColor(DesignTokens.accent2),
+                            scrollState = fieldScroll,
+                            onTextLayout = { layout = it },
+                        )
+                    }
+                }
+                // The gutter stays put while the text slides under it and the sidebar.
                 Box(
                     Modifier
+                        .offset(x = leftPad)
                         .testTag("gutter")
                         .width(gutterWidth)
                         .height(gutterHeight)
+                        .contentTint()
                         .drawBehind {
+                            val linePx = DesignTokens.codeLineHeight.toPx()
+                            val glowTop = caretLine * linePx
+                            if (glowTop + linePx > 0f && glowTop < size.height) {
+                                drawRect(
+                                    DesignTokens.currentLineGlow,
+                                    topLeft = Offset(0f, glowTop),
+                                    size = Size(size.width, linePx),
+                                )
+                            }
                             val stroke = 1.dp.toPx()
                             drawRect(
                                 DesignTokens.glassBorderSide,
                                 topLeft = Offset(size.width - stroke, 0f),
                                 size = Size(stroke, size.height),
                             )
+                        }
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) awaitPointerEvent()
+                            }
                         }
                         .padding(end = 8.dp),
                 ) {
@@ -676,53 +765,48 @@ class TextFileEditor(
                         }
                     }
                 }
-                HorizontalScrollViewport(horizontal, Modifier.weight(1f), layered = layered) {
-                    CompositionLocalProvider(
-                        LocalTextSelectionColors provides TextSelectionColors(
-                            handleColor = DesignTokens.accent,
-                            backgroundColor = DesignTokens.selection,
-                        ),
-                    ) {
-                        BasicTextField(
-                            value = currentValue,
-                            onValueChange = ::updateValue,
-                            modifier = Modifier
-                                .focusRequester(focusRequester)
-                                .widthIn(min = textMinWidth)
-                                .padding(start = DesignTokens.space16, end = DesignTokens.space16)
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                                            if (event.type != PointerEventType.Press) continue
-                                            if (!event.keyboardModifiers.isMetaPressed) continue
-                                            val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
-                                            val textLayout = latestLayout.value ?: continue
-                                            val line = textLayout.getLineForVerticalPosition(change.position.y)
-                                            val inside = insideLine(
-                                                change.position,
-                                                textLayout.getLineTop(line),
-                                                textLayout.getLineBottom(line),
-                                                textLayout.getLineRight(line),
-                                            )
-                                            if (!inside) continue
-                                            val offset = textLayout.getOffsetForPosition(change.position)
-                                                .coerceIn(0, text.length)
-                                            change.consume()
-                                            onGoToDeclarationAt?.invoke(offset)
-                                        }
-                                    }
-                                },
-                            textStyle = codeStyle,
-                            readOnly = isReadOnly,
-                            visualTransformation = transformation,
-                            cursorBrush = SolidColor(DesignTokens.accent2),
-                            scrollState = fieldScroll,
-                            onTextLayout = { layout = it },
-                        )
-                    }
-                }
             }
+            }
+            val sidebar = LocalSidebarChrome.current
+            val textLayout = layout
+            if (sidebar != null && textLayout != null && !layered) {
+                val extensionWidth = (maxHeight - sidebar.top - sidebar.bottom).coerceAtLeast(0.dp)
+                val extensionKey = ExtensionKey(
+                    layout = textLayout,
+                    spans = currentSpans,
+                    searchSpans = currentSearchSpans,
+                    horizontal = horizontal.value,
+                    vertical = vertical.value,
+                    chrome = sidebar,
+                    width = maxWidth,
+                    height = maxHeight,
+                )
+                val stripCache = remember { MirroredStripCache() }
+                DisposableEffect(stripCache) {
+                    onDispose { stripCache.dispose() }
+                }
+                val textStartPx = with(density) {
+                    (leftPad + gutterWidth + DesignTokens.space16).toPx()
+                }
+                Box(
+                    Modifier
+                        .offset(x = sidebar.left, y = sidebar.top)
+                        .width(sidebar.width)
+                        .height(extensionWidth)
+                        // The document right of the sidebar's edge, mirrored under its glass.
+                        .backgroundExtension(
+                            key = extensionKey,
+                            cache = stripCache,
+                            sourceLeft = sidebar.left + sidebar.width,
+                            sourceTop = sidebar.top,
+                            sourceWidth = sidebar.width,
+                        ) { canvas ->
+                            canvas.save()
+                            canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
+                            textLayout.multiParagraph.paint(canvas)
+                            canvas.restore()
+                        },
+                )
             }
             VerticalScrollbar(
                 adapter = rememberEditorScrollbarAdapter(
@@ -739,7 +823,7 @@ class TextFileEditor(
                 adapter = rememberEditorScrollbarAdapter(horizontal),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = gutterWidth, bottom = chromeInsets.bottom)
+                    .padding(start = leftPad + gutterWidth, bottom = chromeInsets.bottom)
                     .fillMaxWidth(),
                 style = DesignTokens.scrollbarStyle,
             )

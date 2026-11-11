@@ -19,7 +19,6 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,12 +46,10 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.TextFileEditor
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.chromeGlass
-import stride.app.ui.theme.glassPanel
+import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.neonUnderline
 
 private val FIND_ROW_HEIGHT = 34.dp
@@ -85,20 +82,15 @@ fun FindBar(
         runCatching { queryFocus.requestFocus() }
     }
 
-    val scroll = LocalEditorScrollState.current
-    // Only a layer-free, scrolled editor has code under the fill for the glass to sample.
-    val scrolled by remember(scroll) {
-        derivedStateOf { scroll != null && scroll.value > 0 && !scroll.layered }
-    }
     Column(
         modifier
             .fillMaxWidth()
-            // The bar is a slab: keep the fill, the filter clip and the underline inside its rim.
-            .then(if (scrolled) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
+            // The floating panel carries its own fill, rim and shadow inside its rounded shape.
+            .capsuleGlass(shape)
             .neonUnderline(
                 DesignTokens.accent2,
                 thickness = 1.dp,
-                insetX = DesignTokens.slabRadiusTitle,
+                insetX = DesignTokens.capsuleHeight / 2,
             )
             // Hit testing stops at the topmost pointer node, so a press in the bar's padding
             // does not reach the editor under it. Nothing is consumed.

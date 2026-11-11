@@ -1,46 +1,52 @@
 package stride.app.ui.toolwindow
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.focusHalo
+import stride.app.ui.theme.capsuleGlass
+import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.glassCapsule
-import stride.app.ui.theme.glassPanel
-import stride.app.ui.theme.glassSlabRims
 import stride.app.ui.theme.rememberNeonAlpha
-import stride.app.ui.theme.slabShadow
 
-/** Bottom panel: a 28 dp tab strip over the active window's content. */
+/**
+ * Bottom panel: edge-to-edge content with one glass capsule group floating over it. The group
+ * holds the Run and Terminal switcher; the active window keeps its own controls inside.
+ */
 @Composable
 fun ToolWindowPanel(
     manager: ToolWindowManager,
     onFocusContext: (KeyContext) -> Unit,
     modifier: Modifier = Modifier,
+    contentInset: Dp = 0.dp,
+    contentBottomInset: Dp = 0.dp,
 ) {
     val active = manager.active()
     val context = active?.context ?: KeyContext.GLOBAL
@@ -57,13 +63,10 @@ fun ToolWindowPanel(
         if (hasFocus) onFocusContext(context)
     }
 
-    val shape = RoundedCornerShape(DesignTokens.slabRadiusToolWindow)
-    Column(
+    val switcherShape = RoundedCornerShape(percent = 50)
+    Box(
         modifier
-            .slabShadow(shape)
-            .glassSlabRims(shape)
-            .glassPanel(shape)
-            .focusHalo(hasFocus)
+            .contentTint()
             .focusRequester(focusRequester)
             .onFocusChanged { focusState ->
                 hasFocus = focusState.hasFocus
@@ -71,22 +74,44 @@ fun ToolWindowPanel(
             }
             .focusable(),
     ) {
+        active?.let { window ->
+            window.content(
+                Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = contentInset,
+                        top = DesignTokens.chromeGap + DesignTokens.capsuleHeight + DesignTokens.chromeGap,
+                        bottom = contentBottomInset,
+                    ),
+            )
+        }
         Row(
             Modifier
-                .fillMaxWidth()
-                .height(28.dp),
+                .align(Alignment.TopStart)
+                .offset(x = contentInset, y = DesignTokens.chromeGap)
+                .height(DesignTokens.capsuleHeight)
+                .capsuleGlass(switcherShape)
+                .panelPressBlocker()
+                .padding(horizontal = DesignTokens.space4),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            manager.windows.forEach { window ->
-                ToolWindowTab(
-                    title = window.title,
-                    active = window.id == manager.activeId,
-                    onClick = { manager.activate(window.id) },
-                )
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+                manager.windows.forEach { window ->
+                    ToolWindowTab(
+                        title = window.title,
+                        active = window.id == manager.activeId,
+                        onClick = { manager.activate(window.id) },
+                    )
+                }
             }
         }
-        active?.let { window ->
-            window.content(Modifier.weight(1f).fillMaxWidth())
-        }
+    }
+}
+
+/** Keeps a press on the floating switcher from reaching the panel content under it. */
+private fun Modifier.panelPressBlocker(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent()
     }
 }
 
@@ -96,9 +121,9 @@ private fun ToolWindowTab(title: String, active: Boolean, onClick: () -> Unit) {
         Modifier
             .fillMaxHeight()
             .glassCapsule(
-                shape = RoundedCornerShape(DesignTokens.radiusSmall),
+                shape = RoundedCornerShape(percent = 50),
                 insetX = 2.dp,
-                insetY = 4.dp,
+                insetY = 3.dp,
                 lineEdge = CapsuleEdge.BOTTOM,
                 lineAlpha = rememberNeonAlpha(active),
             )

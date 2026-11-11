@@ -603,7 +603,7 @@ reset the request, call `refocusEditor` and give focus back to the text field. T
 popup has its own field, prefilled with the prefix and with the caret at its end, so typing keeps
 filtering inside the popup. ↑↓ move the selection, Enter or Tab inserts the chosen name in place
 of the original prefix, and a click on a row inserts it too. The rename popup's field is prefilled
-with the old name and selected; Enter applies `applyRename`, which sets the status bar to
+with the old name and selected; Enter applies `applyRename`, which sets the status message to
 `Renamed N occurrences`, or to `Nothing to rename` when the name did not change. Enter on an
 empty field keeps the popup open and shows a hint.
 
@@ -643,23 +643,28 @@ class ToolWindowManager {
     fun active(): ToolWindow?
 }
 
-@Composable fun ToolWindowPanel(manager: ToolWindowManager, onFocusContext: (KeyContext) -> Unit, modifier: Modifier = Modifier)
+@Composable fun ToolWindowPanel(manager: ToolWindowManager, onFocusContext: (KeyContext) -> Unit,
+                                modifier: Modifier = Modifier,
+                                contentInset: Dp = 0.dp, contentBottomInset: Dp = 0.dp)
 ```
 
 `toggle` follows the `ActivateToolWindow` rule: hidden or a different active id → `activate`;
 visible, active and `focused` → `hide`; visible, active and not `focused` → only
 `focusRequests++`.
 
-`ToolWindowPanel` is a 28 dp tab strip (title, active tab in `text` with a 2 dp `accent` underline,
-inactive in `muted`) over the active window's content. The panel root is focusable and requests
-focus whenever `focusRequests` changes, reporting its context through `onFocusContext`.
+`ToolWindowPanel` is edge-to-edge content with one floating capsule group over it: the group
+sits `chromeGap` below the panel top and `contentInset` from its left edge, each tab is a
+capsule with a 2 dp `accent2` line on its bottom edge (active in `text`, inactive in
+`textSecondaryOnGlass`), and the content plane starts below the group and `contentInset` from the
+left, with `contentBottomInset` reserved for the status capsules. The panel root is focusable and
+requests focus whenever `focusRequests` changes, reporting its context through `onFocusContext`.
 
 `AppState` registers two windows in its constructor: `run` (title Run, context `RUN_WINDOW`) and
 `terminal` (title Terminal, context `TERMINAL`), each showing a placeholder line. `⌘4`, `⌥F12`
-and `⇧Esc` drive them through `dispatchAction`. The panel sits below the tree/editor row and
-above the status bar, spanning the full window width; a 4 dp horizontal splitter carries the drag
-into `height` clamped to 120 dp … 80% of the window height. `closeSession()` hides the panel and
-resets `focus`.
+and `⇧Esc` drive them through `dispatchAction`. The panel sits below the editor area and spans
+the full window width, under the floating sidebar and status capsules; a `chromeGap` horizontal
+splitter carries the drag into `height` clamped to 120 dp … 80% of the window height.
+`closeSession()` hides the panel and resets `focus`.
 
 `stride.app.ui.LocalAnimationsEnabled` (`staticCompositionLocalOf { true }`) turns UI animations
 off in tests and snapshots.
@@ -725,8 +730,8 @@ refreshes. `refresh` repaints every match through `TextFileEditor.searchSpans`: 
 current match through `updateValue` and then advance, wrapping around. `close` hides the bar
 and clears the spans of the last editor it painted.
 
-`FindBar` sits below the tab strip, on a `DesignTokens.surface` strip with an accent2
-`neonUnderline` on its bottom edge. The query field carries `testTag("find-query")`, the
+`FindBar` floats under the tab group as a `capsuleGlass` panel with an accent2 `neonUnderline`
+on its bottom edge, inset by half the capsule height. The query field carries `testTag("find-query")`, the
 replacement field `testTag("find-replacement")`; both are single line. Enter/`⌘G` goes to the
 next match, ⇧Enter/`⌘⇧G` to the previous, and Esc closes the bar and hands focus back to the
 editor's `focusRequester`. The `Aa` and `.*` toggles show `accent2` glow when active. The
@@ -1266,23 +1271,27 @@ Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.ui
 default. `ActionId.TOGGLE_UI_FONT` (`Switch UI Font`, no default stroke, reachable from the
 Actions tab) flips it immediately and stores the choice with `java.util.prefs.Preferences` in
 node `stride` under `uiFont` (`pretendard` / `system`), then shows `UI font: Pretendard` or
-`UI font: System` in the status bar. `UiFontPreference` takes the node so tests inject their
+`UI font: System` in the status capsule group. `UiFontPreference` takes the node so tests inject their
 own. The font files live in `app/src/main/resources/fonts/pretendard/` with `OFL.txt`. Code
 uses monospace at 13 sp with a 20 sp line height. Chrome uses one 13 sp step (15 sp for the
 search field, 24 sp for the wordmark fallback) with weights 400/500/600. Spacing follows a
-4 dp grid; small controls use 6 dp radii, capsules 8 dp, the floating chrome slabs 12–16 dp and
-the popup panes 18 dp, with nested radii kept at `outer − inset` and never below 4 dp. Labels
-are sentence case (`Project`, not tracked caps).
+4 dp grid; small controls use 6 dp radii, selection capsules 8 dp, control capsules half their
+height, the floating sidebar 20 dp and the popup panes 18 dp, with nested radii kept at
+`outer − inset` and never below 4 dp. Labels are sentence case (`Project`, not tracked caps).
 
-The window is 1280×820 dp, centered, with the icon from `logo/stride-icon-256.png`. Every
-chrome surface is a floating slab inset `slabMargin` (8 dp) from the window edge, so the field
-shows in the gaps between them: a 36 dp title bar (logo, project name, clickable Search pill
-with the `⇧⇧` hint) at radius 14, a 280 dp project tree slab (radius 16) with a draggable
-8 dp splitter gap clamped to 200–480 dp, a floating tab strip (radius 13) over the editor, and
-a 24 dp status pill (radius 12) 8 dp above the bottom edge showing the relative path,
-`Ln`/`Col`, the file type name, `UTF-8` and a `Read-only` badge when the editor is read-only.
-The editor is the dark content plane under the tab strip and the status pill; the find bar
-and the Run/Terminal panel use the same slab material (radius 14).
+The window is 1280×820 dp, centered, with the icon from `logo/stride-icon-256.png`. Content
+runs edge to edge: the editor's dark content plane and the tool window's console fill the whole
+window, and the chrome floats over them as separate glass capsules. A 280 dp project sidebar
+floats `chromeInset` (10 dp) in from the top, left and bottom edges at radius 20; the open tabs
+are one glass capsule group (`capsuleHeight` 34 dp, radius half the height) right of it; the
+project name capsule sits at the top left of the content and the Search capsule (`⇧⇧`) at the
+top right; the bottom row is the file path capsule at the left and one status capsule group at
+the right holding `Ln`/`Col`, the file type name, `UTF-8`, a `Read-only` badge and the focus
+chip. Capsule height is 34 dp (32 dp on the status row) with `chromeGap` (8 dp) between
+capsules; the text column starts `contentGap` (10 dp) right of the sidebar, and the same inset
+starts the tool-window content. Two `chromeGap`-wide strips are drag handles: the sidebar's
+right edge and the editor/tool window split. Every capsule blocks presses from reaching the
+editor under it, while the content between capsules stays clickable.
 
 Chevrons, folder/file icons, the magnifier and the close × are drawn with `Canvas`. The empty
 states load `logo/stride-wordmark-dark.svg` through `loadSvgPainter` and fall back to the PNG
@@ -1342,9 +1351,9 @@ row: a neutral interior lift (`capsuleLift`, white 7%), a crisp top-lit 1 px rim
 backdrop, so tree guide lines and code behind them stay out of the selection. The selected
 label is `selectedText` (white) and its file icon takes `accent`. Hover is a faint neutral
 step (`hoverFill`, white 4%). A focused panel draws a 1 dp `focusHalo` line on its top edge
-and nothing else glows. Unselected rows and tabs stay quiet. `StatusBar` takes an optional
-`focusLabel` and renders it as a right-aligned `accent2` `FocusChip` without a glow;
-`EditorArea`, `ProjectTreePanel` and `ToolWindowPanel` draw the halo when focused.
+and nothing else glows; the tool window drops the halo because its content plane is
+edge-to-edge and the focused context is shown in the status capsule. Unselected rows and tabs
+stay quiet. The status capsule group renders the `accent2` `FocusChip` without a glow.
 
 The two helpers are `glassCapsule(shape, insetX, insetY, fillAlpha, lineEdge, lineAlpha)` and
 `selectionRow(selected, hovered)`, which fixes the popup capsule at 6/2 dp inset with a left
@@ -1360,21 +1369,22 @@ Files ⌘E and Find Action ⇧⌘A; without one it shows Open Folder ⌘O, the s
 
 ### Animation rules
 
-Motion is limited to state transitions: the 150 ms selection capsule and neon line fade, and
-the popup open fade. Nothing loops; the run window's running glyph no longer pulses. When
-`stride.app.ui.LocalAnimationsEnabled` (a `staticCompositionLocalOf { true }`) is false,
-`rememberNeonAlpha` returns 0f/1f immediately and no animation keeps the test clock busy.
-`SnapshotRenderer` and the UI tests provide `false`. The wordmark caret blink keeps its own
-`LocalWordmarkCaretBlink` switch. `standardEasing` (`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is
-the easing for the motion tokens `motionShortMillis` 150, `motionMediumMillis` 200 and
-`motionPopupMillis` 250.
+Motion is limited to state transitions: the 150 ms selection capsule and neon line fade, the
+200 ms tab-group selection pill slide/stretch (`animateDpAsState` on its left and width with
+`standardEasing`), and the popup open fade. Nothing loops; the run window's running glyph no
+longer pulses. When `stride.app.ui.LocalAnimationsEnabled` (a `staticCompositionLocalOf { true }`)
+is false, `rememberNeonAlpha` returns 0f/1f immediately and the pill uses `snap()`, so no
+animation keeps the test clock busy. `SnapshotRenderer` and the UI tests provide `false`. The
+wordmark caret blink keeps its own `LocalWordmarkCaretBlink` switch. `standardEasing`
+(`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is the easing for the motion tokens
+`motionShortMillis` 150, `motionMediumMillis` 200 and `motionPopupMillis` 250.
 
 ### Liquid glass, the field and the lens
 
 The surface is three layers: **L0 field → L1 glass → L2 the one neon line**. `App` wraps its
-root in `MeshBackground`; the floating slabs use `glassPanel` plus `slabShadow` and
-`glassSlabRims`, capsules use `glassCapsule`, and transient surfaces use `backdropGlass`. The
-editor body stays `contentTint`, one pre-blended opaque color, and is the dark plane under the
+root in `MeshBackground`; the sidebar uses `sidebarGlass` over the background extension, every
+floating control capsule uses `capsuleGlass`, transient surfaces use `backdropGlass`, and the
+editor body stays `contentTint`, one pre-blended opaque color that is the dark plane under the
 floating chrome.
 
 The field is a cool graphite fill with a gentle top-to-bottom luminance falloff (no hue
@@ -1391,12 +1401,12 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `glassBase` / `glassBackdropMix` / `glassChromaGain` | #14151B / 0.52 / 0.80 |
 | `glassBezel` / `glassLensStrength` / `glassAberration` | 18 dp / 17 dp / 0.5 dp |
 | `glassSpecular` | 0.42 |
-| `scrim` | black 30% under a popup |
-| `chromeGlassBlurRadius` / `chromeBackdropMix` / `chromeGlassBezel` | 4 dp / 0.80 / 10 dp |
+| `scrim` | black 30% under a popup and at the scroll edge |
 | `capsuleBezel` / `capsuleLensStrength` / `capsuleEndTaper` | 6 dp / 3.5 dp / 10 dp |
-| `glassGrid` / `glassGridSpacing` | white 6% / 40 dp (tree glass) |
-| `slabMargin` | 8 dp |
-| `slabRadiusSide` / `slabRadiusTitle` / `slabRadiusTab` / `slabRadiusStatus` / `slabRadiusToolWindow` | 16 / 14 / 13 / 12 / 14 dp |
+| `chromeInset` / `chromeGap` / `contentGap` | 10 dp / 8 dp / 10 dp |
+| `capsuleHeight` / `statusCapsuleHeight` / `sidebarRadius` | 34 dp / 32 dp / 20 dp |
+| `sidebarFill` / `capsuleFill` | #14151B at 30% / 58% alpha |
+| `backgroundExtensionBlur` | 9 dp (mirrored strip, cached) |
 | `slabShadow` | 16 dp |
 | `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% |
 | `slabInnerRimInset` / `slabInnerRim` | 2 dp / white 6% |
@@ -1420,7 +1430,9 @@ files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing 
 @Composable fun MeshBackground(modifier: Modifier = Modifier,
                                content: @Composable BoxScope.() -> Unit)
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
-fun Modifier.glassPanel(shape: Shape = RectangleShape, grid: Boolean = false): Modifier
+fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
+fun Modifier.capsuleGlass(shape: Shape): Modifier
+fun Modifier.sidebarGlass(shape: Shape): Modifier
 fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
                           fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
                           lineAlpha: Float = 1f): Modifier
@@ -1429,35 +1441,59 @@ fun Modifier.glassLensCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp
                               lineAlpha: Float = 1f): Modifier
 @Composable fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier
 fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier
-fun Modifier.chromeGlass(shape: Shape = RectangleShape): Modifier
 fun Modifier.slabShadow(shape: Shape): Modifier
 fun Modifier.glassSlabRims(shape: Shape): Modifier
 fun Modifier.labelScrim(active: Boolean): Modifier
 fun Modifier.contentTint(): Modifier
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
-data class EditorInsets(val top: Dp = 0.dp, val bottom: Dp = 0.dp)
+fun Modifier.backgroundExtension(key: Any, cache: MirroredStripCache,
+                                 sourceLeft: Dp, sourceTop: Dp, sourceWidth: Dp,
+                                 blurRadius: Dp = DesignTokens.backgroundExtensionBlur,
+                                 source: (Canvas) -> Unit): Modifier
+class MirroredStripCache
+data class SidebarChrome(val left: Dp, val width: Dp, val top: Dp, val bottom: Dp)
+val LocalSidebarChrome: ProvidableCompositionLocal<SidebarChrome?>
+data class EditorInsets(val top: Dp = 0.dp, val bottom: Dp = 0.dp,
+                        val left: Dp = 0.dp, val right: Dp = 0.dp)
 val LocalEditorInsets: ProvidableCompositionLocal<EditorInsets>
 ```
 
 `MeshBackground` draws the field into a bitmap once per size and exposes it through
 `LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill`
-into an opaque cached image keyed by panel size, field size, root position and field version;
-each frame only copies that image and draws the hairline rim. `grid = true` also bakes a faint
-neutral hairline grid (40 dp, white 6%) into the slice, which is what the tree's selection lens
-bends and which makes the tree slab read as a pane over the field. `glassCapsule` draws the
-lift and rim directly and never samples the backdrop; `glassLensCapsule` replaces it on the
-selected tree row and active tab: the same capsule over a small 6 dp bezel lens of 3.5 dp whose
-displacement fades to zero at the capsule ends, so the neon line stays crisp and nothing smears
-there.
+into an opaque cached image, unchanged from the previous design; nothing on the new chrome uses
+it, but it remains the cached field-slice primitive. `glassCapsule` draws the lift and rim
+directly and never samples the backdrop; `glassLensCapsule` replaces it on the selected tree
+row and on the tab group's selection pill: the same capsule over a small 6 dp bezel lens of
+3.5 dp whose displacement fades to zero at the capsule ends, so the neon line stays crisp and
+nothing smears there.
 
 `slabShadow` bakes a soft black 55% rounded-rect shadow, blurred at `0.55 × slabShadow`, into
-one image per slab size; a frame only blits that image, so a static slab costs no render layer.
-`glassSlabRims` draws the slab's specular rim over its content: a 1 dp stroke whose gradient is
-white 22% at the top and 6% at the bottom, a white 12% highlight down the left edge, and a
-faint white 6% inner lower rim inset 2 dp. Its Skia paths, paints and shaders are cached per
-size. Both modifiers belong before the fill modifier in the chain, so the rim is not painted
-through the backdrop filter. `labelScrim` paints a black 45% band inset 2 dp behind a bar's
-label run when code is scrolling under it.
+one image per shape size; the interior of the shape is clipped out of the baked image, so a
+translucent fill over content (the sidebar) does not sit on a dark plate. `glassSlabRims` draws
+the specular rim over the content: a 1 dp stroke whose gradient is white 22% at the top and 6%
+at the bottom, a white 12% highlight down the left edge, and a faint white 6% inner lower rim
+inset 2 dp. Its Skia paths, paints and shaders are cached per size. `labelScrim` paints a black
+45% band inset 2 dp behind the run tool window's status word.
+
+`capsuleGlass` is the floating control material: a tinted fill (`capsuleFill`, #14151B at 58%)
+plus the neutral lift over it, with `slabShadow` and `glassSlabRims`. It carries no backdrop
+pass of its own; the scroll edge fade has already dimmed the content band it floats over, and
+the render harness measures each backdrop layer at about 6.5 ms, so capsules stay cheap.
+`sidebarGlass` is the sidebar's material: a more translucent tint (`sidebarFill`, 30%) over the
+background extension, plus the same shadow and rim.
+
+**Background extension.** The editor renders the strip of its real document that lies right of
+the sidebar's edge into a small offscreen image, mirrors it horizontally across that edge,
+blurs it at `backgroundExtensionBlur` (9 dp), and caches it (`MirroredStripCache`) keyed by the
+text layout, the spans, both scroll offsets, the sidebar geometry and the editor size. A static
+frame only blits the cached image; scrolling or editing rebuilds it once. `SidebarChrome` is
+provided by `App` so the editor knows where the sidebar sits; a layered editor skips the pass.
+The strip is painted at 1/3 resolution before the blur, which is invisible through the blur.
+
+**Scroll edge effect.** Two gradients of `scrim` (black 30%), one at the top and one at the
+bottom of the window, fade the content under the capsule rows toward the field and leave the
+content at the band's inner edge sharp. There is no painted bar and no per-frame blur layer;
+the bands are 52 dp (top) and 50 dp (bottom), inside the 40–56 dp the design calls for.
 
 `backdropGlass` runs the liquid glass shader over what is already drawn beneath it.
 `GlassShader` compiles one SkSL program (`RuntimeEffect.makeForShader`) whose uniforms are the
@@ -1483,13 +1519,14 @@ child shader.
 - Specular: light from the top-left gives a thin bright rim (the outer 28% of the bezel) on
   the upper edge that fades along the sides, with a faint darker inner rim at the bottom.
   Ordinary glass has no outer glow.
-- Cost: the shader is evaluated on a 1/4-resolution copy for floating glass and a
-  1/8-resolution copy for chrome bars (`LENS_DOWNSCALE`, `CHROME_DOWNSCALE`) and scaled back
+- Cost: the shader is evaluated on a 1/4-resolution copy (`LENS_DOWNSCALE`) and scaled back
   up; its size, radius, bezel, strength, aberration and outer-taper uniforms are expressed in
   that copy's pixels. Scaling the runtime shader's own output instead would
   magnify its bezel from the top-left corner, which is why the scale is applied inside the
   filter chain before the shader. The filter is cached per panel size and radius. The interior takes a
-  single `content.eval`; only bezel pixels take three.
+  single `content.eval`; only bezel pixels take three. The shader is now used only by
+  `backdropGlass` (popups, the go-to-line field); the sidebar and control capsules do not run a
+  backdrop pass.
 
 When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `GlassShader` returns
 `null` and the glass falls back to the previous blur-only path with the hairline border.
@@ -1497,11 +1534,15 @@ When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `Glass
 lens bends the bezel backdrop (strength 0 against 6 dp on the same shader path), that the four
 corner bezels match over a uniform backdrop past the specular rim, that the thin popup glass
 shows a scrimmed backdrop at about 3.8:1, and that the selection capsule bends its backdrop in
-the middle while the displacement fades to nothing at both ends. `TreeEditorGlassTest` adds the
-slab pixel checks: the window field shows in the 8 dp margin beside the sidebar, the slab
-interior is lighter than that margin, the top rim is brighter than the bottom edge, and the
-status bar label run stays at 4.5:1 with code scrolled under it (measured 6.6:1). The backdrop
-path was measured on `ImageComposeScene`: **real**, not the bitmap fallback.
+the middle while the displacement fades to nothing at both ends. It also checks that the
+background extension mirrors and blurs the strip right of its edge while leaving the source
+strip untouched. `TreeEditorGlassTest` adds the pixel checks for the new chrome: rewriting the
+document changes the pixels inside the sidebar (the mirror is real content), the 8 dp gap
+between the top capsules follows the code under the floating row (no full-width bar), the top
+capsule's rim is brighter than its bottom edge, the selected tab's pill moves to the newly
+selected tab, the status capsule's label run clears 4.5:1 over scrolled code (measured 5.6:1),
+and the search capsule's shortcut hint clears it on its glass (5.5:1). The backdrop path was
+measured on `ImageComposeScene`: **real**, not the bitmap fallback.
 
 Text on glass uses `textSecondaryOnGlass`; `muted` (4.13:1) and `subtle` (2.09:1) are below
 body contrast on the worst strong glass, so neither may carry information text there.
@@ -1526,39 +1567,37 @@ The glass is deliberately cheap:
   cached bitmap (`GlassCacheStats.panelBlurCount` must not grow frame to frame).
 - No looping animation and no blur-radius animation. The field is static.
 - One glass layer per region; a popup's scrim covers the glass beneath it.
-- Floating slabs do not use `Modifier.shadow` or `Modifier.clip`: each bakes one shadow image
-  (`slabShadow`) and caches its rim paths (`glassSlabRims`), so a static slab costs two image or
-  path draws and no render layer. Their content is inset enough that rounding is not needed as a
-  clip.
-- The editor is `contentTint`; the tool window, tab strip, find bar, title bar and status bar
-  are glass over the field.
-- The selection capsule lens is a small 6 dp bezel filter, cached per row or tab size; only the
-  selected row and the active tab draw it, and unselected capsules draw nothing.
+- No floating surface uses `Modifier.shadow` or `Modifier.clip`: each bakes one shadow image
+  (`slabShadow`, with the shape's interior clipped out) and caches its rim paths
+  (`glassSlabRims`), so a static capsule costs two image or path draws and no render layer.
+- The editor and the tool-window console are `contentTint` content planes; the sidebar is a
+  translucent tint over the cached mirror, and every control is a capsule over it.
+- The selection capsule lens is a small 6 dp bezel filter, cached per row or pill size; only the
+  selected tree row and the tab group's selection pill draw it.
+- The background extension is rendered at 1/3 resolution and blurred and cached once per
+  document/scroll/size key; a static frame only blits it. A layered editor (≥1 000 lines) skips
+  it. The scroll edge effect is a gradient of `scrim`, not a backdrop layer: the render harness
+  measures each backdrop layer at about 6.5 ms, so the design uses no per-frame backdrop pass on
+  the chrome.
 - The floating glass lens filter is cached per panel size and radius, and is evaluated on a
   1/4-resolution copy. `liquidGlassBlurRadius` must stay at 8 dp or above: at 5 dp Skia stops
   downscaling inside the blur and the Search Everywhere scene costs about 5 ms more.
-- Chrome bars pay for a backdrop filter only while an editor is scrolled under them; otherwise
-  they use the cached `glassPanel` slice. Their filter is evaluated on a 1/8-resolution copy.
-- The backdrop blur runs on a 1/8-resolution copy of the backdrop, not at full resolution.
+- Popup scenes pay for one `backdropGlass` layer (the modal panel) on a 1/8-resolution backdrop
+  blur.
 
 `SnapshotFrameTimingTest` caps each scenario at `baseline × factor + 1.0 ms` (factor 1.5 for
 content, 2.0 for popups). The baselines were measured on a solid background, so they cost
 effectively 0 ms; one opaque full-screen field image at 2560×1640 costs 0.948 ms in the
 software-raster harness, which is what the 1.0 ms L0 budget admits.
 
-The twelve scenes measured for the floating slabs (p50, software raster, medians of three runs
-at 2560×1640) are 2.04, 5.09, 5.58, 17.56, 13.34, 5.21, 17.29, 5.44, 15.07, 6.22, 6.25 and
-7.29 ms. The parent commit (54203d9) measured 1.76, 3.35, 3.34, 16.22, 12.04, 3.33, 15.42,
-3.53, 12.89, 3.41, 3.51 and 5.50 ms on the same machine. The editor scenes pay about 1.7 ms for
-the four floating slabs (a cached shadow blit and rim paths each) and the tool window pays about
-2.8 ms for its cached glass slice instead of one opaque fill; the popup scenes move less than
-one millisecond. Popup scenes stay under their 2.0× limits because the lens filter runs on a
-1/4-resolution copy; the GPU path evaluates the same SkSL as one shader pass.
-
-The scene-12 pair reported in 54203d9 (2.38 → 6.95 ms) is not like-for-like: that commit also
-changed the scene to 340-character lines, so the jump mixes the layer removal and the two bar
-filters with a document that draws about ten times more glyphs per line. Only the 1a2d671 pair
-(5.50 → 7.29 ms) measured the same scene on both trees.
+The twelve scenes measured for the edge-to-edge chrome (p50, software raster, medians of three
+runs at 2560×1640) are 2.13, 9.85, 9.89, 19.11, 14.80, 10.19, 18.93, 11.63, 20.19, 9.34, 9.21
+and 10.18 ms. The parent commit (f8e659f, v1.2.0) measured 2.15, 5.38, 5.18, 17.90, 13.54,
+5.15, 18.33, 5.70, 15.44, 6.55, 6.31 and 7.51 ms on the same machine. The editor scenes pay
+about 4.5 ms for the sidebar's cached mirror blit and the capsule shadows/rims; the popup scenes
+pay about 2–4 ms for the same chrome behind the modal. The GPU path evaluates the popup's SkSL
+as one shader pass and blits the same cached mirror, so the desktop window's cost is bounded by
+the content draw.
 
 The material and the lens are built from three generic effects: a thin base (a neutral floor
 carrying a visible luminance and hue impression of the blurred backdrop), lens refraction at the
@@ -1569,22 +1608,23 @@ chromatic split directly; no third-party shader, asset or material library is us
 
 ### Applied surfaces: tool windows, run and terminal
 
-The bottom tool window panel is a floating glass slab: its `Column` takes `slabShadow`,
-`glassSlabRims` and `glassPanel(shape)` at `slabRadiusToolWindow` (14 dp), so `RunToolWindow`
-and `TerminalView` draw no background of their own and the panel reads as a pane over the
-field. `ToolWindowGlassTest` fixes the empty cell and the tab strip to that glass band.
+The bottom tool window panel is edge-to-edge content: its `Box` paints `contentTint()` (the same
+opaque plane as the editor), the active window's content gets a start inset matching the editor's
+text column, a top inset for the switcher row and a bottom inset for the status capsules, and the
+panel ends at the window edges with no slab. `ToolWindowGlassTest` fixes the empty cell to the
+content plane and checks that the switcher is one floating capsule over it.
 
-The tool-window tab strip `Row` is transparent inside the slab; each tab is a `glassCapsule`
-inset 2/4 dp with the neon line on its bottom edge, so only the active tab shows a capsule and
-a line. Inactive tab labels are `textSecondaryOnGlass`.
+The tool-window switcher is a capsule group (`capsuleGlass`, radius half its height) offset
+`chromeGap` from the panel top and from the content inset; each tab is a `glassCapsule` inset
+2/3 dp with the neon line on its bottom edge, so only the active tab shows a capsule and a line.
+Inactive tab labels are `textSecondaryOnGlass`. `RunToolWindow`'s session tabs are a second
+capsule group inside the run content, with the same language.
 
-Run window text sits directly on the slab: the header status word (`accent2` while running,
+Run window text sits on the content plane: the header status word (`accent2` while running,
 `neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
-panel. The panel paints no opaque tint; text is read on the glass slice, whose brightest value
-is `glassFill` over the field's lift. There `text`, `muted`, `accent2` and `neonLime` clear
-4.5:1, while `neonPink` alone reaches only 4.09:1; the header status word therefore sits on the
-same black 45% `labelScrim` band the chrome bars use, which puts it at 5.14:1. `MethodDetail`
-stays transparent. The selected method row is a `selectionRow` capsule with the accent2 line.
+panel. `text`, `muted`, `accent2` and `neonLime` clear 4.5:1 on the plane; `neonPink` sits on
+the black 45% `labelScrim` band (5.14:1). `MethodDetail` stays transparent. The selected method
+row is a `selectionRow` capsule with the accent2 line.
 
 Status glyphs keep their shapes and colors (✓ ✕ ●) and draw no halo; the running pulse was
 removed.
@@ -1596,57 +1636,66 @@ unchanged.
 
 ### Applied surfaces: tree, tabs and editor
 
-The project tree is a floating slab (`slabRadiusSide` 16 dp, `slabShadow`, `glassSlabRims`)
-filled by `glassPanel(grid = true)`: a faint neutral hairline grid (40 dp, white 6%) is baked
-into its cached field slice, so the slab reads as a pane over the field and the selection lens
-has structure to bend. The tree keeps its `focusHalo`, fed by an `onFocusChanged` read of the
-panel subtree in `App` (`KeyContext` has no tree context, so `state.focus` is unchanged). The
-selected tree row and the active tab are `glassLensCapsule`s inset 6/2 dp (tabs 4/4 dp) with
-the accent2 line on the left (tabs bottom), a `hoverFill` step on hover and the small lens
-described above. Unselected rows and tabs draw nothing, so the line is the only bright mark.
-The tree header is `Project` in 13 sp medium; inactive tab labels use `textOnBusyGlass`
-(`#C4CBDA`, 6.9:1 over scrolled code); splitter hairlines and indent guides use
-`glassBorderSide`. File icons are `muted`, the selected row's icon `accent`.
+The project tree is one floating capsule-panel: inset `chromeInset` from the top, left and
+bottom edges, radius 20, `slabShadow` + `glassSlabRims` + `sidebarGlass`. There is no baked
+texture and no grid; the panel is a translucent tint over the background extension, which is
+the editor's own document mirrored from the strip right of its edge (`backgroundExtension`). The
+tree keeps its `focusHalo` on the panel's top edge, fed by an `onFocusChanged` read of the panel
+subtree in `App` (`KeyContext` has no tree context, so `state.focus` is unchanged). The panel
+registers a passive pointer node, so presses on its empty area do not reach the code under it;
+its rows and theirs clickables still work. The selected tree row is a `glassLensCapsule` inset
+6/2 dp with the accent2 line on the left, a `hoverFill` step on hover and the small lens
+described above. Unselected rows draw nothing, so the line is the only bright mark. The tree
+header is `Project` in 13 sp medium; indent guides use `glassBorderSide`. File icons are `muted`,
+the selected row's icon `accent`. The panel's right edge carries an invisible `chromeGap`-wide
+drag handle clamped to 200–480 dp.
 
-The editor body is `contentTint()`, never glass, and it fills the whole editor column including
-the area under the tab bar, the find bar and the status bar. `EditorArea` supplies
-`LocalEditorInsets` (the tab bar's inset and height plus the find bar on top, the status bar's
-inset and gap on the bottom) and `TextFileEditor` adds them to the scrolled content's padding,
-so line 1 and the last line stay reachable while code scrolled past them draws under the
-chrome. The tab bar (radius 13), find bar (radius 14) and status pill (radius 12) float 8 dp in
-from the editor edges with `slabShadow` and `glassSlabRims`, and use `chromeGlass()` — the thin
-backdrop glass without an edge lens — only while their editor scroll position is above zero
-(or, for the status bar, not yet at the end) and the content is layer-free, and the cached
-`glassPanel` slice otherwise. Over scrolled code the status pill draws a black 45% `labelScrim`
-band behind its label run and the tab labels switch to `textOnBusyGlass`; the status label run
-measures 6.6:1 there. The bars' state is read through `derivedStateOf`, so a scroll step only
-recomposes them when `scrolled` / `overCode` actually changes. The bars register a passive
-pointer node, so a press on their glass (including the find bar's padding) stops at the bar
-instead of reaching the text field's full-document hit bounds under it. The find bar passes its
-14 dp slab shape to the glass fill, so the fill and the filter clip stop at the rounded rim, and
-its neon underline is inset by the slab radius instead of running under the rounded corners.
+The open tabs are one `capsuleGlass` group right of the sidebar: the selected tab is an inner
+`glassLensCapsule` pill with the accent2 line on its bottom edge, and the pill's left and width
+animate with `motionMediumMillis` and `standardEasing` when the selection changes
+(`snap()` when `LocalAnimationsEnabled` is false), so it slides and stretches between tabs. Tabs
+keep their icons, labels, close buttons and horizontal overflow scrolling, including the
+scroll-into-view effect for a tab that becomes selected off screen. Inactive labels use
+`textOnBusyGlass` (`#C4CBDA`), which clears 4.5:1 over scrolled code; splitter hairlines use
+`glassBorderSide`.
+
+The editor body is `contentTint()`, never glass, and fills the whole window: it runs under the
+sidebar, the capsule rows and the find bar. `EditorArea` supplies `LocalEditorInsets` (the top
+band plus the find bar, the bottom band, the sidebar-derived left inset, and the right inset) and
+`TextFileEditor` applies the left inset as the text column's start and the top/bottom insets to
+the scrolled content's padding and the caret's viewport, so line 1, the last line and the caret
+stay reachable. The text field spans the window and scrolls horizontally under the gutter and
+the sidebar: the gutter is an opaque `contentTint` overlay at the text column's start, and the
+line numbers stay put while text slides under them. The find bar floats under the tab group as a
+`capsuleGlass` panel (`capsuleHeight / 2` radius) with a 1 dp `neonUnderline` inset by that
+radius. The top row (project capsule, tab group, search capsule) and the bottom row (path
+capsule, status capsule group) all use `capsuleGlass`; each capsule registers a passive pointer
+node and blocks presses from reaching the editor, while the gaps between capsules stay
+clickable. The scroll edge effect fades the content in the 52 dp top and 50 dp bottom bands
+toward the field (`scrim` gradients), so content passes under the floating controls without a
+bar.
 
 The vertical and horizontal scroll views (`VerticalScrollViewport` / `HorizontalScrollViewport`,
 `EditorScrollState`) have two paths. Below `LAYERED_SCROLL_ENTER_LINES` (1 000) the content is
-placed without a render layer, so the bars' backdrop filter can sample the code scrolling under
-them. At or above it the viewport places the content with `placeRelativeWithLayer`, which drops
-the per-scroll-frame cost but is invisible to a backdrop filter, so the bars fall back to the
-cached `glassPanel` slab and stop showing code through. The mode has hysteresis
-(`LAYERED_SCROLL_EXIT_LINES`, 800): once layered, a document must shrink below 800 lines before
-the sampling path returns, so editing around the threshold does not flip it. The switch leaves
-the caret, the selection and `EditorScrollState.value` alone. The threshold comes from
-`ScrollFrameTimingTest`: on the 2× snapshot harness the layer-free path costs 8.2 ms per scroll
-frame at 1 000 lines (8.3 at 750; the harness floor is ~8.3) and 8.9 / 9.1 / 11.5 ms at
+placed without a render layer, so the background extension's offscreen strip is built from the
+live document on each change. At or above it the viewport places the content with
+`placeRelativeWithLayer`, which drops the per-scroll-frame cost but cannot be sampled, so the
+editor skips the mirror and the sidebar shows the content plane under its tint. The mode has
+hysteresis (`LAYERED_SCROLL_EXIT_LINES`, 800): once layered, a document must shrink below 800
+lines before the sampling path returns, so editing around the threshold does not flip it. The
+switch leaves the caret, the selection and `EditorScrollState.value` alone. The threshold comes
+from `ScrollFrameTimingTest`: on the 2× snapshot harness the layer-free path costs 8.2 ms per
+scroll frame at 1 000 lines (8.3 at 750; the harness floor is ~8.3) and 8.9 / 9.1 / 11.5 ms at
 1 200 / 2 400 / 5 000, while the layered path is 6.1 / 6.0 / 6.6 / 8.3 ms. A 10 000-line
 document is measured at density 1 (12.3 ms layer-free, 8.8 ms layered): at density 2 its
 400 000 px content exceeds Compose's 262 143 px layout limit in the gutter, so it cannot be laid
 out on that density at all.
-The gutter keeps the same tint and draws a 1 dp `glassBorderSide` separator, and its line numbers
-are `muted`, which clears 4.5:1 on the worst content tint (5.86:1). The go-to-line popup is
-`backdropGlass(shape)` with `textSecondaryOnGlass` text, placed below the chrome insets;
-`TreeEditorGlassTest` measures the backdrop as real (dense document, adjacent-pixel difference
-under the blur limit) with the faint document still visible behind the fill, and that the tab
-bar region follows two different scrolled documents.
+The gutter overlay keeps the editor tint (`contentTint`), redraws the current-line glow, and
+draws a 1 dp `glassBorderSide` separator; its line numbers are `muted`, which clears 4.5:1 on
+the worst content tint (5.86:1). The go-to-line popup is `backdropGlass(shape)` with
+`textSecondaryOnGlass` text, placed below the top band; `TreeEditorGlassTest` measures the
+backdrop as real (dense document, adjacent-pixel difference under the blur limit) with the
+faint document still visible behind the fill.
 
 ### Applied surfaces: popups and find bar
 
@@ -1676,10 +1725,10 @@ is a `selectionRow` capsule inset 6/2 dp with the accent2 line on its left edge;
 `hoverFill` step. The Find in Path toggles and the Search Everywhere tab chips follow the same
 capsule-and-line language, and no popup draws an outer glow.
 
-The find bar uses `glassPanel()` (cached field slice) with a 1 dp `neonUnderline`. Its labels
-and placeholders are `textSecondaryOnGlass`, the match counter turns `neonAmber` on a pattern
-error and the query field gains a `neonPink` border instead of pink text, and the row buttons
-use a `glassFill` fill.
+The find bar is a floating `capsuleGlass` panel under the tab group with a 1 dp `neonUnderline`
+inset by half the capsule height. Its labels and placeholders are `textSecondaryOnGlass`, the
+match counter turns `neonAmber` on a pattern error and the query field gains a `neonPink`
+border instead of pink text, and the row buttons use a `glassFill` fill.
 
 ## Offscreen snapshots
 
@@ -1689,7 +1738,7 @@ use a `glassFill` fill.
 (`01-empty.png`, `02-editor-kotlin.png`, `03-editor-json.png`, `04-search.png`,
 `05-search-empty-results.png`, `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
-`12-editor-scrolled.png`).
+`12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`).
 `tasks.test` sets `java.awt.headless=true`, so the renderer never opens a window or touches
 the display.
 
@@ -1734,15 +1783,15 @@ Maven Central alone does not carry it.
 | `NeonModifiersTest` | underline glow direction and `rememberNeonAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
 | `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), and the rendered field staying neutral inside its luminance band |
-| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, and the blur-only fallback when the shader is unavailable |
-| `ToolWindowGlassTest` | the tab strip is the neutral glass fill over the field, the terminal and run console paint the slab glass over the field, status glyphs draw no halo, run status colors clear 4.5 on the painted glass slab, and the failed-status word clears it on its label band |
-| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected row carries the neon line on its capsule edge, the find bar glass matches its rounded slab in both the panel and chrome branches with a corner check, and no fade runs with animations disabled |
+| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, the background extension mirroring and blurring the strip right of its edge while leaving the source untouched, and the blur-only fallback when the shader is unavailable |
+| `ToolWindowGlassTest` | the tool window content is the opaque content plane with one floating switcher capsule over it, the terminal and run console paint that plane, status glyphs draw no halo, run status colors clear 4.5 on the content plane, and the failed-status word clears it on its label band |
+| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected row carries the neon line on its capsule edge, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
 | `EditorScrollUiTest` | `EditorScrollState` viewports: caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, the gutter keeps its position while the text scrolls horizontally, and a small document stays layer-free while a large one layers and shrinks back across the hysteresis |
 | `EditorScrollStateTest` | sub-pixel wheel deltas accumulate, an edge-clamped delta is dropped, the scrollbar adapter excludes the chrome insets from its track, and the layer threshold has hysteresis |
 | `ScrollFrameTimingTest` | scroll frames (not static frames) at 1 000 / 5 000 / 10 000 lines on both viewport paths, three sequential runs each, and the layered path cheaper past the threshold |
-| `OverlayHitTest` | a press on the status pill over a scrolled document does not move the caret |
+| `OverlayHitTest` | a press on the status capsule over a scrolled document does not move the caret |
 | `GradleCommandTest` | command order and `$0`, spaced test name as one argument, wrapper/PATH fallback, test args, shell fallback |
 | `GradleInitScriptTest` | every event line uses the parser prefix and the five kinds, synthesized lines parse as events, the test task cannot be skipped as up-to-date or cached, `strideRunMain` registered for every project and its message without the java plugin |
 | `TestEventParserTest` | the five event kinds, TeamCity escape reversal, non-event and malformed lines as output, order preservation |
@@ -1762,4 +1811,4 @@ Maven Central alone does not carry it.
 | `BuiltInPluginLoadingTest` | the three bundled descriptors enabled, kt/json file types and highlighter lexers through the extension points, one core extension per interface EP |
 | `TextEditorProviderTest` | a file at the highlighted-size limit stays editable and one byte above the limit is read-only |
 | `RepositoryAcceptanceTest` | repository tree top level with generated directories hidden, `Main.kt` as a selected highlighted tab, double-Shift search opening `docs/api-search.md`, and the repository Kotlin and search snapshots |
-| `TreeEditorGlassTest` | tree glass over the field, the sidebar slab inset with the field in the margin and a brighter top rim than its bottom edge, the editor tint over the same field pixel, code scrolled under the tab bar showing through its glass and following two different documents, the status bar text clearing 4.5:1 over scrolled code (6.6:1), the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search pill shortcut hint clearing 4.5:1 on its fill |
+| `TreeEditorGlassTest` | the sidebar showing the mirrored document (rewriting the code changes its pixels), the gap between the top capsules following the code under the row instead of a full-width bar, the top capsule's rim brighter than its bottom edge, the tab-group selection pill moving to the newly selected tab, the editor tint over the same field pixel, the status capsule's label run clearing 4.5:1 over scrolled code (5.6:1), the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search capsule's shortcut hint clearing 4.5:1 on its glass (5.5:1) |

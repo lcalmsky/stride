@@ -5,11 +5,10 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
@@ -17,8 +16,11 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.runSkikoComposeUiTest
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import java.nio.file.Files
 import java.nio.file.Path
@@ -43,116 +45,239 @@ class TreeEditorGlassTest {
     @TempDir
     lateinit var temp: Path
 
+    /**
+     * The background extension is real content: the strip of code right of the sidebar is
+     * mirrored behind it, so rewriting the document changes the pixels inside the sidebar.
+     */
+    @OptIn(ExperimentalTestApi::class)
     @Test
-    fun `tree panel is the glass fill over the neutral field`() {
+    fun `sidebar refracts the code mirrored from its right edge`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
         val state = AppState()
         try {
-            state.openFolder(project("tree-project"))
-            val pixels = renderAppPixels(state)
-            val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
-            val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-            // The slab spans x 8..288 and y 52..772 at density 1. Scan the whole upper band, not
-            // one pixel: a hue or a leak anywhere there must fail.
-            var widest = -1
-            var widestPixel = 0
-            var widestX = -1
-            var widestY = -1
-            for (y in 40..64) {
-                for (x in 120..276) {
-                    val candidate = spread(pixels[index(x, y)])
-                    if (candidate > widest) {
-                        widest = candidate
-                        widestPixel = pixels[index(x, y)]
-                        widestX = x
-                        widestY = y
-                    }
+            val root = longProject("mirror-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
                 }
             }
-            val pixel = pixels[index(150, 300)]
-            val luminance = relativeLuminance(Color(pixel))
+            waitForIdle()
+            val text = editor.value.text
+            val selection = editor.value.selection
+            val first = captureToImage().pixels()
+
+            // Same line count and length, no glyphs: the mirrored strip can only change if the
+            // sidebar really samples the document instead of a texture.
+            editor.updateValue(TextFieldValue(text.map { if (it == '\n') it else ' ' }.joinToString(""), selection))
+            waitForIdle()
+            val second = captureToImage().pixels()
+
+            var total = 0.0
+            var count = 0
+            var darkest = 1.0
+            var brightest = 0.0
+            for (y in 260 until 700) {
+                for (x in 40 until 270) {
+                    val firstLuma = relativeLuminance(Color(first[index(x, y)]))
+                    val secondLuma = relativeLuminance(Color(second[index(x, y)]))
+                    total += abs(firstLuma - secondLuma)
+                    count += 1
+                    darkest = minOf(darkest, firstLuma)
+                    brightest = maxOf(brightest, firstLuma)
+                }
+            }
+            val difference = total / count
             System.err.println(
-                "tree-glass widest=%d at (%d,%d) pixel=#%06X luminance=%.4f band=%.4f..%.4f".format(
-                    widest,
-                    widestX,
-                    widestY,
-                    widestPixel and 0xFFFFFF,
-                    luminance,
-                    lowest,
-                    highest,
-                ),
-            )
-            // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
-            assertTrue(widest <= 12, "the tree glass should stay neutral, widest channel spread = $widest")
-            assertTrue(
-                luminance >= lowest - 0.002 && luminance <= highest + 0.004,
-                "tree glass luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),
+                "extension difference=%.5f range=%.4f".format(difference, brightest - darkest),
             )
             assertTrue(
-                relativeLuminance(DesignTokens.surface) != luminance,
-                "tree glass still measures as the flat surface color",
+                difference > 0.0005,
+                "the sidebar should follow the mirrored code (difference %.5f)".format(difference),
+            )
+            assertTrue(
+                brightest - darkest > 0.002,
+                "the sidebar should not be a flat fill (range %.5f)".format(brightest - darkest),
             )
         } finally {
             state.dispose()
         }
     }
 
+    /**
+     * No full-width bar: the 8 dp gap between the project capsule and the tab group shows the
+     * code scrolling under the floating controls, so it changes with the document.
+     */
+    @OptIn(ExperimentalTestApi::class)
     @Test
-    fun `sidebar floats inset with a brighter top rim than its bottom edge`() {
+    fun `the row between the top capsules follows the code under it`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
         val state = AppState()
         try {
-            state.openFolder(project("slab-project"))
-            val pixels = renderAppPixels(state)
-            // The slab spans x 8..288, y 52..772 at density 1; the window field shows at x 0..8.
-            val margin = pixels[index(4, 300)]
-            val interior = pixels[index(150, 300)]
-            val marginLuma = relativeLuminance(Color(margin))
-            val interiorLuma = relativeLuminance(Color(interior))
-            val field = fieldAt(300)
-            val fieldLuma = relativeLuminance(field)
+            val root = longProject("gap-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+
+            val name = session.displayName()
+            val nameBounds = onAllNodesWithText(name, useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy { it.boundsInRoot.top }
+                .boundsInRoot
+            val tabBounds = onAllNodesWithText("Long.kt", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy { it.boundsInRoot.top }
+                .boundsInRoot
+            // The capsule keeps 12 dp of padding after its label; the tab's label starts 33 dp
+            // into the group (group padding, tab padding, icon and spacer).
+            val capsuleRight = nameBounds.right + 12
+            val groupLeft = tabBounds.left - 33
+            val gapX = ((capsuleRight + groupLeft) / 2).toInt()
+            val y = (DesignTokens.chromeInset + DesignTokens.capsuleHeight / 2).value.toInt()
             System.err.println(
-                "slab-margin margin=#%06X (%.4f) field=#%06X (%.4f) interior=#%06X (%.4f)".format(
-                    margin and 0xFFFFFF,
-                    marginLuma,
-                    field.toArgb() and 0xFFFFFF,
-                    fieldLuma,
-                    interior and 0xFFFFFF,
-                    interiorLuma,
-                ),
+                "top-gap capsuleRight=%.1f groupLeft=%.1f x=%d y=%d".format(capsuleRight, groupLeft, gapX, y),
             )
+            assertTrue(groupLeft > capsuleRight, "the gap is empty: ${capsuleRight}..${groupLeft}")
+
+            val text = editor.value.text
+            val selection = editor.value.selection
+            val beforePixels = captureToImage().pixels()
+            var before = 0.0
+            var samples = 0
+            for (dy in -4..4) {
+                before += relativeLuminance(Color(beforePixels[index(gapX, y + dy)]))
+                samples += 1
+            }
+            before /= samples
+
+            editor.updateValue(TextFieldValue(text.map { if (it == '\n') it else ' ' }.joinToString(""), selection))
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+            var after = 0.0
+            for (dy in -4..4) after += relativeLuminance(Color(pixels[index(gapX, y + dy)]))
+            after /= samples
+
+            System.err.println("top-gap before=%.5f after=%.5f".format(before, after))
             assertTrue(
-                abs(marginLuma - fieldLuma) < 0.02,
-                "the margin should stay the window field: %.4f vs field %.4f".format(marginLuma, fieldLuma),
-            )
-            assertTrue(
-                interiorLuma > marginLuma + 0.004,
-                "the slab should be lighter than the field margin: %.4f vs %.4f".format(interiorLuma, marginLuma),
-            )
-            val topRim = relativeLuminance(Color(pixels[index(150, 52)]))
-            val bottomRim = relativeLuminance(Color(pixels[index(150, 771)]))
-            System.err.println("slab-rim top=%.4f bottom=%.4f".format(topRim, bottomRim))
-            assertTrue(
-                topRim > bottomRim + 0.02,
-                "the top rim should be brighter than the bottom edge: %.4f vs %.4f".format(topRim, bottomRim),
+                abs(before - after) > 0.0008,
+                "the gap should be code, not a painted bar (before %.5f after %.5f)".format(before, after),
             )
         } finally {
             state.dispose()
         }
     }
 
-    private fun fieldAt(y: Int): Color {
-        val t = y.toFloat() / HEIGHT
-        return if (t <= 0.55f) {
-            lerp(DesignTokens.backgroundLift, DesignTokens.background, t / 0.55f)
-        } else {
-            lerp(DesignTokens.background, DesignTokens.fieldBottom, (t - 0.55f) / 0.45f)
+    /** The top capsule's specular rim is brighter than its bottom edge. */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `top capsule rim is brighter than its bottom edge`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("rim-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val nameBounds = onAllNodesWithText(session.displayName(), useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy { it.boundsInRoot.top }
+                .boundsInRoot
+            val pixels = captureToImage().pixels()
+            val x = (nameBounds.right + 12 - 22).toInt()
+            val top = relativeLuminance(Color(pixels[index(x, DesignTokens.chromeInset.value.toInt() + 1)]))
+            val bottom = relativeLuminance(
+                Color(
+                    pixels[index(
+                        x,
+                        (DesignTokens.chromeInset + DesignTokens.capsuleHeight).value.toInt() - 2,
+                    )],
+                ),
+            )
+            System.err.println("capsule-rim top=%.4f bottom=%.4f".format(top, bottom))
+            assertTrue(
+                top > bottom + 0.02,
+                "the capsule top rim should be brighter than its bottom edge: %.4f vs %.4f".format(top, bottom),
+            )
+        } finally {
+            state.dispose()
         }
     }
 
-    private fun lerp(from: Color, to: Color, t: Float): Color = Color(
-        from.red + (to.red - from.red) * t,
-        from.green + (to.green - from.green) * t,
-        from.blue + (to.blue - from.blue) * t,
-    )
+    /** The selected tab pill, with its cyan line, moves to the newly selected tab. */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `tab pill moves to the newly selected tab`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = demoProject()
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("src/Main.kt")))
+            session.editors.openFile(VFile(root.resolve("src/Greeting.kt")))
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+
+            onNode(
+                SemanticsMatcher("top tab") { it.boundsInRoot.top < 100f } and
+                    hasText("Main.kt") and hasClickAction(),
+            ).performClick()
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+            val lineY = (DesignTokens.chromeInset + DesignTokens.capsuleHeight).value.toInt() - 5
+            val main = topText(pixels, "Main.kt", lineY)
+            val greeting = topText(pixels, "Greeting.kt", lineY)
+            System.err.println("tab-pill cyan main=%d greeting=%d".format(main, greeting))
+            assertTrue(main > 60, "the selected Main.kt tab should carry the cyan line ($main)")
+            assertTrue(
+                main > greeting + 40,
+                "the pill should sit under the newly selected tab (main $main, greeting $greeting)",
+            )
+        } finally {
+            state.dispose()
+        }
+    }
 
     @Test
     fun `editor body is the content tint over the same mesh pixel`() {
@@ -188,7 +313,7 @@ class TreeEditorGlassTest {
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun `tree focus halo turns on when the tree has focus`() = runSkikoComposeUiTest(
-        size = Size(1280f, 820f),
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
         density = Density(1f),
     ) {
         val state = AppState()
@@ -212,7 +337,8 @@ class TreeEditorGlassTest {
             onNode(hasText("src") and hasClickAction()).assertIsFocused()
             val focused = captureToImage().pixels()
 
-            for ((x, y) in listOf(200 to 58, 200 to 54)) {
+            // The sidebar's top edge: the halo line sits on the glass rim.
+            for ((x, y) in listOf(200 to 10, 200 to 12)) {
                 val before = Color(unfocused[index(x, y)])
                 val after = Color(focused[index(x, y)])
                 val green = channel(after) { green } - channel(before) { green }
@@ -232,7 +358,7 @@ class TreeEditorGlassTest {
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun `goto line popup blurs the document behind it`() = runSkikoComposeUiTest(
-        size = Size(1280f, 820f),
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
         density = Density(1f),
     ) {
         val root = temp.resolve("dense-project")
@@ -302,116 +428,6 @@ class TreeEditorGlassTest {
     }
 
     @Test
-    fun `code scrolled under the tab bar shows through the glass`() {
-        val first = scrolledBarPixels("y")
-        val second = scrolledBarPixels("W")
-        // The floating tab strip spans x 304..1264, y 60..96 at density 1; stay below its rim.
-        val left = 500
-        val right = 1200
-        val top = 64
-        val bottom = 92
-        val pattern = meanAdjacentDiff(first, left, right, top, bottom)
-        var total = 0.0
-        var count = 0
-        var darkest = 1.0
-        var brightest = 0.0
-        for (y in top until bottom) {
-            for (x in left until right) {
-                val firstLuma = relativeLuminance(Color(first[index(x, y)]))
-                val secondLuma = relativeLuminance(Color(second[index(x, y)]))
-                total += abs(firstLuma - secondLuma)
-                count += 1
-                darkest = minOf(darkest, firstLuma)
-                brightest = maxOf(brightest, firstLuma)
-            }
-        }
-        val difference = total / count
-        System.err.println(
-            "tab-bar-glass pattern=%.5f range=%.5f content-difference=%.5f".format(
-                pattern,
-                brightest - darkest,
-                difference,
-            ),
-        )
-        assertTrue(
-            brightest - darkest > 0.004,
-            "the tab bar should not be a flat tint (lum range %.5f)".format(brightest - darkest),
-        )
-        assertTrue(
-            difference > 0.0005,
-            "the bar should follow the code under it (difference %.5f)".format(difference),
-        )
-    }
-
-    @Test
-    fun `status bar text clears 4_5 over the scrolled code`() {
-        val pixels = scrolledBarPixels("y")
-        // The status slab spans y 780..804 at density 1; measure its interior, not the rim.
-        val top = 782
-        val bottom = 802
-        val left = 40
-        val right = 1240
-        val luminances = ArrayList<Double>((bottom - top) * (right - left))
-        for (y in top until bottom) {
-            for (x in left until right) {
-                luminances += relativeLuminance(Color(pixels[index(x, y)]))
-            }
-        }
-        luminances.sort()
-        val background = luminances[luminances.size / 2]
-        val text = luminances.last()
-        val ratio = (text + 0.05) / (background + 0.05)
-        val textPixels = luminances.count { it > background + 0.1 }
-        System.err.println(
-            "status-contrast background=%.4f text=%.4f ratio=%.3f text-pixels=%d".format(
-                background,
-                text,
-                ratio,
-                textPixels,
-            ),
-        )
-        assertTrue(textPixels > 200, "expected label pixels in the status bar, found $textPixels")
-        assertTrue(
-            ratio >= DesignTokens.contrastText,
-            "status bar text over scrolled code = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
-        )
-    }
-
-    private fun scrolledBarPixels(glyph: String): IntArray {
-        val root = temp.resolve("scroll-$glyph")
-        Files.createDirectories(root)
-        val content = (1..120).joinToString("\n") { line -> "line $line " + glyph.repeat(340) }
-        Files.writeString(root.resolve("Long.kt"), content)
-        val state = AppState()
-        try {
-            state.openFolder(root)
-            val session = requireNotNull(state.session)
-            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
-            editor.gotoLine("100:290")
-            val scene = ImageComposeScene(WIDTH, HEIGHT, Density(1f)) {
-                CompositionLocalProvider(
-                    LocalAnimationsEnabled provides false,
-                    LocalWordmarkCaretBlink provides false,
-                ) {
-                    App(state, onOpenFolder = {})
-                }
-            }
-            return try {
-                var nanos = 0L
-                repeat(8) {
-                    scene.render(nanos).close()
-                    nanos += 16_000_000L
-                }
-                scene.render(nanos).pixels()
-            } finally {
-                scene.close()
-            }
-        } finally {
-            state.dispose()
-        }
-    }
-
-    @Test
     fun `gutter line numbers clear 4_5 on the worst content tint`() {
         val worstTint = blendOver(
             DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
@@ -425,15 +441,20 @@ class TreeEditorGlassTest {
         )
     }
 
+    /** The status capsule sits over scrolled code; its label run keeps body contrast. */
     @OptIn(ExperimentalTestApi::class)
     @Test
-    fun `search pill shortcut hint clears 4_5 on its fill`() = runSkikoComposeUiTest(
-        size = Size(1280f, 820f),
+    fun `status capsule text clears 4_5 over the scrolled code`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
         density = Density(1f),
     ) {
         val state = AppState()
         try {
-            state.openFolder(project("search-pill-project"))
+            val root = longProject("status-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
             setContent {
                 CompositionLocalProvider(
                     LocalAnimationsEnabled provides false,
@@ -443,65 +464,116 @@ class TreeEditorGlassTest {
                 }
             }
             waitForIdle()
-            // The pill is clickable, so the merged semantics node spans the whole row; measure the
-            // unmerged text node to keep the hint's own pixels inside the search area. The same
-            // glyphs also label the shortcut list further down, so the topmost node is the pill's.
+            val bounds = onAllNodesWithText("UTF-8", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy { it.boundsInRoot.top }
+                .boundsInRoot
+            val pixels = captureToImage().pixels()
+            val left = bounds.left.toInt()
+            val right = bounds.right.toInt()
+            val top = bounds.top.toInt()
+            val bottom = bounds.bottom.toInt()
+            val luminances = ArrayList<Double>((bottom - top) * (right - left))
+            for (y in top until bottom) {
+                for (x in left until right) luminances += relativeLuminance(Color(pixels[index(x, y)]))
+            }
+            luminances.sort()
+            val background = luminances[luminances.size / 2]
+            val text = luminances.last()
+            val ratio = (text + 0.05) / (background + 0.05)
+            val textPixels = luminances.count { it > background + 0.1 }
+            System.err.println(
+                "status-contrast background=%.4f text=%.4f ratio=%.3f text-pixels=%d".format(
+                    background,
+                    text,
+                    ratio,
+                    textPixels,
+                ),
+            )
+            assertTrue(textPixels > 20, "expected label pixels in the status capsule, found $textPixels")
+            assertTrue(
+                ratio >= DesignTokens.contrastText,
+                "status capsule text over scrolled code = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `search capsule shortcut hint clears 4_5 on its glass`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            state.openFolder(project("search-capsule-project"))
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            // The same glyphs also label the shortcut list further down, so the topmost node is
+            // the capsule's hint.
             val bounds = onAllNodesWithText("⇧⇧", useUnmergedTree = true)
                 .fetchSemanticsNodes()
                 .minBy { it.boundsInRoot.top }
                 .boundsInRoot
             val pixels = captureToImage().pixels()
-            // The pill is black 30% over the title bar slab, which is the glass fill over the field.
-            val fill = blendOver(
-                DesignTokens.searchPillFill,
-                blendOver(
-                    DesignTokens.glassFill,
-                    blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift),
-                ),
-            )
             val left = bounds.left.toInt()
             val right = maxOf(bounds.right.toInt(), left + 1)
             val top = bounds.top.toInt()
             val bottom = maxOf(bounds.bottom.toInt(), top + 1)
-            assertTrue(left < right && top < bottom, "hint bounds are empty: $bounds")
-            var best = 0.0
-            var bestPixel = 0
-            var bestX = -1
-            var bestY = -1
+            val luminances = ArrayList<Double>((bottom - top) * (right - left))
             for (y in top until bottom) {
-                for (x in left until right) {
-                    val pixel = pixels[index(x, y)]
-                    val ratio = contrastRatio(Color(pixel), fill)
-                    if (ratio > best) {
-                        best = ratio
-                        bestPixel = pixel
-                        bestX = x
-                        bestY = y
-                    }
-                }
+                for (x in left until right) luminances += relativeLuminance(Color(pixels[index(x, y)]))
             }
+            luminances.sort()
+            val background = luminances[luminances.size / 2]
+            val best = luminances.last()
+            val ratio = (best + 0.05) / (background + 0.05)
             System.err.println(
-                "search-pill-hint contrast=%.3f pixel=#%06X at (%d,%d) fill=#%06X".format(
-                    best,
-                    bestPixel and 0xFFFFFF,
-                    bestX,
-                    bestY,
-                    fill.toArgb() and 0xFFFFFF,
-                ),
+                "search-capsule-hint background=%.4f text=%.4f ratio=%.3f".format(background, best, ratio),
             )
             assertTrue(
-                best >= DesignTokens.contrastText,
-                "search pill hint contrast = %.3f < %.1f (pixel #%06X at (%d,%d))".format(
-                    best,
-                    DesignTokens.contrastText,
-                    bestPixel and 0xFFFFFF,
-                    bestX,
-                    bestY,
-                ),
+                ratio >= DesignTokens.contrastText,
+                "search capsule hint contrast = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
             )
         } finally {
             state.dispose()
         }
+    }
+
+    /** The cyan amount of the selected-tab line under [label]'s topmost node. */
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.topText(pixels: IntArray, label: String, lineY: Int): Int {
+        val bounds = onAllNodesWithText(label, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .minBy { it.boundsInRoot.top }
+            .boundsInRoot
+        val x = bounds.center.x.toInt()
+        var best = 0
+        for (y in lineY..lineY + 4) {
+            for (dx in -4..4) {
+                val pixel = pixels[index(x + dx, y)]
+                val cyan = ((pixel shr 8) and 0xFF) + (pixel and 0xFF) - 2 * ((pixel shr 16) and 0xFF)
+                best = maxOf(best, cyan)
+            }
+        }
+        return best
+    }
+
+    private fun longProject(name: String, glyph: Char): Path {
+        val root = temp.resolve(name)
+        Files.createDirectories(root)
+        val content = (1..120).joinToString("\n") { line -> "line $line " + glyph.toString().repeat(340) }
+        Files.writeString(root.resolve("Long.kt"), content)
+        return root
     }
 
     private fun project(name: String): Path {
@@ -509,6 +581,14 @@ class TreeEditorGlassTest {
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/Main.kt"), "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
         Files.writeString(root.resolve("src/Other.kt"), "package demo\n")
+        return root
+    }
+
+    private fun demoProject(): Path {
+        val root = temp.resolve("demo-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Main.kt"), "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        Files.writeString(root.resolve("src/Greeting.kt"), "package demo\n\nclass Greeting\n")
         return root
     }
 
@@ -576,20 +656,6 @@ class TreeEditorGlassTest {
     private fun channel(color: Color, pick: Color.() -> Float): Float = pick(color) * 255f
 
     private fun index(x: Int, y: Int): Int = y * WIDTH + x
-
-    private fun spread(pixel: Int): Int {
-        val red = (pixel shr 16) and 0xFF
-        val green = (pixel shr 8) and 0xFF
-        val blue = pixel and 0xFF
-        return maxOf(red, green, blue) - minOf(red, green, blue)
-    }
-
-    private fun channelDistance(first: Int, second: Int): Int {
-        val red = abs(((first shr 16) and 0xFF) - ((second shr 16) and 0xFF))
-        val green = abs(((first shr 8) and 0xFF) - ((second shr 8) and 0xFF))
-        val blue = abs((first and 0xFF) - (second and 0xFF))
-        return maxOf(red, green, blue)
-    }
 
     companion object {
         private const val WIDTH = 1280

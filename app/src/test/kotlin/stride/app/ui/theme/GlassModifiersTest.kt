@@ -19,6 +19,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -541,6 +542,56 @@ class GlassModifiersTest {
         MeshBackground(Modifier.fillMaxSize()) {
             Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
             Box(Modifier.align(Alignment.TopStart).size(60.dp, 40.dp).backdropGlass())
+        }
+    }
+
+    @Test
+    fun `background extension mirrors and blurs the strip right of its edge`() {
+        val width = 400
+        val height = 120
+        val cache = MirroredStripCache()
+        try {
+            val pixels = pixelArray(width, height) {
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    Box(Modifier.offset(x = 250.dp).size(50.dp, 120.dp).background(Color.White))
+                    // The element covers the target 100..200; its source strip is 200..300.
+                    Box(
+                        Modifier
+                            .offset(x = 100.dp)
+                            .size(100.dp, 120.dp)
+                            .backgroundExtension(
+                                key = "mirror",
+                                cache = cache,
+                                sourceLeft = 200.dp,
+                                sourceTop = 0.dp,
+                                sourceWidth = 100.dp,
+                            ) { canvas ->
+                                canvas.drawRect(
+                                    250f,
+                                    0f,
+                                    300f,
+                                    120f,
+                                    Paint().apply { color = Color.White },
+                                )
+                            },
+                    )
+                }
+            }
+            // Mirrored: window 125 shows source 275 (white), window 175 shows source 225 (black).
+            val mirroredWhite = relativeLuminance(Color(pixels[index(125, 60, width)]))
+            val mirroredBlack = relativeLuminance(Color(pixels[index(175, 60, width)]))
+            val source = relativeLuminance(Color(pixels[index(280, 60, width)]))
+            System.err.println(
+                "extension white=%.4f black=%.4f source=%.4f".format(mirroredWhite, mirroredBlack, source),
+            )
+            assertTrue(
+                mirroredWhite > mirroredBlack + 0.05,
+                "the extension should mirror the strip: white %.4f vs black %.4f"
+                    .format(mirroredWhite, mirroredBlack),
+            )
+            assertTrue(source > 0.9, "the source strip should stay unpainted: %.4f".format(source))
+        } finally {
+            cache.dispose()
         }
     }
 

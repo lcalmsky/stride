@@ -71,9 +71,16 @@ object DesignTokens {
     val radiusCapsule = 8.dp
     val radiusPopup = 18.dp
 
-    val topBarHeight = 36.dp
-    val tabStripHeight = 36.dp
-    val statusBarHeight = 24.dp
+    /**
+     * Floating chrome: the sidebar and every control capsule sit [chromeInset] in from the window
+     * edge over edge-to-edge content, separated by [chromeGap] and rounded to half their height.
+     */
+    val chromeInset = 10.dp
+    val chromeGap = 8.dp
+    val capsuleHeight = 34.dp
+    val statusCapsuleHeight = 32.dp
+    val contentGap = 10.dp
+    val sidebarRadius = 20.dp
     val treeHeaderHeight = 32.dp
     val treeRowHeight = 24.dp
     val treeIndent = 16.dp
@@ -127,27 +134,22 @@ object DesignTokens {
     val glassAberration = 0.5.dp
     val glassSpecular = 0.42f
 
-    /** Chrome bars: the same thin glass without edge lens, with the hairline frame. */
-    val chromeGlassBezel = 10.dp
-    val chromeGlassBlurRadius = 4.dp
-    val chromeBackdropMix = 0.8f
-
     /** The small lens on the selected tree row and the active tab. */
     val capsuleBezel = 6.dp
     val capsuleLensStrength = 3.5.dp
     val capsuleEndTaper = 10.dp
 
-    /**
-     * Flying slabs: every chrome surface is inset from the window edge by [slabMargin] and cast
-     * the same neutral shadow, so the window field shows in the gaps between them.
-     */
-    val slabMargin = 8.dp
-    val slabRadiusSide = 16.dp
-    val slabRadiusTitle = 14.dp
-    val slabRadiusTab = 13.dp
-    val slabRadiusStatus = 12.dp
-    val slabRadiusToolWindow = 14.dp
+    /** Floating chrome casts the same soft neutral shadow; a frame only blits a baked image. */
     val slabShadow = 16.dp
+
+    /** The sidebar tint over the background extension: the mirrored content stays visible. */
+    val sidebarFill = Color(0xFF14151B).copy(alpha = 0.30f)
+
+    /** The capsule tint over the already blurred content band, plus its neutral lift. */
+    val capsuleFill = Color(0xFF14151B).copy(alpha = 0.58f)
+
+    /** The strip mirrored behind the sidebar is blurred hard so only its colour and rhythm remain. */
+    val backgroundExtensionBlur = 9.dp
 
     /** The specular slab rim: bright at the top and left, a faint line at the bottom. */
     val slabRimTop = Color.White.copy(alpha = 0.22f)
@@ -162,13 +164,6 @@ object DesignTokens {
 
     /** Secondary labels on busy glass (a bar over code, a popup over the editor). */
     val textOnBusyGlass = Color(0xFFC4CBDA)
-
-    /** The search pill's dark glass fill on the title bar slab. */
-    val searchPillFill = Color.Black.copy(alpha = 0.30f)
-
-    /** Hairline grid baked into the project tree glass, so its lens has neutral detail to bend. */
-    val glassGridSpacing = 40.dp
-    val glassGrid = Color.White.copy(alpha = 0.06f)
 
     /**
      * Shadow under chrome and popup text. On thin glass the text is read against this plate, so
