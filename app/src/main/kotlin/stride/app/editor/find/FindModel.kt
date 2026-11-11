@@ -2,7 +2,11 @@ package stride.app.editor.find
 
 import stride.app.editor.TextChange
 
-data class FindOptions(val caseSensitive: Boolean = false, val regex: Boolean = false)
+data class FindOptions(
+    val caseSensitive: Boolean = false,
+    val regex: Boolean = false,
+    val wholeWord: Boolean = false,
+)
 data class FindMatch(val start: Int, val end: Int)
 
 /** [matches] are ascending; [error] is the pattern error when a regular expression is invalid. */
@@ -18,7 +22,7 @@ object FindModel {
                 return FindResult(emptyList(), e.message ?: "Invalid regular expression")
             }
             val matches = regex.findAll(text).map { FindMatch(it.range.first, it.range.last + 1) }.toList()
-            return FindResult(matches)
+            return FindResult(if (options.wholeWord) matches.filter { isWholeWord(text, it) } else matches)
         }
         val matches = buildList {
             var index = text.indexOf(query, 0, ignoreCase = !options.caseSensitive)
@@ -27,8 +31,18 @@ object FindModel {
                 index = text.indexOf(query, index + 1, ignoreCase = !options.caseSensitive)
             }
         }
-        return FindResult(matches)
+        return FindResult(if (options.wholeWord) matches.filter { isWholeWord(text, it) } else matches)
     }
+
+    /** `true` when neither side of [match] continues an identifier. */
+    fun isWholeWord(text: String, match: FindMatch): Boolean {
+        val before = text.getOrNull(match.start - 1)
+        val after = text.getOrNull(match.end)
+        return (before == null || !isIdentifierPart(before)) && (after == null || !isIdentifierPart(after))
+    }
+
+    private fun isIdentifierPart(character: Char): Boolean =
+        character.isLetterOrDigit() || character == '_' || character == '$'
 
     /** The first match at or after [caret], wrapping to the first match; `null` without matches. */
     fun nextIndex(matches: List<FindMatch>, caret: Int): Int? {

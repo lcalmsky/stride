@@ -42,6 +42,17 @@ class FindInPathScannerTest {
     }
 
     @Test
+    fun `whole word skips matches inside a larger identifier`() {
+        val file = indexed("words.txt", "foo foobar barfoo foo\n".toByteArray())
+
+        val all = FindInPathScanner.scan(listOf(file), "foo", FindOptions())
+        val whole = FindInPathScanner.scan(listOf(file), "foo", FindOptions(wholeWord = true))
+
+        assertEquals(4, all.size)
+        assertEquals(listOf(1, 19), whole.map { it.column })
+    }
+
+    @Test
     fun `should stop produces no hits`() {
         val file = indexed("hits.txt", "foo\n".toByteArray())
 

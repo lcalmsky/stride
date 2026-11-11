@@ -61,6 +61,26 @@ class ProjectTreeModel(
         if (key(file) in expanded) collapse(file) else expand(file)
     }
 
+    /**
+     * Expands every ancestor of [file] so its row becomes visible; `false` when the file is
+     * outside the root or does not exist below it.
+     */
+    fun reveal(file: VFile): Boolean {
+        val target = key(file)
+        val rootKey = key(root)
+        if (target == rootKey) return true
+        if (!target.startsWith(rootKey)) return false
+        var changed = false
+        if (expanded.add(rootKey)) changed = true
+        var ancestor: Path? = target.parent
+        while (ancestor != null && ancestor != rootKey) {
+            if (expanded.add(ancestor)) changed = true
+            ancestor = ancestor.parent
+        }
+        if (changed) rebuild()
+        return rowsState.any { key(it.file) == target }
+    }
+
     /** Drops the cached children of every event file's parent directory, then rebuilds. */
     fun handleEvents(events: List<VFileEvent>) {
         if (disposed) return

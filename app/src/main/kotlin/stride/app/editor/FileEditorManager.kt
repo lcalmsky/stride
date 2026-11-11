@@ -30,6 +30,11 @@ class FileEditorManager(private val project: Project) : Disposable {
     var selected by mutableStateOf<FileEditor?>(null)
         private set
 
+    /** Called whenever a different editor becomes selected; used by the navigation history. */
+    var onSelectionChanged: (FileEditor) -> Unit = {}
+
+    private val closedFiles = ArrayList<VFile>()
+
     private var disposed = false
 
     /**
@@ -40,14 +45,14 @@ class FileEditorManager(private val project: Project) : Disposable {
         if (disposed) return null
         val key = keyOf(file)
         openFilesState.firstOrNull { keyOf(it.file) == key }?.let {
-            selected = it
+            select(it)
             touchRecent(it.file)
             return it
         }
         val provider = providers.firstOrNull { it.accept(project, file) } ?: return null
         val editor = provider.createEditor(project, file)
         openFilesState.add(editor)
-        selected = editor
+        select(editor)
         touchRecent(file)
         return editor
     }
@@ -62,15 +67,34 @@ class FileEditorManager(private val project: Project) : Disposable {
         return editor
     }
 
-    /** Closes [file]'s tab, disposing its editor. */
+    /** Closes [file]'s tab, disposing its editor; the file can be reopened later. */
     fun closeFile(file: VFile) {
         val index = openFilesState.indexOfFirst { keyOf(it.file) == keyOf(file) }
         if (index < 0) return
         val editor = openFilesState.removeAt(index)
         if (selected === editor) {
-            selected = openFilesState.getOrNull(index) ?: openFilesState.getOrNull(index - 1)
+            select(openFilesState.getOrNull(index) ?: openFilesState.getOrNull(index - 1))
         }
+        rememberClosed(file)
         Disposer.dispose(editor)
+    }
+
+    /** Closes every tab except the selected one. */
+    fun closeOthers() {
+        val keep = selected ?: return
+        val others = openFilesState.filter { it !== keep }
+        for (editor in others) {
+            openFilesState.remove(editor)
+            rememberClosed(editor.file)
+            Disposer.dispose(editor)
+        }
+        select(keep)
+    }
+
+    /** Reopens the most recently closed tab; `null` when no tab was closed. */
+    fun reopenClosed(): FileEditor? {
+        val file = closedFiles.removeLastOrNull() ?: return null
+        return openFile(file)
     }
 
     /** Selects the next tab, wrapping around; does nothing with fewer than two tabs. */
@@ -85,13 +109,26 @@ class FileEditorManager(private val project: Project) : Disposable {
         val current = openFilesState.indexOfFirst { it === selected }
         if (current < 0) {
             val next = openFilesState[0]
-            selected = next
+            select(next)
             touchRecent(next.file)
             return
         }
         val next = openFilesState[(current + step + count) % count]
-        selected = next
+        select(next)
         touchRecent(next.file)
+    }
+
+    private fun select(editor: FileEditor?) {
+        if (selected === editor) return
+        selected = editor
+        if (editor != null) onSelectionChanged(editor)
+    }
+
+    private fun rememberClosed(file: VFile) {
+        val key = keyOf(file)
+        closedFiles.removeAll { keyOf(it) == key }
+        closedFiles.add(file)
+        while (closedFiles.size > MAX_CLOSED_FILES) closedFiles.removeAt(0)
     }
 
     private fun touchRecent(file: VFile) {
@@ -117,6 +154,7 @@ class FileEditorManager(private val project: Project) : Disposable {
         val editors = openFilesState.toList()
         openFilesState.clear()
         recentFilesState.clear()
+        closedFiles.clear()
         selected = null
         for (editor in editors) Disposer.dispose(editor)
     }
@@ -125,5 +163,6 @@ class FileEditorManager(private val project: Project) : Disposable {
 
     companion object {
         const val MAX_RECENT_FILES: Int = 50
+        const val MAX_CLOSED_FILES: Int = 50
     }
 }

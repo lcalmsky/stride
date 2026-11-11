@@ -122,6 +122,42 @@ class KeymapTest {
         // $Copy and $Cut take the whole line when nothing is selected
         assertEquals(ActionId.COPY_LINE, action("meta C", KeyContext.EDITOR))
         assertEquals(ActionId.CUT_LINE, action("meta X", KeyContext.EDITOR))
+        // GotoDeclaration meta B
+        assertEquals(ActionId.GOTO_DECLARATION, action("meta B", KeyContext.EDITOR))
+        // Back and Forward keep the tab-switching strokes apart
+        assertEquals(ActionId.BACK, action("meta OPEN_BRACKET", KeyContext.GLOBAL))
+        assertEquals(ActionId.BACK, action("meta alt LEFT", KeyContext.GLOBAL))
+        assertEquals(ActionId.FORWARD, action("meta CLOSE_BRACKET", KeyContext.GLOBAL))
+        assertEquals(ActionId.FORWARD, action("meta alt RIGHT", KeyContext.GLOBAL))
+        assertEquals(ActionId.PREVIOUS_TAB, action("meta shift OPEN_BRACKET", KeyContext.GLOBAL))
+        assertEquals(ActionId.NEXT_TAB, action("meta shift CLOSE_BRACKET", KeyContext.GLOBAL))
+        // FileStructurePopup control F12 (→meta)
+        assertEquals(ActionId.FILE_STRUCTURE_POPUP, action("meta F12", KeyContext.EDITOR))
+        // GotoTest control shift T (→meta)
+        assertEquals(ActionId.GOTO_TEST, action("meta shift T", KeyContext.GLOBAL))
+        // FindUsages alt F7
+        assertEquals(ActionId.FIND_USAGES, action("alt F7", KeyContext.EDITOR))
+        // ToggleBookmark F3 and ShowBookmarks meta F3
+        assertEquals(ActionId.TOGGLE_BOOKMARK, action("F3", KeyContext.EDITOR))
+        assertEquals(ActionId.SHOW_BOOKMARKS, action("meta F3", KeyContext.GLOBAL))
+        // ActivateProjectToolWindow meta 1
+        assertEquals(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, action("meta 1", KeyContext.GLOBAL))
+        // HideAllWindows control shift F12 (→meta)
+        assertEquals(ActionId.HIDE_ALL_WINDOWS, action("meta shift F12", KeyContext.GLOBAL))
+        // CopyPaths control shift C (→meta)
+        assertEquals(ActionId.COPY_PATHS, action("meta shift C", KeyContext.GLOBAL))
+        // CopyReference control alt shift C (→meta)
+        assertEquals(ActionId.COPY_REFERENCE, action("meta alt shift C", KeyContext.GLOBAL))
+        // Switcher control TAB
+        assertEquals(ActionId.SWITCHER, action("control TAB", KeyContext.GLOBAL))
+        // SelectInProjectView has no macOS default stroke; alt F1 reveals the file
+        assertEquals(ActionId.SELECT_IN_PROJECT_VIEW, action("alt F1", KeyContext.GLOBAL))
+    }
+
+    @Test
+    fun `actions without a stroke stay reachable from the actions tab`() {
+        assertTrue(keymap.strokesFor(ActionId.REOPEN_CLOSED_TAB).isEmpty())
+        assertTrue(keymap.strokesFor(ActionId.CLOSE_OTHER_TABS).isEmpty())
     }
 
     @Test

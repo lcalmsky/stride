@@ -12,6 +12,9 @@ enum class ActionId {
     EDITOR_START_NEW_LINE, EDITOR_START_NEW_LINE_BEFORE, EDITOR_MATCH_BRACE,
     EDITOR_CODE_BLOCK_START, EDITOR_CODE_BLOCK_END, METHOD_UP, METHOD_DOWN,
     HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
+    GOTO_DECLARATION, BACK, FORWARD, FILE_STRUCTURE_POPUP, GOTO_TEST, FIND_USAGES,
+    TOGGLE_BOOKMARK, SHOW_BOOKMARKS, ACTIVATE_PROJECT_TOOL_WINDOW, HIDE_ALL_WINDOWS,
+    COPY_PATHS, COPY_REFERENCE, SWITCHER, SELECT_IN_PROJECT_VIEW, REOPEN_CLOSED_TAB, CLOSE_OTHER_TABS,
 }
 
 enum class KeyContext {
@@ -171,4 +174,35 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     // $Copy and $Cut with an empty selection take the whole line
     bind("meta C", ActionId.COPY_LINE, KeyContext.EDITOR)
     bind("meta X", ActionId.CUT_LINE, KeyContext.EDITOR)
+    // GotoDeclaration meta B
+    bind("meta B", ActionId.GOTO_DECLARATION, KeyContext.EDITOR)
+    // Back meta OPEN_BRACKET; meta alt LEFT
+    bind("meta OPEN_BRACKET", ActionId.BACK, KeyContext.GLOBAL)
+    bind("meta alt LEFT", ActionId.BACK, KeyContext.GLOBAL)
+    // Forward meta CLOSE_BRACKET; meta alt RIGHT
+    bind("meta CLOSE_BRACKET", ActionId.FORWARD, KeyContext.GLOBAL)
+    bind("meta alt RIGHT", ActionId.FORWARD, KeyContext.GLOBAL)
+    // FileStructurePopup control F12 (→meta)
+    bind("meta F12", ActionId.FILE_STRUCTURE_POPUP, KeyContext.EDITOR)
+    // GotoTest control shift T (→meta)
+    bind("meta shift T", ActionId.GOTO_TEST, KeyContext.GLOBAL)
+    // FindUsages alt F7
+    bind("alt F7", ActionId.FIND_USAGES, KeyContext.EDITOR)
+    // ToggleBookmark F3
+    bind("F3", ActionId.TOGGLE_BOOKMARK, KeyContext.EDITOR)
+    // ShowBookmarks meta F3
+    bind("meta F3", ActionId.SHOW_BOOKMARKS, KeyContext.GLOBAL)
+    // ActivateProjectToolWindow meta 1
+    bind("meta 1", ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, KeyContext.GLOBAL)
+    // HideAllWindows control shift F12 (→meta)
+    bind("meta shift F12", ActionId.HIDE_ALL_WINDOWS, KeyContext.GLOBAL)
+    // CopyPaths control shift C (→meta)
+    bind("meta shift C", ActionId.COPY_PATHS, KeyContext.GLOBAL)
+    // CopyReference control alt shift C (→meta)
+    bind("meta alt shift C", ActionId.COPY_REFERENCE, KeyContext.GLOBAL)
+    // Switcher control TAB
+    bind("control TAB", ActionId.SWITCHER, KeyContext.GLOBAL)
+    // SelectInProjectView has no macOS default stroke; alt F1 reveals the current file
+    bind("alt F1", ActionId.SELECT_IN_PROJECT_VIEW, KeyContext.GLOBAL)
+    // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
 }

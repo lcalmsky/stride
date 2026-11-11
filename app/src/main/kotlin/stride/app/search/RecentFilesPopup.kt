@@ -42,6 +42,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -112,6 +113,17 @@ fun RecentFilesPopup(
                             }
                             Key.DirectionUp -> {
                                 if (files.isNotEmpty()) selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
+                                true
+                            }
+                            // The Switcher keeps ctrl held and presses Tab again to step down.
+                            Key.Tab -> {
+                                if (files.isNotEmpty()) {
+                                    selectedIndex = if (event.isShiftPressed) {
+                                        (selectedIndex - 1).coerceAtLeast(0)
+                                    } else {
+                                        (selectedIndex + 1).coerceAtMost(files.lastIndex)
+                                    }
+                                }
                                 true
                             }
                             Key.Enter, Key.NumPadEnter -> {

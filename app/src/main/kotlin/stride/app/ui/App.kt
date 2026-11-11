@@ -11,6 +11,7 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
@@ -45,10 +46,13 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -80,6 +84,15 @@ import stride.app.editor.find.FindBar
 import stride.app.editor.insertCompletion
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
+import stride.app.navigation.BookmarksPopup
+import stride.app.navigation.ChooserRow
+import stride.app.navigation.FileStructure
+import stride.app.navigation.FileStructurePopup
+import stride.app.navigation.TargetChooserPopup
+import stride.app.navigation.goToDeclaration
+import stride.app.navigation.navigationLocation
+import stride.app.navigation.openDeclaration
+import stride.app.navigation.openFileAtLine
 import stride.app.run.ContextActionsPopup
 import stride.app.run.RunConfigurationPopup
 import stride.app.run.RunManager
@@ -129,11 +142,23 @@ fun App(
     var treeWidth by remember { mutableStateOf(DesignTokens.treeDefaultWidth) }
     var treeFocused by remember { mutableStateOf(false) }
     val gotoLineEditor = session?.editors?.selected as? TextFileEditor
+    val selectedEditor = session?.editors?.selected
+    val caretOffset = (selectedEditor as? TextFileEditor)?.value?.selection?.start
     LaunchedEffect(gotoLineEditor, gotoLineEditor?.gotoLineVisible) {
         // The goto-line field removes itself on close without a focus-lost event.
         if (state.focus == KeyContext.EDITOR_FIELD && gotoLineEditor?.gotoLineVisible != true) {
             state.focus = KeyContext.EDITOR
         }
+    }
+    LaunchedEffect(session, selectedEditor, caretOffset) {
+        val editor = selectedEditor ?: return@LaunchedEffect
+        val path = editor.file.path.toAbsolutePath().normalize()
+        session.history.updateCurrent(path, caretOffset ?: 0)
+    }
+    val bookmarkEntries = session?.bookmarks?.entries?.toList()
+    LaunchedEffect(session, selectedEditor, bookmarkEntries) {
+        val editor = selectedEditor as? TextFileEditor ?: return@LaunchedEffect
+        editor.bookmarkLines = session.bookmarks.linesOf(editor.file.path.toAbsolutePath().normalize())
     }
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -148,18 +173,22 @@ fun App(
                     NoProjectState(onOpenFolder, Modifier.weight(1f))
                 } else {
                     Row(Modifier.weight(1f).fillMaxWidth()) {
-                        ProjectTreePanel(
-                            session,
-                            Modifier
-                                .width(treeWidth)
-                                .fillMaxHeight()
-                                .onFocusChanged { treeFocused = it.hasFocus },
-                            focused = treeFocused,
-                        )
-                        Splitter(onResize = { delta ->
-                            treeWidth = (treeWidth + delta)
-                                .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
-                        })
+                        if (state.projectTreeVisible) {
+                            ProjectTreePanel(
+                                session,
+                                Modifier
+                                    .width(treeWidth)
+                                    .fillMaxHeight()
+                                    .onFocusChanged { treeFocused = it.hasFocus },
+                                focused = treeFocused,
+                                focusRequests = state.treeFocusRequests,
+                                revealRequests = state.revealRequests,
+                            )
+                            Splitter(onResize = { delta ->
+                                treeWidth = (treeWidth + delta)
+                                    .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
+                            })
+                        }
                         Box(
                             Modifier
                                 .weight(1f)
@@ -183,6 +212,8 @@ fun App(
                                 session,
                                 state.findBar,
                                 onFocusContext = { state.focus = it },
+                                onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
+                                onJump = { editor -> session.history.record(navigationLocation(editor)) },
                                 modifier = Modifier.fillMaxSize(),
                                 focused = state.focus == KeyContext.EDITOR,
                             )
@@ -256,21 +287,28 @@ fun App(
                         if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
                     },
             ) {
-                FindInPathPopup(
-                    index = session.project.service<FileNameIndex>(),
-                    onChoose = { hit ->
-                        state.findInPathVisible = false
-                        (session.editors.openFile(hit.file) as? TextFileEditor)?.let { editor ->
-                            editor.updateValue(TextFieldValue(editor.value.text, TextRange(hit.start, hit.end)))
-                            runCatching { editor.focusRequester.requestFocus() }
-                        }
-                        refocusEditor(state)
-                    },
-                    onClose = {
-                        state.findInPathVisible = false
-                        refocusEditor(state)
-                    },
-                )
+                key(state.findInPathGeneration) {
+                    FindInPathPopup(
+                        index = session.project.service<FileNameIndex>(),
+                        initialQuery = state.findInPathQuery,
+                        initialWholeWord = state.findInPathWholeWord,
+                        onChoose = { hit ->
+                            state.findInPathVisible = false
+                            session.history.withoutRecording {
+                                (session.editors.openFile(hit.file) as? TextFileEditor)?.let { editor ->
+                                    editor.updateValue(TextFieldValue(editor.value.text, TextRange(hit.start, hit.end)))
+                                    runCatching { editor.focusRequester.requestFocus() }
+                                }
+                            }
+                            (session.editors.selected)?.let { session.history.push(navigationLocation(it)) }
+                            refocusEditor(state)
+                        },
+                        onClose = {
+                            state.findInPathVisible = false
+                            refocusEditor(state)
+                        },
+                    )
+                }
             }
         }
         if (state.recentFilesVisible && session != null) {
@@ -291,6 +329,113 @@ fun App(
                     },
                     onClose = {
                         state.recentFilesVisible = false
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        if (state.declarationChooserVisible && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = "Go to Declaration",
+                    rows = state.declarationChoices.map { declaration ->
+                        ChooserRow(
+                            "${declaration.name} — ${declaration.relativePath}:${declaration.line + 1}",
+                            declaration,
+                        )
+                    },
+                    onChoose = { declaration ->
+                        state.declarationChooserVisible = false
+                        state.declarationChoices = emptyList()
+                        openDeclaration(state, session, declaration)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.declarationChooserVisible = false
+                        state.declarationChoices = emptyList()
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        if (state.testChooserVisible && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = "Go to Test",
+                    rows = state.testChoices.map { file -> ChooserRow("${file.name} — ${relativePath(session, file)}", file) },
+                    onChoose = { file ->
+                        state.testChooserVisible = false
+                        state.testChoices = emptyList()
+                        openFileAtLine(state, session, file, 0)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.testChooserVisible = false
+                        state.testChoices = emptyList()
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        if (state.fileStructureVisible && session != null) {
+            val structureEditor = session.editors.selected as? TextFileEditor
+            if (structureEditor != null) {
+                val entries = remember(structureEditor, structureEditor.value.text) {
+                    FileStructure.entries(structureEditor.file.name, structureEditor.value.text)
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .onFocusChanged { focus ->
+                            if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                        },
+                ) {
+                    FileStructurePopup(
+                        entries = entries,
+                        onChoose = { entry ->
+                            state.fileStructureVisible = false
+                            structureEditor.gotoLine((entry.line + 1).toString())
+                            refocusEditor(state)
+                        },
+                        onClose = {
+                            state.fileStructureVisible = false
+                            refocusEditor(state)
+                        },
+                    )
+                }
+            }
+        }
+        if (state.bookmarksVisible && session != null) {
+            val rows = session.bookmarks.entries.sortedWith(compareBy({ it.relativePath }, { it.line }))
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                BookmarksPopup(
+                    bookmarks = rows,
+                    onChoose = { bookmark ->
+                        state.bookmarksVisible = false
+                        openFileAtLine(state, session, VFile(bookmark.path), bookmark.line)
+                        refocusEditor(state)
+                    },
+                    onRemove = { bookmark -> session.bookmarks.remove(bookmark) },
+                    onClose = {
+                        state.bookmarksVisible = false
                         refocusEditor(state)
                     },
                 )
@@ -398,7 +543,8 @@ fun App(
 /** True while a popup or the find bar owns the keyboard, so closing the search must not refocus. */
 private fun popupOwnsFocus(state: AppState): Boolean =
     state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
-        state.contextActionsVisible || state.runConfigurationsVisible ||
+        state.declarationChooserVisible || state.testChooserVisible || state.fileStructureVisible ||
+        state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.findBar.visible
 
 private fun refocusEditor(state: AppState) {
@@ -523,8 +669,26 @@ private fun VerticalSplitter(onResize: (Dp) -> Unit) {
 }
 
 @Composable
-private fun ProjectTreePanel(session: ProjectSession, modifier: Modifier, focused: Boolean = false) {
-    Column(modifier.glassPanel().focusHalo(focused)) {
+private fun ProjectTreePanel(
+    session: ProjectSession,
+    modifier: Modifier,
+    focused: Boolean = false,
+    focusRequests: Int = 0,
+    revealRequests: Int = 0,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(focusRequests) {
+        if (focusRequests == 0) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+    }
+    Column(
+        modifier
+            .glassPanel()
+            .focusHalo(focused)
+            .focusRequester(focusRequester)
+            .focusable(),
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -542,6 +706,12 @@ private fun ProjectTreePanel(session: ProjectSession, modifier: Modifier, focuse
             )
         }
         val listState = rememberLazyListState()
+        LaunchedEffect(revealRequests) {
+            withFrameNanos { }
+            val key = session.editors.selected?.let { pathKey(it.file) } ?: return@LaunchedEffect
+            val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
+            if (index >= 0) listState.scrollToItem(index)
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 items(session.tree.rows(), key = { it.file.path.toString() }) { row ->
@@ -627,6 +797,8 @@ private fun EditorArea(
     session: ProjectSession,
     findBar: FindBarState,
     onFocusContext: (KeyContext) -> Unit,
+    onGoToDeclaration: (TextFileEditor, Int) -> Unit,
+    onJump: (TextFileEditor) -> Unit,
     modifier: Modifier,
     focused: Boolean = false,
 ) {
@@ -645,7 +817,11 @@ private fun EditorArea(
             if (selected == null) {
                 EmptyEditor()
             } else {
-                if (selected is TextFileEditor) selected.onFocusContext = onFocusContext
+                if (selected is TextFileEditor) {
+                    selected.onFocusContext = onFocusContext
+                    selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
+                    selected.onJump = { onJump(selected) }
+                }
                 selected.Content(Modifier.fillMaxSize())
             }
         }

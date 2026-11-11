@@ -8,8 +8,13 @@ import androidx.compose.runtime.setValue
 import stride.app.editor.CompletionRequest
 import stride.app.editor.FileEditorManager
 import stride.app.editor.RenameRequest
+import stride.app.editor.SystemTextClipboard
+import stride.app.editor.TextClipboard
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
+import stride.app.navigation.BookmarkManager
+import stride.app.navigation.NavigationHistory
+import stride.app.navigation.navigationLocation
 import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
 import stride.app.run.RunManager
@@ -28,6 +33,7 @@ import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.core.vfs.VirtualFileManager
+import stride.search.Declaration
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 import stride.search.SearchTab
@@ -38,11 +44,18 @@ class ProjectSession private constructor(val project: Project) : Disposable {
     val editors: FileEditorManager
     val tree: ProjectTreeModel
 
+    /** Back/forward locations of this session. */
+    val history = NavigationHistory()
+
+    /** Bookmarks of this session; they outlive the tab the line was set in. */
+    val bookmarks = BookmarkManager()
+
     init {
         project.service<VirtualFileManager>().start()
         project.service<FileNameIndex>()
         project.service<DeclarationIndex>()
         editors = project.service()
+        editors.onSelectionChanged = { editor -> history.record(navigationLocation(editor)) }
         val providers = ExtensionPointName<TreeStructureProvider>(TREE_STRUCTURE_PROVIDER_EP).extensionList()
         tree = ProjectTreeModel(VFile(project.root), providers, project)
     }
@@ -78,7 +91,46 @@ class AppState {
 
     var findInPathVisible by mutableStateOf(false)
 
+    /** Query the Find in Path popup opens with, and whether it starts in whole-word mode. */
+    var findInPathQuery by mutableStateOf("")
+
+    var findInPathWholeWord by mutableStateOf(false)
+
+    /** Incremented by [openFindInPath]; the popup is keyed on it so every open starts fresh. */
+    var findInPathGeneration by mutableStateOf(0)
+        private set
+
     var recentFilesVisible by mutableStateOf(false)
+
+    /** Candidates of the Go to Declaration chooser; empty when it is closed. */
+    var declarationChoices by mutableStateOf(emptyList<Declaration>())
+
+    var declarationChooserVisible by mutableStateOf(false)
+
+    var fileStructureVisible by mutableStateOf(false)
+
+    /** Candidates of the Go to Test chooser; empty when it is closed. */
+    var testChoices by mutableStateOf(emptyList<VFile>())
+
+    var testChooserVisible by mutableStateOf(false)
+
+    var bookmarksVisible by mutableStateOf(false)
+
+    var projectTreeVisible by mutableStateOf(true)
+
+    /** Incremented to hand the keyboard to the project tree. */
+    var treeFocusRequests by mutableStateOf(0)
+        private set
+
+    /** Incremented to scroll the project tree to the selected file. */
+    var revealRequests by mutableStateOf(0)
+        private set
+
+    /** Clipboard for Copy Path and Copy Reference; replaced in tests. */
+    var clipboard: TextClipboard = SystemTextClipboard
+
+    private var treeBeforeHide: Boolean? = null
+    private var toolWindowBeforeHide: Boolean? = null
 
     var contextActions: List<ContextAction> by mutableStateOf(emptyList())
     var contextActionsVisible by mutableStateOf(false)
@@ -147,6 +199,45 @@ class AppState {
         focus = KeyContext.SEARCH_POPUP
     }
 
+    /** Opens Find in Path prefilled with [query], resetting the popup. */
+    fun openFindInPath(query: String = "", wholeWord: Boolean = false) {
+        findInPathQuery = query
+        findInPathWholeWord = wholeWord
+        findInPathGeneration++
+        findInPathVisible = true
+        focus = KeyContext.SEARCH_POPUP
+    }
+
+    /** Shows or hides the project tree; showing it also asks for the tree's focus. */
+    fun toggleProjectTree() {
+        projectTreeVisible = !projectTreeVisible
+        if (projectTreeVisible) treeFocusRequests++
+    }
+
+    /** Hides the tree and the tool window panel; the next call restores the layout it hid. */
+    fun hideAllWindows() {
+        if (projectTreeVisible || toolWindows.visible) {
+            treeBeforeHide = projectTreeVisible
+            toolWindowBeforeHide = toolWindows.visible
+            projectTreeVisible = false
+            toolWindows.hide()
+            focus = KeyContext.GLOBAL
+            return
+        }
+        val tree = treeBeforeHide
+        val tools = toolWindowBeforeHide
+        treeBeforeHide = null
+        toolWindowBeforeHide = null
+        projectTreeVisible = tree ?: true
+        if (tools == true) toolWindows.visible = true
+        if (projectTreeVisible) treeFocusRequests++
+    }
+
+    /** Asks the project tree to scroll to the selected file. */
+    fun requestTreeReveal() {
+        revealRequests++
+    }
+
     fun openFolder(path: Path) {
         closeSession()
         session = ProjectSession.open(path)
@@ -159,7 +250,15 @@ class AppState {
         searchTab = SearchTab.ALL
         findBar.close()
         findInPathVisible = false
+        findInPathQuery = ""
+        findInPathWholeWord = false
         recentFilesVisible = false
+        declarationChoices = emptyList()
+        declarationChooserVisible = false
+        fileStructureVisible = false
+        testChoices = emptyList()
+        testChooserVisible = false
+        bookmarksVisible = false
         contextActions = emptyList()
         contextActionsVisible = false
         runConfigurationChoices = emptyList()
@@ -167,6 +266,9 @@ class AppState {
         completion = null
         rename = null
         statusMessage = null
+        projectTreeVisible = true
+        treeBeforeHide = null
+        toolWindowBeforeHide = null
         toolWindows.hide()
         focus = KeyContext.GLOBAL
     }

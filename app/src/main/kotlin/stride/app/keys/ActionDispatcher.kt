@@ -4,6 +4,16 @@ import stride.app.AppState
 import stride.app.editor.TextFileEditor
 import stride.app.editor.openCodeCompletion
 import stride.app.editor.openRename
+import stride.app.navigation.copyPath
+import stride.app.navigation.findUsages
+import stride.app.navigation.goToDeclaration
+import stride.app.navigation.goToTest
+import stride.app.navigation.navigateBack
+import stride.app.navigation.navigateForward
+import stride.app.navigation.openFileStructure
+import stride.app.navigation.selectInProjectView
+import stride.app.navigation.showBookmarks
+import stride.app.navigation.toggleBookmark
 import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
@@ -91,17 +101,49 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.FIND_IN_PATH -> {
-        if (state.session != null) {
-            state.findInPathVisible = true
-            state.focus = KeyContext.SEARCH_POPUP
-        }
+        if (state.session != null) state.openFindInPath()
         true
     }
-    ActionId.RECENT_FILES -> {
+    ActionId.RECENT_FILES, ActionId.SWITCHER -> {
         if (state.session != null) {
             state.recentFilesVisible = true
             state.focus = KeyContext.SEARCH_POPUP
         }
+        true
+    }
+    ActionId.GOTO_DECLARATION -> goToDeclaration(state)
+    ActionId.BACK -> navigateBack(state)
+    ActionId.FORWARD -> navigateForward(state)
+    ActionId.FILE_STRUCTURE_POPUP -> openFileStructure(state)
+    ActionId.GOTO_TEST -> goToTest(state)
+    ActionId.FIND_USAGES -> findUsages(state)
+    ActionId.TOGGLE_BOOKMARK -> toggleBookmark(state)
+    ActionId.SHOW_BOOKMARKS -> showBookmarks(state)
+    ActionId.ACTIVATE_PROJECT_TOOL_WINDOW -> {
+        if (state.session == null) return false
+        state.toggleProjectTree()
+        true
+    }
+    ActionId.HIDE_ALL_WINDOWS -> {
+        if (state.session == null) return false
+        state.hideAllWindows()
+        true
+    }
+    ActionId.COPY_PATHS -> copyPath(state, reference = false)
+    ActionId.COPY_REFERENCE -> copyPath(state, reference = true)
+    ActionId.SELECT_IN_PROJECT_VIEW -> selectInProjectView(state)
+    ActionId.REOPEN_CLOSED_TAB -> {
+        val session = state.session ?: return false
+        if (session.editors.reopenClosed() == null) {
+            state.statusMessage = "No closed tab to reopen"
+        } else {
+            state.statusMessage = null
+        }
+        true
+    }
+    ActionId.CLOSE_OTHER_TABS -> {
+        val session = state.session ?: return false
+        session.editors.closeOthers()
         true
     }
     // BasicTextField already binds meta Z and meta shift Z to its own undo and redo

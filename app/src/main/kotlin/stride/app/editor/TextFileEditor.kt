@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -53,6 +54,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -124,6 +130,15 @@ class TextFileEditor(
     var searchSpans: List<BackgroundSpan> by mutableStateOf(emptyList())
 
     var gutterMarkers: List<GutterMarker> by mutableStateOf(emptyList())
+
+    /** 0-based lines carrying a bookmark mark in the gutter. */
+    var bookmarkLines: Set<Int> by mutableStateOf(emptySet())
+
+    /** Called after a jump moved the caret, so the navigation history can record the target. */
+    var onJump: (() -> Unit)? = null
+
+    /** Called with the caret offset of a ⌘-click; the app turns it into Go to Declaration. */
+    var onGoToDeclarationAt: ((Int) -> Unit)? = null
 
     /** Attached to the text field so the find bar and popups can hand focus back to the caret. */
     val focusRequester = FocusRequester()
@@ -241,6 +256,7 @@ class TextFileEditor(
         val line = parts[0].toIntOrNull() ?: return false
         val column = if (parts.size == 2) parts[1].toIntOrNull() ?: return false else 1
         applyValue(TextFieldValue(text, EditActions.gotoLine(text, line, column)), record = false)
+        onJump?.invoke()
         return true
     }
 
@@ -486,6 +502,7 @@ class TextFileEditor(
         val horizontal = rememberScrollState()
         val fieldScroll = rememberTextFieldVerticalScrollState()
         var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+        val latestLayout = rememberUpdatedState(layout)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
         val gutterWidth = (lineCount.toString().length.coerceAtLeast(2) * 9 + 16 + 14).dp
         val codeStyle = TextStyle(
@@ -578,6 +595,28 @@ class TextFileEditor(
                         modifier = Modifier.fillMaxWidth(),
                         style = codeStyle.copy(color = DesignTokens.muted, textAlign = TextAlign.End),
                     )
+                    val bookmarked = bookmarkLines
+                    if (bookmarked.isNotEmpty()) {
+                        Canvas(Modifier.matchParentSize()) {
+                            val linePx = lineHeight.toPx()
+                            val glyphWidth = 7.dp.toPx()
+                            val glyphHeight = 10.dp.toPx()
+                            val left = 11.dp.toPx()
+                            val notch = 3.dp.toPx()
+                            for (line in bookmarked) {
+                                val top = line * linePx + (linePx - glyphHeight) / 2
+                                val path = Path().apply {
+                                    moveTo(left, top)
+                                    lineTo(left + glyphWidth, top)
+                                    lineTo(left + glyphWidth, top + glyphHeight)
+                                    lineTo(left + glyphWidth / 2, top + glyphHeight - notch)
+                                    lineTo(left, top + glyphHeight)
+                                    close()
+                                }
+                                drawPath(path, DesignTokens.neonAmber)
+                            }
+                        }
+                    }
                     val currentMarkers = gutterMarkers
                     for (marker in currentMarkers) {
                         Canvas(
@@ -613,7 +652,22 @@ class TextFileEditor(
                             modifier = Modifier
                                 .focusRequester(focusRequester)
                                 .widthIn(min = textMinWidth)
-                                .padding(start = DesignTokens.space16, end = DesignTokens.space16),
+                                .padding(start = DesignTokens.space16, end = DesignTokens.space16)
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                                            if (event.type != PointerEventType.Press) continue
+                                            if (!event.keyboardModifiers.isMetaPressed) continue
+                                            val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
+                                            val textLayout = latestLayout.value ?: continue
+                                            val offset = textLayout.getOffsetForPosition(change.position)
+                                                .coerceIn(0, text.length)
+                                            change.consume()
+                                            onGoToDeclarationAt?.invoke(offset)
+                                        }
+                                    }
+                                },
                             textStyle = codeStyle,
                             readOnly = isReadOnly,
                             visualTransformation = transformation,

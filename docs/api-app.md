@@ -109,8 +109,11 @@ reduced to one `TextChange(offset, oldLength, newText)` by common prefix/suffix 
 class FileEditorManager(project: Project) : Disposable {
     val openFiles: List<FileEditor>           // Compose snapshot list
     var selected: FileEditor?                 // Compose snapshot state
+    var onSelectionChanged: (FileEditor) -> Unit  // records the navigation history
     fun openFile(file: VFile): FileEditor?    // reuses an open tab and selects it
     fun closeFile(file: VFile)                // selects the right neighbour, else the left, else none
+    fun closeOthers()                         // closes every tab except the selected one
+    fun reopenClosed(): FileEditor?           // reopens the most recently closed tab
     fun selectNext()                          // cycles, does nothing with fewer than two tabs
     fun selectPrevious()
     fun saveSelected()
@@ -181,6 +184,7 @@ class ProjectTreeModel(
     fun expand(file: VFile)
     fun collapse(file: VFile)
     fun toggle(file: VFile)
+    fun reveal(file: VFile): Boolean   // expands the file's ancestors; false outside the root
     fun handleEvents(events: List<VFileEvent>)
     fun children(directory: VFile): List<VFile>
 }
@@ -276,6 +280,9 @@ enum class ActionId {
     EDITOR_START_NEW_LINE, EDITOR_START_NEW_LINE_BEFORE, EDITOR_MATCH_BRACE,
     EDITOR_CODE_BLOCK_START, EDITOR_CODE_BLOCK_END, METHOD_UP, METHOD_DOWN,
     HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
+    GOTO_DECLARATION, BACK, FORWARD, FILE_STRUCTURE_POPUP, GOTO_TEST, FIND_USAGES,
+    TOGGLE_BOOKMARK, SHOW_BOOKMARKS, ACTIVATE_PROJECT_TOOL_WINDOW, HIDE_ALL_WINDOWS,
+    COPY_PATHS, COPY_REFERENCE, SWITCHER, SELECT_IN_PROJECT_VIEW, REOPEN_CLOSED_TAB, CLOSE_OTHER_TABS,
 }
 
 enum class KeyContext {
@@ -318,6 +325,8 @@ Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
 `Keymap.actionFor` prefers a binding whose context equals `focus`, then a `GLOBAL` binding, then
 `null`. `Keymap.forPlatform(false)` is the macOS table with `meta` and `ctrl` swapped on every
 stroke. `SEARCH_EVERYWHERE` carries no stroke: `DoubleModifierDetector` produces it.
+`REOPEN_CLOSED_TAB` and `CLOSE_OTHER_TABS` also carry no stroke; they are reached from the
+Actions tab.
 
 ### macOS bindings
 
@@ -378,6 +387,22 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :166 |
 | `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :168 |
 | `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :169 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :178 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :180, :181 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :183, :184 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :186 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :188 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :190 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :192 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :194 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :196 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :198 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :200 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :202 |
+| `SWITCHER` | GLOBAL | ⌃Tab | `Switcher` | :204 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :206 |
+| `REOPEN_CLOSED_TAB` | — | (none) | — | — |
+| `CLOSE_OTHER_TABS` | — | (none) | — | — |
 
 `KeyRouter` has no window dependency and is unit-tested. Modifier keys map to `ModifierKey`; a
 repeated down of an already-pressed modifier is ignored. `DoubleModifierDetector` turns a double
@@ -635,7 +660,11 @@ off in tests and snapshots.
 ```kotlin
 package stride.app.editor.find
 
-data class FindOptions(val caseSensitive: Boolean = false, val regex: Boolean = false)
+data class FindOptions(
+    val caseSensitive: Boolean = false,
+    val regex: Boolean = false,
+    val wholeWord: Boolean = false,
+)
 data class FindMatch(val start: Int, val end: Int)
 data class FindResult(val matches: List<FindMatch>, val error: String? = null)
 
@@ -718,6 +747,7 @@ object FindInPathScanner {
 @Composable fun FindInPathPopup(
     index: FileNameIndex,
     initialQuery: String = "",
+    initialWholeWord: Boolean = false,
     onChoose: (FindInPathHit) -> Unit,
     onClose: () -> Unit,
 )
@@ -746,6 +776,114 @@ list, footer hints and the neon selection signal.
 tabs) and by `selectNext`/`selectPrevious`; `closeFile` leaves entries in place and `dispose`
 clears them. `AppState` adds `findBar`, `findInPathVisible` and `recentFilesVisible`, and
 `closeSession()` resets all three.
+
+Whole-word matching (`FindOptions.wholeWord`, the `W` toggle in the popup) keeps only matches
+whose two sides are not identifier characters. `FindUsages` (`⌥F7`) opens this popup prefilled
+with the identifier at the caret and the toggle on, through `AppState.openFindInPath`, which
+bumps `findInPathGeneration` so the popup is recreated.
+
+## Declaration navigation, tests and bookmarks
+
+```kotlin
+package stride.app.navigation
+
+data class NavigationLocation(val path: Path, val offset: Int)
+
+class NavigationHistory(maxEntries: Int = MAX_ENTRIES) {
+    val size: Int
+    val current: NavigationLocation?
+    fun locations(): List<NavigationLocation>
+    fun push(location: NavigationLocation)     // truncates forward, dedupes, caps at 100
+    fun record(location: NavigationLocation)   // push unless recording is suspended
+    fun updateCurrent(path: Path, offset: Int) // caret of the current entry only
+    fun back(): NavigationLocation?
+    fun forward(): NavigationLocation?
+    fun clear()
+    fun <T> withoutRecording(block: () -> T): T
+    companion object { const val MAX_ENTRIES: Int = 100 }
+}
+
+fun navigationLocation(editor: FileEditor): NavigationLocation
+
+object DeclarationNavigator {
+    fun localTarget(fileName: String, text: String, name: String, caretLine: Int): ParsedDeclaration?
+    fun ranked(candidates: List<Declaration>, currentPackage: String?, currentModule: String?): List<Declaration>
+    fun packageOf(text: String, relativePath: String): String?
+    fun packageOfPath(relativePath: String): String?
+    fun moduleOfPath(relativePath: String): String?
+}
+
+object TestNavigation {
+    fun baseName(fileName: String): String?
+    fun isTestName(base: String): Boolean
+    fun counterpartNames(base: String): List<String>
+    fun candidates(fileName: String, currentRelativePath: String?, files: List<IndexedFile>): List<IndexedFile>
+}
+
+data class Bookmark(val path: Path, val relativePath: String, val line: Int, val lineText: String)
+
+class BookmarkManager {
+    val entries: List<Bookmark>                // Compose snapshot list
+    fun toggle(bookmark: Bookmark): Boolean    // true when added
+    fun remove(bookmark: Bookmark)
+    fun linesOf(path: Path): Set<Int>
+    fun isEmpty(): Boolean
+    fun clear()
+    companion object {
+        fun lineIndex(text: String, offset: Int): Int
+        fun lineText(text: String, line: Int): String
+    }
+}
+
+data class FileStructureEntry(val name: String, val kind: DeclarationKind, val line: Int, val depth: Int)
+
+object FileStructure {
+    fun entries(fileName: String, text: String): List<FileStructureEntry>
+    fun matching(entries: List<FileStructureEntry>, query: String): List<FileStructureEntry>
+}
+
+data class ChooserRow<T>(val text: String, val value: T)
+@Composable fun <T> TargetChooserPopup(title: String, rows: List<ChooserRow<T>>,
+                                       onChoose: (T) -> Unit, onClose: () -> Unit)
+@Composable fun FileStructurePopup(entries: List<FileStructureEntry>,
+                                   onChoose: (FileStructureEntry) -> Unit, onClose: () -> Unit)
+@Composable fun BookmarksPopup(bookmarks: List<Bookmark>, onChoose: (Bookmark) -> Unit,
+                               onRemove: (Bookmark) -> Unit, onClose: () -> Unit)
+```
+
+`ProjectSession` owns one `NavigationHistory` and one `BookmarkManager`; it records every
+selection change through `FileEditorManager.onSelectionChanged`, so a tab switch, a history
+restore and a jump all land in the same stack. `App` keeps the current entry's caret in step
+with `updateCurrent` and gives `TextFileEditor.onJump` a recorder, so `GOTO_LINE`, the file
+structure popup and every other `gotoLine` path add an entry. `withoutRecording` keeps the
+`openFile` a `back`/`forward` performs from truncating the forward stack.
+
+`GOTO_DECLARATION` (`⌘B`, and `⌘`-click through `TextFileEditor.onGoToDeclarationAt`) reads
+the word at the caret. A declaration of that name in the current file wins (nearest preceding
+line, else the first one). Otherwise the `DeclarationIndex` snapshot is filtered to the name
+and ordered by the current package, the current module, then the path: one hit opens it, several
+open `TargetChooserPopup` (`name — path:line`), none sets `Cannot find declaration to go to`.
+A package comes from the file's `package` line, else from the path below `src/<set>/kotlin|java`;
+a module is the path before `/src/`.
+
+`GOTO_TEST` maps `Foo.kt` to `FooTest.kt`, `FooTests.kt` or `TestFoo.kt` and a test name back to
+its subject through `FileNameIndex`; several candidates open the chooser, none sets
+`No test found for Foo`. `FILE_STRUCTURE_POPUP` lists `DeclarationParser` declarations indented
+by their container depth and filters them with `NameMatcher`. `TOGGLE_BOOKMARK` marks the caret
+line in the editor gutter (`TextFileEditor.bookmarkLines`); bookmarks live in the session, so
+they survive a tab close, and they do not move when lines above them are edited.
+`SHOW_BOOKMARKS` lists `path:line — text`; Enter opens the line and Delete/Backspace removes
+the selected bookmark.
+
+`COPY_PATHS` writes the absolute path and `COPY_REFERENCE` writes `relative/path:line` through
+`AppState.clipboard` (replaced in tests), both reporting `Copied <text>`. `SELECT_IN_PROJECT_VIEW`
+shows the tree, calls `ProjectTreeModel.reveal` and bumps `revealRequests`, which scrolls the
+list to the selected row. `ACTIVATE_PROJECT_TOOL_WINDOW` toggles `projectTreeVisible`;
+`HIDE_ALL_WINDOWS` hides the tree and the tool window panel and the next press restores the
+layout it saved. `SWITCHER` opens `RecentFilesPopup` (which starts on the second entry and steps
+down on Tab), and `REOPEN_CLOSED_TAB`/`CLOSE_OTHER_TABS` use `FileEditorManager`'s closed-tab
+stack. All new popups are modal: they open with `state.focus` set to `CONTEXT_POPUP`, Escape
+closes them, and every close hands focus back to the editor.
 
 ## App composable
 
@@ -1375,7 +1513,12 @@ Maven Central alone does not carry it.
 | `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
 | `FindBarStateTest` | span painting and current match, next cycling, replace all, close clearing spans |
-| `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop |
+| `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop, whole-word filtering |
+| `NavigationHistoryTest` | consecutive duplicate suppression, forward truncation on push, back/forward ends, the 100-entry cap, caret update and recording suspension |
+| `DeclarationNavigatorTest` | same-file nearest preceding target, package/module ranking, package and module derivation |
+| `TestNavigationTest` | source-to-test names in both directions, extension and directory ordering, no counterpart |
+| `BookmarksTest` | toggle add/remove, per-file lines, remove, line index and text |
+| `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
 | `NeonModifiersTest` | glow pixels outside the shape, zero alpha, underline direction, `rememberNeonAlpha` with animations on and off |
 | `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` limited to large text, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered mesh orbs staying under the worst single-orb luminance |
 | `GlassModifiersTest` | the panel taking the mesh color behind it, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint over the mesh, the cached slice being an opaque image, and the backdrop blur staying aligned with the panel edge |

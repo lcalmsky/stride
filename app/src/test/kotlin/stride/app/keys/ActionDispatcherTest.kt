@@ -14,8 +14,10 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyRename
+import stride.app.navigation.openDeclaration
 import stride.app.run.ContextActionKind
 import stride.app.run.FakeProcess
 import stride.app.run.ProcessStarter
@@ -26,6 +28,8 @@ import stride.app.run.StartedProcess
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.search.DeclarationIndex
+import stride.search.FileNameIndex
 import stride.search.SearchTab
 import java.nio.file.Files
 import java.nio.file.Path
@@ -499,6 +503,285 @@ class ActionDispatcherTest {
         assertEquals("No identifier at caret", state.statusMessage)
     }
 
+    @Test
+    fun `go to declaration jumps to the declaration in the same file`() {
+        state.focus = KeyContext.EDITOR
+        val root = temp.resolve("declaration-local")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "package demo\n\nfun helper() {}\n\nfun main() {\n    helper()\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        val caret = editor.value.text.lastIndexOf("helper()") + 1
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+        assertTrue(dispatchAction(ActionId.GOTO_DECLARATION, state) { null })
+
+        val line = editor.value.text.take(editor.value.selection.start).count { it == '\n' }
+        assertEquals(2, line)
+        assertNull(state.statusMessage)
+    }
+
+    @Test
+    fun `go to declaration finds the declaration in another file`() {
+        state.focus = KeyContext.EDITOR
+        val root = temp.resolve("declaration-index")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
+        Files.writeString(root.resolve("src/main/kotlin/demo/Helper.kt"), "package demo\n\nobject Helper\n")
+        Files.writeString(root.resolve("src/main/kotlin/demo/Main.kt"), "package demo\n\nfun main() {\n    Helper\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val main = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
+        main.updateValue(TextFieldValue(main.value.text, TextRange(main.value.text.indexOf("Helper") + 1)))
+
+        assertTrue(dispatchAction(ActionId.GOTO_DECLARATION, state) { null })
+
+        assertEquals("Helper.kt", session.editors.selected?.file?.name)
+        val target = session.editors.selected as TextFileEditor
+        assertEquals(2, target.value.text.take(target.value.selection.start).count { it == '\n' })
+    }
+
+    @Test
+    fun `several index declarations open a chooser`() {
+        state.focus = KeyContext.EDITOR
+        val root = temp.resolve("declaration-chooser")
+        Files.createDirectories(root.resolve("src/main/kotlin/a"))
+        Files.createDirectories(root.resolve("src/main/kotlin/b"))
+        Files.createDirectories(root.resolve("src/main/kotlin/c"))
+        Files.writeString(root.resolve("src/main/kotlin/a/Alpha.kt"), "package a\n\nfun helper() {}\n")
+        Files.writeString(root.resolve("src/main/kotlin/b/Beta.kt"), "package b\n\nfun helper() {}\n")
+        Files.writeString(root.resolve("src/main/kotlin/c/Use.kt"), "package c\n\nfun use() { helper() }\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val use = session.editors.openFile(VFile(root.resolve("src/main/kotlin/c/Use.kt"))) as TextFileEditor
+        use.updateValue(TextFieldValue(use.value.text, TextRange(use.value.text.indexOf("helper()") + 1)))
+
+        assertTrue(dispatchAction(ActionId.GOTO_DECLARATION, state) { null })
+
+        assertTrue(state.declarationChooserVisible)
+        assertEquals(
+            listOf("src/main/kotlin/a/Alpha.kt", "src/main/kotlin/b/Beta.kt"),
+            state.declarationChoices.map { it.relativePath },
+        )
+        openDeclaration(state, session, state.declarationChoices.first())
+        assertEquals("Alpha.kt", session.editors.selected?.file?.name)
+    }
+
+    @Test
+    fun `go to declaration reports when nothing matches`() {
+        state.focus = KeyContext.EDITOR
+        val root = temp.resolve("declaration-missing")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "fun main() {\n    missing()\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("missing") + 1)))
+
+        assertTrue(dispatchAction(ActionId.GOTO_DECLARATION, state) { null })
+
+        assertEquals("Cannot find declaration to go to", state.statusMessage)
+        assertFalse(state.declarationChooserVisible)
+    }
+
+    @Test
+    fun `back and forward move between the visited files`() {
+        val session = openProjectWith("a.kt", "b.kt")
+        val root = temp.resolve("project")
+
+        assertTrue(dispatchAction(ActionId.BACK, state) { null })
+        assertEquals("a.kt", session.editors.selected?.file?.name)
+
+        assertTrue(dispatchAction(ActionId.FORWARD, state) { null })
+        assertEquals("b.kt", session.editors.selected?.file?.name)
+        assertEquals(root.resolve("b.kt").toAbsolutePath().normalize(), session.editors.selected?.file?.path)
+    }
+
+    @Test
+    fun `go to test opens the counterpart and back to the subject`() {
+        val root = temp.resolve("test-navigation")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Foo.kt"), "class Foo\n")
+        Files.writeString(root.resolve("FooTest.kt"), "class FooTest\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000))
+        session.editors.openFile(VFile(root.resolve("Foo.kt")))
+
+        assertTrue(dispatchAction(ActionId.GOTO_TEST, state) { null })
+        assertEquals("FooTest.kt", session.editors.selected?.file?.name)
+
+        assertTrue(dispatchAction(ActionId.GOTO_TEST, state) { null })
+        assertEquals("Foo.kt", session.editors.selected?.file?.name)
+    }
+
+    @Test
+    fun `go to test chooses between several candidates and reports none`() {
+        val root = temp.resolve("test-choices")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Foo.kt"), "class Foo\n")
+        Files.writeString(root.resolve("FooTest.kt"), "class FooTest\n")
+        Files.writeString(root.resolve("FooTests.kt"), "class FooTests\n")
+        Files.writeString(root.resolve("Bar.kt"), "class Bar\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000))
+        session.editors.openFile(VFile(root.resolve("Foo.kt")))
+
+        assertTrue(dispatchAction(ActionId.GOTO_TEST, state) { null })
+        assertTrue(state.testChooserVisible)
+        assertEquals(listOf("FooTest.kt", "FooTests.kt"), state.testChoices.map { it.name })
+
+        state.testChooserVisible = false
+        session.editors.openFile(VFile(root.resolve("Bar.kt")))
+        assertTrue(dispatchAction(ActionId.GOTO_TEST, state) { null })
+        assertEquals("No test found for Bar", state.statusMessage)
+    }
+
+    @Test
+    fun `toggling a bookmark marks the caret line and show bookmarks opens the popup`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one\ntwo\n", TextRange(4)))
+
+        assertTrue(dispatchAction(ActionId.TOGGLE_BOOKMARK, state) { null })
+        assertEquals(listOf(1), session.bookmarks.entries.map { it.line })
+        assertEquals(setOf(1), editor.bookmarkLines)
+
+        assertTrue(dispatchAction(ActionId.SHOW_BOOKMARKS, state) { null })
+        assertTrue(state.bookmarksVisible)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+        assertTrue(dispatchAction(ActionId.TOGGLE_BOOKMARK, state) { null })
+        assertTrue(session.bookmarks.isEmpty())
+        assertTrue(editor.bookmarkLines.isEmpty())
+    }
+
+    @Test
+    fun `hide all windows hides the tree and the tool window and restores them`() {
+        openProjectWith()
+        state.toolWindows.activate("run")
+        state.focus = KeyContext.RUN_WINDOW
+
+        assertTrue(dispatchAction(ActionId.HIDE_ALL_WINDOWS, state) { null })
+        assertFalse(state.projectTreeVisible)
+        assertFalse(state.toolWindows.visible)
+
+        assertTrue(dispatchAction(ActionId.HIDE_ALL_WINDOWS, state) { null })
+        assertTrue(state.projectTreeVisible)
+        assertTrue(state.toolWindows.visible)
+    }
+
+    @Test
+    fun `the project window action toggles the tree`() {
+        openProjectWith()
+        assertTrue(state.projectTreeVisible)
+
+        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
+        assertFalse(state.projectTreeVisible)
+
+        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
+        assertTrue(state.projectTreeVisible)
+        assertEquals(1, state.treeFocusRequests)
+    }
+
+    @Test
+    fun `copy path and copy reference write the expected text`() {
+        val clipboard = RecordingClipboard()
+        state.clipboard = clipboard
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one\ntwo\n", TextRange(4)))
+        val absolute = root.resolve("a.kt").toAbsolutePath().normalize().toString()
+
+        assertTrue(dispatchAction(ActionId.COPY_PATHS, state) { null })
+        assertEquals(absolute, clipboard.text)
+        assertEquals("Copied $absolute", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.COPY_REFERENCE, state) { null })
+        assertEquals("a.kt:2", clipboard.text)
+    }
+
+    @Test
+    fun `select in project view expands the tree to the file`() {
+        val root = temp.resolve("reveal-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Alpha.kt"), "")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        session.editors.openFile(VFile(root.resolve("src/Alpha.kt")))
+        assertFalse(session.tree.rows().any { it.file.name == "Alpha.kt" })
+
+        assertTrue(dispatchAction(ActionId.SELECT_IN_PROJECT_VIEW, state) { null })
+
+        assertTrue(state.projectTreeVisible)
+        assertTrue(session.tree.rows().any { it.file.name == "Alpha.kt" })
+        assertEquals(1, state.revealRequests)
+    }
+
+    @Test
+    fun `file structure opens for the selected file`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("class A {\n    fun a() {}\n}\n", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.FILE_STRUCTURE_POPUP, state) { null })
+
+        assertTrue(state.fileStructureVisible)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+    }
+
+    @Test
+    fun `find usages prefills find in path with the whole word`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(
+            TextFieldValue(
+                "fun helper() {}\n\nfun use() { helper() }\n",
+                TextRange("fun helper() {}\n\nfun use() { helper() }\n".lastIndexOf("helper") + 1),
+            ),
+        )
+
+        assertTrue(dispatchAction(ActionId.FIND_USAGES, state) { null })
+
+        assertTrue(state.findInPathVisible)
+        assertEquals("helper", state.findInPathQuery)
+        assertTrue(state.findInPathWholeWord)
+        assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+    }
+
+    @Test
+    fun `reopen closed tab and close other tabs work on the open files`() {
+        val session = openProjectWith("a.kt", "b.kt", "c.kt")
+        val root = temp.resolve("project")
+        session.editors.closeFile(VFile(root.resolve("c.kt")))
+
+        assertTrue(dispatchAction(ActionId.REOPEN_CLOSED_TAB, state) { null })
+        assertEquals("c.kt", session.editors.selected?.file?.name)
+
+        session.editors.openFile(VFile(root.resolve("b.kt")))
+        assertTrue(dispatchAction(ActionId.CLOSE_OTHER_TABS, state) { null })
+        assertEquals(listOf("b.kt"), session.editors.openFiles.map { it.file.name })
+    }
+
+    @Test
+    fun `the switcher opens the recent files popup`() {
+        openProjectWith("a.kt", "b.kt")
+
+        assertTrue(dispatchAction(ActionId.SWITCHER, state) { null })
+
+        assertTrue(state.recentFilesVisible)
+        assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+    }
+
     private fun openProjectWith(vararg names: String): ProjectSession {
         val root = temp.resolve("project")
         Files.createDirectories(root)
@@ -524,5 +807,14 @@ class ActionDispatcherTest {
         fun resetPlugins() {
             Application.resetForTests()
         }
+    }
+}
+
+private class RecordingClipboard : TextClipboard {
+    var text: String? = null
+
+    override fun writeText(text: String): Boolean {
+        this.text = text
+        return true
     }
 }

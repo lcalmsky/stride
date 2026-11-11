@@ -72,12 +72,14 @@ import kotlinx.coroutines.withContext
 fun FindInPathPopup(
     index: FileNameIndex,
     initialQuery: String = "",
+    initialWholeWord: Boolean = false,
     onChoose: (FindInPathHit) -> Unit,
     onClose: () -> Unit,
 ) {
     var query by remember { mutableStateOf(initialQuery) }
     var caseSensitive by remember { mutableStateOf(false) }
     var regex by remember { mutableStateOf(false) }
+    var wholeWord by remember { mutableStateOf(initialWholeWord) }
     var hits by remember { mutableStateOf(emptyList<FindInPathHit>()) }
     var selectedIndex by remember { mutableStateOf(0) }
     var searching by remember { mutableStateOf(false) }
@@ -86,7 +88,7 @@ fun FindInPathPopup(
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
 
-    LaunchedEffect(query, caseSensitive, regex) {
+    LaunchedEffect(query, caseSensitive, regex, wholeWord) {
         if (query.isEmpty()) {
             hits = emptyList()
             selectedIndex = 0
@@ -94,7 +96,7 @@ fun FindInPathPopup(
             return@LaunchedEffect
         }
         searching = true
-        val options = FindOptions(caseSensitive, regex)
+        val options = FindOptions(caseSensitive, regex, wholeWord)
         val scanned = withContext(Dispatchers.Default) {
             FindInPathScanner.scan(index.snapshot(), query, options) { !isActive }
         }
@@ -155,8 +157,10 @@ fun FindInPathPopup(
                 onQueryChange = { query = it },
                 caseSensitive = caseSensitive,
                 regex = regex,
+                wholeWord = wholeWord,
                 onToggleCase = { caseSensitive = !caseSensitive },
                 onToggleRegex = { regex = !regex },
+                onToggleWholeWord = { wholeWord = !wholeWord },
                 focusRequester = focusRequester,
             )
             if (query.isNotEmpty()) {
@@ -184,8 +188,10 @@ private fun Header(
     onQueryChange: (String) -> Unit,
     caseSensitive: Boolean,
     regex: Boolean,
+    wholeWord: Boolean,
     onToggleCase: () -> Unit,
     onToggleRegex: () -> Unit,
+    onToggleWholeWord: () -> Unit,
     focusRequester: FocusRequester,
 ) {
     Row(
@@ -229,6 +235,7 @@ private fun Header(
         }
         Spacer(Modifier.width(DesignTokens.space12))
         Toggle("Aa", caseSensitive, onToggleCase)
+        Toggle("W", wholeWord, onToggleWholeWord)
         Toggle(".*", regex, onToggleRegex)
     }
 }

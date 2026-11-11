@@ -69,6 +69,22 @@ object ActionNames {
         ActionId.RENAME_ELEMENT to "Rename Element",
         ActionId.COPY_LINE to "Copy Line",
         ActionId.CUT_LINE to "Cut Line",
+        ActionId.GOTO_DECLARATION to "Go to Declaration",
+        ActionId.BACK to "Back",
+        ActionId.FORWARD to "Forward",
+        ActionId.FILE_STRUCTURE_POPUP to "File Structure",
+        ActionId.GOTO_TEST to "Go to Test",
+        ActionId.FIND_USAGES to "Find Usages",
+        ActionId.TOGGLE_BOOKMARK to "Toggle Bookmark",
+        ActionId.SHOW_BOOKMARKS to "Show Bookmarks",
+        ActionId.ACTIVATE_PROJECT_TOOL_WINDOW to "Project Window",
+        ActionId.HIDE_ALL_WINDOWS to "Hide All Windows",
+        ActionId.COPY_PATHS to "Copy Path",
+        ActionId.COPY_REFERENCE to "Copy Reference",
+        ActionId.SWITCHER to "Switcher",
+        ActionId.SELECT_IN_PROJECT_VIEW to "Select in Project View",
+        ActionId.REOPEN_CLOSED_TAB to "Reopen Closed Tab",
+        ActionId.CLOSE_OTHER_TABS to "Close Other Tabs",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */
