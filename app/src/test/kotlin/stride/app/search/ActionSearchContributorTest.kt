@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.keys.ActionId
+import stride.app.keys.Keymap
 import stride.app.keys.MacKeymap
 import stride.core.services.Application
 import stride.search.SearchTab
@@ -45,6 +46,21 @@ class ActionSearchContributorTest {
             assertEquals("Go to Class", contributor.fetch("go to class", 10).first().presentationText)
             assertEquals("Open Folder", contributor.fetch("open folder", 10).first().presentationText)
             assertTrue(contributor.fetch("save", 0).isEmpty())
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `the actions tab labels shortcuts for non-macOS keymaps`() {
+        val state = AppState()
+        try {
+            val contributor = ActionSearchContributor(state, { null }, Keymap.forPlatform(false))
+
+            assertEquals("Ctrl+S", contributor.fetch("save", 1).single().secondaryText)
+            assertEquals("Meta+R", contributor.fetch("run", 1).single().secondaryText)
+            assertEquals("Shift+Ctrl+O", contributor.fetch("go to file", 1).single().secondaryText)
+            assertEquals("Esc", contributor.fetch("editor escape", 1).single().secondaryText)
         } finally {
             state.dispose()
         }

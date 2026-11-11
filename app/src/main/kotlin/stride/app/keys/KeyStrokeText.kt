@@ -37,9 +37,9 @@ fun formatKeyStroke(stroke: KeyStroke, macOs: Boolean = true): String {
     return (modifiers + keyLabel(stroke.key)).joinToString("+")
 }
 
-/** First stroke bound to [action], formatted; empty when the action has no shortcut. */
+/** First stroke bound to [action], formatted for [keymap]'s platform; empty without a shortcut. */
 fun shortcutText(keymap: Keymap, action: ActionId): String =
-    keymap.strokesFor(action).firstOrNull()?.let(::formatKeyStroke).orEmpty()
+    keymap.strokesFor(action).firstOrNull()?.let { formatKeyStroke(it, keymap.isMacOs) }.orEmpty()
 
 /** A short label for [key] such as `O`, `↑` or `F12`. */
 fun keyLabel(key: Key): String = when (key) {

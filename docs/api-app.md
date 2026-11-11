@@ -292,7 +292,7 @@ enum class KeyContext {
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
-class Keymap(val bindings: Map<KeyStroke, List<Binding>>) {
+class Keymap(val bindings: Map<KeyStroke, List<Binding>>, val isMacOs: Boolean = true) {
     fun actionFor(stroke: KeyStroke, focus: KeyContext): ActionId?
     fun strokesFor(action: ActionId): List<KeyStroke>
     companion object { fun forPlatform(isMac: Boolean): Keymap }

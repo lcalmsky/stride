@@ -24,7 +24,11 @@ enum class KeyContext {
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
-class Keymap(val bindings: Map<KeyStroke, List<Binding>>) {
+class Keymap(
+    val bindings: Map<KeyStroke, List<Binding>>,
+    /** Whether [bindings] follow the macOS layout; `shortcutText` reads its labels from this. */
+    val isMacOs: Boolean = true,
+) {
     /**
      * The binding in [focus]'s context first, otherwise a GLOBAL binding, otherwise `null`.
      * Modal popups own the keyboard, so GLOBAL never answers for them.
@@ -51,6 +55,7 @@ class Keymap(val bindings: Map<KeyStroke, List<Binding>>) {
                     MacKeymap.keymap.bindings.mapKeys { (stroke, _) ->
                         stroke.copy(meta = stroke.ctrl, ctrl = stroke.meta)
                     },
+                    isMacOs = false,
                 )
             }
     }
