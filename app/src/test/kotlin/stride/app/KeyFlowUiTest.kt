@@ -1136,6 +1136,40 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `choosing go to line again focuses the already open field`() = runComposeUiTest {
+        val root = temp.resolve("goto-refocus-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "line 1\nline 2")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { pressKey(Key.L) }
+            }
+            waitUntil(timeoutMillis = 5_000) { editor.gotoLineVisible }
+            onNodeWithTag(TextFileEditor.GOTO_LINE_TAG).assertIsFocused()
+
+            // An action chosen from the Actions tab hands focus to the editor while the popup stays.
+            onNode(hasSetTextAction() and hasText("line 1", substring = true)).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            assertTrue(dispatchAction(ActionId.GOTO_LINE, state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR_FIELD }
+            onNodeWithTag(TextFileEditor.GOTO_LINE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `dispatching editor escape directly closes the goto line popup and refocuses the editor`() = runComposeUiTest {
         val root = temp.resolve("goto-dispatch-project")
         Files.createDirectories(root)

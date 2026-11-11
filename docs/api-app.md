@@ -582,13 +582,15 @@ the other open editors' text to the editor.
 ### Completion and rename popups
 
 `CODE_COMPLETION` calls `openCodeCompletion(state)`: it reads the caret's identifier prefix and
-stores a `CompletionRequest` in `AppState.completion`. The popup ranks the names once per open,
-off the UI thread: the identifiers of the current file (the one under the caret left out), the
-other open files, the `DeclarationIndex` names and the language keywords, through
-`CodeCompletion.candidates`. Editor identifier scans and declaration-line scans are memoised per
-text revision. `RENAME_ELEMENT` calls `openRename(state)`, which stores a `RenameRequest` with
-the word at the caret in `AppState.rename`. Both refuse a read-only editor with a
-`File is read-only` status message, and both set `AppState.focus = CONTEXT_POPUP`.
+stores a `CompletionRequest` in `AppState.completion`. The popup collects the names once, off the
+UI thread: the identifiers of the current file (the one under the caret left out), the other open
+files, the `DeclarationIndex` names and the language keywords. `CodeCompletion.candidates` then
+ranks those names again on every query change as the field is typed in. Collection stops early
+once the popup closes. Editor identifier scans are published as one immutable revision snapshot
+and, like declaration-line scans, are memoised per text revision. `RENAME_ELEMENT` calls
+`openRename(state)`, which stores a `RenameRequest` with the word at the caret in `AppState.rename`.
+Both refuse a read-only editor with a `File is read-only` status message, and both set
+`AppState.focus = CONTEXT_POPUP`.
 
 `App` draws `CompletionPopup` and `RenamePopup` over the whole window. They are modal: while one
 is open `Keymap.actionFor` answers no `GLOBAL` binding, Escape closes it, and both closing paths

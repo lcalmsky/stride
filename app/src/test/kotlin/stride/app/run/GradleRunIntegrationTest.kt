@@ -1,6 +1,7 @@
 package stride.app.run
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -84,6 +85,65 @@ class GradleRunIntegrationTest {
             runCatching { project.service<RunManager>().stop() }
             project.dispose()
         }
+    }
+
+    @Test
+    fun `runs strideRunMain with the configuration cache enabled`() {
+        assumeTrue(System.getProperty("stride.runIntegration") == "true", "needs -Dstride.runIntegration=true")
+        val repo = Path.of(requireNotNull(System.getProperty("stride.repoRoot")) { "stride.repoRoot is not set" })
+        val root = writeConfigurationCacheProject(repo, temp.resolve("cc-project"))
+        val project = Project(root)
+        try {
+            val manager = project.service<RunManager>()
+            val args = listOf("classes") +
+                RunCommands.gradleMainArgs("", "demo.Main", "main") +
+                listOf("--configuration-cache")
+            val session = manager.run(
+                RunConfiguration(
+                    name = "Configuration cache",
+                    workingDir = root,
+                    args = args,
+                    kind = RunKind.APPLICATION,
+                ),
+            )
+
+            val outcome = await(session, TIMEOUT_MILLIS)
+
+            assertEquals(Outcome.DONE, outcome, "child Gradle did not finish: ${tail(session)}")
+            assertEquals(0, session.exitCode, "child Gradle failed: ${tail(session)}")
+            assertTrue(session.consoleLines.any { it.contains("cc-main-ok") }, tail(session))
+            assertTrue(session.consoleLines.any { it.contains("Configuration cache entry stored") }, tail(session))
+            assertFalse(session.consoleLines.any { it.contains("Configuration cache problems") }, tail(session))
+        } finally {
+            runCatching { project.service<RunManager>().stop() }
+            project.dispose()
+        }
+    }
+
+    /** The launcher comes from the project dir, so the temp project delegates to the repo wrapper. */
+    private fun writeConfigurationCacheProject(repo: Path, root: Path): Path {
+        Files.createDirectories(root.resolve("src/main/java/demo"))
+        Files.writeString(root.resolve("settings.gradle"), "rootProject.name = 'cc-project'\n")
+        Files.writeString(root.resolve("build.gradle"), "plugins { id 'java' }\n")
+        Files.writeString(
+            root.resolve("src/main/java/demo/Main.java"),
+            """
+            package demo;
+
+            public class Main {
+                public static void main(String[] args) {
+                    System.out.println("cc-main-ok");
+                }
+            }
+            """.trimIndent() + "\n",
+        )
+        val gradlew = root.resolve("gradlew")
+        Files.writeString(
+            gradlew,
+            "#!/bin/sh\nexec \"${repo.resolve("gradlew")}\" -p \"$root\" \"\$@\"\n",
+        )
+        assertTrue(gradlew.toFile().setExecutable(true), "cannot make the temp wrapper executable")
+        return root
     }
 
     private fun configuration(root: Path, args: List<String>) = RunConfiguration(

@@ -109,10 +109,17 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
     }
 }
 
-/** One tab per concurrently existing configuration; hidden while there is only one. */
+/**
+ * The tab strip is hidden while the only session is still running, so a single run looks the
+ * same as before; a finished last session keeps its × so it can be closed.
+ */
+internal fun showRunTabs(sessions: List<RunSession>): Boolean =
+    sessions.size > 1 || sessions.any { !it.isRunning }
+
+/** One tab per concurrently existing configuration; hidden while the only session is running. */
 @Composable
 private fun RunTabs(manager: RunManager, current: RunSession) {
-    if (manager.sessions.size <= 1) return
+    if (!showRunTabs(manager.sessions)) return
     Row(Modifier.fillMaxWidth().height(DesignTokens.tabStripHeight)) {
         for (session in manager.sessions) {
             val active = session === current

@@ -31,20 +31,25 @@ allprojects { project ->
     // Runs one main from the runtime classpath of the chosen source set. Registered lazily for
     // every project so a project without the java plugin reports why it cannot run instead of
     // "task not found"; an ordinary build never configures or executes it.
+    // The values the action needs are captured now: a Project inside an action cannot be
+    // stored in the configuration cache.
+    def projectPath = project.path
+    def javaApplied = false
+    project.pluginManager.withPlugin('java') { javaApplied = true }
     project.tasks.register('strideRunMain', JavaExec) { task ->
-        def mainProperty = project.providers.gradleProperty('stride.mainClass')
+        def mainClassName = project.providers.gradleProperty('stride.mainClass').getOrElse('')
         def sourceSetName = project.providers.gradleProperty('stride.sourceSet').getOrElse('main')
-        mainClass.set(mainProperty.orElse(''))
+        mainClass.set(mainClassName)
         project.pluginManager.withPlugin('java') {
             task.classpath = project.sourceSets.getByName(sourceSetName).runtimeClasspath
         }
         standardInput = System.in
         workingDir = project.projectDir
         doFirst {
-            if (!project.pluginManager.hasPlugin('java')) {
+            if (!javaApplied) {
                 throw new GradleException(
-                    "stride: project ${project.path} does not apply the java plugin; cannot run " +
-                        "${mainProperty.getOrElse('')}"
+                    "stride: project ${projectPath} does not apply the java plugin; cannot run " +
+                        "${mainClassName}"
                 )
             }
         }

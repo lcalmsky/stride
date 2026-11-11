@@ -1,6 +1,7 @@
 package stride.app.run
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
@@ -53,16 +54,35 @@ class GradleInitScriptTest {
 
     @Test
     fun `a project without the java plugin fails with a clear message`() {
-        assertTrue(script.contains("project.pluginManager.hasPlugin('java')"))
+        assertTrue(script.contains("def projectPath = project.path"))
+        assertTrue(script.contains("def javaApplied = false"))
+        assertTrue(script.contains("withPlugin('java') { javaApplied = true }"))
         assertTrue(
             script.contains(
-                "stride: project \${project.path} does not apply the java plugin; cannot run ",
+                "stride: project \${projectPath} does not apply the java plugin; cannot run ",
             ),
         )
         assertTrue(script.contains("throw new GradleException"))
         val register = script.indexOf("tasks.register('strideRunMain', JavaExec)")
-        val pluginBlock = script.indexOf("project.pluginManager.withPlugin('java')")
+        val pluginBlock = script.indexOf("sourceSets.getByName(sourceSetName).runtimeClasspath")
         assertTrue(register in 0 until pluginBlock, "the task must be registered outside the java plugin callback")
+    }
+
+    @Test
+    fun `the run action captures no project reference for the configuration cache`() {
+        val action = doFirstAction()
+        assertTrue(action.contains("javaApplied"), action)
+        assertTrue(action.contains("\${projectPath}"), action)
+        assertFalse(action.contains("project."), "a Project in the action breaks the configuration cache: $action")
+    }
+
+    /** The body of the strideRunMain `doFirst` action, indentation included. */
+    private fun doFirstAction(): String {
+        val start = script.indexOf("doFirst {")
+        check(start >= 0) { "no doFirst action in the init script" }
+        val end = script.indexOf("\n        }", start)
+        check(end > start) { "unterminated doFirst action" }
+        return script.substring(start, end)
     }
 
     companion object {

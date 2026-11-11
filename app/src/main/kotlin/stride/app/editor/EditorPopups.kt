@@ -52,7 +52,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.theme.DesignTokens
@@ -100,7 +102,10 @@ fun CompletionPopup(
     val contentFade = popupContentFade(fade)
 
     LaunchedEffect(request) {
-        candidates = withContext(Dispatchers.Default) { request.candidates() }
+        candidates = withContext(Dispatchers.Default) {
+            val context = coroutineContext
+            request.candidates { context.ensureActive() }
+        }
     }
     LaunchedEffect(Unit) {
         withFrameNanos { }

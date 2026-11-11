@@ -16,6 +16,8 @@ import stride.core.services.Application
 import stride.core.vfs.VFile
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 
 class TextFileEditorActionsTest {
     @TempDir
@@ -264,6 +266,37 @@ class TextFileEditorActionsTest {
         editor.updateValue(TextFieldValue("class B", TextRange(0)))
         assertEquals(listOf("class", "B"), editor.identifiers())
         assertEquals(listOf(0), editor.declarationLines)
+    }
+
+    @Test
+    fun `concurrent identifier scans never mix revisions`() {
+        val first = "alpha beta gamma"
+        val second = "delta epsilon zeta"
+        val expected = setOf(CodeCompletion.identifiers(first), CodeCompletion.identifiers(second))
+        val editor = editor(first)
+        val failures = Collections.synchronizedList(mutableListOf<List<String>>())
+        val stop = AtomicBoolean(false)
+        val readers = (1..4).map {
+            Thread {
+                while (!stop.get()) {
+                    val names = editor.identifiers()
+                    if (names !in expected) failures.add(names)
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+        }
+        try {
+            repeat(500) { index ->
+                editor.updateValue(TextFieldValue(if (index % 2 == 0) second else first, TextRange(0)))
+            }
+        } finally {
+            stop.set(true)
+            readers.forEach { it.join(5_000) }
+        }
+
+        assertTrue(failures.isEmpty(), "mixed revisions: ${failures.take(3)}")
     }
 
     @Test

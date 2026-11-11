@@ -11,10 +11,14 @@ class CompletionRequest(
     val prefixStart: Int,
     val prefixLength: Int,
     val prefix: String,
-    private val nameSource: () -> List<String>,
+    private val nameSource: (checkCancelled: () -> Unit) -> List<String>,
 ) {
-    /** Candidate names ranked for [prefix]; the popup calls this off the UI thread. */
-    fun candidates(): List<String> = CodeCompletion.candidates(prefix, nameSource())
+    /**
+     * Candidate names ranked for [prefix]; the popup calls this off the UI thread.
+     * [checkCancelled] throws once the popup has closed so the scan stops early.
+     */
+    fun candidates(checkCancelled: () -> Unit = {}): List<String> =
+        CodeCompletion.candidates(prefix, nameSource(checkCancelled))
 }
 
 /** An open rename popup and the identifier it started from. */
@@ -32,13 +36,16 @@ fun openCodeCompletion(state: AppState): Boolean {
     val caret = editor.value.selection.start
     val prefixRange = EditActions.identifierPrefix(text, caret)
     val prefix = if (prefixRange.isEmpty()) "" else text.substring(prefixRange.first, prefixRange.last + 1)
-    val request = CompletionRequest(editor, prefixRange.first, prefix.length, prefix) {
+    val request = CompletionRequest(editor, prefixRange.first, prefix.length, prefix) { checkCancelled ->
         buildList {
             // The identifier under the caret is the one being completed, not a candidate.
-            addAll(editor.identifiers(prefixRange))
+            addAll(editor.identifiers(prefixRange, checkCancelled))
             for (other in session.editors.openFiles) {
-                if (other !== editor) (other as? TextFileEditor)?.let { addAll(it.identifiers()) }
+                if (other === editor) continue
+                checkCancelled()
+                (other as? TextFileEditor)?.let { addAll(it.identifiers(checkCancelled = checkCancelled)) }
             }
+            checkCancelled()
             addAll(session.project.service<DeclarationIndex>().snapshot().map { it.name })
             addAll(CodeCompletion.keywordsFor(editor.file.name))
         }

@@ -193,11 +193,16 @@ object EditActions {
         return start until position
     }
 
-    /** Every identifier in [text], in document order. */
-    fun identifierRanges(text: String): List<IntRange> {
+    /** Every identifier in [text], in document order; [checkCancelled] throws to stop a long scan. */
+    fun identifierRanges(text: String, checkCancelled: () -> Unit = {}): List<IntRange> {
         val ranges = ArrayList<IntRange>()
         var index = 0
+        var nextCheck = CANCELLATION_CHECK_INTERVAL
         while (index < text.length) {
+            if (index >= nextCheck) {
+                checkCancelled()
+                nextCheck = index + CANCELLATION_CHECK_INTERVAL
+            }
             if (!isIdentifierStart(text[index])) {
                 index++
                 continue
@@ -620,6 +625,7 @@ object EditActions {
 private const val BRACKET_OPENING = "([{"
 private const val BRACKET_CLOSING = ")]}"
 private val NO_SPACE_BEFORE = charArrayOf(')', ']', '.', ',')
+private const val CANCELLATION_CHECK_INTERVAL = 64 * 1024
 private val BRACKET_PARTNER = mapOf(
     '(' to ')', ')' to '(',
     '[' to ']', ']' to '[',

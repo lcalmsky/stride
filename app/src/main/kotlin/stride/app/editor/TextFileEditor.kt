@@ -32,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -110,9 +111,8 @@ class TextFileEditor(
     private var selectionStep = false
     private var hippieStep = false
     private var hippie: HippieState? = null
-    private var identifiersText: String? = null
-    private var identifierRangesCache: List<IntRange> = emptyList()
-    private var identifiersCache: List<String> = emptyList()
+    @Volatile
+    private var identifierSnapshot: IdentifierSnapshot? = null
     private var declarationLinesText: String? = null
     private var declarationLinesCache: List<Int> = emptyList()
 
@@ -147,6 +147,10 @@ class TextFileEditor(
 
     var gotoLineVisible: Boolean by mutableStateOf(false)
 
+    /** Increments on every GO_TO_LINE request so an already-open popup takes focus again. */
+    var gotoLineFocusRequests: Int by mutableIntStateOf(0)
+        private set
+
     val commenter: Commenter?
 
     var isDisposed: Boolean = false
@@ -156,19 +160,14 @@ class TextFileEditor(
 
     /**
      * Identifiers of the current text, skipping the range that is exactly [excluded] — the
-     * identifier being completed. The ranges are scanned once per text revision.
+     * identifier being completed. The scan is published as one immutable snapshot, so concurrent
+     * readers never see two revisions mixed; [checkCancelled] throws to abandon a closed popup's scan.
      */
-    internal fun identifiers(excluded: IntRange? = null): List<String> {
+    internal fun identifiers(excluded: IntRange? = null, checkCancelled: () -> Unit = {}): List<String> {
         val current = text
-        if (identifiersText != current) {
-            identifiersText = current
-            identifierRangesCache = EditActions.identifierRanges(current)
-            identifiersCache = identifierRangesCache.map { current.substring(it.first, it.last + 1) }
-        }
-        if (excluded == null) return identifiersCache
-        return identifierRangesCache.indices
-            .filter { identifierRangesCache[it] != excluded }
-            .map { identifiersCache[it] }
+        val snapshot = identifierSnapshot?.takeIf { it.text == current }
+            ?: IdentifierSnapshot.scan(current, checkCancelled).also { identifierSnapshot = it }
+        return snapshot.namesExcluding(excluded)
     }
 
     /** Declaration start lines of the current text, computed once per text revision. */
@@ -306,6 +305,7 @@ class TextFileEditor(
         }
         ActionId.GOTO_LINE -> {
             gotoLineVisible = true
+            gotoLineFocusRequests++
             true
         }
         ActionId.EDITOR_ESCAPE -> when {
@@ -707,7 +707,7 @@ class TextFileEditor(
         var fieldHadFocus by remember { mutableStateOf(false) }
         val inputFocus = remember { FocusRequester() }
         val shape = RoundedCornerShape(8.dp)
-        LaunchedEffect(Unit) {
+        LaunchedEffect(gotoLineFocusRequests) {
             withFrameNanos { }
             runCatching { inputFocus.requestFocus() }
         }
