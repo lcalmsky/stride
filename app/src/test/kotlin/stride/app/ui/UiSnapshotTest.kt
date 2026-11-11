@@ -305,9 +305,10 @@ class UiSnapshotTest {
     fun `editor scrolled snapshot`() {
         val root = temp.resolve("scroll-project")
         Files.createDirectories(root)
-        val content = (1..120).joinToString("\n") { line ->
-            if (line == 100) "y".repeat(300) else "line $line"
-        }
+        // Long lines on purpose: the content scrolled under the glass bars must be visible.
+        // Every line is long and the view is scrolled to column 290, so the code also runs
+        // under the tab bar and the status bar.
+        val content = (1..120).joinToString("\n") { line -> "line $line " + "y".repeat(340) }
         Files.writeString(root.resolve("Long.kt"), content)
         val state = AppState()
         try {

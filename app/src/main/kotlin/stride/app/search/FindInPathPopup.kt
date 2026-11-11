@@ -24,8 +24,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -146,32 +148,34 @@ fun FindInPathPopup(
                     }
                 },
         ) {
-            Header(
-                query = query,
-                onQueryChange = { query = it },
-                caseSensitive = caseSensitive,
-                regex = regex,
-                wholeWord = wholeWord,
-                onToggleCase = { caseSensitive = !caseSensitive },
-                onToggleRegex = { regex = !regex },
-                onToggleWholeWord = { wholeWord = !wholeWord },
-                focusRequester = focusRequester,
-            )
-            if (query.isNotEmpty()) {
-                StatusLine(searching = searching, hits = hits)
-                when {
-                    searching && hits.isEmpty() -> Unit
-                    hits.isEmpty() -> Text(
-                        "No results",
-                        color = DesignTokens.textSecondaryOnGlass,
-                        fontSize = DesignTokens.uiTextSize,
-                        fontFamily = DesignTokens.uiFont,
-                        modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
-                    )
-                    else -> ResultList(hits, selectedIndex, onChoose)
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+                Header(
+                    query = query,
+                    onQueryChange = { query = it },
+                    caseSensitive = caseSensitive,
+                    regex = regex,
+                    wholeWord = wholeWord,
+                    onToggleCase = { caseSensitive = !caseSensitive },
+                    onToggleRegex = { regex = !regex },
+                    onToggleWholeWord = { wholeWord = !wholeWord },
+                    focusRequester = focusRequester,
+                )
+                if (query.isNotEmpty()) {
+                    StatusLine(searching = searching, hits = hits)
+                    when {
+                        searching && hits.isEmpty() -> Unit
+                        hits.isEmpty() -> Text(
+                            "No results",
+                            color = DesignTokens.textSecondaryOnGlass,
+                            fontSize = DesignTokens.uiTextSize,
+                            fontFamily = DesignTokens.uiFont,
+                            modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
+                        )
+                        else -> ResultList(hits, selectedIndex, onChoose)
+                    }
                 }
+                PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
             }
-            PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
         }
     }
 }

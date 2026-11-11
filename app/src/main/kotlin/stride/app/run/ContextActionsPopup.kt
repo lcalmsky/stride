@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -131,6 +133,7 @@ internal fun ChoicePopup(
                     }
                 },
         ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             title?.let { text ->
                 Text(
                     text,
@@ -149,6 +152,7 @@ internal fun ChoicePopup(
                 )
             }
             PopupHintBar("↑↓ Navigate", "↵ Run", "Esc Close")
+            }
         }
     }
 }

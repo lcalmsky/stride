@@ -38,8 +38,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -80,10 +82,12 @@ import stride.app.ProjectSession
 import stride.app.editor.CompletionPopup
 import stride.app.editor.FileEditor
 import stride.app.editor.FileEditorManager
+import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.RenamePopup
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyRename
 import stride.app.editor.find.FindBar
+import stride.app.editor.find.findBarHeight
 import stride.app.editor.insertCompletion
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
@@ -112,9 +116,13 @@ import stride.app.search.SearchEverywherePopup
 import stride.app.tree.TreeRow
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.CapsuleEdge
+import stride.app.ui.theme.EditorInsets
+import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.MeshBackground
+import stride.app.ui.theme.chromeGlass
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
+import stride.app.ui.theme.glassLensCapsule
 import stride.app.ui.theme.glassPanel
 import stride.app.ui.theme.rememberNeonAlpha
 import stride.app.ui.toolwindow.ToolWindowManager
@@ -173,6 +181,9 @@ fun App(
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
+            // Without a tool window the editor runs to the window bottom, under the status bar.
+            val statusBarOverlaps = !state.toolWindows.visible
+            val statusBarInset = if (statusBarOverlaps) DesignTokens.statusBarHeight else 0.dp
             Column(Modifier.fillMaxSize()) {
                 TopBar(
                     projectName = session?.displayName() ?: "strIDE",
@@ -182,75 +193,95 @@ fun App(
                 if (session == null) {
                     NoProjectState(onOpenFolder, Modifier.weight(1f))
                 } else {
-                    Row(Modifier.weight(1f).fillMaxWidth()) {
-                        if (state.projectTreeVisible) {
-                            ProjectTreePanel(
-                                session,
-                                Modifier
-                                    .width(treeWidth)
-                                    .fillMaxHeight()
-                                    .onFocusChanged { treeFocused = it.hasFocus },
-                                focused = treeFocused,
-                                focusRequests = state.treeFocusRequests,
-                                revealRequests = state.revealRequests,
-                            )
-                            Splitter(onResize = { delta ->
-                                treeWidth = (treeWidth + delta)
-                                    .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
-                            })
-                        }
-                        Box(
+                    CompositionLocalProvider(
+                        LocalEditorScrollState provides (session.editors.selected as? TextFileEditor)?.verticalScroll,
+                    ) {
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Column(
                             Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .onFocusChanged { focus ->
-                                    // The find bar sits inside this box and reports FIND_BAR itself.
-                                    if (!state.findBar.visible) {
-                                        if (focus.hasFocus) {
-                                            if (state.focus != KeyContext.EDITOR_FIELD) {
-                                                state.focus = KeyContext.EDITOR
-                                            }
-                                        } else if (state.focus == KeyContext.EDITOR ||
-                                            state.focus == KeyContext.EDITOR_FIELD
-                                        ) {
-                                            state.focus = KeyContext.GLOBAL
-                                        }
-                                    }
-                                },
+                                .fillMaxSize()
+                                .padding(bottom = if (statusBarOverlaps) 0.dp else DesignTokens.statusBarHeight),
                         ) {
-                            EditorArea(
-                                session,
-                                state.findBar,
-                                onFocusContext = { state.focus = it },
-                                onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
-                                onJump = { editor -> session.history.record(navigationLocation(editor)) },
-                                modifier = Modifier.fillMaxSize(),
-                                focused = state.focus == KeyContext.EDITOR,
-                                focusRequests = state.editorFocusRequests,
-                            )
-                            TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
-                        }
-                    }
-                    if (state.toolWindows.visible) {
-                        VerticalSplitter(onResize = { delta ->
-                            state.toolWindows.height = (state.toolWindows.height - delta)
-                                .coerceIn(ToolWindowManager.MIN_HEIGHT, maxToolWindowHeight)
-                        })
-                        ToolWindowPanel(
-                            manager = state.toolWindows,
-                            onFocusContext = { context ->
-                                if (context == KeyContext.GLOBAL) {
-                                    if (state.focus == state.toolWindows.active()?.context) {
-                                        state.focus = KeyContext.GLOBAL
-                                    }
-                                } else {
-                                    state.focus = context
+                            Row(Modifier.weight(1f).fillMaxWidth()) {
+                                if (state.projectTreeVisible) {
+                                    ProjectTreePanel(
+                                        session,
+                                        Modifier
+                                            .width(treeWidth)
+                                            .fillMaxHeight()
+                                            .onFocusChanged { treeFocused = it.hasFocus },
+                                        focused = treeFocused,
+                                        focusRequests = state.treeFocusRequests,
+                                        revealRequests = state.revealRequests,
+                                        bottomInset = statusBarInset,
+                                    )
+                                    Splitter(onResize = { delta ->
+                                        treeWidth = (treeWidth + delta)
+                                            .coerceIn(DesignTokens.treeMinWidth, DesignTokens.treeMaxWidth)
+                                    })
                                 }
-                            },
-                            modifier = Modifier.height(state.toolWindows.height).fillMaxWidth(),
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .onFocusChanged { focus ->
+                                            // The find bar sits inside this box and reports FIND_BAR itself.
+                                            if (!state.findBar.visible) {
+                                                if (focus.hasFocus) {
+                                                    if (state.focus != KeyContext.EDITOR_FIELD) {
+                                                        state.focus = KeyContext.EDITOR
+                                                    }
+                                                } else if (state.focus == KeyContext.EDITOR ||
+                                                    state.focus == KeyContext.EDITOR_FIELD
+                                                ) {
+                                                    state.focus = KeyContext.GLOBAL
+                                                }
+                                            }
+                                        },
+                                ) {
+                                    EditorArea(
+                                        session,
+                                        state.findBar,
+                                        onFocusContext = { state.focus = it },
+                                        onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
+                                        onJump = { editor -> session.history.record(navigationLocation(editor)) },
+                                        modifier = Modifier.fillMaxSize(),
+                                        focused = state.focus == KeyContext.EDITOR,
+                                        focusRequests = state.editorFocusRequests,
+                                        bottomInset = statusBarInset,
+                                    )
+                                    TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
+                                }
+                            }
+                            if (state.toolWindows.visible) {
+                                VerticalSplitter(onResize = { delta ->
+                                    state.toolWindows.height = (state.toolWindows.height - delta)
+                                        .coerceIn(ToolWindowManager.MIN_HEIGHT, maxToolWindowHeight)
+                                })
+                                ToolWindowPanel(
+                                    manager = state.toolWindows,
+                                    onFocusContext = { context ->
+                                        if (context == KeyContext.GLOBAL) {
+                                            if (state.focus == state.toolWindows.active()?.context) {
+                                                state.focus = KeyContext.GLOBAL
+                                            }
+                                        } else {
+                                            state.focus = context
+                                        }
+                                    },
+                                    modifier = Modifier.height(state.toolWindows.height).fillMaxWidth(),
+                                )
+                            }
+                        }
+                        StatusBar(
+                            session,
+                            focusLabel = focusLabel(state.focus),
+                            message = state.statusMessage,
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                            overlapsEditor = statusBarOverlaps,
                         )
                     }
-                    StatusBar(session, focusLabel = focusLabel(state.focus), message = state.statusMessage)
+                    }
                 }
             }
         }
@@ -689,6 +720,7 @@ private fun ProjectTreePanel(
     focused: Boolean = false,
     focusRequests: Int = 0,
     revealRequests: Int = 0,
+    bottomInset: Dp = 0.dp,
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusRequests) {
@@ -698,7 +730,7 @@ private fun ProjectTreePanel(
     }
     Column(
         modifier
-            .glassPanel()
+            .glassPanel(grid = true)
             .focusHalo(focused)
             .focusRequester(focusRequester)
             .focusable(),
@@ -725,7 +757,7 @@ private fun ProjectTreePanel(
             val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
             if (index >= 0) listState.scrollToItem(index)
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().padding(bottom = bottomInset)) {
             LazyColumn(Modifier.fillMaxSize(), state = listState) {
                 items(session.tree.rows(), key = { it.file.path.toString() }) { row ->
                     TreeRowItem(session, row)
@@ -747,17 +779,28 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
     val selectedFile = session.editors.selected?.file
     val selected = selectedFile != null && samePath(selectedFile, row.file)
     val neon = rememberNeonAlpha(selected)
+    val capsuleShape = RoundedCornerShape(DesignTokens.radiusSmall)
+    val capsule = if (selected) {
+        Modifier.glassLensCapsule(
+            shape = capsuleShape,
+            insetX = 6.dp,
+            insetY = 2.dp,
+            lineAlpha = neon,
+        )
+    } else {
+        Modifier.glassCapsule(
+            shape = capsuleShape,
+            insetX = 6.dp,
+            insetY = 2.dp,
+            fillAlpha = if (hovered) 1f else 0f,
+            lineAlpha = 0f,
+        )
+    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.treeRowHeight)
-            .glassCapsule(
-                shape = RoundedCornerShape(DesignTokens.radiusSmall),
-                insetX = 6.dp,
-                insetY = 2.dp,
-                fillAlpha = if (hovered && !selected) 1f else 0f,
-                lineAlpha = neon,
-            )
+            .then(capsule)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
                 if (row.file.isDirectory) session.tree.toggle(row.file) else session.editors.openFile(row.file)
@@ -814,23 +857,18 @@ private fun EditorArea(
     modifier: Modifier,
     focused: Boolean = false,
     focusRequests: Int = 0,
+    bottomInset: Dp = 0.dp,
 ) {
     LaunchedEffect(focusRequests) {
         if (focusRequests == 0) return@LaunchedEffect
         withFrameNanos { }
         (session.editors.selected as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
     }
-    Column(modifier.focusHalo(focused)) {
-        TabBar(session.editors)
-        if (findBar.visible) {
-            FindBar(
-                findBar,
-                session.editors.selected as? TextFileEditor,
-                onFocusContext,
-                Modifier.fillMaxWidth(),
-            )
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+    // The editor fills the area and draws under the chrome; the bars only reserve insets.
+    Box(modifier.focusHalo(focused)) {
+        val barHeight = if (findBar.visible) findBarHeight(findBar) else 0.dp
+        val topInset = DesignTokens.tabStripHeight + barHeight
+        CompositionLocalProvider(LocalEditorInsets provides EditorInsets(top = topInset, bottom = bottomInset)) {
             val selected = session.editors.selected
             if (selected == null) {
                 EmptyEditor()
@@ -843,12 +881,26 @@ private fun EditorArea(
                 selected.Content(Modifier.fillMaxSize())
             }
         }
+        TabBar(session.editors, Modifier.align(Alignment.TopCenter))
+        if (findBar.visible) {
+            FindBar(
+                findBar,
+                session.editors.selected as? TextFileEditor,
+                onFocusContext,
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = DesignTokens.tabStripHeight)
+                    .fillMaxWidth(),
+            )
+        }
     }
 }
 
 @Composable
-private fun TabBar(manager: FileEditorManager) {
+private fun TabBar(manager: FileEditorManager, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
+    // Only a scrolled editor has code under the bar; otherwise the cached field slice is enough.
+    val scrolled = LocalEditorScrollState.current?.let { it.value > 0 } == true
     var tabBounds by remember { mutableStateOf<Map<String, Rect>>(emptyMap()) }
     val selectedKey = manager.selected?.let { pathKey(it.file) }
     LaunchedEffect(selectedKey, tabBounds, scrollState.viewportSize) {
@@ -865,21 +917,23 @@ private fun TabBar(manager: FileEditorManager) {
         scrollState.scrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(DesignTokens.tabStripHeight)
-            .glassPanel()
+            .then(if (scrolled) Modifier.chromeGlass() else Modifier.glassPanel())
             .horizontalScroll(scrollState),
     ) {
-        manager.openFiles.forEach { editor ->
-            val key = pathKey(editor.file)
-            Box(
-                Modifier.onGloballyPositioned { coordinates ->
-                    val bounds = coordinates.boundsInParent()
-                    if (tabBounds[key] != bounds) tabBounds = tabBounds + (key to bounds)
-                },
-            ) {
-                TabItem(manager, editor)
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            manager.openFiles.forEach { editor ->
+                val key = pathKey(editor.file)
+                Box(
+                    Modifier.onGloballyPositioned { coordinates ->
+                        val bounds = coordinates.boundsInParent()
+                        if (tabBounds[key] != bounds) tabBounds = tabBounds + (key to bounds)
+                    },
+                ) {
+                    TabItem(manager, editor)
+                }
             }
         }
     }
@@ -891,18 +945,30 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
     val hovered by interaction.collectIsHoveredAsState()
     val active = editor === manager.selected
     val neon = rememberNeonAlpha(active)
+    val capsuleShape = RoundedCornerShape(DesignTokens.radiusCapsule)
+    val capsule = if (active) {
+        Modifier.glassLensCapsule(
+            shape = capsuleShape,
+            insetX = 4.dp,
+            insetY = 4.dp,
+            lineEdge = CapsuleEdge.BOTTOM,
+            lineAlpha = neon,
+        )
+    } else {
+        Modifier.glassCapsule(
+            shape = capsuleShape,
+            insetX = 4.dp,
+            insetY = 4.dp,
+            fillAlpha = if (hovered) 1f else 0f,
+            lineEdge = CapsuleEdge.BOTTOM,
+            lineAlpha = 0f,
+        )
+    }
     Row(
         Modifier
             .fillMaxHeight()
             .widthIn(max = DesignTokens.tabMaxWidth)
-            .glassCapsule(
-                shape = RoundedCornerShape(DesignTokens.radiusCapsule),
-                insetX = 4.dp,
-                insetY = 4.dp,
-                fillAlpha = if (hovered && !active) 1f else 0f,
-                lineEdge = CapsuleEdge.BOTTOM,
-                lineAlpha = neon,
-            )
+            .then(capsule)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
                 manager.openFile(editor.file)
@@ -952,50 +1018,60 @@ private fun TabCloseButton(
 }
 
 @Composable
-private fun StatusBar(session: ProjectSession, focusLabel: String? = null, message: String? = null) {
+private fun StatusBar(
+    session: ProjectSession,
+    focusLabel: String? = null,
+    message: String? = null,
+    modifier: Modifier = Modifier,
+    overlapsEditor: Boolean = false,
+) {
     val editor = session.editors.selected
     val textEditor = editor as? TextFileEditor
+    val scroll = LocalEditorScrollState.current
+    val overCode = overlapsEditor && scroll != null && scroll.value > 0 && scroll.value < scroll.maxValue
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(DesignTokens.statusBarHeight)
-            .glassPanel()
+            .then(if (overCode) Modifier.chromeGlass() else Modifier.glassPanel())
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            relativePath(session, editor?.file),
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.statusTextSize,
-            fontFamily = DesignTokens.uiFont,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (editor != null) {
-            if (textEditor != null) {
-                val (line, column) = lineAndColumn(textEditor.value.text, textEditor.value.selection.start)
-                StatusItem("Ln $line, Col $column")
-            }
-            StatusItem(FileTypeRegistry.getFileType(editor.file.name).name)
-            StatusItem("UTF-8")
-            if (textEditor != null && textEditor.isReadOnly) {
-                ReadOnlyBadge()
-            }
-        }
-        if (message != null) {
-            Spacer(Modifier.width(DesignTokens.space16))
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
-                message,
-                color = DesignTokens.neonAmber,
+                relativePath(session, editor?.file),
+                color = DesignTokens.textSecondaryOnGlass,
                 fontSize = DesignTokens.statusTextSize,
                 fontFamily = DesignTokens.uiFont,
                 maxLines = 1,
-                modifier = Modifier.testTag("status-message"),
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-        }
-        if (focusLabel != null) {
-            FocusChip(focusLabel)
+            if (editor != null) {
+                if (textEditor != null) {
+                    val (line, column) = lineAndColumn(textEditor.value.text, textEditor.value.selection.start)
+                    StatusItem("Ln $line, Col $column")
+                }
+                StatusItem(FileTypeRegistry.getFileType(editor.file.name).name)
+                StatusItem("UTF-8")
+                if (textEditor != null && textEditor.isReadOnly) {
+                    ReadOnlyBadge()
+                }
+            }
+            if (message != null) {
+                Spacer(Modifier.width(DesignTokens.space16))
+                Text(
+                    message,
+                    color = DesignTokens.neonAmber,
+                    fontSize = DesignTokens.statusTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                    maxLines = 1,
+                    modifier = Modifier.testTag("status-message"),
+                )
+            }
+            if (focusLabel != null) {
+                FocusChip(focusLabel)
+            }
         }
     }
 }

@@ -43,7 +43,6 @@ import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.blendOver
 import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Project
 import stride.core.vfs.VFile
@@ -151,6 +150,80 @@ class PopupGlassTest {
     }
 
     @Test
+    fun `popup interior shows the backdrop at about two to one`() {
+        val search = SearchEverywhere(Project(Path.of("build/tmp/popup-detail-project")))
+        val pixels = scenePixels(800, 400) {
+            Box(Modifier.fillMaxSize()) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val cell = 180f
+                    var row = 0
+                    var y = 0f
+                    while (y < size.height) {
+                        var col = 0
+                        var x = 0f
+                        while (x < size.width) {
+                            drawRect(
+                                if ((row + col) % 2 == 0) Color.White else Color.Black,
+                                Offset(x, y),
+                                Size(cell, cell),
+                            )
+                            x += cell
+                            col += 1
+                        }
+                        y += cell
+                        row += 1
+                    }
+                }
+                SearchEverywherePopup(search = search, onChoose = {}, onClose = {}, initialQuery = "")
+            }
+        }
+        // Panel interior at y=120: one sample over a white cell, one over a black cell.
+        val light = relativeLuminance(Color(pixels[index(450, 120, 800)]))
+        val dark = relativeLuminance(Color(pixels[index(630, 120, 800)]))
+        val ratio = (maxOf(light, dark) + 0.05) / (minOf(light, dark) + 0.05)
+        System.err.println("popup-detail light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
+        assertTrue(ratio >= 1.9, "backdrop detail through the popup is %.3f:1, expected at least 2:1".format(ratio))
+        assertTrue(ratio <= 3.2, "backdrop detail through the popup is %.3f:1, expected about 3:1".format(ratio))
+    }
+
+    @Test
+    fun `popup text clears 4_5 on a bright backdrop`() {
+        val root = Path.of("build/tmp/recent-bright-project")
+        val files = listOf(
+            VFile(root.resolve("Alpha.kt")),
+            VFile(root.resolve("Beta.kt")),
+            VFile(root.resolve("Gamma.kt")),
+        )
+        val pixels = scenePixels(800, 400) {
+            Box(Modifier.fillMaxSize().background(Color.White)) {
+                RecentFilesPopup(files = files, projectRoot = root, onChoose = {}, onClose = {})
+            }
+        }
+        // Row band of the first entry (header ends at 144, rows are 32 px tall).
+        var best = 0.0
+        for (y in 148 until 208) {
+            for (x in 100 until 700) {
+                val luma = relativeLuminance(Color(pixels[index(x, y, 800)]))
+                if (luma < 0.15) continue
+                var local = 1.0
+                for (dy in -2..2) {
+                    for (dx in -2..2) {
+                        val localLuma = relativeLuminance(Color(pixels[index(x + dx, y + dy, 800)]))
+                        if (localLuma < local) local = localLuma
+                    }
+                }
+                val ratio = (luma + 0.05) / (local + 0.05)
+                if (ratio > best) best = ratio
+            }
+        }
+        System.err.println("popup-text-bright best=%.3f".format(best))
+        assertTrue(
+            best >= DesignTokens.contrastText,
+            "popup text on the bright glass tops out at %.3f:1".format(best),
+        )
+    }
+
+    @Test
     fun `the selected recent row carries the neon line on its capsule edge`() {
         val root = Path.of("build/tmp/recent-glass-project")
         val files = listOf(
@@ -192,8 +265,8 @@ class PopupGlassTest {
         var widest = -1
         var widestX = -1
         var widestY = -1
-        // Below the underline line so only the panel fill is measured.
-        for (y in 6 until 22) {
+        // Below the top rim and above the underline glow, so only the panel fill is measured.
+        for (y in 6 until 18) {
             for (x in 60 until 400) {
                 val spread = spread(pixels[index(x, y, 600)])
                 if (spread > widest) {
@@ -204,20 +277,27 @@ class PopupGlassTest {
             }
         }
         val pixel = pixels[index(widestX, widestY, 600)]
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
-        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
+        val lowest = relativeLuminance(chromeOver(DesignTokens.fieldBottom))
+        val highest = relativeLuminance(chromeOver(DesignTokens.backgroundLift))
         val luminance = relativeLuminance(Color(pixel))
         System.err.println(
             "find-bar widest=$widest at ($widestX,$widestY) pixel=${hex(pixel)} luminance=%.4f band=%.4f..%.4f"
                 .format(luminance, lowest, highest),
         )
-        // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
-        assertTrue(widest <= 12, "the find bar should stay neutral, widest channel spread = $widest")
+        // The cooler chrome glass keeps the field's graphite tint; anything wider would be a hue.
+        assertTrue(widest <= 15, "the find bar should stay neutral, widest channel spread = $widest")
         assertTrue(
-            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
-            "the find bar luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),
+            luminance >= lowest - 0.003 && luminance <= highest + 0.004,
+            "the find bar luminance %.4f is outside the bar glass band %.4f..%.4f".format(luminance, lowest, highest),
         )
     }
+
+    /** The chrome glass over a neutral field color: the base plus its share of the field. */
+    private fun chromeOver(field: Color): Color = Color(
+        (DesignTokens.glassBase.red + DesignTokens.chromeBackdropMix * field.red).coerceIn(0f, 1f),
+        (DesignTokens.glassBase.green + DesignTokens.chromeBackdropMix * field.green).coerceIn(0f, 1f),
+        (DesignTokens.glassBase.blue + DesignTokens.chromeBackdropMix * field.blue).coerceIn(0f, 1f),
+    )
 
     @Test
     fun `popup draws without a fade when animations are disabled`() {

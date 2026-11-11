@@ -5,7 +5,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -20,13 +19,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.rememberTextFieldVerticalScrollState
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.neonBorder
@@ -148,6 +147,12 @@ class TextFileEditor(
     val focusRequester = FocusRequester()
 
     val undo = UndoManager()
+
+    /** Vertical scroll position of the document viewport; the chrome bars read it. */
+    val verticalScroll = EditorScrollState()
+
+    /** Horizontal scroll position of the text body. */
+    val horizontalScroll = EditorScrollState()
 
     var gotoLineVisible: Boolean by mutableStateOf(false)
 
@@ -513,8 +518,8 @@ class TextFileEditor(
         val transformation = remember(currentSpans, currentSearchSpans) {
             HighlightingVisualTransformation(currentSpans, currentSearchSpans)
         }
-        val vertical = rememberScrollState()
-        val horizontal = rememberScrollState()
+        val vertical = verticalScroll
+        val horizontal = horizontalScroll
         val fieldScroll = rememberTextFieldVerticalScrollState()
         var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
         val latestLayout = rememberUpdatedState(layout)
@@ -533,14 +538,18 @@ class TextFileEditor(
 
         BoxWithConstraints(modifier.contentTint()) {
             val density = LocalDensity.current
+            val chromeInsets = LocalEditorInsets.current
+            val topPad = 8.dp + chromeInsets.top
+            val bottomPad = 8.dp + chromeInsets.bottom
+            val topPadPx = with(density) { topPad.toPx() }
+            val viewportHeightPx = with(density) { (maxHeight - topPad - bottomPad).coerceAtLeast(0.dp).toPx() }
             LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight) {
                 val textLayout = layout ?: return@LaunchedEffect
                 val caretOffset = currentValue.selection.end.coerceIn(0, currentValue.text.length)
                 val rect = textLayout.getCursorRect(caretOffset)
                 val contentLeft = with(density) { DesignTokens.space16.toPx() }
-                val contentTop = with(density) { 8.dp.toPx() }
+                val contentTop = topPadPx
                 val viewportWidth = with(density) { (maxWidth - gutterWidth).toPx() }
-                val viewportHeight = with(density) { maxHeight.toPx() }
                 val margin = with(density) { 24.dp.toPx() }
 
                 val left = contentLeft + rect.left
@@ -557,20 +566,21 @@ class TextFileEditor(
 
                 val top = contentTop + rect.top
                 val bottom = contentTop + rect.bottom
+                // The chrome bars hold the visible viewport: it starts at topPad and ends at bottomPad.
                 val targetY = when {
-                    bottom + margin > vertical.value + viewportHeight ->
-                        vertical.value + (bottom + margin - vertical.value - viewportHeight)
-                    top - margin < vertical.value -> top - margin
+                    bottom + margin > vertical.value + topPadPx + viewportHeightPx ->
+                        vertical.value + (bottom + margin - vertical.value - topPadPx - viewportHeightPx)
+                    top - margin < vertical.value + topPadPx -> top - margin - topPadPx
                     else -> vertical.value.toFloat()
                 }
                 val targetYPx = targetY.toInt().coerceIn(0, vertical.maxValue)
                 if (targetYPx != vertical.value) vertical.scrollTo(targetYPx)
             }
-            val gutterHeight = maxOf(maxHeight - 16.dp, lineHeight * lineCount)
+            val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * lineCount)
             val textMinWidth = (maxWidth - gutterWidth - 32.dp).coerceAtLeast(0.dp)
             Canvas(Modifier.matchParentSize()) {
                 val linePx = DesignTokens.codeLineHeight.toPx()
-                val top = 8.dp.toPx() + caretLine * linePx - vertical.value
+                val top = topPadPx + caretLine * linePx - vertical.value
                 if (top + linePx > 0f && top < size.height) {
                     drawRect(
                         DesignTokens.currentLineGlow,
@@ -584,11 +594,11 @@ class TextFileEditor(
                     )
                 }
             }
+            VerticalScrollViewport(vertical, Modifier.fillMaxSize()) {
             Row(
                 Modifier
-                    .fillMaxSize()
-                    .verticalScroll(vertical)
-                    .padding(vertical = 8.dp),
+                    .fillMaxWidth()
+                    .padding(top = topPad, bottom = bottomPad),
             ) {
                 Box(
                     Modifier
@@ -655,7 +665,7 @@ class TextFileEditor(
                         }
                     }
                 }
-                Box(Modifier.weight(1f).horizontalScroll(horizontal)) {
+                HorizontalScrollViewport(horizontal, Modifier.weight(1f)) {
                     CompositionLocalProvider(
                         LocalTextSelectionColors provides TextSelectionColors(
                             handleColor = DesignTokens.accent,
@@ -702,16 +712,20 @@ class TextFileEditor(
                     }
                 }
             }
+            }
             VerticalScrollbar(
-                adapter = rememberScrollbarAdapter(vertical),
-                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                adapter = rememberEditorScrollbarAdapter(vertical),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(top = chromeInsets.top, bottom = chromeInsets.bottom),
                 style = DesignTokens.scrollbarStyle,
             )
             HorizontalScrollbar(
-                adapter = rememberScrollbarAdapter(horizontal),
+                adapter = rememberEditorScrollbarAdapter(horizontal),
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = gutterWidth)
+                    .padding(start = gutterWidth, bottom = chromeInsets.bottom)
                     .fillMaxWidth(),
                 style = DesignTokens.scrollbarStyle,
             )
@@ -719,7 +733,7 @@ class TextFileEditor(
                 GotoLinePopup(
                     Modifier
                         .align(Alignment.TopEnd)
-                        .padding(DesignTokens.space12),
+                        .padding(top = chromeInsets.top + DesignTokens.space12, end = DesignTokens.space12),
                 )
             }
         }
@@ -743,6 +757,7 @@ class TextFileEditor(
                 .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
                 "Go to line:",
                 color = DesignTokens.textSecondaryOnGlass,
@@ -804,6 +819,7 @@ class TextFileEditor(
                     ),
                     cursorBrush = SolidColor(DesignTokens.accent),
                 )
+            }
             }
         }
     }

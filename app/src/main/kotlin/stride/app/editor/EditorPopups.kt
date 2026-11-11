@@ -21,8 +21,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -159,6 +161,7 @@ fun CompletionPopup(
                     }
                 },
         ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             CompletionHeader(input, focusRequester) { input = it }
             if (items.isEmpty()) {
                 Text(
@@ -183,6 +186,7 @@ fun CompletionPopup(
                 }
             }
             PopupHintBar("↑↓ Navigate", "↵ Insert", "Esc Close")
+            }
         }
     }
 }
@@ -311,6 +315,7 @@ fun RenamePopup(
                     }
                 },
         ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
                 "Rename",
                 color = DesignTokens.textSecondaryOnGlass,
@@ -359,6 +364,7 @@ fun RenamePopup(
                 )
             }
             PopupHintBar("↵ Rename", "Esc Cancel")
+            }
         }
     }
 }

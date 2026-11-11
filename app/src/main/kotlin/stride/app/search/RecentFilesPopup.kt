@@ -24,8 +24,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -129,32 +131,34 @@ fun RecentFilesPopup(
                     }
                 },
         ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = DesignTokens.space16),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "Recent Files",
-                    color = DesignTokens.text,
-                    fontSize = DesignTokens.uiTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                )
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .padding(horizontal = DesignTokens.space16),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Recent Files",
+                        color = DesignTokens.text,
+                        fontSize = DesignTokens.uiTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                    )
+                }
+                if (files.isEmpty()) {
+                    Text(
+                        "No recent files",
+                        color = DesignTokens.textSecondaryOnGlass,
+                        fontSize = DesignTokens.uiTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                        modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
+                    )
+                } else {
+                    ResultList(files, projectRoot, selectedIndex, onChoose)
+                }
+                PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
             }
-            if (files.isEmpty()) {
-                Text(
-                    "No recent files",
-                    color = DesignTokens.textSecondaryOnGlass,
-                    fontSize = DesignTokens.uiTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                    modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
-                )
-            } else {
-                ResultList(files, projectRoot, selectedIndex, onChoose)
-            }
-            PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
         }
     }
 }

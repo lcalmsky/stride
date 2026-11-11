@@ -14,8 +14,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,15 +41,22 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.TextFileEditor
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.chromeGlass
 import stride.app.ui.theme.glassPanel
 import stride.app.ui.theme.neonUnderline
 
 private val FIND_ROW_HEIGHT = 34.dp
 private val FIND_COUNTER_WIDTH = 110.dp
+
+/** Height of the bar in [state], so the editor can reserve the same viewport inset. */
+fun findBarHeight(state: FindBarState): Dp =
+    if (state.replaceVisible) FIND_ROW_HEIGHT * 2 else FIND_ROW_HEIGHT
 
 @Composable
 fun FindBar(
@@ -71,12 +80,14 @@ fun FindBar(
         runCatching { queryFocus.requestFocus() }
     }
 
+    val scrolled = LocalEditorScrollState.current?.let { it.value > 0 } == true
     Column(
         modifier
             .fillMaxWidth()
-            .glassPanel()
+            .then(if (scrolled) Modifier.chromeGlass() else Modifier.glassPanel())
             .neonUnderline(DesignTokens.accent2, thickness = 1.dp),
     ) {
+        CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
         Row(
             Modifier.fillMaxWidth().height(FIND_ROW_HEIGHT).padding(horizontal = DesignTokens.space8),
             verticalAlignment = Alignment.CenterVertically,
@@ -209,6 +220,7 @@ fun FindBar(
                 BarButton("Replace") { state.replaceCurrent(editor) }
                 BarButton("Replace all") { state.replaceAll(editor) }
             }
+        }
         }
     }
 }

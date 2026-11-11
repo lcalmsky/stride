@@ -240,6 +240,82 @@ class TreeEditorGlassTest {
     }
 
     @Test
+    fun `code scrolled under the tab bar shows through the glass`() {
+        val first = scrolledBarPixels("y")
+        val second = scrolledBarPixels("W")
+        // The tab strip is y 36..72 at density 1; x 500..1200 is past the active tab capsule.
+        val left = 500
+        val right = 1200
+        val top = 40
+        val bottom = 68
+        val pattern = meanAdjacentDiff(first, left, right, top, bottom)
+        var total = 0.0
+        var count = 0
+        var darkest = 1.0
+        var brightest = 0.0
+        for (y in top until bottom) {
+            for (x in left until right) {
+                val firstLuma = relativeLuminance(Color(first[index(x, y)]))
+                val secondLuma = relativeLuminance(Color(second[index(x, y)]))
+                total += abs(firstLuma - secondLuma)
+                count += 1
+                darkest = minOf(darkest, firstLuma)
+                brightest = maxOf(brightest, firstLuma)
+            }
+        }
+        val difference = total / count
+        System.err.println(
+            "tab-bar-glass pattern=%.5f range=%.5f content-difference=%.5f".format(
+                pattern,
+                brightest - darkest,
+                difference,
+            ),
+        )
+        assertTrue(
+            brightest - darkest > 0.004,
+            "the tab bar should not be a flat tint (lum range %.5f)".format(brightest - darkest),
+        )
+        assertTrue(
+            difference > 0.0005,
+            "the bar should follow the code under it (difference %.5f)".format(difference),
+        )
+    }
+
+    private fun scrolledBarPixels(glyph: String): IntArray {
+        val root = temp.resolve("scroll-$glyph")
+        Files.createDirectories(root)
+        val content = (1..120).joinToString("\n") { line -> "line $line " + glyph.repeat(340) }
+        Files.writeString(root.resolve("Long.kt"), content)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            val scene = ImageComposeScene(WIDTH, HEIGHT, Density(1f)) {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            return try {
+                var nanos = 0L
+                repeat(8) {
+                    scene.render(nanos).close()
+                    nanos += 16_000_000L
+                }
+                scene.render(nanos).pixels()
+            } finally {
+                scene.close()
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `gutter line numbers clear 4_5 on the worst content tint`() {
         val worstTint = blendOver(
             DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),

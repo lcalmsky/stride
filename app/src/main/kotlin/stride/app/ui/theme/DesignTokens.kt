@@ -3,7 +3,10 @@ package stride.app.ui.theme
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.foundation.ScrollbarStyle
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -112,17 +115,40 @@ object DesignTokens {
     val glassBlurRadiusMax = 20.dp
 
     /**
-     * Floating glass is frosted: [glassBase] is nearly opaque and the backdrop only shows as a
-     * faint luminance impression plus [glassChromaGain] of its hue.
+     * Floating glass is thin: [glassBase] is the neutral floor and [glassBackdropMix] of the
+     * blurred backdrop's luminance (plus [glassChromaGain] of its hue) shows through it, so code
+     * behind a popup or a bar stays visible as a soft impression.
      */
     val glassBase = Color(0xFF17181E)
-    val glassBackdropMix = 0.06f
-    val glassChromaGain = 0.35f
-    val liquidGlassBlurRadius = 14.dp
-    val glassBezel = 12.dp
-    val glassLensStrength = 6.dp
+    val glassBackdropMix = 0.40f
+    val glassChromaGain = 0.6f
+    val liquidGlassBlurRadius = 18.dp
+    val glassBezel = 16.dp
+    val glassLensStrength = 14.dp
     val glassAberration = 0.5.dp
     val glassSpecular = 0.42f
+
+    /** Chrome bars: the same thin glass without edge lens, with the hairline frame. */
+    val chromeGlassBezel = 10.dp
+    val chromeGlassBlurRadius = 4.dp
+    val chromeBackdropMix = 0.8f
+
+    /** The small lens on the selected tree row and the active tab. */
+    val capsuleBezel = 6.dp
+    val capsuleLensStrength = 3.5.dp
+    val capsuleEndTaper = 10.dp
+
+    /** Hairline grid baked into the project tree glass, so its lens has neutral detail to bend. */
+    val glassGridSpacing = 48.dp
+    val glassGrid = Color.White.copy(alpha = 0.03f)
+
+    /** Soft shadow under chrome and popup text, which carries its own contrast on thin glass. */
+    val chromeTextShadow = Shadow(
+        color = Color.Black.copy(alpha = 0.7f),
+        offset = Offset(0f, 1f),
+        blurRadius = 3f,
+    )
+    val chromeTextStyle = TextStyle(shadow = chromeTextShadow)
 
     val contentTintAlpha = 0.92f
 

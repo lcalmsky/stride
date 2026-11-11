@@ -90,23 +90,30 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `popup text clears 4_5 on the frosted base over any backdrop`() {
-        // The base is nearly opaque: a pure white and a pure black backdrop move it the most.
-        val backdrops = mapOf(
-            "brightest" to blendOver(Color.White.copy(alpha = DesignTokens.glassBackdropMix), DesignTokens.glassBase),
-            "darkest" to blendOver(Color.Black.copy(alpha = DesignTokens.glassBackdropMix), DesignTokens.glassBase),
-        )
+    fun `popup text carries its own contrast over the thin glass`() {
+        // The glass is thin, so the text shadow, not the base, guarantees contrast on a bright
+        // backdrop. Pure white and pure black move the surface the most.
+        val backdrops = mapOf("brightest" to 1f, "darkest" to 0f)
         val tokens = mapOf(
             "text" to DesignTokens.text,
             "selectedText" to DesignTokens.selectedText,
             "textSecondaryOnGlass" to DesignTokens.textSecondaryOnGlass,
         )
         for ((token, color) in tokens) {
-            for ((backdrop, surface) in backdrops) {
-                val ratio = contrastRatio(color, surface)
+            for ((backdrop, value) in backdrops) {
+                val surface = Color(
+                    (DesignTokens.glassBase.red + DesignTokens.glassBackdropMix * value).coerceIn(0f, 1f),
+                    (DesignTokens.glassBase.green + DesignTokens.glassBackdropMix * value).coerceIn(0f, 1f),
+                    (DesignTokens.glassBase.blue + DesignTokens.glassBackdropMix * value).coerceIn(0f, 1f),
+                )
+                val shadowed = blendOver(DesignTokens.chromeTextShadow.color, surface)
+                val ratio = contrastRatio(color, shadowed)
                 assertTrue(
                     ratio >= DesignTokens.contrastText,
-                    "$token on the $backdrop frosted base = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+                    "$token on the $backdrop glass under its shadow = %.3f < %.1f".format(
+                        ratio,
+                        DesignTokens.contrastText,
+                    ),
                 )
             }
         }

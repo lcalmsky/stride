@@ -65,6 +65,9 @@ private const val BACKDROP_BLUR_DOWNSCALE = 8
 /** The lens blur runs on a 1/[LENS_DOWNSCALE] copy of the backdrop; the bend stays soft. */
 private const val LENS_DOWNSCALE = 4
 
+/** Chrome bars downscale further: they sit over text and their blur is soft anyway. */
+private const val CHROME_DOWNSCALE = 8
+
 /** The lens displacement fades to zero over this distance from the outer rim. */
 private val LENS_TAPER = 2.dp
 
@@ -88,6 +91,14 @@ class MeshBitmapHolder {
 
 /** The field behind the current window, or `null` when no [MeshBackground] is above. */
 val LocalMeshBitmap = staticCompositionLocalOf<MeshBitmapHolder?> { null }
+
+/**
+ * How far the tab bar, find bar and status bar overlay the editor viewport. The editor keeps
+ * drawing under them; these insets only keep the first and last lines reachable.
+ */
+data class EditorInsets(val top: Dp = 0.dp, val bottom: Dp = 0.dp)
+
+val LocalEditorInsets = staticCompositionLocalOf { EditorInsets() }
 
 /**
  * Test-only observation point: how many times [glassPanel] actually ran a blur, whether its
@@ -182,6 +193,7 @@ private data class GlassKey(
     val left: Int,
     val top: Int,
     val meshVersion: Int,
+    val grid: Boolean,
 )
 
 private class GlassPanelCache {
@@ -192,9 +204,10 @@ private class GlassPanelCache {
 /**
  * A cached glass panel: its slice of the field blurred once together with the
  * [DesignTokens.glassFill] fill, and the hairline rim. The blur is cached by panel size, field
- * size, root position and field version.
+ * size, root position and field version. [grid] bakes a faint neutral hairline grid into the
+ * slice, so small lenses over the panel have structure to bend.
  */
-fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
+fun Modifier.glassPanel(shape: Shape = RectangleShape, grid: Boolean = false): Modifier = composed {
     val mesh = LocalMeshBitmap.current
     val state = remember { GlassPanelState() }
     val cache = remember { GlassPanelCache() }
@@ -210,7 +223,7 @@ fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
             state.update(coordinates.boundsInRoot().topLeft, coordinates.size.width, coordinates.size.height)
         }
         .drawBehind {
-            drawGlassPanel(state.bounds, shape, mesh, cache)
+            drawGlassPanel(state.bounds, shape, mesh, cache, grid)
         }
 }
 
@@ -251,6 +264,73 @@ fun Modifier.glassCapsule(
     }
 }
 
+/**
+ * The lens capsule on the selected tree row and the active tab: the backdrop bends inside a
+ * [DesignTokens.capsuleBezel] rim, then the neutral lift, the crisp top rim and the neon line sit
+ * on top. The displacement fades to zero at the left and right ends, so nothing smears there.
+ */
+fun Modifier.glassLensCapsule(
+    shape: Shape,
+    insetX: Dp = 6.dp,
+    insetY: Dp = 2.dp,
+    lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
+    lineAlpha: Float = 1f,
+): Modifier = composed {
+    val cache = remember { BackdropFilterCache() }
+    DisposableEffect(cache) {
+        onDispose { cache.dispose() }
+    }
+    drawWithContent {
+        val left = insetX.toPx()
+        val top = insetY.toPx()
+        val innerWidth = size.width - left * 2f
+        val innerHeight = size.height - top * 2f
+        if (innerWidth <= 0f || innerHeight <= 0f || lineAlpha <= 0f) {
+            drawContent()
+            return@drawWithContent
+        }
+        val innerSize = Size(innerWidth, innerHeight)
+        val outline = shape.createOutline(innerSize, layoutDirection, this)
+        val radius = when (outline) {
+            is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+            is Outline.Rectangle -> 0f
+            is Outline.Generic -> 0f
+        }
+        val liquid = cache.filterFor(
+            width = innerWidth,
+            height = innerHeight,
+            radius = radius,
+            density = density,
+            sigma = DesignTokens.liquidGlassBlurRadius.toPx() * BLUR_SIGMA_SCALE,
+            bezel = DesignTokens.capsuleBezel.toPx(),
+            strength = DesignTokens.capsuleLensStrength.toPx(),
+            aberration = DesignTokens.glassAberration.toPx(),
+            taper = LENS_TAPER.toPx() / LENS_DOWNSCALE,
+            endTaper = DesignTokens.capsuleEndTaper.toPx() / LENS_DOWNSCALE,
+            backdropMix = DesignTokens.glassBackdropMix,
+            downscale = LENS_DOWNSCALE,
+        )
+        GlassCacheStats.lastSurfaceLiquid = liquid != null
+        val native = drawContext.canvas.nativeCanvas
+        native.save()
+        native.translate(left, top)
+        cache.path?.let { native.clipPath(it) } ?: native.clipPath(capsulePath(shape, innerSize).asSkiaPath())
+        if (liquid != null) {
+            cache.layer?.let { native.saveLayer(it) } ?: native.saveLayer(
+                SaveLayerRec(org.jetbrains.skia.Rect(0f, 0f, innerWidth, innerHeight), null, liquid),
+            )
+            native.restore()
+        } else {
+            drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = innerSize)
+        }
+        drawRect(DesignTokens.capsuleLift, size = innerSize)
+        drawCapsuleRim(shape, innerSize, 0f, 0f)
+        drawNeonLine(innerSize, 0f, 0f, lineEdge, lineAlpha)
+        native.restore()
+        drawContent()
+    }
+}
+
 enum class CapsuleEdge { LEFT, BOTTOM }
 
 /** A popup selection row: the capsule and neon line when selected, a faint step on hover. */
@@ -269,6 +349,7 @@ private fun DrawScope.drawGlassPanel(
     shape: Shape,
     mesh: MeshBitmapHolder?,
     cache: GlassPanelCache,
+    grid: Boolean,
 ) {
     val slice = if (bounds != null && mesh?.bitmap != null && mesh.width > 0 && mesh.height > 0) {
         val key = GlassKey(
@@ -279,6 +360,7 @@ private fun DrawScope.drawGlassPanel(
             left = bounds.left,
             top = bounds.top,
             meshVersion = mesh.version,
+            grid = grid,
         )
         if (cache.key != key) {
             cache.image?.close()
@@ -287,6 +369,9 @@ private fun DrawScope.drawGlassPanel(
                 bounds = bounds,
                 size = size,
                 sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE,
+                grid = grid,
+                gridSpacing = DesignTokens.glassGridSpacing.toPx(),
+                gridStroke = 1.dp.toPx(),
             )
             cache.key = key
             GlassCacheStats.panelBlurCount += 1
@@ -324,6 +409,9 @@ private fun glassSliceImage(
     bounds: GlassBounds,
     size: Size,
     sigma: Float,
+    grid: Boolean,
+    gridSpacing: Float,
+    gridStroke: Float,
 ): Image {
     val width = size.width.roundToInt().coerceAtLeast(1)
     val height = size.height.roundToInt().coerceAtLeast(1)
@@ -358,24 +446,131 @@ private fun glassSliceImage(
         }
     }
     val fill = Paint().apply { color = DesignTokens.glassFill.toArgb() }
+    val gridPaint = if (grid) Paint().apply { color = DesignTokens.glassGrid.toArgb() } else null
     val base = try {
         surface.canvas.drawRect(org.jetbrains.skia.Rect(0f, 0f, width.toFloat(), height.toFloat()), fill)
+        if (gridPaint != null) {
+            val spacing = gridSpacing.coerceAtLeast(1f)
+            val stroke = gridStroke
+            var offset = spacing
+            while (offset < width) {
+                surface.canvas.drawRect(
+                    org.jetbrains.skia.Rect(offset, 0f, offset + stroke, height.toFloat()),
+                    gridPaint,
+                )
+                offset += spacing
+            }
+            offset = spacing
+            while (offset < height) {
+                surface.canvas.drawRect(
+                    org.jetbrains.skia.Rect(0f, offset, width.toFloat(), offset + stroke),
+                    gridPaint,
+                )
+                offset += spacing
+            }
+        }
         surface.makeImageSnapshot()
     } finally {
         fill.close()
+        gridPaint?.close()
         surface.close()
     }
     GlassCacheStats.lastSliceOpaque = base.isOpaque
     return base
 }
 
-/** The liquid glass filter, rebuilt only when the panel's size or corner radius changes. */
+/** The liquid glass filter, rebuilt only when the panel's size or lens geometry changes. */
 private class BackdropFilterCache {
     var width: Int = -1
     var height: Int = -1
     var radius: Int = -1
     var density: Float = -1f
+    var bezel: Float = -1f
+    var strength: Float = -1f
+    var endTaper: Float = -1f
+    var backdropMix: Float = -1f
+    var downscale: Int = -1
     var filter: ImageFilter? = null
+    var fallback: ImageFilter? = null
+    var path: org.jetbrains.skia.Path? = null
+    var layer: SaveLayerRec? = null
+
+    fun dispose() {
+        filter?.close()
+        filter = null
+        fallback?.close()
+        fallback = null
+        path?.close()
+        path = null
+        layer = null
+    }
+
+    fun filterFor(
+        width: Float,
+        height: Float,
+        radius: Float,
+        density: Float,
+        sigma: Float,
+        bezel: Float,
+        strength: Float,
+        aberration: Float,
+        taper: Float,
+        endTaper: Float,
+        backdropMix: Float,
+        downscale: Int,
+    ): ImageFilter? {
+        val widthKey = width.roundToInt()
+        val heightKey = height.roundToInt()
+        val radiusKey = radius.roundToInt()
+        val unchanged = this.width == widthKey && this.height == heightKey && this.radius == radiusKey &&
+            this.density == density && this.bezel == bezel && this.strength == strength &&
+            this.endTaper == endTaper && this.backdropMix == backdropMix && this.downscale == downscale
+        if (unchanged) return filter
+        filter?.close()
+        fallback?.close()
+        path?.close()
+        filter = GlassShader.backdropFilter(
+            width = width,
+            height = height,
+            radius = radius,
+            sigma = sigma,
+            bezel = bezel,
+            strength = strength,
+            aberration = aberration,
+            taper = taper,
+            endTaper = endTaper,
+            downscale = downscale,
+            baseRed = DesignTokens.glassBase.red,
+            baseGreen = DesignTokens.glassBase.green,
+            baseBlue = DesignTokens.glassBase.blue,
+            backdropMix = backdropMix,
+            chromaGain = DesignTokens.glassChromaGain,
+            specular = DesignTokens.glassSpecular,
+        )
+        this.width = widthKey
+        this.height = heightKey
+        this.radius = radiusKey
+        this.density = density
+        this.bezel = bezel
+        this.strength = strength
+        this.endTaper = endTaper
+        this.backdropMix = backdropMix
+        this.downscale = downscale
+        fallback = if (filter == null) backdropImageFilter(sigma) else null
+        path = org.jetbrains.skia.Path().apply {
+            if (radius > 0f) {
+                addRRect(RRect.makeLTRB(0f, 0f, width, height, radius))
+            } else {
+                addRect(org.jetbrains.skia.Rect.makeWH(width, height))
+            }
+        }
+        layer = SaveLayerRec(
+            org.jetbrains.skia.Rect.makeWH(width, height),
+            null,
+            filter ?: fallback,
+        )
+        return filter
+    }
 }
 
 /**
@@ -383,71 +578,90 @@ private class BackdropFilterCache {
  * paints the rim and the content. When the shader is unavailable the previous blur-only glass is
  * used instead.
  */
-fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = composed {
+fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = liquidBackdrop(
+    shape,
+    lensBezel = DesignTokens.glassBezel,
+    lensStrength = DesignTokens.glassLensStrength,
+    blurRadius = DesignTokens.liquidGlassBlurRadius,
+    backdropMix = DesignTokens.glassBackdropMix,
+    downscale = LENS_DOWNSCALE,
+)
+
+/**
+ * Glass for a chrome bar over the editor: a lighter blur than the floating glass, no edge lens
+ * (the bar is barely taller than the bezel), a lighter tint so the code under it stays readable,
+ * and the hairline frame on top.
+ */
+fun Modifier.chromeGlass(shape: Shape = RectangleShape): Modifier = liquidBackdrop(
+    shape,
+    lensBezel = DesignTokens.chromeGlassBezel,
+    lensStrength = 0.dp,
+    blurRadius = DesignTokens.chromeGlassBlurRadius,
+    backdropMix = DesignTokens.chromeBackdropMix,
+    downscale = CHROME_DOWNSCALE,
+    border = true,
+)
+
+private fun Modifier.liquidBackdrop(
+    shape: Shape,
+    lensBezel: Dp,
+    lensStrength: Dp,
+    blurRadius: Dp,
+    backdropMix: Float,
+    downscale: Int,
+    border: Boolean = false,
+): Modifier = composed {
     val cache = remember { BackdropFilterCache() }
     DisposableEffect(cache) {
-        onDispose {
-            cache.filter?.close()
-            cache.filter = null
-        }
+        onDispose { cache.dispose() }
     }
     drawWithContent {
         val sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE
-        val liquidSigma = DesignTokens.liquidGlassBlurRadius.toPx() * BLUR_SIGMA_SCALE
+        val liquidSigma = blurRadius.toPx() * BLUR_SIGMA_SCALE
         val outline = shape.createOutline(size, layoutDirection, this)
         val radius = when (outline) {
             is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
             is Outline.Rectangle -> 0f
             is Outline.Generic -> 0f
         }
-        val width = size.width.roundToInt()
-        val height = size.height.roundToInt()
-        val radiusKey = radius.roundToInt()
-        if (cache.width != width || cache.height != height || cache.radius != radiusKey || cache.density != density) {
-            cache.filter?.close()
-            cache.filter = GlassShader.backdropFilter(
-                width = size.width,
-                height = size.height,
-                radius = radius,
-                sigma = liquidSigma,
-                bezel = DesignTokens.glassBezel.toPx(),
-                strength = DesignTokens.glassLensStrength.toPx(),
-                aberration = DesignTokens.glassAberration.toPx(),
-                taper = LENS_TAPER.toPx() / LENS_DOWNSCALE,
-                baseRed = DesignTokens.glassBase.red,
-                baseGreen = DesignTokens.glassBase.green,
-                baseBlue = DesignTokens.glassBase.blue,
-                backdropMix = DesignTokens.glassBackdropMix,
-                chromaGain = DesignTokens.glassChromaGain,
-                specular = DesignTokens.glassSpecular,
-            )
-            cache.width = width
-            cache.height = height
-            cache.radius = radiusKey
-            cache.density = density
-        }
-        val liquid = cache.filter
+        val liquid = cache.filterFor(
+            width = size.width,
+            height = size.height,
+            radius = radius,
+            density = density,
+            sigma = liquidSigma,
+            bezel = lensBezel.toPx(),
+            strength = lensStrength.toPx(),
+            aberration = DesignTokens.glassAberration.toPx(),
+            taper = LENS_TAPER.toPx() / LENS_DOWNSCALE,
+            endTaper = 0f,
+            backdropMix = backdropMix,
+            downscale = downscale,
+        )
         GlassCacheStats.lastSurfaceLiquid = liquid != null
         val native = drawContext.canvas.nativeCanvas
         native.save()
-        when (outline) {
+        cache.path?.let { native.clipPath(it) } ?: when (outline) {
             is Outline.Rectangle -> native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
             is Outline.Rounded -> native.clipPath(Path().apply { addRoundRect(outline.roundRect) }.asSkiaPath())
             is Outline.Generic -> native.clipPath(outline.path.asSkiaPath())
         }
-        native.saveLayer(
-            SaveLayerRec(
-                org.jetbrains.skia.Rect(0f, 0f, size.width, size.height),
-                null,
-                liquid ?: backdropImageFilter(sigma),
-            ),
-        )
+        cache.layer?.let { native.saveLayer(it) } ?: run {
+            native.saveLayer(
+                SaveLayerRec(
+                    org.jetbrains.skia.Rect(0f, 0f, size.width, size.height),
+                    null,
+                    liquid ?: backdropImageFilter(sigma),
+                ),
+            )
+        }
         if (liquid == null) {
             // Same frosted base as the shader path, over the blur-only backdrop.
-            drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = size)
+            drawRect(DesignTokens.glassBase.copy(alpha = 1f - backdropMix), size = size)
             drawGlassBorder()
         }
         native.restore()
+        if (border) drawGlassBorder()
         drawContent()
         native.restore()
     }
@@ -685,6 +899,8 @@ internal object GlassShader {
         strength: Float,
         aberration: Float,
         taper: Float,
+        endTaper: Float,
+        downscale: Int,
         baseRed: Float,
         baseGreen: Float,
         baseBlue: Float,
@@ -694,9 +910,9 @@ internal object GlassShader {
     ): ImageFilter? {
         val effect = runtimeEffect() ?: return null
         return runCatching {
-            // The shader is evaluated on the 1/[LENS_DOWNSCALE] backdrop copy, so its geometry
-            // uniforms and its outer-edge taper are expressed in that copy's pixels.
-            val scale = 1f / LENS_DOWNSCALE
+            // The shader is evaluated on a 1/[downscale] backdrop copy, so its geometry uniforms
+            // and its outer-edge taper are expressed in that copy's pixels.
+            val scale = 1f / downscale
             val builder = RuntimeShaderBuilder(effect)
             builder.uniform("size", width * scale, height * scale)
             builder.uniform("origin", 0f, 0f)
@@ -705,24 +921,25 @@ internal object GlassShader {
             builder.uniform("strength", (strengthOverride ?: strength) * scale)
             builder.uniform("aberration", aberration * scale)
             builder.uniform("taper", taper)
+            builder.uniform("endTaper", endTaper)
             builder.uniform("baseColor", baseRed, baseGreen, baseBlue)
             builder.uniform("backdropMix", backdropMix)
             builder.uniform("chromaGain", chromaGain)
             builder.uniform("specular", specular)
-            val downscale = ImageFilter.makeMatrixTransform(
+            val downscaleFilter = ImageFilter.makeMatrixTransform(
                 Matrix33.makeScale(scale),
                 SamplingMode.LINEAR,
                 null,
             )
             val input = ImageFilter.makeBlur(
-                sigma / LENS_DOWNSCALE,
-                sigma / LENS_DOWNSCALE,
+                sigma / downscale,
+                sigma / downscale,
                 FilterTileMode.CLAMP,
-                downscale,
+                downscaleFilter,
             )
             val runtime = ImageFilter.makeRuntimeShader(builder, "content", input)
             ImageFilter.makeMatrixTransform(
-                Matrix33.makeScale(LENS_DOWNSCALE.toFloat()),
+                Matrix33.makeScale(downscale.toFloat()),
                 SamplingMode.LINEAR,
                 runtime,
             )
@@ -745,6 +962,7 @@ internal object GlassShader {
         uniform float strength;
         uniform float aberration;
         uniform float taper;
+        uniform float endTaper;
         uniform float3 baseColor;
         uniform float backdropMix;
         uniform float chromaGain;
@@ -785,7 +1003,12 @@ internal object GlassShader {
                 // Zero at the outer 2 dp and at the inner bezel edge, peaking mid-bezel.
                 float mid = clamp(-d / bezel, 0.0, 1.0);
                 float profile = 4.0 * mid * (1.0 - mid) * smoothstep(0.0, taper, -d);
-                sampleAt = fragCoord - n * (profile * strength);
+                // Capsules fade the bend to zero at their left and right ends.
+                float endProfile = 1.0;
+                if (endTaper > 0.0) {
+                    endProfile = smoothstep(0.0, endTaper, min(fragCoord.x, size.x - fragCoord.x));
+                }
+                sampleAt = fragCoord - n * (profile * endProfile * strength);
             }
 
             half3 col = frosted(content.eval(sampleAt).rgb);

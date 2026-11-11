@@ -26,8 +26,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -166,20 +168,22 @@ fun SearchEverywherePopup(
                     }
                 },
         ) {
-            PopupHeader(query, focusRequester, onQueryChange = { query = it })
-            TabRow(selected = tab, onSelect = { tab = it })
-            if (query.isNotEmpty() && results.isEmpty() && !loading) {
-                Text(
-                    "No matching results",
-                    color = DesignTokens.textSecondaryOnGlass,
-                    fontSize = DesignTokens.uiTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                    modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
-                )
-            } else if (rows.isNotEmpty()) {
-                ResultList(rows, tab, results.size, selectedIndex, onChoose)
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+                PopupHeader(query, focusRequester, onQueryChange = { query = it })
+                TabRow(selected = tab, onSelect = { tab = it })
+                if (query.isNotEmpty() && results.isEmpty() && !loading) {
+                    Text(
+                        "No matching results",
+                        color = DesignTokens.textSecondaryOnGlass,
+                        fontSize = DesignTokens.uiTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                        modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
+                    )
+                } else if (rows.isNotEmpty()) {
+                    ResultList(rows, tab, results.size, selectedIndex, onChoose)
+                }
+                PopupHintBar("↑↓ Navigate", "⇥ Switch Tab", "↵ Open", "Esc Close")
             }
-            PopupHintBar("↑↓ Navigate", "⇥ Switch Tab", "↵ Open", "Esc Close")
         }
     }
 }

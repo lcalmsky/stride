@@ -272,10 +272,12 @@ class GlassModifiersTest {
     }
 
     @Test
-    fun `the frosted base keeps backdrop detail under one point three`() {
+    fun `the thin popup glass shows the backdrop at two to three to one`() {
+        // A popup draws its scrim before the glass, so the glass sees the scrimmed backdrop.
         val pixels = pixelArray(400, 300) {
             Box(Modifier.fillMaxSize()) {
                 Checkerboard(cellSize = 180f)
+                Box(Modifier.fillMaxSize().background(DesignTokens.scrim))
                 Box(
                     Modifier
                         .offset(40.dp, 4.dp)
@@ -288,10 +290,10 @@ class GlassModifiersTest {
         val light = blockMean(pixels, 400, 90, 90, 4)
         val dark = blockMean(pixels, 400, 270, 90, 4)
         val ratio = (maxOf(light, dark) + 0.05) / (minOf(light, dark) + 0.05)
-        System.err.println("glass-frost light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
+        System.err.println("glass-thin light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
         assertTrue(
-            ratio <= 1.3,
-            "backdrop detail through the glass is %.3f:1, expected at most 1.3:1".format(ratio),
+            ratio >= 1.9 && ratio <= 3.2,
+            "backdrop detail through the popup glass is %.3f:1, expected about 2:1 to 3:1".format(ratio),
         )
     }
 
@@ -427,6 +429,66 @@ class GlassModifiersTest {
         } finally {
             GlassShader.resetForTests()
         }
+    }
+
+    @Test
+    fun `the selection capsule bends its backdrop but not at the ends`() {
+        GlassShader.resetForTests()
+        try {
+            GlassShader.strengthOverride = 0f
+            val flat = capsulePixels()
+            GlassShader.strengthOverride = DesignTokens.capsuleLensStrength.value
+            val bent = capsulePixels()
+            // Inner capsule x 106..294, y 102..128; the bezel is the outer 6 dp of its top edge.
+            val middle = meanChannelDistance(flat, bent, 160, 240, 102, 107)
+            val leftEnd = meanChannelDistance(flat, bent, 106, 110, 102, 107)
+            val rightEnd = meanChannelDistance(flat, bent, 290, 294, 102, 107)
+            System.err.println(
+                "capsule-lens middle=%.3f leftEnd=%.3f rightEnd=%.3f".format(middle, leftEnd, rightEnd),
+            )
+            assertTrue(middle > 0.1, "the capsule lens should bend the backdrop (mean %.3f)".format(middle))
+            assertTrue(
+                maxOf(leftEnd, rightEnd) < middle * 0.5,
+                "the capsule lens must fade out at its ends (middle %.3f, ends %.3f/%.3f)".format(
+                    middle,
+                    leftEnd,
+                    rightEnd,
+                ),
+            )
+        } finally {
+            GlassShader.resetForTests()
+        }
+    }
+
+    private fun capsulePixels(): IntArray = pixelArray(400, 240) {
+        Box(Modifier.fillMaxSize()) {
+            Checkerboard(cellSize = 32f)
+            Box(
+                Modifier
+                    .offset(100.dp, 100.dp)
+                    .size(200.dp, 30.dp)
+                    .glassLensCapsule(RoundedCornerShape(DesignTokens.radiusCapsule), lineAlpha = 1f),
+            )
+        }
+    }
+
+    private fun meanChannelDistance(
+        first: IntArray,
+        second: IntArray,
+        fromX: Int,
+        toX: Int,
+        fromY: Int,
+        toY: Int,
+    ): Double {
+        var total = 0
+        var count = 0
+        for (y in fromY until toY) {
+            for (x in fromX until toX) {
+                total += channelDistance(first[index(x, y, 400)], second[index(x, y, 400)])
+                count += 1
+            }
+        }
+        return total.toDouble() / count
     }
 
     @Test

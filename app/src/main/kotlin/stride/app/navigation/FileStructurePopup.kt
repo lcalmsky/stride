@@ -23,8 +23,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -122,6 +124,7 @@ fun FileStructurePopup(
                     }
                 },
         ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -192,6 +195,7 @@ fun FileStructurePopup(
                 }
             }
             PopupHintBar("↑↓ Navigate", "↵ Jump", "Esc Close")
+            }
         }
     }
 }
