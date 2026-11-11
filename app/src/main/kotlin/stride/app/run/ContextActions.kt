@@ -10,7 +10,7 @@ object ContextActions {
         text: String,
         fileName: String,
         caretOffset: Int,
-        lastRunName: String? = null,
+        rerunName: String? = null,
         runningName: String? = null,
     ): List<ContextAction> {
         val main = MainLocator.locate(text, fileName)
@@ -33,7 +33,7 @@ object ContextActions {
             listOfNotNull(testAction, mainAction)
         }
         val tail = buildList {
-            if (lastRunName != null) add(ContextAction(ContextActionKind.RERUN, "Rerun '$lastRunName'"))
+            if (rerunName != null) add(ContextAction(ContextActionKind.RERUN, "Rerun '$rerunName'"))
             if (runningName != null) add(ContextAction(ContextActionKind.STOP, "Stop '$runningName'"))
         }
         return head + tail

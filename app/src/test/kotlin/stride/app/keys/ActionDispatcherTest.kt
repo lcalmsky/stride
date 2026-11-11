@@ -348,7 +348,7 @@ class ActionDispatcherTest {
         state.focus = KeyContext.EDITOR
         assertTrue(dispatchAction(ActionId.RUN_CONTEXT, state) { null })
 
-        assertEquals("Cannot run App.java: the main class is not the first top-level class", state.statusMessage)
+        assertEquals("Cannot run App.java: the main class is not the first top-level type", state.statusMessage)
         assertNull(session.project.service<RunManager>().lastRun)
     }
 

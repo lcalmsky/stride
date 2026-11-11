@@ -8,9 +8,12 @@ object RunCommands {
 
     private val SCRIPT_EXTENSIONS = setOf("py", "sh", "js", "rb", "kts")
 
-    /** `kotlin` when the login shell has it, otherwise the same file through `kotlinc -script`. */
+    /**
+     * `kotlin` when the login shell has it, otherwise the same file through `kotlinc -script`.
+     * `$0` is the shell's name, so the script path is `$2`.
+     */
     private const val KOTLIN_SCRIPT =
-        "command -v kotlin >/dev/null && exec kotlin \"\$1\" || exec kotlinc -script \"\$1\""
+        "command -v kotlin >/dev/null && exec kotlin \"\$2\" || exec kotlinc -script \"\$2\""
 
     fun gradleMainArgs(gradlePath: String, mainClass: String, sourceSet: String): List<String> = listOf(
         "$gradlePath:$STRIDE_TASK",

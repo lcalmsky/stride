@@ -64,6 +64,7 @@ class RunManager(private val project: Project) : Disposable {
         if (existing >= 0) runSessions.add(existing, session) else runSessions.add(session)
         current = session
         session.start()
+        pruneFinished()
         return session
     }
 
@@ -72,10 +73,32 @@ class RunManager(private val project: Project) : Disposable {
         if (runSessions.any { it === session }) current = session
     }
 
-    fun rerun(): RunSession? = (current?.configuration ?: lastRun)?.let(::run)
+    /** Stops and removes [session]; the newest remaining session becomes current. */
+    fun close(session: RunSession) {
+        val index = runSessions.indexOfFirst { it === session }
+        if (index < 0) return
+        session.stop()
+        runSessions.removeAt(index)
+        if (current === session) current = runSessions.lastOrNull()
+    }
+
+    /** The configuration [rerun] starts: the selected tab's, else the last run. */
+    val rerunTarget: RunConfiguration? get() = current?.configuration ?: lastRun
+
+    fun rerun(): RunSession? = rerunTarget?.let(::run)
 
     fun stop() {
         current?.stop()
+    }
+
+    /** Keeps every running session and the [MAX_FINISHED_SESSIONS] most recent finished ones. */
+    private fun pruneFinished() {
+        while (true) {
+            val finished = runSessions.filter { !it.isRunning }
+            if (finished.size <= MAX_FINISHED_SESSIONS) return
+            val oldest = finished.firstOrNull { it !== current } ?: return
+            runSessions.remove(oldest)
+        }
     }
 
     override fun dispose() {
@@ -90,5 +113,6 @@ class RunManager(private val project: Project) : Disposable {
 
     companion object {
         const val MAX_RECENT = 10
+        const val MAX_FINISHED_SESSIONS = 5
     }
 }

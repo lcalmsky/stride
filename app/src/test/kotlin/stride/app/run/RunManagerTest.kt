@@ -152,6 +152,110 @@ class RunManagerTest {
     }
 
     @Test
+    fun `the rerun target is the selected tab's configuration`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess(blocking = true), "fake") }
+            manager.run(configuration("one"))
+            manager.run(configuration("two"))
+            val firstSession = manager.sessions.first { it.configuration.name == "one" }
+
+            manager.select(firstSession)
+
+            assertEquals("one", manager.rerunTarget?.name)
+            assertEquals("one", manager.rerun()?.configuration?.name)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `finished sessions beyond the five most recent are pruned`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            var blocking = false
+            manager.starter = ProcessStarter {
+                StartedProcess(if (blocking) FakeProcess(blocking = true) else FakeProcess(), "fake")
+            }
+            for (index in 1..7) {
+                manager.run(configuration("run-$index"))
+                waitUntil { manager.sessions.all { !it.isRunning } }
+            }
+
+            blocking = true
+            manager.run(configuration("run-8"))
+
+            assertEquals(6, manager.sessions.size)
+            assertEquals(
+                listOf("run-3", "run-4", "run-5", "run-6", "run-7", "run-8"),
+                manager.sessions.map { it.configuration.name },
+            )
+            assertTrue(manager.sessions.last().isRunning)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `a running session survives pruning`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            manager.starter = ProcessStarter {
+                val staysRunning = it.name == "long" || it.name == "tail"
+                StartedProcess(FakeProcess(blocking = staysRunning), "fake")
+            }
+            manager.run(configuration("long"))
+            for (index in 1..7) {
+                manager.run(configuration("run-$index"))
+                waitUntil {
+                    manager.sessions.filter { it.configuration.name != "long" }.all { !it.isRunning }
+                }
+            }
+
+            manager.run(configuration("tail"))
+
+            val finished = manager.sessions.filter { !it.isRunning }.map { it.configuration.name }
+            assertEquals(listOf("run-3", "run-4", "run-5", "run-6", "run-7"), finished)
+            assertEquals(7, manager.sessions.size)
+            assertTrue(manager.sessions.any { it.configuration.name == "long" && it.isRunning })
+            assertTrue(manager.sessions.any { it.configuration.name == "tail" && it.isRunning })
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `closing a tab stops it and selects the newest remaining session`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val first = FakeProcess(blocking = true)
+            val second = FakeProcess(blocking = true)
+            val processes = ArrayDeque(listOf(first, second))
+            manager.starter = ProcessStarter { StartedProcess(processes.removeFirst(), "fake") }
+            manager.run(configuration("one"))
+            manager.run(configuration("two"))
+            val firstSession = manager.sessions.first { it.configuration.name == "one" }
+
+            manager.close(firstSession)
+
+            assertTrue(first.destroyed)
+            assertEquals(1, manager.sessions.size)
+            assertEquals("two", manager.current?.configuration?.name)
+
+            manager.close(manager.sessions.single())
+
+            assertTrue(second.destroyed)
+            assertNull(manager.current)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
     fun `recent keeps the last ten distinct configurations, most recent first`() {
         val project = Project(temp)
         try {
@@ -202,5 +306,13 @@ class RunManagerTest {
 
         assertTrue(first.destroyed)
         assertTrue(second.destroyed)
+    }
+
+    private fun waitUntil(timeoutMillis: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline && !condition()) {
+            Thread.sleep(10)
+        }
+        assertTrue(condition(), "condition not met within ${timeoutMillis}ms")
     }
 }

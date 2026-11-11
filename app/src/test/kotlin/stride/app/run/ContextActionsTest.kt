@@ -67,7 +67,7 @@ class ContextActionsTest {
             text = mainFile,
             fileName = "Main.kt",
             caretOffset = caretOn(mainFile, "println"),
-            lastRunName = "demo.DemoTest",
+            rerunName = "demo.DemoTest",
             runningName = "MainKt",
         )
 

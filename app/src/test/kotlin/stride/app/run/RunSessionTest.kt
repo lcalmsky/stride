@@ -84,9 +84,27 @@ class RunSessionTest {
         waitUntil { session.undeliveredInput == "hello" }
 
         assertFalse(session.consoleLines.contains("hello"))
+        assertFalse(session.writeInput("later"), "stdin stays closed once a write failed")
         session.clearUndeliveredInput()
         assertNull(session.undeliveredInput)
+        assertFalse(session.consoleLines.contains("later"))
         session.stop()
+    }
+
+    @Test
+    fun `the console keeps only the newest lines`() {
+        val last = RunSession.MAX_CONSOLE_LINES + 19
+        val output = (0..last).joinToString("\n") { "line-$it" } + "\n"
+        val process = FakeProcess(output.toByteArray())
+
+        val session = RunSession(configuration(), process, "gradle :test")
+        session.start()
+        waitUntil { session.exitCode != null }
+
+        assertTrue(session.consoleLines.size <= RunSession.MAX_CONSOLE_LINES)
+        assertEquals("line-$last", session.consoleLines.last())
+        assertFalse(session.consoleLines.contains("line-0"), "the oldest lines must be dropped")
+        assertFalse(session.consoleLines.contains("gradle :test"), "the command line was the oldest line")
     }
 
     @Test

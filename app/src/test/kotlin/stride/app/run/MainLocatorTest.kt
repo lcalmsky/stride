@@ -121,10 +121,46 @@ class MainLocatorTest {
 
         val target = MainLocator.locate(text, "App.java")
         assertEquals("demo.App", target?.className)
-        assertEquals(false, target?.isFirstTopLevelClass)
+        assertEquals(false, target?.isFirstTopLevelType)
 
         val first = MainLocator.locate("package demo;\n\nclass App {\n    public static void main(String[] args) { }\n}\n", "App.java")
-        assertEquals(true, first?.isFirstTopLevelClass)
+        assertEquals(true, first?.isFirstTopLevelType)
+    }
+
+    @Test
+    fun `a top-level type before the main class makes it not first`() {
+        for (declaration in listOf("interface Kind { }", "enum Kind { A, B }", "record Kind(int a) { }", "@interface Kind { }")) {
+            val text = """
+                package demo;
+
+                $declaration
+
+                class App {
+                    public static void main(String[] args) {
+                    }
+                }
+            """.trimIndent()
+
+            val target = MainLocator.locate(text, "App.java")
+            assertEquals("demo.App", target?.className, declaration)
+            assertEquals(false, target?.isFirstTopLevelType, declaration)
+        }
+    }
+
+    @Test
+    fun `a Java class after imports is the first top-level type`() {
+        val text = """
+            package demo;
+
+            import java.util.List;
+
+            class App {
+                public static void main(String[] args) {
+                }
+            }
+        """.trimIndent()
+
+        assertEquals(true, MainLocator.locate(text, "App.java")?.isFirstTopLevelType)
     }
 
     @Test

@@ -28,16 +28,25 @@ def stackOf = { Throwable throwable ->
 }
 
 allprojects { project ->
-    // Runs one main from the runtime classpath of the chosen source set. Registered lazily
-    // and only for java projects, so an ordinary build never sees it.
-    project.pluginManager.withPlugin('java') {
-        project.tasks.register('strideRunMain', JavaExec) {
-            def mainClassName = project.providers.gradleProperty('stride.mainClass').getOrElse('')
-            def sourceSetName = project.providers.gradleProperty('stride.sourceSet').getOrElse('main')
-            mainClass.set(mainClassName)
-            classpath = project.sourceSets.getByName(sourceSetName).runtimeClasspath
-            standardInput = System.in
-            workingDir = project.projectDir
+    // Runs one main from the runtime classpath of the chosen source set. Registered lazily for
+    // every project so a project without the java plugin reports why it cannot run instead of
+    // "task not found"; an ordinary build never configures or executes it.
+    project.tasks.register('strideRunMain', JavaExec) { task ->
+        def mainProperty = project.providers.gradleProperty('stride.mainClass')
+        def sourceSetName = project.providers.gradleProperty('stride.sourceSet').getOrElse('main')
+        mainClass.set(mainProperty.orElse(''))
+        project.pluginManager.withPlugin('java') {
+            task.classpath = project.sourceSets.getByName(sourceSetName).runtimeClasspath
+        }
+        standardInput = System.in
+        workingDir = project.projectDir
+        doFirst {
+            if (!project.pluginManager.hasPlugin('java')) {
+                throw new GradleException(
+                    "stride: project ${project.path} does not apply the java plugin; cannot run " +
+                        "${mainProperty.getOrElse('')}"
+                )
+            }
         }
     }
 

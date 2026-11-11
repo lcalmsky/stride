@@ -85,6 +85,19 @@ class RunSession(
     private val pendingInput = ArrayBlockingQueue<String>(MAX_PENDING_INPUT)
     private var writer: Thread? = null
 
+    /** Set once a write to the child's stdin failed; the writer thread has stopped by then. */
+    @Volatile
+    private var stdinClosed = false
+
+    /** Adds [line], dropping the oldest lines once the console exceeds [MAX_CONSOLE_LINES]. */
+    private fun appendConsole(line: String) {
+        consoleLines.add(line)
+        if (consoleLines.size > MAX_CONSOLE_LINES) {
+            val drop = (consoleLines.size - MAX_CONSOLE_LINES).coerceAtLeast(CONSOLE_TRIM_BATCH)
+            repeat(drop) { consoleLines.removeAt(0) }
+        }
+    }
+
     fun start() {
         Thread({ read() }, "stride-run-reader").apply {
             isDaemon = true
@@ -103,7 +116,7 @@ class RunSession(
                 while (line != null) {
                     when (val parsed = TestEventParser.parse(line)) {
                         is ParsedLine.Event -> tree.apply(parsed.event)
-                        is ParsedLine.Output -> consoleLines.add(parsed.text)
+                        is ParsedLine.Output -> appendConsole(parsed.text)
                     }
                     line = reader.readLine()
                 }
@@ -117,10 +130,10 @@ class RunSession(
 
     /**
      * Queues [line] and a newline for the child's stdin. Returns `false` when the process has
-     * ended or the bounded queue is full; the caller keeps the typed line in that case.
+     * ended, its stdin is closed, or the bounded queue is full; the caller keeps the line.
      */
     fun writeInput(line: String): Boolean {
-        if (!isRunning) return false
+        if (!isRunning || stdinClosed) return false
         return pendingInput.offer(line)
     }
 
@@ -141,10 +154,11 @@ class RunSession(
                 process.outputStream.flush()
             }.isSuccess
             if (!written) {
+                stdinClosed = true
                 undeliveredInput = line
                 return
             }
-            consoleLines.add(line)
+            appendConsole(line)
         }
     }
 
@@ -158,6 +172,8 @@ class RunSession(
 
     companion object {
         const val MAX_PENDING_INPUT = 64
+        const val MAX_CONSOLE_LINES = 10_000
+        private const val CONSOLE_TRIM_BATCH = 1_000
         private const val INPUT_POLL_MILLIS = 100L
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -197,6 +198,54 @@ class KeyFlowUiTest {
             }
             onNodeWithText("Search everywhere").assertExists()
             onNodeWithText("Go to Class").assertDoesNotExist()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `choosing an action that opens no popup returns global shortcuts`() = runComposeUiTest {
+        val root = temp.resolve("action-focus-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("A.kt"), "package demo\n")
+        Files.writeString(root.resolve("B.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("A.kt")))
+            session.editors.openFile(VFile(root.resolve("B.kt")))
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                keyDown(Key.MetaLeft)
+                keyDown(Key.ShiftLeft)
+                pressKey(Key.A)
+                keyUp(Key.ShiftLeft)
+                keyUp(Key.MetaLeft)
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasText("Actions") and isSelected()).assertExists()
+
+            onNode(hasSetTextAction() and isFocused()).performTextInput("close tab")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Close Tab").fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { !state.searchVisible }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals(1, session.editors.openFiles.size)
+
+            // The popup field is gone and nothing holds widget focus, so route through the
+            // same keymap and dispatcher the window handler uses from the state's focus.
+            val router = KeyRouter(isMac = true)
+            val recent = router.route(KeyEventType.DOWN, Key.E, meta = true, focus = state.focus)
+            assertEquals(ActionId.RECENT_FILES, recent)
+            assertTrue(dispatchAction(requireNotNull(recent), state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.recentFilesVisible }
         } finally {
             state.dispose()
         }

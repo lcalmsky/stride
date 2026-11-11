@@ -11,8 +11,8 @@ object MainLocator {
         val className: String,
         val line: Int,
         val endLine: Int,
-        /** Whether a Java main's class is the file's first top-level class. */
-        val isFirstTopLevelClass: Boolean = true,
+        /** Whether a Java main's class is the file's first top-level type. */
+        val isFirstTopLevelType: Boolean = true,
     )
 
     private val PACKAGE = Regex("(?m)^\\s*package\\s+([\\w.]+)")
@@ -23,6 +23,7 @@ object MainLocator {
     private val COMPANION_OBJECT = Regex("\\bcompanion\\s+object\\b")
     private val OBJECT = Regex("\\bobject\\s+(\\w+)")
     private val CLASS = Regex("\\bclass\\s+(\\w+)")
+    private val TOP_LEVEL_TYPE = Regex("\\b(?:class|interface|enum|record)\\s+(\\w+)")
 
     /** The first entry point declared in [text], or null when the file has none. */
     fun locate(text: String, fileName: String): MainTarget? {
@@ -94,7 +95,7 @@ object MainLocator {
                 className = qualify(packageName, match.groupValues[1]),
                 line = index,
                 endLine = source.blockEnd(index, depth),
-                isFirstTopLevelClass = candidate == source.firstTopLevelClassLine,
+                isFirstTopLevelType = candidate == source.firstTopLevelTypeLine,
             )
         }
         return null
@@ -148,8 +149,8 @@ object MainLocator {
         /** Comment contents blanked, string literals kept for `@file:JvmName`. */
         val commentsMasked: String = mask(text, blankStrings = false)
 
-        /** The first top-level `class` declaration line in the file. */
-        val firstTopLevelClassLine: Int
+        /** The first top-level type declaration line in the file. */
+        val firstTopLevelTypeLine: Int
 
         init {
             lines = masked.split("\n")
@@ -162,8 +163,8 @@ object MainLocator {
                     if (character == '}') depth--
                 }
             }
-            firstTopLevelClassLine = lines.indices
-                .firstOrNull { startDepth[it] == 0 && CLASS.containsMatchIn(lines[it]) }
+            firstTopLevelTypeLine = lines.indices
+                .firstOrNull { startDepth[it] == 0 && TOP_LEVEL_TYPE.containsMatchIn(lines[it]) }
                 ?: -1
         }
 

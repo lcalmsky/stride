@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 class RunCommandsTest {
     @TempDir
@@ -96,12 +98,57 @@ class RunCommandsTest {
                 "/bin/zsh",
                 "-l",
                 "-c",
-                "command -v kotlin >/dev/null && exec kotlin \"\$1\" || exec kotlinc -script \"\$1\"",
+                "command -v kotlin >/dev/null && exec kotlin \"\$2\" || exec kotlinc -script \"\$2\"",
                 "stride",
                 "kotlin",
                 file.toString(),
             ),
             RunCommands.direct(file, shell = "/bin/zsh"),
         )
+    }
+
+    @Test
+    fun `the shell runs the script path, not the tool name, through kotlin`() {
+        val bin = temp.resolve("bin")
+        writeExecutable(bin.resolve("kotlin"), "for arg in \"\$@\"; do printf 'arg:%s\\n' \"\$arg\"; done")
+        val file = Files.writeString(temp.resolve("hello.kts"), "println(\"hi\")\n").toAbsolutePath()
+
+        val output = runWithoutLoginShell(requireNotNull(RunCommands.direct(file, shell = "/bin/sh")), bin)
+
+        assertEquals("arg:${file}", output.trim())
+    }
+
+    @Test
+    fun `the shell runs the script path through kotlinc when kotlin is missing`() {
+        val bin = temp.resolve("bin-kotlinc")
+        writeExecutable(bin.resolve("kotlinc"), "printf 'kotlinc:%s\\n' \"\$*\"")
+        val file = Files.writeString(temp.resolve("hello.kts"), "println(\"hi\")\n").toAbsolutePath()
+
+        val output = runWithoutLoginShell(requireNotNull(RunCommands.direct(file, shell = "/bin/sh")), bin)
+
+        assertEquals("kotlinc:-script ${file}", output.trim())
+    }
+
+    private fun writeExecutable(file: Path, body: String): Path {
+        Files.createDirectories(file.parent)
+        Files.writeString(file, "#!/bin/sh\n$body\n")
+        assertTrue(file.toFile().setExecutable(true), "could not make $file executable")
+        return file
+    }
+
+    /**
+     * Runs the command with only [bin] on `PATH` and without `-l`: a login shell would read the
+     * user's profile files, which can replace `PATH` and hide the fakes.
+     */
+    private fun runWithoutLoginShell(argv: List<String>, bin: Path): String {
+        val command = argv.toMutableList()
+        assertTrue(command.remove("-l"), "expected the login flag in $argv")
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .apply { environment()["PATH"] = bin.toString() }
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS), "shell did not finish: $output")
+        return output
     }
 }

@@ -79,7 +79,7 @@ fun mainConfiguration(
             kind = RunKind.APPLICATION,
         )
     }
-    if (file.extension() != "java" || !target.isFirstTopLevelClass) return null
+    if (file.extension() != "java" || !target.isFirstTopLevelType) return null
     val command = RunCommands.direct(file) ?: return null
     return RunConfiguration(
         name = simpleName(target.className),
@@ -100,8 +100,8 @@ fun mainConfigurationProblem(
     val gradleProjectDir = TestLocator.gradleProjectDir(file, session.project.root)
     val inSourceSet = gradleProjectDir != null && RunCommands.sourceSetIn(gradleProjectDir, file) != null
     if (inSourceSet) return null
-    if (file.extension() == "java" && !target.isFirstTopLevelClass) {
-        return "Cannot run $name: the main class is not the first top-level class"
+    if (file.extension() == "java" && !target.isFirstTopLevelType) {
+        return "Cannot run $name: the main class is not the first top-level type"
     }
     if (file.extension() == "kt" && gradleProjectDir != null) {
         return "Cannot run $name: not in a source set"
@@ -130,7 +130,7 @@ fun openContextActions(state: AppState): Boolean {
         text = editor.value.text,
         fileName = editor.file.name,
         caretOffset = editor.value.selection.start,
-        lastRunName = manager.lastRun?.name,
+        rerunName = manager.rerunTarget?.name,
         runningName = manager.current?.takeIf { it.isRunning }?.configuration?.name,
     )
     if (actions.isEmpty()) {

@@ -42,14 +42,27 @@ class GradleInitScriptTest {
     }
 
     @Test
-    fun `registers the strideRunMain task lazily for java projects`() {
-        assertTrue(script.contains("pluginManager.withPlugin('java')"))
+    fun `registers the strideRunMain task lazily for every project`() {
         assertTrue(script.contains("tasks.register('strideRunMain', JavaExec)"))
         assertTrue(script.contains("gradleProperty('stride.mainClass')"))
         assertTrue(script.contains("gradleProperty('stride.sourceSet')"))
         assertTrue(script.contains("runtimeClasspath"))
         assertTrue(script.contains("standardInput = System.in"))
         assertTrue(script.contains("workingDir = project.projectDir"))
+    }
+
+    @Test
+    fun `a project without the java plugin fails with a clear message`() {
+        assertTrue(script.contains("project.pluginManager.hasPlugin('java')"))
+        assertTrue(
+            script.contains(
+                "stride: project \${project.path} does not apply the java plugin; cannot run ",
+            ),
+        )
+        assertTrue(script.contains("throw new GradleException"))
+        val register = script.indexOf("tasks.register('strideRunMain', JavaExec)")
+        val pluginBlock = script.indexOf("project.pluginManager.withPlugin('java')")
+        assertTrue(register in 0 until pluginBlock, "the task must be registered outside the java plugin callback")
     }
 
     companion object {

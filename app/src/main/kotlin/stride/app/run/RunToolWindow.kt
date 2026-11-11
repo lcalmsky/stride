@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -48,6 +50,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import stride.app.ui.CloseIcon
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.NeonEdge
@@ -119,7 +122,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
                     .background(if (active) DesignTokens.raised.copy(alpha = 0.6f) else DesignTokens.transparent)
                     .neonUnderline(DesignTokens.accent2, alpha = if (active) 1f else 0f, edge = NeonEdge.BOTTOM)
                     .clickable { manager.select(session) }
-                    .padding(horizontal = DesignTokens.space8),
+                    .padding(start = DesignTokens.space8, end = DesignTokens.space4),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -130,6 +133,15 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.width(DesignTokens.space4))
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .clickable { manager.close(session) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CloseIcon(Modifier.size(9.dp))
+                }
             }
         }
     }

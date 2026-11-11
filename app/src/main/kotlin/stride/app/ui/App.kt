@@ -224,6 +224,9 @@ fun App(
                                     is Declaration -> session.editors.openFileAtLine(item.file, item.line)
                                 }
                                 refocusEditor(state)
+                            } else if (!popupOwnsFocus(state) && state.focus == KeyContext.SEARCH_POPUP) {
+                                // An action that opens no popup must not leave the modal context behind.
+                                refocusEditor(state)
                             }
                         },
                         onClose = {
@@ -380,6 +383,12 @@ fun App(
         }
     }
 }
+
+/** True while a popup or the find bar owns the keyboard, so closing the search must not refocus. */
+private fun popupOwnsFocus(state: AppState): Boolean =
+    state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
+        state.contextActionsVisible || state.runConfigurationsVisible ||
+        state.completion != null || state.rename != null || state.findBar.visible
 
 private fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR
