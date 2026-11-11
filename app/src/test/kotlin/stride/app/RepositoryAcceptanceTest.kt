@@ -29,11 +29,13 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import stride.app.editor.TextFileEditor
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.search.SearchEverywhere
 import stride.app.ui.App
+import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.SnapshotRenderer
 import stride.core.services.Application
 import stride.core.services.service
@@ -48,6 +50,7 @@ import java.nio.file.Path
  * Acceptance test against a real checkout of this repository. [REPO_ROOT_PROPERTY] is set by
  * `app/build.gradle.kts`; nothing in this class writes to the checkout.
  */
+@ExtendWith(FixedUiFontExtension::class)
 class RepositoryAcceptanceTest {
     private val repoRoot: Path by lazy {
         val configured = System.getProperty(REPO_ROOT_PROPERTY)

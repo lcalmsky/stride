@@ -45,6 +45,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.editor.COMPLETION_FIELD_TAG
 import stride.app.editor.COMPLETION_SELECTED_ROW_TAG
@@ -67,6 +68,7 @@ import stride.app.search.SEARCH_SELECTED_ROW_TAG
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
 import stride.app.ui.App
+import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
 import stride.core.services.Application
@@ -75,6 +77,7 @@ import stride.core.vfs.VFile
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 
+@ExtendWith(FixedUiFontExtension::class)
 class KeyFlowUiTest {
     @TempDir
     lateinit var temp: Path

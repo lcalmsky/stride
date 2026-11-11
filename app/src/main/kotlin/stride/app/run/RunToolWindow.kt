@@ -2,6 +2,9 @@ package stride.app.run
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,6 +51,7 @@ import stride.app.ui.CloseIcon
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.glassCapsule
+import stride.app.ui.theme.rememberNeonAlpha
 import stride.app.ui.theme.selectionRow
 
 private val consoleStyle = TextStyle(
@@ -113,6 +117,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
     Row(Modifier.fillMaxWidth().height(DesignTokens.tabStripHeight)) {
         for (session in manager.sessions) {
             val active = session === current
+            val lineAlpha = rememberNeonAlpha(active)
             Row(
                 Modifier
                     .fillMaxHeight()
@@ -121,7 +126,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
                         insetX = 2.dp,
                         insetY = 4.dp,
                         lineEdge = CapsuleEdge.BOTTOM,
-                        lineAlpha = if (active) 1f else 0f,
+                        lineAlpha = lineAlpha,
                     )
                     .clickable { manager.select(session) }
                     .padding(start = DesignTokens.space8, end = DesignTokens.space4),
@@ -227,13 +232,16 @@ private fun ClassRow(node: TestClassNode) {
 @Composable
 private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> Unit) {
     val color = statusColor(method.status)
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
             .selectionRow(
                 selected = selected,
-                hovered = false,
+                hovered = hovered,
             )
+            .hoverable(interaction)
             .clickable(onClick = onClick)
             .padding(start = DesignTokens.space16, end = DesignTokens.space8, top = DesignTokens.space4, bottom = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,

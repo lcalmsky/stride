@@ -65,6 +65,9 @@ private const val BACKDROP_BLUR_DOWNSCALE = 8
 /** The lens blur runs on a 1/[LENS_DOWNSCALE] copy of the backdrop; the bend stays soft. */
 private const val LENS_DOWNSCALE = 4
 
+/** The lens displacement fades to zero over this distance from the outer rim. */
+private val LENS_TAPER = 2.dp
+
 private val contentTintColor = blendOver(
     DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
     DesignTokens.background,
@@ -371,6 +374,7 @@ private class BackdropFilterCache {
     var width: Int = -1
     var height: Int = -1
     var radius: Int = -1
+    var density: Float = -1f
     var filter: ImageFilter? = null
 }
 
@@ -399,7 +403,7 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = composed {
         val width = size.width.roundToInt()
         val height = size.height.roundToInt()
         val radiusKey = radius.roundToInt()
-        if (cache.width != width || cache.height != height || cache.radius != radiusKey) {
+        if (cache.width != width || cache.height != height || cache.radius != radiusKey || cache.density != density) {
             cache.filter?.close()
             cache.filter = GlassShader.backdropFilter(
                 width = size.width,
@@ -409,6 +413,7 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = composed {
                 bezel = DesignTokens.glassBezel.toPx(),
                 strength = DesignTokens.glassLensStrength.toPx(),
                 aberration = DesignTokens.glassAberration.toPx(),
+                taper = LENS_TAPER.toPx() / LENS_DOWNSCALE,
                 baseRed = DesignTokens.glassBase.red,
                 baseGreen = DesignTokens.glassBase.green,
                 baseBlue = DesignTokens.glassBase.blue,
@@ -419,32 +424,32 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = composed {
             cache.width = width
             cache.height = height
             cache.radius = radiusKey
+            cache.density = density
         }
         val liquid = cache.filter
         GlassCacheStats.lastSurfaceLiquid = liquid != null
-        drawIntoCanvas { canvas ->
-            val native = canvas.nativeCanvas
-            native.save()
-            when (outline) {
-                is Outline.Rectangle -> native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
-                is Outline.Rounded -> native.clipPath(Path().apply { addRoundRect(outline.roundRect) }.asSkiaPath())
-                is Outline.Generic -> native.clipPath(outline.path.asSkiaPath())
-            }
-            native.saveLayer(
-                SaveLayerRec(
-                    org.jetbrains.skia.Rect(0f, 0f, size.width, size.height),
-                    null,
-                    liquid ?: backdropImageFilter(sigma),
-                ),
-            )
-            if (liquid == null) {
-                // Same frosted base as the shader path, over the blur-only backdrop.
-                drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = size)
-                drawGlassBorder()
-            }
-            native.restore()
+        val native = drawContext.canvas.nativeCanvas
+        native.save()
+        when (outline) {
+            is Outline.Rectangle -> native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
+            is Outline.Rounded -> native.clipPath(Path().apply { addRoundRect(outline.roundRect) }.asSkiaPath())
+            is Outline.Generic -> native.clipPath(outline.path.asSkiaPath())
         }
+        native.saveLayer(
+            SaveLayerRec(
+                org.jetbrains.skia.Rect(0f, 0f, size.width, size.height),
+                null,
+                liquid ?: backdropImageFilter(sigma),
+            ),
+        )
+        if (liquid == null) {
+            // Same frosted base as the shader path, over the blur-only backdrop.
+            drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = size)
+            drawGlassBorder()
+        }
+        native.restore()
         drawContent()
+        native.restore()
     }
 }
 
@@ -596,11 +601,15 @@ private fun DrawScope.drawNeonLine(
     val width = DesignTokens.selectionBarWidth.toPx()
     val glow = Paint().apply {
         isAntiAlias = true
-        this.color = color.copy(alpha = 0.30f * alpha).toArgb()
-        maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(org.jetbrains.skia.FilterBlurMode.NORMAL, 2.5.dp.toPx())
+        mode = org.jetbrains.skia.PaintMode.STROKE
+        strokeWidth = 7.dp.toPx()
+        this.color = color.copy(alpha = 0.32f * alpha).toArgb()
+        maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(org.jetbrains.skia.FilterBlurMode.NORMAL, 3.5.dp.toPx())
     }
     val crisp = Paint().apply {
         isAntiAlias = true
+        mode = org.jetbrains.skia.PaintMode.STROKE
+        strokeWidth = width
         this.color = color.copy(alpha = alpha).toArgb()
     }
     try {
@@ -652,6 +661,9 @@ internal object GlassShader {
     /** Test seam: `false` forces the blur-only fallback. */
     var enabled: Boolean = true
 
+    /** Test seam: overrides the lens strength (device px) when non-null. */
+    var strengthOverride: Float? = null
+
     private var cached: RuntimeEffect? = null
     private var compiled = false
 
@@ -672,6 +684,7 @@ internal object GlassShader {
         bezel: Float,
         strength: Float,
         aberration: Float,
+        taper: Float,
         baseRed: Float,
         baseGreen: Float,
         baseBlue: Float,
@@ -689,9 +702,9 @@ internal object GlassShader {
             builder.uniform("origin", 0f, 0f)
             builder.uniform("radius", radius * scale)
             builder.uniform("bezel", bezel * scale)
-            builder.uniform("strength", strength * scale)
+            builder.uniform("strength", (strengthOverride ?: strength) * scale)
             builder.uniform("aberration", aberration * scale)
-            builder.uniform("pixelScale", scale)
+            builder.uniform("taper", taper)
             builder.uniform("baseColor", baseRed, baseGreen, baseBlue)
             builder.uniform("backdropMix", backdropMix)
             builder.uniform("chromaGain", chromaGain)
@@ -718,6 +731,7 @@ internal object GlassShader {
 
     internal fun resetForTests() {
         enabled = true
+        strengthOverride = null
         cached = null
         compiled = false
     }
@@ -730,7 +744,7 @@ internal object GlassShader {
         uniform float bezel;
         uniform float strength;
         uniform float aberration;
-        uniform float pixelScale;
+        uniform float taper;
         uniform float3 baseColor;
         uniform float backdropMix;
         uniform float chromaGain;
@@ -770,7 +784,7 @@ internal object GlassShader {
 
                 // Zero at the outer 2 dp and at the inner bezel edge, peaking mid-bezel.
                 float mid = clamp(-d / bezel, 0.0, 1.0);
-                float profile = 4.0 * mid * (1.0 - mid) * smoothstep(0.0, 2.0 * pixelScale, -d);
+                float profile = 4.0 * mid * (1.0 - mid) * smoothstep(0.0, taper, -d);
                 sampleAt = fragCoord - n * (profile * strength);
             }
 
@@ -785,7 +799,7 @@ internal object GlassShader {
 
             // Thin specular rim lit from the top-left; fades along the sides and at the bottom.
             float facing = max(dot(n, normalize(float2(-0.55, -0.85))), 0.0);
-            float rim = smoothstep(0.72, 1.0, t) * smoothstep(0.0, 2.0 * pixelScale, -d);
+            float rim = smoothstep(0.72, 1.0, t) * smoothstep(0.0, taper, -d);
             col += half3(rim * facing * facing * specular);
 
             float bottomShade = smoothstep(0.6, 1.0, t) * max(n.y, 0.0);

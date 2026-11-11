@@ -1173,8 +1173,9 @@ private fun OpenFolderButton(onClick: () -> Unit) {
 
 @Composable
 private fun ShortcutList(hasProject: Boolean) {
-    val keymap = remember { Keymap.forPlatform(KeyRouter.isMacOs()) }
-    val shortcuts = remember(keymap, hasProject) { welcomeHints(keymap, hasProject) }
+    val macOs = remember { KeyRouter.isMacOs() }
+    val keymap = remember(macOs) { Keymap.forPlatform(macOs) }
+    val shortcuts = remember(keymap, hasProject) { welcomeHints(keymap, hasProject, macOs) }
     Column(
         Modifier.width(300.dp),
         verticalArrangement = Arrangement.spacedBy(DesignTokens.space8),

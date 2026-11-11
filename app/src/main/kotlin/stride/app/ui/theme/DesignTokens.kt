@@ -57,7 +57,6 @@ object DesignTokens {
     val statusTextSize = 13.sp
     val smallTextSize = 13.sp
     val labelTextSize = 13.sp
-    val headingTextSize = 15.sp
 
     val space4 = 4.dp
     val space8 = 8.dp

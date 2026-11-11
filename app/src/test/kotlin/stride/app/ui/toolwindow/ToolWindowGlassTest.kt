@@ -29,6 +29,7 @@ import kotlin.math.abs
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.keys.KeyContext
 import stride.app.run.FakeProcess
@@ -40,6 +41,7 @@ import stride.app.run.RunToolWindow
 import stride.app.run.StartedProcess
 import stride.app.terminal.TerminalSession
 import stride.app.terminal.TerminalView
+import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
@@ -48,6 +50,7 @@ import stride.app.ui.theme.contrastRatio
 import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Project
 
+@ExtendWith(FixedUiFontExtension::class)
 class ToolWindowGlassTest {
     @TempDir
     lateinit var temp: Path

@@ -35,8 +35,10 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
+import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
@@ -46,6 +48,7 @@ import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Project
 import stride.core.vfs.VFile
 
+@ExtendWith(FixedUiFontExtension::class)
 class PopupGlassTest {
     private val panelShape = RoundedCornerShape(DesignTokens.radiusPopup)
 

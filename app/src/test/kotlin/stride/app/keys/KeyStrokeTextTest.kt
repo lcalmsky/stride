@@ -14,6 +14,14 @@ class KeyStrokeTextTest {
     }
 
     @Test
+    fun `formats platform modifier labels when the keymap is not the macOS one`() {
+        assertEquals("Ctrl+S", formatKeyStroke(KeyStroke.parse("control S"), macOs = false))
+        assertEquals("Shift+Ctrl+O", formatKeyStroke(KeyStroke.parse("control shift O"), macOs = false))
+        assertEquals("Shift+Alt+↑", formatKeyStroke(KeyStroke.parse("alt shift UP"), macOs = false))
+        assertEquals("Esc", formatKeyStroke(KeyStroke.parse("ESCAPE"), macOs = false))
+    }
+
+    @Test
     fun `the first bound stroke of an action is its shortcut`() {
         assertEquals("⌘S", shortcutText(MacKeymap.keymap, ActionId.SAVE))
         assertEquals("⌘O", shortcutText(MacKeymap.keymap, ActionId.GOTO_CLASS))

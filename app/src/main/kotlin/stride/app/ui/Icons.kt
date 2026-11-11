@@ -13,18 +13,6 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import stride.app.ui.theme.DesignTokens
 
-/** Tint of a file icon, chosen from the file name so build scripts and sources share a color. */
-fun fileTypeColor(fileName: String): Color {
-    val lower = fileName.lowercase()
-    return when {
-        lower.endsWith(".kt") || lower.endsWith(".kts") || lower.endsWith(".gradle") -> DesignTokens.accent
-        lower.endsWith(".json") -> DesignTokens.json
-        lower.endsWith(".md") || lower.endsWith(".markdown") -> DesignTokens.accent2
-        lower.endsWith(".xml") -> DesignTokens.xml
-        else -> DesignTokens.muted
-    }
-}
-
 @Composable
 fun FileTypeIcon(fileName: String, modifier: Modifier = Modifier, color: Color = DesignTokens.muted) {
     Canvas(modifier) {

@@ -1429,23 +1429,25 @@ child shader.
 - Lens: the backdrop is blurred at `liquidGlassBlurRadius` (14 dp) before sampling. Inside the
   12 dp bezel the sample coordinate moves inward along the rounded-rect normal with a
   `4t(1-t)` profile peaking at 6 dp, so the bend is zero at the outer 2 dp and at the inner
-  bezel edge and never exceeds 6 dp. The red and blue channels split by at most 0.5 dp, only
-  inside the bezel.
+  bezel edge and never exceeds 6 dp. The outer taper is passed to the shader in copy pixels
+  (`LENS_TAPER.toPx() / LENS_DOWNSCALE`), so it stays 2 dp at any display density. The red and
+  blue channels split by at most 0.5 dp, only inside the bezel.
 - Specular: light from the top-left gives a thin bright rim (the outer 28% of the bezel) on
   the upper edge that fades along the sides, with a faint darker inner rim at the bottom.
   Ordinary glass has no outer glow.
 - Cost: the shader is evaluated on a 1/4-resolution copy and scaled back up
-  (`LENS_DOWNSCALE`); its size, radius, bezel, strength and aberration uniforms are expressed
-  in that copy's pixels. Scaling the runtime shader's own output instead would magnify its
-  bezel from the top-left corner, which is why the scale is applied inside the filter chain
-  before the shader. The filter is cached per panel size and radius. The interior takes a
+  (`LENS_DOWNSCALE`); its size, radius, bezel, strength, aberration and outer-taper uniforms
+  are expressed in that copy's pixels. Scaling the runtime shader's own output instead would
+  magnify its bezel from the top-left corner, which is why the scale is applied inside the
+  filter chain before the shader. The filter is cached per panel size and radius. The interior takes a
   single `content.eval`; only bezel pixels take three.
 
 When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `GlassShader` returns
 `null` and `backdropGlass` falls back to the previous blur-only glass with the hairline border.
 `GlassModifiersTest` asserts that the SkSL compiles, that the fallback still blurs, that the
-bezel samples a displaced backdrop, that the four corner bezels match over a uniform backdrop,
-and that the frosted base keeps backdrop detail under 1.3:1. The backdrop path was measured on `ImageComposeScene`:
+lens bends the bezel backdrop (strength 0 against 6 dp on the same shader path), that the four
+corner bezels match over a uniform backdrop, and that the frosted base keeps backdrop detail
+under 1.3:1. The backdrop path was measured on `ImageComposeScene`:
 **real**, not the bitmap fallback.
 
 Text on glass uses `textSecondaryOnGlass`; `muted` (4.13:1) and `subtle` (2.09:1) are below
@@ -1489,20 +1491,12 @@ With the liquid glass the twelve scenes measure (p50, software raster, unchanged
 scenes stay under their 2.0× limits because the lens filter runs on a 1/4-resolution copy; the
 GPU path evaluates the same SkSL as one shader pass.
 
-Sources for the material and the lens technique:
-
-- Apple, Meet Liquid Glass (WWDC25, session 219):
-  https://developer.apple.com/videos/play/wwdc2025/219
-- Apple, Platforms State of the Union (WWDC25, session 102):
-  https://developer.apple.com/videos/play/wwdc2025/102
-- Apple Newsroom, the new software design:
-  https://www.apple.com/newsroom/2025/06/apple-introduces-a-delightful-and-elegant-new-software-design/
-- LiquidLens, edge optics with a signed distance field and a convex squircle:
-  https://github.com/DevBehindYou/LiquidLens/blob/main/docs/02-optics-and-physics.md
-- Android Liquid Glass AGSL write-up (SDF, medial-axis fade, edge guard, Fresnel rim):
-  https://himanshu-lal4.github.io/react-native-liquid-glassmorphism/android-liquid-glass
-- A compact implementation of the same lens (SDF normal, bezel ramp, RGB split, specular rim):
-  https://raw.githubusercontent.com/OppaiHacker/MediaControll/main/CustomTheme/shaders/liquidglass.frag
+The material and the lens are built from three generic effects: a frosted base (a mostly opaque
+neutral fill carrying a faint luminance and hue impression of the blurred backdrop), lens
+refraction at the panel edge (the sample point bends inward along the rounded-rect normal inside
+the bezel, fading to zero at the outer rim), and a specular rim lit from the top-left. The SkSL
+in `Glass.kt` implements the signed-distance geometry, the bezel profile and the sub-pixel
+chromatic split directly; no third-party shader, asset or material library is used.
 
 ### Applied surfaces: tool windows, run and terminal
 
@@ -1606,6 +1600,8 @@ Maven Central alone does not carry it.
 | `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
 | `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
 | `KeymapTest` | every macOS binding in its context, context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
+| `KeyStrokeTextTest` | macOS glyph formatting and order, platform modifier labels (`Ctrl+S`, `Shift+Ctrl+O`) for non-macOS keymaps, first bound stroke per action |
+| `WelcomeHintsTest` | hints read from the keymap, Double Shift as the literal gesture, and platform modifier labels on a non-macOS keymap |
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
 | `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
@@ -1618,10 +1614,10 @@ Maven Central alone does not carry it.
 | `TestNavigationTest` | source-to-test names in both directions, extension and directory ordering, no counterpart |
 | `BookmarksTest` | toggle add/remove, per-file lines, remove, line index and text |
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
-| `NeonModifiersTest` | glow pixels outside the shape, zero alpha, underline direction, `rememberNeonAlpha` with animations on and off |
+| `NeonModifiersTest` | underline glow direction and `rememberNeonAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
 | `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered field staying neutral inside its luminance band |
-| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the bezel sampling a displaced backdrop, and the blur-only fallback when the shader is unavailable |
+| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, and the blur-only fallback when the shader is unavailable |
 | `ToolWindowGlassTest` | the tab strip is the neutral glass fill over the field, the terminal and run console paint exactly one opaque tint, status glyphs draw no halo, run status colors clear 4.5 on the worst tint |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent, the selected row carries the neon line on its capsule edge, the find bar is the neutral glass fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere, the find bar, recent files, the terminal, the run window and an editor scrolled to a far column |

@@ -350,21 +350,83 @@ class GlassModifiersTest {
     }
 
     @Test
-    fun `the lens changes the backdrop inside the bezel`() {
+    fun `backdrop glass keeps its rounded clip to itself`() {
+        val pixels = pixelArray(400, 200) {
+            Box(Modifier.fillMaxSize().background(Color(0xFF202020))) {
+                Box(
+                    Modifier
+                        .offset(4.dp, 4.dp)
+                        .size(120.dp, 80.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .backdropGlass(RoundedCornerShape(12.dp)),
+                )
+                Box(Modifier.offset(250.dp, 120.dp).size(100.dp, 50.dp).background(Color.Red))
+            }
+        }
+        val red = Color(pixels[index(300, 145, 400)])
+        assertTrue(
+            red.red > 0.9f && red.green < 0.1f && red.blue < 0.1f,
+            "a sibling drawn after the glass must not inherit its rounded clip: $red",
+        )
+    }
+
+    @Test
+    fun `the neon selection line is 2 dp wide with a cyan halo at density 2`() {
+        val pixels = pixelArray(400, 60, density = 2f) {
+            Box(
+                Modifier
+                    .size(200.dp, 30.dp)
+                    .background(DesignTokens.surface)
+                    .glassCapsule(
+                        shape = RoundedCornerShape(DesignTokens.radiusCapsule),
+                        lineAlpha = 1f,
+                    ),
+            )
+        }
+        val y = 30
+        // The capsule is inset 6 dp; the 2 dp line spans 7..9 dp, i.e. device px 14..17.
+        var barPixels = 0
+        for (x in 10..22) {
+            val pixel = pixels[index(x, y, 400)]
+            if (red(pixel) < green(pixel) && red(pixel) < blue(pixel) && blue(pixel) > 180) barPixels += 1
+        }
+        val glow = pixels[index(20, y, 400)]
+        val fill = pixels[index(360, y, 400)]
+        val glowCyan = green(glow) + blue(glow) - 2 * red(glow)
+        val fillCyan = green(fill) + blue(fill) - 2 * red(fill)
+        System.err.println(
+            "neon-bar bar=$barPixels glow=${hex(glow)} glowCyan=$glowCyan fill=${hex(fill)} fillCyan=$fillCyan",
+        )
+        assertTrue(barPixels >= 4, "the crisp line should be 2 dp = 4 device px wide, was $barPixels")
+        assertTrue(
+            glowCyan > fillCyan + 40,
+            "the halo right of the line should be cyan-tinted (glow $glowCyan vs fill $fillCyan)",
+        )
+    }
+
+    @Test
+    fun `the lens bends the backdrop inside the bezel`() {
         GlassShader.resetForTests()
-        val lensed = bezelPixels()
-        GlassShader.enabled = false
-        val fallback = try {
-            bezelPixels()
+        try {
+            // Same shader path twice: only the displacement differs, so a flat lens cannot pass.
+            GlassShader.strengthOverride = 0f
+            val flat = bezelPixels()
+            GlassShader.strengthOverride = 6f
+            val bent = bezelPixels()
+            var total = 0
+            var count = 0
+            for (y in 110 until 190) {
+                for (x in 103 until 110) {
+                    total += channelDistance(flat[index(x, y, 400)], bent[index(x, y, 400)])
+                    count += 1
+                }
+            }
+            val mean = total.toDouble() / count
+            System.err.println("lens-bend flat-vs-bent mean=%.3f".format(mean))
+            assertTrue(mean > 0.2, "the lens displacement should change the bezel backdrop (mean %.3f)".format(mean))
         } finally {
             GlassShader.resetForTests()
         }
-        val lensedPixel = lensed[index(104, 120, 400)]
-        val fallbackPixel = fallback[index(104, 120, 400)]
-        System.err.println(
-            "lens-bezel lensed=#%06X fallback=#%06X".format(lensedPixel and 0xFFFFFF, fallbackPixel and 0xFFFFFF),
-        )
-        assertNotEquals(fallbackPixel, lensedPixel, "the bezel should sample a displaced backdrop")
     }
 
     @Test
@@ -414,8 +476,8 @@ class GlassModifiersTest {
         }
     }
 
-    private fun pixelArray(width: Int, height: Int, content: @Composable () -> Unit): IntArray {
-        val scene = ImageComposeScene(width, height, Density(1f)) {
+    private fun pixelArray(width: Int, height: Int, density: Float = 1f, content: @Composable () -> Unit): IntArray {
+        val scene = ImageComposeScene(width, height, Density(density)) {
             CompositionLocalProvider(LocalAnimationsEnabled provides false) { content() }
         }
         return try {
@@ -472,4 +534,19 @@ class GlassModifiersTest {
         val blue = pixel and 0xFF
         return maxOf(red, green, blue) - minOf(red, green, blue)
     }
+
+    private fun channelDistance(first: Int, second: Int): Int =
+        maxOf(
+            abs(red(first) - red(second)),
+            abs(green(first) - green(second)),
+            abs(blue(first) - blue(second)),
+        )
+
+    private fun red(pixel: Int): Int = (pixel shr 16) and 0xFF
+
+    private fun green(pixel: Int): Int = (pixel shr 8) and 0xFF
+
+    private fun blue(pixel: Int): Int = pixel and 0xFF
+
+    private fun hex(pixel: Int): String = "#%06X".format(pixel and 0xFFFFFF)
 }

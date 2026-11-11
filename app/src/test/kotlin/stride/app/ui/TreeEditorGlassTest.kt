@@ -27,6 +27,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
@@ -37,6 +38,7 @@ import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Application
 import stride.core.vfs.VFile
 
+@ExtendWith(FixedUiFontExtension::class)
 class TreeEditorGlassTest {
     @TempDir
     lateinit var temp: Path

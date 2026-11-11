@@ -12,7 +12,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.PaintingStyle
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -23,17 +22,6 @@ import org.jetbrains.skia.MaskFilter
 import stride.app.ui.LocalAnimationsEnabled
 
 enum class NeonEdge { TOP, BOTTOM }
-
-/** A glow that bleeds outwards from [shape]. Nothing is drawn when [alpha] is 0. */
-fun Modifier.neonGlow(
-    color: Color,
-    radius: Dp = DesignTokens.glowRadius,
-    shape: Shape = RectangleShape,
-    alpha: Float = 1f,
-): Modifier = drawBehind {
-    if (alpha <= 0f) return@drawBehind
-    drawBlurredShape(shape, color.glow(alpha), radius.toPx() / 2f)
-}
 
 /** A crisp 1dp outline plus the same color's glow. */
 fun Modifier.neonBorder(
@@ -79,52 +67,6 @@ fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Mo
         this
     }
 
-/** The 3dp neon bar on a selected row's left edge, with its glow. */
-fun Modifier.neonSelectionBar(
-    color: Color = DesignTokens.selectionBar,
-    alpha: Float = 1f,
-): Modifier = drawBehind {
-    if (alpha <= 0f) return@drawBehind
-    val width = DesignTokens.selectionBarWidth.toPx()
-    val paint = Paint().apply {
-        isAntiAlias = true
-        this.color = color.glow(alpha)
-        asFrameworkPaint().maskFilter =
-            MaskFilter.makeBlur(FilterBlurMode.NORMAL, DesignTokens.glowRadius.toPx() / 2f)
-    }
-    drawIntoCanvas {
-        it.drawRect(0f, 0f, width, size.height, paint)
-    }
-    drawRect(color.copy(alpha = color.alpha * alpha), topLeft = Offset.Zero, size = Size(width, size.height))
-}
-
-/**
- * A three-layer glow behind [shape]: a tight core, a mid halo and a wide bloom. Each layer's
- * alpha is multiplied by [alpha]; nothing is drawn when [alpha] is 0 or less.
- */
-fun Modifier.neonGlowLayered(
-    color: Color,
-    shape: Shape = RectangleShape,
-    alpha: Float = 1f,
-): Modifier = drawBehind {
-    if (alpha <= 0f) return@drawBehind
-    drawBlurredShape(
-        shape,
-        color.copy(alpha = color.alpha * DesignTokens.glowCoreAlpha * alpha),
-        DesignTokens.glowCoreSigma.toPx(),
-    )
-    drawBlurredShape(
-        shape,
-        color.copy(alpha = color.alpha * DesignTokens.glowHaloAlpha * alpha),
-        DesignTokens.glowHaloSigma.toPx(),
-    )
-    drawBlurredShape(
-        shape,
-        color.copy(alpha = color.alpha * DesignTokens.glowBloomAlpha * alpha),
-        DesignTokens.glowBloomSigma.toPx(),
-    )
-}
-
 /** Selection fade. Instant 0f/1f when [LocalAnimationsEnabled] is false. */
 @Composable
 fun rememberNeonAlpha(active: Boolean): Float {
@@ -144,16 +86,6 @@ private fun strokePaint(color: Color, width: Float): Paint = Paint().apply {
     style = PaintingStyle.Stroke
     strokeWidth = width
     this.color = color
-}
-
-private fun DrawScope.drawBlurredShape(shape: Shape, color: Color, sigma: Float) {
-    if (color.alpha <= 0f || sigma <= 0f) return
-    val paint = Paint().apply {
-        isAntiAlias = true
-        this.color = color
-        asFrameworkPaint().maskFilter = MaskFilter.makeBlur(FilterBlurMode.NORMAL, sigma)
-    }
-    drawShape(shape, paint)
 }
 
 private fun DrawScope.drawShape(shape: Shape, paint: Paint, inset: Float = 0f) {

@@ -7,6 +7,7 @@ import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.KeyStroke
+import stride.app.keys.Keymap
 import stride.app.keys.MacKeymap
 import stride.app.keys.formatKeyStroke
 
@@ -31,6 +32,15 @@ class WelcomeHintsTest {
             assertEquals(hint.action, keymap.actionFor(stroke, KeyContext.GLOBAL))
         }
         assertEquals(listOf("⇧⇧", "⇧⌘O", "⌘E", "⇧⌘A"), hints.map { it.keys })
+    }
+
+    @Test
+    fun `a non-macOS keymap shows platform modifier labels`() {
+        val hints = welcomeHints(Keymap.forPlatform(false), hasProject = true, macOs = false)
+        assertEquals(listOf("⇧⇧", "Shift+Ctrl+O", "Ctrl+E", "Shift+Ctrl+A"), hints.map { it.keys })
+
+        val openFolder = welcomeHints(Keymap.forPlatform(false), hasProject = false, macOs = false).single()
+        assertEquals("Ctrl+O", openFolder.keys)
     }
 
     @Test

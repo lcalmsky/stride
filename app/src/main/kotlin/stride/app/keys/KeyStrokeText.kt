@@ -8,13 +8,33 @@ private const val ALT_GLYPH = "⌥"
 private const val SHIFT_GLYPH = "⇧"
 private const val META_GLYPH = "⌘"
 
-/** Formats [stroke] with macOS glyphs, for example `meta shift O` → `⇧⌘O`. */
-fun formatKeyStroke(stroke: KeyStroke): String = buildString {
-    if (stroke.ctrl) append(CONTROL_GLYPH)
-    if (stroke.alt) append(ALT_GLYPH)
-    if (stroke.shift) append(SHIFT_GLYPH)
-    if (stroke.meta) append(META_GLYPH)
-    append(keyLabel(stroke.key))
+/** Platform modifier labels for keymaps that are not the macOS default. */
+private const val CONTROL_LABEL = "Ctrl"
+private const val ALT_LABEL = "Alt"
+private const val SHIFT_LABEL = "Shift"
+private const val META_LABEL = "Meta"
+
+/**
+ * Formats [stroke] with macOS glyphs, for example `meta shift O` → `⇧⌘O`. With [macOs] false it
+ * writes platform labels instead, for example `ctrl shift O` → `Shift+Ctrl+O`.
+ */
+fun formatKeyStroke(stroke: KeyStroke, macOs: Boolean = true): String {
+    if (macOs) {
+        return buildString {
+            if (stroke.ctrl) append(CONTROL_GLYPH)
+            if (stroke.alt) append(ALT_GLYPH)
+            if (stroke.shift) append(SHIFT_GLYPH)
+            if (stroke.meta) append(META_GLYPH)
+            append(keyLabel(stroke.key))
+        }
+    }
+    val modifiers = buildList {
+        if (stroke.shift) add(SHIFT_LABEL)
+        if (stroke.ctrl) add(CONTROL_LABEL)
+        if (stroke.alt) add(ALT_LABEL)
+        if (stroke.meta) add(META_LABEL)
+    }
+    return (modifiers + keyLabel(stroke.key)).joinToString("+")
 }
 
 /** First stroke bound to [action], formatted; empty when the action has no shortcut. */

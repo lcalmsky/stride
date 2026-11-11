@@ -13,7 +13,7 @@ data class WelcomeHint(val label: String, val action: ActionId, val keys: String
  * folder open the hints cover the search entry points; without one, `meta O` opens a folder
  * through [ActionId.GOTO_CLASS] because [ActionId.OPEN_FOLDER] has no default stroke.
  */
-fun welcomeHints(keymap: Keymap, hasProject: Boolean): List<WelcomeHint> {
+fun welcomeHints(keymap: Keymap, hasProject: Boolean, macOs: Boolean = true): List<WelcomeHint> {
     val entries = if (hasProject) {
         listOf(
             "Search Everywhere" to ActionId.SEARCH_EVERYWHERE,
@@ -24,13 +24,13 @@ fun welcomeHints(keymap: Keymap, hasProject: Boolean): List<WelcomeHint> {
     } else {
         listOf("Open Folder" to ActionId.GOTO_CLASS)
     }
-    return entries.map { (label, action) -> WelcomeHint(label, action, hintStroke(keymap, action)) }
+    return entries.map { (label, action) -> WelcomeHint(label, action, hintStroke(keymap, action, macOs)) }
 }
 
 /** Double Shift is owned by [KeyRouter], not the keymap, so it is the one literal gesture. */
-private fun hintStroke(keymap: Keymap, action: ActionId): String =
+private fun hintStroke(keymap: Keymap, action: ActionId, macOs: Boolean): String =
     if (action == ActionId.SEARCH_EVERYWHERE) {
         KeyRouter.SEARCH_EVERYWHERE_GESTURE
     } else {
-        keymap.strokesFor(action).firstOrNull()?.let(::formatKeyStroke).orEmpty()
+        keymap.strokesFor(action).firstOrNull()?.let { formatKeyStroke(it, macOs) }.orEmpty()
     }
