@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -49,9 +50,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.NeonEdge
 import stride.app.ui.theme.neonGlow
 import stride.app.ui.theme.neonGlowLayered
 import stride.app.ui.theme.neonSelectionBar
+import stride.app.ui.theme.neonUnderline
 import stride.app.ui.theme.rememberNeonAlpha
 
 private val consoleStyle = TextStyle(
@@ -90,6 +93,7 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
             .focusRequester(focusRequester)
             .focusable(),
     ) {
+        RunTabs(manager, session)
         RunHeader(session)
         if (session.configuration.kind == RunKind.TEST) {
             Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -98,6 +102,35 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
             }
         } else {
             ConsolePane(session, null, Modifier.weight(1f).fillMaxWidth())
+        }
+    }
+}
+
+/** One tab per concurrently existing configuration; hidden while there is only one. */
+@Composable
+private fun RunTabs(manager: RunManager, current: RunSession) {
+    if (manager.sessions.size <= 1) return
+    Row(Modifier.fillMaxWidth().height(DesignTokens.tabStripHeight)) {
+        for (session in manager.sessions) {
+            val active = session === current
+            Row(
+                Modifier
+                    .fillMaxHeight()
+                    .background(if (active) DesignTokens.raised.copy(alpha = 0.6f) else DesignTokens.transparent)
+                    .neonUnderline(DesignTokens.accent2, alpha = if (active) 1f else 0f, edge = NeonEdge.BOTTOM)
+                    .clickable { manager.select(session) }
+                    .padding(horizontal = DesignTokens.space8),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    session.configuration.name,
+                    color = if (active) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+                    fontSize = DesignTokens.smallTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -245,6 +278,11 @@ const val RUN_INPUT_TAG: String = "run-stdin"
 private fun ConsoleInput(session: RunSession) {
     var line by remember(session) { mutableStateOf("") }
     val enabled = session.isRunning
+    LaunchedEffect(session.undeliveredInput) {
+        val undelivered = session.undeliveredInput ?: return@LaunchedEffect
+        line = undelivered
+        session.clearUndeliveredInput()
+    }
     Row(
         Modifier.fillMaxWidth().padding(top = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
@@ -266,10 +304,7 @@ private fun ConsoleInput(session: RunSession) {
                     } else {
                         when (event.key) {
                             Key.Enter, Key.NumPadEnter -> {
-                                if (enabled) {
-                                    session.writeInput(line)
-                                    line = ""
-                                }
+                                if (enabled && session.writeInput(line)) line = ""
                                 true
                             }
                             else -> false

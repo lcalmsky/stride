@@ -3,6 +3,7 @@ package stride.app.run
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -47,22 +48,93 @@ class RunManagerTest {
     }
 
     @Test
-    fun `run stops the previous session first`() {
+    fun `running a different configuration keeps the previous session alive`() {
         val project = Project(temp)
         try {
             val manager = project.service<RunManager>()
             val first = FakeProcess(blocking = true)
-            val second = FakeProcess()
+            val second = FakeProcess(blocking = true)
             val processes = ArrayDeque(listOf(first, second))
             manager.starter = ProcessStarter { StartedProcess(processes.removeFirst(), "fake") }
 
             manager.run(configuration("one"))
-            assertTrue(manager.isRunning)
-
             manager.run(configuration("two"))
 
+            assertTrue(manager.isRunning)
+            assertTrue(manager.sessions.any { it.configuration.name == "one" && it.isRunning })
+            assertEquals(2, manager.sessions.size)
+            assertEquals("two", manager.current?.configuration?.name)
+            assertEquals(false, first.destroyed)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `running the same configuration replaces its tab and stops the old process`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val first = FakeProcess(blocking = true)
+            val second = FakeProcess(blocking = true)
+            val processes = ArrayDeque(listOf(first, second))
+            manager.starter = ProcessStarter { StartedProcess(processes.removeFirst(), "fake") }
+            val configuration = configuration("one")
+
+            manager.run(configuration)
+            val same = manager.run(configuration.copy(name = "one renamed"))
+
             assertTrue(first.destroyed)
-            assertEquals("two", manager.lastRun?.name)
+            assertEquals(1, manager.sessions.size)
+            assertSame(same, manager.current)
+            assertEquals("one renamed", manager.current?.configuration?.name)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `stop only stops the selected tab`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val first = FakeProcess(blocking = true)
+            val second = FakeProcess(blocking = true)
+            val processes = ArrayDeque(listOf(first, second))
+            manager.starter = ProcessStarter { StartedProcess(processes.removeFirst(), "fake") }
+
+            manager.run(configuration("one"))
+            manager.run(configuration("two"))
+            val firstSession = manager.sessions.first { it.configuration.name == "one" }
+
+            manager.select(firstSession)
+            manager.stop()
+
+            assertTrue(first.destroyed)
+            assertEquals(false, second.destroyed)
+            assertEquals("one", manager.current?.configuration?.name)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `rerun reruns the selected tab's configuration`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val started = mutableListOf<RunConfiguration>()
+            manager.starter = ProcessStarter { configuration ->
+                started += configuration
+                StartedProcess(FakeProcess(blocking = true), "fake")
+            }
+            manager.run(configuration("one"))
+            manager.run(configuration("two"))
+
+            manager.rerun()
+
+            assertEquals(listOf("one", "two", "two"), started.map { it.name })
+            assertEquals(2, manager.sessions.size)
         } finally {
             project.dispose()
         }
@@ -80,7 +152,7 @@ class RunManagerTest {
     }
 
     @Test
-    fun `recent keeps the last ten distinct names, most recent first`() {
+    fun `recent keeps the last ten distinct configurations, most recent first`() {
         val project = Project(temp)
         try {
             val manager = project.service<RunManager>()
@@ -100,15 +172,35 @@ class RunManagerTest {
     }
 
     @Test
-    fun `disposing the project destroys the child process`() {
+    fun `recent keeps configurations that only differ in their arguments`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+
+            manager.run(configuration("same"))
+            manager.run(configuration("same").copy(args = listOf("other")))
+
+            assertEquals(2, manager.recent.size)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `disposing the project destroys every child process`() {
         val project = Project(temp)
         val manager = project.service<RunManager>()
-        val process = FakeProcess(blocking = true)
-        manager.starter = ProcessStarter { StartedProcess(process, "fake") }
+        val first = FakeProcess(blocking = true)
+        val second = FakeProcess(blocking = true)
+        val processes = ArrayDeque(listOf(first, second))
+        manager.starter = ProcessStarter { StartedProcess(processes.removeFirst(), "fake") }
 
-        manager.run(configuration())
+        manager.run(configuration("one"))
+        manager.run(configuration("two"))
         project.dispose()
 
-        assertTrue(process.destroyed)
+        assertTrue(first.destroyed)
+        assertTrue(second.destroyed)
     }
 }

@@ -111,6 +111,18 @@ class KeymapTest {
     }
 
     @Test
+    fun `modal popups never fall back to global bindings`() {
+        assertNull(action("control R", KeyContext.CONTEXT_POPUP))
+        assertNull(action("meta F9", KeyContext.CONTEXT_POPUP))
+        assertNull(action("meta 4", KeyContext.CONTEXT_POPUP))
+        assertNull(action("control R", KeyContext.SEARCH_POPUP))
+        assertNull(action("meta shift O", KeyContext.SEARCH_POPUP))
+        // Escape is not a keymap binding: the popup itself closes on it.
+        assertNull(action("ESCAPE", KeyContext.CONTEXT_POPUP))
+        assertNull(action("ESCAPE", KeyContext.SEARCH_POPUP))
+    }
+
+    @Test
     fun `open folder keeps no stroke but stays an action`() {
         assertTrue(keymap.strokesFor(ActionId.OPEN_FOLDER).isEmpty())
     }

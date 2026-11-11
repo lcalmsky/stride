@@ -57,7 +57,7 @@ import org.jetbrains.skia.Surface
 private const val BLUR_SIGMA_SCALE = 0.57735f
 
 /** Backdrop blur runs on a 1/this-resolution copy of the backdrop; see [backdropImageFilter]. */
-private const val BACKDROP_BLUR_DOWNSCALE = 4
+private const val BACKDROP_BLUR_DOWNSCALE = 8
 
 private val contentTintColor = blendOver(
     DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),

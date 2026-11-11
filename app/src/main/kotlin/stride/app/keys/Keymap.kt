@@ -15,17 +15,24 @@ enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERM
 data class Binding(val action: ActionId, val context: KeyContext)
 
 class Keymap(val bindings: Map<KeyStroke, List<Binding>>) {
-    /** The binding in [focus]'s context first, otherwise a GLOBAL binding, otherwise `null`. */
+    /**
+     * The binding in [focus]'s context first, otherwise a GLOBAL binding, otherwise `null`.
+     * Modal popups own the keyboard, so GLOBAL never answers for them.
+     */
     fun actionFor(stroke: KeyStroke, focus: KeyContext): ActionId? {
         val candidates = bindings[stroke] ?: return null
-        return candidates.firstOrNull { it.context == focus }?.action
-            ?: candidates.firstOrNull { it.context == KeyContext.GLOBAL }?.action
+        candidates.firstOrNull { it.context == focus }?.let { return it.action }
+        if (focus in MODAL_CONTEXTS) return null
+        return candidates.firstOrNull { it.context == KeyContext.GLOBAL }?.action
     }
 
     fun strokesFor(action: ActionId): List<KeyStroke> =
         bindings.filterValues { list -> list.any { it.action == action } }.keys.toList()
 
     companion object {
+        /** Contexts whose popup handles every key itself; GLOBAL must not fire through them. */
+        private val MODAL_CONTEXTS = setOf(KeyContext.SEARCH_POPUP, KeyContext.CONTEXT_POPUP)
+
         fun forPlatform(isMac: Boolean): Keymap =
             if (isMac) {
                 MacKeymap.keymap

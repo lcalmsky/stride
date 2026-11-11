@@ -739,7 +739,7 @@ events its init script prints into a tree. It is a project service, like the ter
 
 ### Process model
 
-`GradleProcessStarter` materializes the init script resource
+`DefaultProcessStarter` materializes the init script resource
 `stride/run/stride-test-events.init.gradle`, builds the command through `GradleCommand`,
 and starts it in the configuration's working directory with stdout and stderr merged.
 
@@ -765,11 +765,21 @@ object GradleInitScript {
 data class RunConfiguration(
     val name: String,
     val workingDir: Path,
-    val args: List<String>,
+    val args: List<String> = emptyList(),
     val kind: RunKind,
+    val command: List<String>? = null,      // a direct run; null means Gradle
+) {
+    val identity: RunIdentity              // kind + workingDir + args/command, not name
+}
+
+data class RunIdentity(
+    val kind: RunKind,
+    val workingDir: Path,
+    val args: List<String>,
+    val command: List<String>?,
 )
 
-enum class RunKind { TEST, TASK }
+enum class RunKind { TEST, TASK, APPLICATION }
 ```
 
 The command is `$SHELL -l -c 'exec "$@"' stride <gradlew> --console=plain --init-script
@@ -780,6 +790,15 @@ forwards each positional argument as one element. `display` quotes only elements
 whitespace or quotes for the console's first line. The child never gets `--no-daemon` or
 `--stop`. The init script disables up-to-date checks and the build cache for every `Test`
 task, so a repeated run still executes and reports its events instead of being skipped.
+
+A script (`.py`, `.sh`, `.js`, `.rb`, `.kts`) runs directly even inside a Gradle project and
+starts in the script's directory. `*.gradle.kts` is the Gradle DSL and is never run as a
+script. Kotlin and Java use `strideRunMain` only when the file is under
+`src/<sourceSet>/(kotlin|java)/` of its Gradle project; a Java file elsewhere runs with
+`java <file>` when its main class is the file's first top-level class. Direct commands go
+through the same login shell (`exec "$@"`); a Kotlin script uses
+`command -v kotlin >/dev/null && exec kotlin "$1" || exec kotlinc -script "$1"` so the
+`kotlin` probe happens in the shell rather than on the UI thread.
 
 ### Event protocol
 
@@ -824,8 +843,11 @@ class RunSession(
     val consoleLines: SnapshotStateList<String>   // first line is displayCommand
     val tree: TestTree
     val exitCode: Int?                            // Compose state, set at EOF
+    val undeliveredInput: String?                 // a line the writer could not send
     val isRunning: Boolean                        // exitCode == null
-    fun start()                                   // one daemon "stride-run-reader" thread
+    fun start()                                   // "stride-run-reader" + "stride-run-writer"
+    fun writeInput(line: String): Boolean         // queues; false when ended or full
+    fun clearUndeliveredInput()
     fun stop()                                    // descendants, then the process
 }
 
@@ -852,18 +874,29 @@ class TestTree {
 The reader thread sends event lines to the tree and the rest to `consoleLines`; it fills
 `exitCode` with `Process.waitFor()` after EOF. A class node is `FAILED` when any method
 failed, `RUNNING` while any is running, `SKIPPED` when every method was skipped, otherwise
-`PASSED`.
+`PASSED`. Standard input goes through a bounded queue (64 lines) consumed by a single
+writer thread, so a child that stops reading cannot block the UI; `writeInput` returns
+false when the process ended or the queue is full and the console keeps the typed line. A
+write that still fails later lands in `undeliveredInput`, which the input row puts back.
 
 ```kotlin
 @Composable fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusRequests: Int = 0)
-@Composable fun TestGutterMarkers(session: ProjectSession, toolWindows: ToolWindowManager)
+@Composable fun TestGutterMarkers(
+    session: ProjectSession,
+    toolWindows: ToolWindowManager,
+    onStatus: (String?) -> Unit = {},
+)
 
 fun runAtCaret(state: AppState): Boolean
 fun runTarget(state: AppState, file: Path, target: TestLocator.TestTarget): Boolean
 ```
 
 `RunToolWindow` is a header (configuration name and `Running…`/`Passed n`/`Failed n of m`/
-`Exit code n`) over a 36/64 split of the test tree and console. Passed is `neonLime`,
+`Exit code n`) over a 36/64 split of the test tree and console. When more than one
+configuration is alive it shows one tab per session above the header; clicking a tab makes
+it the one `Stop` and `Rerun` act on. Starting a configuration that is already in a tab
+stops that tab's process and replaces it in place; starting a different one adds a tab and
+leaves the other processes running. Passed is `neonLime`,
 failed `neonPink`, running `accent2` and skipped `muted`; the glyph carries the state's
 glow. Selecting a method uses the neon selection signal and shows its message, stack and
 captured output below the console. The console uses `codeFont` and follows new lines. The
@@ -871,13 +904,15 @@ view requests focus from `focusRequests`, as the terminal does; the running puls
 animates while `LocalAnimationsEnabled` is true.
 
 `TestGutterMarkers` puts a ▶ on the class line and every `@Test fun` of a `.kt` file under
-`/src/test/`; clicking one runs that target. `runAtCaret` locates the test under the caret
-and starts it. The four actions are:
+`/src/test/` and on the `main` of a `.kt`/`.java` file; it scans only those extensions and
+does the scan on `Dispatchers.Default`. Clicking a marker starts that target, or reports the
+specific reason it cannot start through `onStatus`. `runAtCaret` locates the test under the
+caret and starts it. The four actions are:
 
 | ActionId | when | meaning |
 |---|---|---|
-| `RUN` | ⌃R in any context | rerun `lastRun`, else run the test at the caret, else `Nothing to run` |
-| `RUN_CONTEXT` | ⌃⇧R in the editor | run the test at the caret, else `No test at caret` |
+| `RUN` | ⌃R in any context | rerun the selected tab, else run the test at the caret, else `Nothing to run here` |
+| `RUN_CONTEXT` | ⌃⇧R in the editor | run the test at the caret, else the file's main, else the reason or `Nothing to run here` |
 | `STOP` | ⌘F2 | destroy the process tree |
 | `RERUN` | ⌘R in the Run window | rerun `lastRun`, else `Nothing to rerun` |
 
@@ -892,6 +927,7 @@ object TestLocator {
     fun locate(text: String, caretOffset: Int): TestTarget?
     fun markers(text: String): List<TestMarker>
     fun gradleProjectPath(file: Path, root: Path): String?
+    fun gradleProjectDir(file: Path, root: Path): Path?
 }
 ```
 
@@ -899,36 +935,44 @@ object TestLocator {
 `class <Name>` at or above the caret, and the method is the nearest `fun` at or above it
 whose contiguous annotation lines include `@Test`. A caret between the class line and the
 first test resolves to the class; above the class it resolves to `null`. The filter is
-`<className>.<methodName>` with the backticked name unquoted. `gradleProjectPath` walks up
-to the nearest directory with `build.gradle.kts` or `build.gradle` and returns its path from
-the project root with `:` separators (`:plugins:lang-kotlin`, `""` for the root, `null`
-outside the root).
+`<className>.<methodName>` with the backticked name unquoted. `gradleProjectDir` walks up to
+the nearest directory with `build.gradle.kts` or `build.gradle`; `gradleProjectPath` returns
+that directory's path from the project root with `:` separators (`:plugins:lang-kotlin`,
+`""` for the root, `null` outside the root). `MainLocator` maps a file name to the class the
+Kotlin compiler generates (`hello-world.kt` → `Hello_worldKt`) and reports whether a Java
+main's class is the file's first top-level class.
 
 ```kotlin
 @Service(Service.Level.PROJECT)
 class RunManager(project: Project) : Disposable {
-    var starter: ProcessStarter                 // tests replace GradleProcessStarter
+    var starter: ProcessStarter                 // tests replace DefaultProcessStarter
     var lastRun: RunConfiguration?
-    var current: RunSession?
+    val sessions: List<RunSession>              // one per configuration, oldest first
+    var current: RunSession?                    // the selected tab
     val isRunning: Boolean
     fun run(configuration: RunConfiguration): RunSession
-    fun rerun(): RunSession?                    // null without lastRun
-    fun stop()
+    fun select(session: RunSession)
+    fun rerun(): RunSession?                    // reruns the selected tab, else lastRun
+    fun stop()                                  // stops the selected tab
 }
 
 fun interface ProcessStarter { fun start(configuration: RunConfiguration): StartedProcess }
 data class StartedProcess(val process: Process, val displayCommand: String)
-object GradleProcessStarter : ProcessStarter
+object DefaultProcessStarter : ProcessStarter
 ```
 
 `RunManager` is a project service: `ProjectSession.dispose()` → `Project.dispose()` →
-`ComponentManager.dispose()` disposes it, which stops the child process.
+`ComponentManager.dispose()` disposes it, which stops every child process. Recent entries
+are deduplicated by `RunConfiguration.identity`, so two `MainKt` configurations from
+different directories both survive; the chooser adds the relative working directory to the
+secondary text when two rows share a name.
 
 ### Limits
 
 Nested classes are not located. The Gradle path is the directory path, so a project whose
 `settings.gradle.kts` `include` names a directory differently is reported under the
-directory path. Run configurations are not persisted; only `lastRun` lives in the session.
+directory path. Run configurations are not persisted; `lastRun`, `recent` and the live
+sessions live only in the project.
 
 ## Look
 
@@ -1058,7 +1102,7 @@ bottom-right, neonPink bottom-center) into a bitmap once per size and exposes it
 an opaque cached image keyed by panel size, mesh size, root position and mesh version; each frame
 only draws that image and the border. `backdropGlass` blurs what is already drawn beneath it with
 Skia's `saveLayer(SaveLayerRec(backdrop = …))`, clipped to its shape. Its filter shrinks the
-backdrop to 1/4, blurs the small copy and scales it back up (`makeMatrixTransform` → `makeBlur` →
+backdrop to 1/8, blurs the small copy and scales it back up (`makeMatrixTransform` → `makeBlur` →
 `makeMatrixTransform`), so the scaling origin is the panel's top-left; `GlassModifiersTest`
 measures no pattern shift between 2 px outside and 2 px inside the panel's top and left edges. The
 backdrop path was measured on `ImageComposeScene`: **real**, not the bitmap fallback. Text on
@@ -1205,11 +1249,11 @@ Maven Central alone does not carry it.
 | `TextChangeTest` | common prefix/suffix insert/delete/replace and empty edges; incremental highlighter equals a fresh one |
 | `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
 | `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
-| `KeymapTest` | every macOS binding in its context, context-over-global resolution, non-mac meta↔control swap |
+| `KeymapTest` | every macOS binding in its context, context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
-| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
-| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor |
+| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
 | `FindBarStateTest` | span painting and current match, next cycling, replace all, close clearing spans |
 | `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop |
@@ -1224,9 +1268,10 @@ Maven Central alone does not carry it.
 | `GradleCommandTest` | command order and `$0`, spaced test name as one argument, wrapper/PATH fallback, test args, shell fallback |
 | `GradleInitScriptTest` | every event line uses the parser prefix and the five kinds, synthesized lines parse as events, the test task cannot be skipped as up-to-date or cached |
 | `TestEventParserTest` | the five event kinds, TeamCity escape reversal, non-event and malformed lines as output, order preservation |
-| `TestLocatorTest` | caret-to-method/class resolution on real repository files, marker counts, Gradle project paths |
-| `RunSessionTest` | console versus event lines, tree statuses and failure details, exit code, stop on a fake process |
-| `RunManagerTest` | last run and starter, stopping the previous session, rerun without a run, dispose destroying the child |
+| `TestLocatorTest` | caret-to-method/class resolution on real repository files, marker counts, Gradle project paths and directories |
+| `RunSessionTest` | console versus event lines, tree statuses and failure details, exit code, stop on a fake process, queued stdin and an undelivered line |
+| `RunManagerTest` | last run and starter, one session per configuration, replacing a tab on rerun, stop/rerun on the selected tab, recent identity, dispose destroying every child |
+| `RunConfigurationPopupTest` | the kind secondary text, and the working directory added when two rows share a name |
 | `GradleRunIntegrationTest` | a real `:core:test` child Gradle through the init script (tagged `slow`, opt-in with `-Dstride.runIntegration=true`) |
 | `EditActionsTest` | duplicate, delete, move, line/block comment, indent and unindent with no selection, one line, many lines, the first line and a last line without a newline; `gotoLine` clamping |
 | `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections |

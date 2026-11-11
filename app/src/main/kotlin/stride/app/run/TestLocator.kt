@@ -52,15 +52,21 @@ object TestLocator {
      * [root] to the nearest ancestor directory that holds a build file; `""` for the root.
      */
     fun gradleProjectPath(file: Path, root: Path): String? {
+        val directory = gradleProjectDir(file, root) ?: return null
+        val absoluteRoot = root.toAbsolutePath().normalize()
+        val absoluteDirectory = directory.toAbsolutePath().normalize()
+        if (absoluteDirectory == absoluteRoot) return ""
+        return ":" + absoluteRoot.relativize(absoluteDirectory).joinToString(":") { it.toString() }
+    }
+
+    /** The nearest ancestor directory of [file] under [root] that holds a build file. */
+    fun gradleProjectDir(file: Path, root: Path): Path? {
         val absoluteRoot = root.toAbsolutePath().normalize()
         val absoluteFile = file.toAbsolutePath().normalize()
         if (!absoluteFile.startsWith(absoluteRoot)) return null
         var directory: Path? = absoluteFile.parent
         while (directory != null && directory.startsWith(absoluteRoot)) {
-            if (hasBuildFile(directory)) {
-                if (directory == absoluteRoot) return ""
-                return ":" + absoluteRoot.relativize(directory).joinToString(":") { it.toString() }
-            }
+            if (hasBuildFile(directory)) return directory
             if (directory == absoluteRoot) break
             directory = directory.parent
         }

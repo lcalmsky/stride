@@ -38,6 +38,7 @@ import java.nio.file.Path
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -821,9 +822,9 @@ class KeyFlowUiTest {
     @Test
     fun `alt enter opens context actions and enter runs the main`() = runComposeUiTest {
         val root = temp.resolve("context-actions-project")
-        Files.createDirectories(root)
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
-        val file = root.resolve("Main.kt")
+        val file = root.resolve("src/main/kotlin/demo/Main.kt")
         Files.writeString(file, "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
         val state = AppState()
         try {
@@ -849,6 +850,48 @@ class KeyFlowUiTest {
             onRoot().performKeyInput { pressKey(Key.Enter) }
             waitUntil(timeoutMillis = 5_000) { manager.lastRun?.kind == RunKind.APPLICATION }
             assertFalse(state.contextActionsVisible)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `context actions popup blocks global shortcuts and escape closes it`() = runComposeUiTest {
+        val root = temp.resolve("context-modal-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        val file = root.resolve("src/main/kotlin/demo/Main.kt")
+        Files.writeString(file, "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val manager = session.project.service<RunManager>()
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { pressKey(Key.Enter) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.contextActionsVisible }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.CtrlLeft) { pressKey(Key.R) }
+            }
+            waitForIdle()
+            assertNull(manager.lastRun)
+            assertTrue(state.contextActionsVisible)
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { !state.contextActionsVisible }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
         } finally {
             state.dispose()
         }

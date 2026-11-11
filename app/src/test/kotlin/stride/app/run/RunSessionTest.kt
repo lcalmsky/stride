@@ -2,6 +2,7 @@ package stride.app.run
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -62,12 +63,30 @@ class RunSessionTest {
         session.start()
 
         assertTrue(session.writeInput("hello"))
-        assertEquals("hello\n", process.stdin)
-        assertEquals(listOf("run", "hello"), session.consoleLines.toList())
+        waitUntil { process.stdin == "hello\n" && session.consoleLines.contains("hello") }
 
         session.stop()
         waitUntil { !session.isRunning }
         assertFalse(session.writeInput("after"))
+    }
+
+    @Test
+    fun `keeps a line the writer could not deliver`() {
+        val process = FakeProcess(blocking = true, failStdin = true)
+        val session = RunSession(
+            RunConfiguration(name = "MainKt", workingDir = temp, kind = RunKind.APPLICATION, command = listOf("run")),
+            process,
+            "run",
+        )
+        session.start()
+
+        assertTrue(session.writeInput("hello"))
+        waitUntil { session.undeliveredInput == "hello" }
+
+        assertFalse(session.consoleLines.contains("hello"))
+        session.clearUndeliveredInput()
+        assertNull(session.undeliveredInput)
+        session.stop()
     }
 
     @Test

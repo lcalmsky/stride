@@ -76,8 +76,9 @@ import stride.app.ui.theme.rememberNeonAlpha
 import stride.core.vfs.VFile
 import stride.search.SearchTab
 
+/** The tab row and group headers share the panel, so the list shows two rows fewer. */
 private val MAX_LIST_HEIGHT =
-    DesignTokens.popupRowHeight * DesignTokens.popupMaxRows - DesignTokens.popupTabHeight - DesignTokens.popupGroupHeight
+    DesignTokens.popupRowHeight * (DesignTokens.popupMaxRows - 2) - DesignTokens.popupTabHeight - DesignTokens.popupGroupHeight
 
 /** Test tag on the row the keyboard selection is on; UI tests check it stays visible. */
 internal const val SEARCH_SELECTED_ROW_TAG = "search-selected-row"
@@ -298,6 +299,9 @@ private fun ResultList(
     val listState = rememberLazyListState()
     LaunchedEffect(tab) { listState.scrollToItem(0) }
     LaunchedEffect(selectedIndex, rows) {
+        // Wait for the layout before scrolling: scrollToItem during a measure pass leaves the
+        // lazy list's composition pending.
+        withFrameNanos { }
         // Rows include group headers, so find the selected entry's row rather than its index.
         val target = rows.indexOfFirst { it is PopupRow.Entry && it.index == selectedIndex }
         if (target < 0) return@LaunchedEffect

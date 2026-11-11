@@ -7,7 +7,13 @@ package stride.app.run
  */
 object MainLocator {
     /** [line] and [endLine] are 0-based and inclusive. */
-    data class MainTarget(val className: String, val line: Int, val endLine: Int)
+    data class MainTarget(
+        val className: String,
+        val line: Int,
+        val endLine: Int,
+        /** Whether a Java main's class is the file's first top-level class. */
+        val isFirstTopLevelClass: Boolean = true,
+    )
 
     private val PACKAGE = Regex("(?m)^\\s*package\\s+([\\w.]+)")
     private val FILE_JVM_NAME = Regex("@file\\s*:\\s*JvmName\\s*\\(\\s*\"([^\"]+)\"\\s*\\)")
@@ -20,10 +26,11 @@ object MainLocator {
 
     /** The first entry point declared in [text], or null when the file has none. */
     fun locate(text: String, fileName: String): MainTarget? {
+        if (!isSupported(fileName)) return null
         val source = Source(text)
-        val packageName = PACKAGE.find(text)?.groupValues?.get(1)
-        val fileClass = FILE_JVM_NAME.find(text)?.groupValues?.get(1)
-            ?: fileName.substringBeforeLast('.', fileName).replaceFirstChar { it.uppercase() } + "Kt"
+        val packageName = PACKAGE.find(source.masked)?.groupValues?.get(1)
+        val fileClass = FILE_JVM_NAME.find(source.commentsMasked)?.groupValues?.get(1)
+            ?: facadeName(fileName)
 
         for (index in source.lines.indices) {
             val line = source.lines[index]
@@ -45,6 +52,26 @@ object MainLocator {
         return line
     }
 
+    private fun isSupported(fileName: String): Boolean =
+        fileName.endsWith(".kt", ignoreCase = true) || fileName.endsWith(".java", ignoreCase = true)
+
+    /** The class Kotlin generates for the top-level declarations of a file named [fileName]. */
+    private fun facadeName(fileName: String): String {
+        val base = fileName.substringBeforeLast('.', fileName).replaceFirstChar { it.uppercase() }
+        return sanitize(base) + "Kt"
+    }
+
+    /** Replaces the characters the JVM rejects in a class name, as the Kotlin compiler does. */
+    private fun sanitize(name: String): String = buildString {
+        name.forEachIndexed { index, character ->
+            when {
+                !Character.isJavaIdentifierPart(character) -> append('_')
+                index == 0 && !Character.isJavaIdentifierStart(character) -> append('_').append(character)
+                else -> append(character)
+            }
+        }
+    }
+
     private fun locateKotlin(source: Source, index: Int, packageName: String?, fileClass: String): MainTarget? {
         val depth = source.startDepth[index]
         val className = if (depth == 0) {
@@ -63,7 +90,12 @@ object MainLocator {
             if (source.startDepth[candidate] >= depth) continue
             val match = CLASS.find(source.lines[candidate]) ?: continue
             if (source.startDepth[candidate] != 0) return null
-            return MainTarget(qualify(packageName, match.groupValues[1]), index, source.blockEnd(index, depth))
+            return MainTarget(
+                className = qualify(packageName, match.groupValues[1]),
+                line = index,
+                endLine = source.blockEnd(index, depth),
+                isFirstTopLevelClass = candidate == source.firstTopLevelClassLine,
+            )
         }
         return null
     }
@@ -110,8 +142,17 @@ object MainLocator {
         val lines: List<String>
         val startDepth: IntArray
 
+        /** Comment and string-literal contents blanked. */
+        val masked: String = mask(text, blankStrings = true)
+
+        /** Comment contents blanked, string literals kept for `@file:JvmName`. */
+        val commentsMasked: String = mask(text, blankStrings = false)
+
+        /** The first top-level `class` declaration line in the file. */
+        val firstTopLevelClassLine: Int
+
         init {
-            lines = mask(text).split("\n")
+            lines = masked.split("\n")
             startDepth = IntArray(lines.size)
             var depth = 0
             lines.forEachIndexed { index, line ->
@@ -121,6 +162,9 @@ object MainLocator {
                     if (character == '}') depth--
                 }
             }
+            firstTopLevelClassLine = lines.indices
+                .firstOrNull { startDepth[it] == 0 && CLASS.containsMatchIn(lines[it]) }
+                ?: -1
         }
 
         /** The last line of the block opened by the declaration on [index], or [index] when there is none. */
@@ -140,7 +184,7 @@ object MainLocator {
             return index
         }
 
-        private fun mask(text: String): String {
+        private fun mask(text: String, blankStrings: Boolean): String {
             val output = StringBuilder(text.length)
             var offset = 0
             while (offset < text.length) {
@@ -162,7 +206,7 @@ object MainLocator {
                             offset++
                         }
                     }
-                    character == '"' && text.startsWith("\"\"\"", offset) -> {
+                    character == '"' && text.startsWith("\"\"\"", offset) && blankStrings -> {
                         output.append("\"\"\"")
                         offset += 3
                         while (offset < text.length && !text.startsWith("\"\"\"", offset)) {
@@ -172,6 +216,37 @@ object MainLocator {
                         if (offset < text.length) {
                             output.append("\"\"\"")
                             offset += 3
+                        }
+                    }
+                    character == '"' && text.startsWith("\"\"\"", offset) && !blankStrings -> {
+                        output.append("\"\"\"")
+                        offset += 3
+                        while (offset < text.length && !text.startsWith("\"\"\"", offset)) {
+                            output.append(text[offset])
+                            offset++
+                        }
+                        if (offset < text.length) {
+                            output.append("\"\"\"")
+                            offset += 3
+                        }
+                    }
+                    (character == '"' || character == '\'') && !blankStrings -> {
+                        val quote = character
+                        output.append(quote)
+                        offset++
+                        while (offset < text.length && text[offset] != quote && text[offset] != '\n') {
+                            if (text[offset] == '\\' && offset + 1 < text.length) {
+                                output.append(text[offset])
+                                output.append(text[offset + 1])
+                                offset += 2
+                            } else {
+                                output.append(text[offset])
+                                offset++
+                            }
+                        }
+                        if (offset < text.length && text[offset] == quote) {
+                            output.append(quote)
+                            offset++
                         }
                     }
                     character == '"' || character == '\'' -> {

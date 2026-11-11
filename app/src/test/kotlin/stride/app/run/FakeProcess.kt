@@ -15,12 +15,19 @@ class FakeProcess(
     output: ByteArray = ByteArray(0),
     private val exitCode: Int = 0,
     blocking: Boolean = false,
+    private val failStdin: Boolean = false,
 ) : Process() {
     @Volatile
     var destroyed = false
         private set
 
     private val written = ByteArrayOutputStream()
+
+    private val failingOutput = object : OutputStream() {
+        override fun write(b: Int) {
+            throw java.io.IOException("stdin closed")
+        }
+    }
 
     /** Everything written to the child's stdin, decoded as UTF-8. */
     val stdin: String get() = written.toString(Charsets.UTF_8.name())
@@ -33,7 +40,7 @@ class FakeProcess(
         ByteArrayInputStream(output)
     }
 
-    override fun getOutputStream(): OutputStream = written
+    override fun getOutputStream(): OutputStream = if (failStdin) failingOutput else written
 
     override fun getInputStream(): InputStream = input
 

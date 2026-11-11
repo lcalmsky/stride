@@ -26,6 +26,22 @@ class MainLocatorTest {
     }
 
     @Test
+    fun `mangles characters the JVM rejects in the facade class name`() {
+        val text = "fun main() { }\n"
+
+        assertEquals("Hello_worldKt", MainLocator.locate(text, "hello-world.kt")?.className)
+        assertEquals("Foo_barKt", MainLocator.locate(text, "foo.bar.kt")?.className)
+        assertEquals("_1mainKt", MainLocator.locate(text, "1main.kt")?.className)
+    }
+
+    @Test
+    fun `ignores declarations for files that are not Kotlin or Java`() {
+        assertNull(MainLocator.locate("function main() { }\n", "app.js"))
+        assertNull(MainLocator.locate("def main(): pass\n", "app.py"))
+        assertNull(MainLocator.locate("fun main() { }\n", "Main.txt"))
+    }
+
+    @Test
     fun `honours a file-level JvmName`() {
         val text = """
             @file:JvmName("Entry")
@@ -87,6 +103,43 @@ class MainLocatorTest {
         """.trimIndent()
 
         assertEquals(MainLocator.MainTarget("demo.Hello", 3, 5), MainLocator.locate(text, "Hello.java"))
+    }
+
+    @Test
+    fun `marks a Java main in a later top-level class as not first`() {
+        val text = """
+            package demo;
+
+            class Helper {
+            }
+
+            class App {
+                public static void main(String[] args) {
+                }
+            }
+        """.trimIndent()
+
+        val target = MainLocator.locate(text, "App.java")
+        assertEquals("demo.App", target?.className)
+        assertEquals(false, target?.isFirstTopLevelClass)
+
+        val first = MainLocator.locate("package demo;\n\nclass App {\n    public static void main(String[] args) { }\n}\n", "App.java")
+        assertEquals(true, first?.isFirstTopLevelClass)
+    }
+
+    @Test
+    fun `ignores a package and JvmName inside comments`() {
+        val text = """
+            /*
+            @file:JvmName("Old")
+            package old
+            */
+            package demo
+
+            fun main() { }
+        """.trimIndent()
+
+        assertEquals(MainLocator.MainTarget("demo.MainKt", 6, 6), MainLocator.locate(text, "Main.kt"))
     }
 
     @Test

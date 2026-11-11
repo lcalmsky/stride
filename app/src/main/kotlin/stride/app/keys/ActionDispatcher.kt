@@ -6,6 +6,7 @@ import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
+import stride.app.run.mainConfigurationProblem
 import stride.app.run.openContextActions
 import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
@@ -88,11 +89,17 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.FIND_IN_PATH -> {
-        if (state.session != null) state.findInPathVisible = true
+        if (state.session != null) {
+            state.findInPathVisible = true
+            state.focus = KeyContext.SEARCH_POPUP
+        }
         true
     }
     ActionId.RECENT_FILES -> {
-        if (state.session != null) state.recentFilesVisible = true
+        if (state.session != null) {
+            state.recentFilesVisible = true
+            state.focus = KeyContext.SEARCH_POPUP
+        }
         true
     }
     // BasicTextField already binds meta Z and meta shift Z to its own undo and redo
@@ -114,7 +121,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
                 state.toolWindows.activate("run")
             }
             runContext(state) -> state.statusMessage = null
-            else -> state.statusMessage = "Nothing to run here"
+            else -> state.statusMessage = runContextProblem(state) ?: "Nothing to run here"
         }
         true
     }
@@ -123,7 +130,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         if (runContext(state)) {
             state.statusMessage = null
         } else {
-            state.statusMessage = "Nothing to run here"
+            state.statusMessage = runContextProblem(state) ?: "Nothing to run here"
         }
         true
     }
@@ -169,4 +176,12 @@ private fun runContext(state: AppState): Boolean {
     val started = runMain(session, editor.file.path, main)
     if (started) state.toolWindows.activate("run")
     return started
+}
+
+/** The specific reason the selected file's main cannot run, when there is one. */
+private fun runContextProblem(state: AppState): String? {
+    val session = state.session ?: return null
+    val editor = session.editors.selected as? TextFileEditor ?: return null
+    val main = MainLocator.locate(editor.value.text, editor.file.name)
+    return mainConfigurationProblem(session, editor.file.path, main)
 }

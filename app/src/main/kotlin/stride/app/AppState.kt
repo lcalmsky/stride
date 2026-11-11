@@ -136,6 +136,7 @@ class AppState {
         searchTab = tab
         searchGeneration++
         searchVisible = true
+        focus = KeyContext.SEARCH_POPUP
     }
 
     fun openFolder(path: Path) {

@@ -3,6 +3,7 @@ package stride.app.run
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
+import stride.app.keys.KeyContext
 import stride.core.services.service
 import java.nio.file.Path
 
@@ -48,7 +49,8 @@ fun runMain(session: ProjectSession, file: Path, target: MainLocator.MainTarget?
 
 /**
  * The run for [file]'s entry point. Scripts run directly even inside a Gradle project;
- * Kotlin and Java use `strideRunMain` when they belong to one.
+ * Kotlin and Java use `strideRunMain` only when they are in a Gradle source set, and Java
+ * runs directly otherwise. Direct runs start in the file's directory.
  */
 fun mainConfiguration(
     session: ProjectSession,
@@ -60,30 +62,51 @@ fun mainConfiguration(
         val command = RunCommands.direct(file) ?: return null
         return RunConfiguration(
             name = file.fileName?.toString() ?: file.toString(),
-            workingDir = root,
+            workingDir = file.parent ?: root,
             kind = RunKind.APPLICATION,
             command = command,
         )
     }
     if (target == null) return null
-    val extension = file.extension()
-    val gradlePath = TestLocator.gradleProjectPath(file, root)
-    if (gradlePath != null) {
+    val gradleProjectDir = TestLocator.gradleProjectDir(file, root)
+    val sourceSet = gradleProjectDir?.let { RunCommands.sourceSetIn(it, file) }
+    if (gradleProjectDir != null && sourceSet != null) {
+        val gradlePath = TestLocator.gradleProjectPath(file, root) ?: return null
         return RunConfiguration(
             name = simpleName(target.className),
             workingDir = root,
-            args = RunCommands.gradleMainArgs(gradlePath, target.className, RunCommands.sourceSetFor(file)),
+            args = RunCommands.gradleMainArgs(gradlePath, target.className, sourceSet),
             kind = RunKind.APPLICATION,
         )
     }
-    if (extension != "java") return null
+    if (file.extension() != "java" || !target.isFirstTopLevelClass) return null
     val command = RunCommands.direct(file) ?: return null
     return RunConfiguration(
         name = simpleName(target.className),
-        workingDir = root,
+        workingDir = file.parent ?: root,
         kind = RunKind.APPLICATION,
         command = command,
     )
+}
+
+/** Why [file]'s entry point cannot start here, or null when it can or has no entry point. */
+fun mainConfigurationProblem(
+    session: ProjectSession,
+    file: Path,
+    target: MainLocator.MainTarget?,
+): String? {
+    if (target == null || RunCommands.isScript(file)) return null
+    val name = file.fileName?.toString() ?: file.toString()
+    val gradleProjectDir = TestLocator.gradleProjectDir(file, session.project.root)
+    val inSourceSet = gradleProjectDir != null && RunCommands.sourceSetIn(gradleProjectDir, file) != null
+    if (inSourceSet) return null
+    if (file.extension() == "java" && !target.isFirstTopLevelClass) {
+        return "Cannot run $name: the main class is not the first top-level class"
+    }
+    if (file.extension() == "kt" && gradleProjectDir != null) {
+        return "Cannot run $name: not in a source set"
+    }
+    return null
 }
 
 /** The runnable entries of the selected file: its main, then the test at the caret. */
@@ -116,6 +139,7 @@ fun openContextActions(state: AppState): Boolean {
     }
     state.contextActions = actions
     state.contextActionsVisible = true
+    state.focus = KeyContext.CONTEXT_POPUP
     state.statusMessage = null
     return true
 }
@@ -125,7 +149,7 @@ fun openRunConfigurationChooser(state: AppState): Boolean {
     val session = state.session ?: return false
     val current = fileRunConfigurations(state)
     val recent = session.project.service<RunManager>().recent.filter { candidate ->
-        current.none { it.name == candidate.name }
+        current.none { it.identity == candidate.identity }
     }
     val choices = current + recent
     if (choices.isEmpty()) {
@@ -134,6 +158,7 @@ fun openRunConfigurationChooser(state: AppState): Boolean {
     }
     state.runConfigurationChoices = choices
     state.runConfigurationsVisible = true
+    state.focus = KeyContext.CONTEXT_POPUP
     state.statusMessage = null
     return true
 }
@@ -143,9 +168,13 @@ fun runContextAction(state: AppState, kind: ContextActionKind): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected as? TextFileEditor ?: return false
     val manager = session.project.service<RunManager>()
+    val main = if (kind == ContextActionKind.RUN_MAIN) {
+        MainLocator.locate(editor.value.text, editor.file.name)
+    } else {
+        null
+    }
     val started = when (kind) {
-        ContextActionKind.RUN_MAIN ->
-            runMain(session, editor.file.path, MainLocator.locate(editor.value.text, editor.file.name))
+        ContextActionKind.RUN_MAIN -> runMain(session, editor.file.path, main)
         ContextActionKind.RUN_TEST, ContextActionKind.RUN_TEST_CLASS -> {
             val found = TestLocator.locate(editor.value.text, editor.value.selection.start) ?: return false
             val target = if (kind == ContextActionKind.RUN_TEST_CLASS) found.copy(methodName = null) else found
@@ -157,7 +186,12 @@ fun runContextAction(state: AppState, kind: ContextActionKind): Boolean {
             true
         }
     }
-    if (started) state.toolWindows.activate("run")
+    if (started) {
+        state.statusMessage = null
+        state.toolWindows.activate("run")
+    } else if (kind == ContextActionKind.RUN_MAIN) {
+        state.statusMessage = mainConfigurationProblem(session, editor.file.path, main) ?: state.statusMessage
+    }
     return started
 }
 

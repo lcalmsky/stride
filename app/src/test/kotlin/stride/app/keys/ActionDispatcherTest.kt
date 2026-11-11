@@ -206,12 +206,12 @@ class ActionDispatcherTest {
     @Test
     fun `context actions open with the main first under the caret`() {
         val root = temp.resolve("context-project")
-        Files.createDirectories(root)
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
-        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        Files.writeString(root.resolve("src/main/kotlin/demo/Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
         state.openFolder(root)
         val session = requireNotNull(state.session)
-        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
         editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
 
         assertTrue(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })
@@ -223,14 +223,14 @@ class ActionDispatcherTest {
     @Test
     fun `run context falls back from the test to the file main`() {
         val root = temp.resolve("main-project")
-        Files.createDirectories(root)
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
-        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        Files.writeString(root.resolve("src/main/kotlin/demo/Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
         state.openFolder(root)
         val session = requireNotNull(state.session)
         val manager = session.project.service<RunManager>()
         manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
-        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
         editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
 
         state.focus = KeyContext.EDITOR
@@ -255,11 +255,11 @@ class ActionDispatcherTest {
         assertEquals("Nothing to run here", state.statusMessage)
 
         val root = temp.resolve("plain-run-project")
-        Files.createDirectories(root)
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
-        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n}\n")
+        Files.writeString(root.resolve("src/main/kotlin/demo/Main.kt"), "package demo\n\nfun main() {\n}\n")
         state.openFolder(root)
-        val mainEditor = requireNotNull(state.session).editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        val mainEditor = requireNotNull(state.session).editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
         mainEditor.updateValue(TextFieldValue(mainEditor.value.text, TextRange(mainEditor.value.text.indexOf("fun main"))))
         val mainManager = requireNotNull(state.session).project.service<RunManager>()
         mainManager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
@@ -287,9 +287,9 @@ class ActionDispatcherTest {
     @Test
     fun `choose run configuration lists the file entries then the recent runs`() {
         val root = temp.resolve("choose-project")
-        Files.createDirectories(root)
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
         Files.writeString(root.resolve("build.gradle.kts"), "")
-        Files.writeString(root.resolve("Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
+        Files.writeString(root.resolve("src/main/kotlin/demo/Main.kt"), "package demo\n\nfun main() {\n    println(1)\n}\n")
         state.openFolder(root)
         val session = requireNotNull(state.session)
         val manager = session.project.service<RunManager>()
@@ -302,13 +302,71 @@ class ActionDispatcherTest {
                 kind = RunKind.TEST,
             ),
         )
-        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
         editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("println"))))
 
         assertTrue(dispatchAction(ActionId.CHOOSE_RUN_CONFIGURATION, state) { null })
 
         assertTrue(state.runConfigurationsVisible)
         assertEquals(listOf("MainKt", "previous"), state.runConfigurationChoices.map { it.name })
+    }
+
+    @Test
+    fun `a kotlin main outside a source set reports the reason`() {
+        val root = temp.resolve("outside-source-set")
+        Files.createDirectories(root.resolve("playground"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        val file = root.resolve("playground/Main.kt")
+        Files.writeString(file, "package demo\n\nfun main() {\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("fun main"))))
+
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.RUN_CONTEXT, state) { null })
+
+        assertEquals("Cannot run Main.kt: not in a source set", state.statusMessage)
+        assertNull(session.project.service<RunManager>().lastRun)
+    }
+
+    @Test
+    fun `a java main in a later top-level class is not run directly`() {
+        val root = temp.resolve("java-second-class")
+        Files.createDirectories(root)
+        val file = root.resolve("App.java")
+        Files.writeString(
+            file,
+            "class Helper {\n}\n\nclass App {\n    public static void main(String[] args) {\n    }\n}\n",
+        )
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("main"))))
+
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.RUN_CONTEXT, state) { null })
+
+        assertEquals("Cannot run App.java: the main class is not the first top-level class", state.statusMessage)
+        assertNull(session.project.service<RunManager>().lastRun)
+    }
+
+    @Test
+    fun `a direct script run starts in the script's directory`() {
+        val root = temp.resolve("script-project")
+        Files.createDirectories(root.resolve("scripts"))
+        Files.writeString(root.resolve("scripts/report.py"), "print('hi')\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(), "fake") }
+        session.editors.openFile(VFile(root.resolve("scripts/report.py")))
+
+        assertTrue(dispatchAction(ActionId.RUN, state) { null })
+
+        val configuration = requireNotNull(manager.lastRun)
+        assertEquals(root.resolve("scripts").toAbsolutePath().normalize(), configuration.workingDir.toAbsolutePath().normalize())
+        assertEquals(RunKind.APPLICATION, configuration.kind)
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

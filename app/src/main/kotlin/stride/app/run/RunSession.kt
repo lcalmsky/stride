@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 
 enum class TestStatus { RUNNING, PASSED, FAILED, SKIPPED }
 
@@ -74,10 +76,21 @@ class RunSession(
     var exitCode: Int? by mutableStateOf(null)
         private set
 
+    /** A line the writer thread could not deliver; the console input puts it back. */
+    var undeliveredInput: String? by mutableStateOf(null)
+        private set
+
     val isRunning: Boolean get() = exitCode == null
+
+    private val pendingInput = ArrayBlockingQueue<String>(MAX_PENDING_INPUT)
+    private var writer: Thread? = null
 
     fun start() {
         Thread({ read() }, "stride-run-reader").apply {
+            isDaemon = true
+            start()
+        }
+        writer = Thread({ writeInputs() }, "stride-run-writer").apply {
             isDaemon = true
             start()
         }
@@ -102,21 +115,49 @@ class RunSession(
         exitCode = code
     }
 
-    /** Writes [line] and a newline to the child's stdin and echoes it in the console. */
+    /**
+     * Queues [line] and a newline for the child's stdin. Returns `false` when the process has
+     * ended or the bounded queue is full; the caller keeps the typed line in that case.
+     */
     fun writeInput(line: String): Boolean {
         if (!isRunning) return false
-        return runCatching {
-            process.outputStream.write((line + "\n").toByteArray(Charsets.UTF_8))
-            process.outputStream.flush()
+        return pendingInput.offer(line)
+    }
+
+    /** Clears [undeliveredInput] after the console input has put the line back. */
+    fun clearUndeliveredInput() {
+        undeliveredInput = null
+    }
+
+    private fun writeInputs() {
+        while (isRunning) {
+            val line = try {
+                pendingInput.poll(INPUT_POLL_MILLIS, TimeUnit.MILLISECONDS) ?: continue
+            } catch (_: InterruptedException) {
+                return
+            }
+            val written = runCatching {
+                process.outputStream.write((line + "\n").toByteArray(Charsets.UTF_8))
+                process.outputStream.flush()
+            }.isSuccess
+            if (!written) {
+                undeliveredInput = line
+                return
+            }
             consoleLines.add(line)
-            true
-        }.getOrDefault(false)
+        }
     }
 
     fun stop() {
+        writer?.interrupt()
         runCatching {
             process.toHandle().descendants().forEach { it.destroyForcibly() }
         }
         process.destroyForcibly()
+    }
+
+    companion object {
+        const val MAX_PENDING_INPUT = 64
+        private const val INPUT_POLL_MILLIS = 100L
     }
 }

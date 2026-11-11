@@ -171,7 +171,7 @@ fun App(
                                 modifier = Modifier.fillMaxSize(),
                                 focused = state.focus == KeyContext.EDITOR,
                             )
-                            TestGutterMarkers(session, state.toolWindows)
+                            TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
                         }
                     }
                     if (state.toolWindows.visible) {
@@ -202,11 +202,7 @@ fun App(
                 Modifier
                     .fillMaxSize()
                     .onFocusChanged { focus ->
-                        if (focus.hasFocus) {
-                            state.focus = KeyContext.SEARCH_POPUP
-                        } else if (state.focus == KeyContext.SEARCH_POPUP) {
-                            state.focus = KeyContext.GLOBAL
-                        }
+                        if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
                     },
             ) {
                 val search = remember(session) { SearchEverywhere(session.project, state, chooseFolder) }
@@ -223,9 +219,13 @@ fun App(
                                     is VFile -> session.editors.openFile(item)
                                     is Declaration -> session.editors.openFileAtLine(item.file, item.line)
                                 }
+                                refocusEditor(state)
                             }
                         },
-                        onClose = { state.searchVisible = false },
+                        onClose = {
+                            state.searchVisible = false
+                            refocusEditor(state)
+                        },
                     )
                 }
             }
@@ -235,11 +235,7 @@ fun App(
                 Modifier
                     .fillMaxSize()
                     .onFocusChanged { focus ->
-                        if (focus.hasFocus) {
-                            state.focus = KeyContext.SEARCH_POPUP
-                        } else if (state.focus == KeyContext.SEARCH_POPUP) {
-                            state.focus = KeyContext.GLOBAL
-                        }
+                        if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
                     },
             ) {
                 FindInPathPopup(
@@ -250,8 +246,12 @@ fun App(
                             editor.updateValue(TextFieldValue(editor.value.text, TextRange(hit.start, hit.end)))
                             runCatching { editor.focusRequester.requestFocus() }
                         }
+                        refocusEditor(state)
                     },
-                    onClose = { state.findInPathVisible = false },
+                    onClose = {
+                        state.findInPathVisible = false
+                        refocusEditor(state)
+                    },
                 )
             }
         }
@@ -260,11 +260,7 @@ fun App(
                 Modifier
                     .fillMaxSize()
                     .onFocusChanged { focus ->
-                        if (focus.hasFocus) {
-                            state.focus = KeyContext.SEARCH_POPUP
-                        } else if (state.focus == KeyContext.SEARCH_POPUP) {
-                            state.focus = KeyContext.GLOBAL
-                        }
+                        if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
                     },
             ) {
                 RecentFilesPopup(
@@ -273,8 +269,12 @@ fun App(
                     onChoose = { file ->
                         state.recentFilesVisible = false
                         session.editors.openFile(file)
+                        refocusEditor(state)
                     },
-                    onClose = { state.recentFilesVisible = false },
+                    onClose = {
+                        state.recentFilesVisible = false
+                        refocusEditor(state)
+                    },
                 )
             }
         }
@@ -292,6 +292,7 @@ fun App(
                     actions = state.contextActions,
                     onChoose = { action ->
                         state.contextActionsVisible = false
+                        refocusEditor(state)
                         runContextAction(state, action.kind)
                     },
                     onClose = {
@@ -313,8 +314,10 @@ fun App(
             ) {
                 RunConfigurationPopup(
                     configurations = state.runConfigurationChoices,
+                    projectRoot = session.project.root,
                     onChoose = { configuration ->
                         state.runConfigurationsVisible = false
+                        refocusEditor(state)
                         session.project.service<RunManager>().run(configuration)
                         state.toolWindows.activate("run")
                     },

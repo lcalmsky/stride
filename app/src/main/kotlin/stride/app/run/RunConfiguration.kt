@@ -15,4 +15,15 @@ data class RunConfiguration(
     val args: List<String> = emptyList(),
     val kind: RunKind,
     val command: List<String>? = null,
+) {
+    /** Everything but [name]: two runs with the same identity are the same configuration. */
+    val identity: RunIdentity
+        get() = RunIdentity(kind, workingDir.toAbsolutePath().normalize(), args, command)
+}
+
+data class RunIdentity(
+    val kind: RunKind,
+    val workingDir: Path,
+    val args: List<String>,
+    val command: List<String>?,
 )
