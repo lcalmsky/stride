@@ -51,6 +51,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.theme.DesignTokens
@@ -85,15 +87,21 @@ fun CompletionPopup(
     var input by remember(request) {
         mutableStateOf(TextFieldValue(request.prefix, TextRange(request.prefix.length)))
     }
+    var candidates by remember(request) { mutableStateOf<List<String>?>(null) }
     val query = input.text
     var selectedIndex by remember(request, query) { mutableStateOf(0) }
-    val items = remember(request, query) { CodeCompletion.candidates(query, request.candidates) }
+    val items = remember(request, query, candidates) {
+        CodeCompletion.candidates(query, candidates.orEmpty())
+    }
     val focusRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
 
+    LaunchedEffect(request) {
+        candidates = withContext(Dispatchers.Default) { request.candidates() }
+    }
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
@@ -156,7 +164,7 @@ fun CompletionPopup(
             CompletionHeader(input, focusRequester) { input = it }
             if (items.isEmpty()) {
                 Text(
-                    "No matching names",
+                    if (candidates == null) "Loading…" else "No matching names",
                     color = DesignTokens.textSecondaryOnGlass,
                     fontSize = DesignTokens.uiTextSize,
                     fontFamily = DesignTokens.uiFont,
@@ -266,6 +274,7 @@ fun RenamePopup(
     var input by remember(initialName) {
         mutableStateOf(TextFieldValue(initialName, TextRange(0, initialName.length)))
     }
+    var emptyHint by remember(initialName) { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
@@ -303,7 +312,11 @@ fun RenamePopup(
                                 true
                             }
                             Key.Enter, Key.NumPadEnter -> {
-                                if (input.text.isNotEmpty()) onRename(input.text)
+                                if (input.text.isEmpty()) {
+                                    emptyHint = true
+                                } else {
+                                    onRename(input.text)
+                                }
                                 true
                             }
                             else -> false
@@ -324,7 +337,10 @@ fun RenamePopup(
             Box(Modifier.fillMaxWidth().padding(horizontal = DesignTokens.space16, vertical = 6.dp)) {
                 BasicTextField(
                     value = input,
-                    onValueChange = { input = it },
+                    onValueChange = {
+                        input = it
+                        emptyHint = false
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focusRequester)
@@ -345,6 +361,15 @@ fun RenamePopup(
                         fontFamily = DesignTokens.uiFont,
                     )
                 }
+            }
+            if (emptyHint) {
+                Text(
+                    "Type a new name",
+                    color = DesignTokens.neonAmber,
+                    fontSize = DesignTokens.labelTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                    modifier = Modifier.padding(horizontal = DesignTokens.space16),
+                )
             }
             PopupFooter("⏎ rename · esc cancel")
         }

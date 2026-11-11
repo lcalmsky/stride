@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
@@ -251,6 +252,18 @@ class TextFileEditorActionsTest {
 
         assertEquals(0, editor.renameWord("foo", "bar"))
         assertEquals("foo", editor.value.text)
+    }
+
+    @Test
+    fun `identifier and declaration scans are cached per text revision`() {
+        val editor = editor("fun a()\nval value = 1")
+        assertSame(editor.identifiers(), editor.identifiers())
+        assertEquals(listOf("fun", "a", "val", "value"), editor.identifiers())
+        assertEquals(listOf(0, 1), editor.declarationLines)
+
+        editor.updateValue(TextFieldValue("class B", TextRange(0)))
+        assertEquals(listOf("class", "B"), editor.identifiers())
+        assertEquals(listOf(0), editor.declarationLines)
     }
 
     @Test

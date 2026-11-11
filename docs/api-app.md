@@ -93,6 +93,7 @@ class TextFileEditor(file: VFile, readOnly: Boolean = false) : FileEditor {
     val value: TextFieldValue                 // text + selection, Compose snapshot state
     val spans: List<TokenSpan>                // current highlighter spans
     val isDisposed: Boolean
+    var onFocusContext: (KeyContext) -> Unit   // reports an editor sub-field's focus context
     fun updateValue(newValue: TextFieldValue) // feeds only the changed range to the highlighter
     fun setText(newText: String)
 }
@@ -277,7 +278,9 @@ enum class ActionId {
     HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
 }
 
-enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP }
+enum class KeyContext {
+    GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
+}
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
@@ -442,18 +445,20 @@ last line (down); line comments insert `prefix + " "` at the smallest indentatio
 remove it again when every non-blank touched line is already commented (blank lines are left
 alone); block comments wrap the selection or strip an outer `prefix…suffix`; indent inserts the
 unit and widens the selection to the touched lines; unindent removes up to `unit.length` leading
-whitespace; `gotoLine` is 1-based and clamps to the nearest line end.
+whitespace; `gotoLine` is 1-based and clamps to the nearest line end. Actions that insert or join
+lines use the document's own separator, so a CRLF file keeps its CRLF endings.
 
 The selection and caret actions are pure as well. `selectWord` returns the next larger selection
 around the input — word, string-literal contents, bracket contents, the brackets themselves, the
 touched lines, then the whole text — or `null` at the top; `wordAt` is the identifier touching an
 offset (including one ending exactly there), and `identifierPrefix` is the empty-or-filled range
 of identifier characters just before it. `toggleCase` upper-cases the selection or caret word when
-it holds a lower-case letter and lower-cases it otherwise. `joinLines` merges the next line, or
-every line the selection touches, into the first: the joined line loses its indentation, one
-space separates the parts unless it starts with `)`, `]`, `.` or `,`, and the caret lands on the
-first join point. `startNewLine` inserts a line with the current line's indentation after (or
-before) it and puts the caret there. `matchBrace`, `codeBlockStart` and `codeBlockEnd` skip
+it holds a lower-case letter and lower-cases it otherwise. `joinLines` merges the next line (also
+when the selection touches only one line), or every line the selection touches, into the first:
+the joined line loses its indentation, one space separates the parts unless it starts with `)`,
+`]`, `.` or `,`, and the caret lands on the first join point. `startNewLine` inserts a line with
+the current line's indentation after (or before) it and puts the caret there. `matchBrace`,
+`codeBlockStart` and `codeBlockEnd` skip
 characters inside comments and string literals; the two block functions return `null` outside any
 block. `wholeLine` includes the trailing newline when there is one. `declarationTarget` picks the
 previous or next line in a declaration-line list, which `DeclarationScan.lines(fileName, text)`
@@ -463,8 +468,8 @@ distance from the caret — preceding occurrences first, then following ones, th
 `otherTexts` — and drops duplicates.
 
 `CodeCompletion.candidates(prefix, names, limit)` ranks names with `NameMatcher`;
-`CodeCompletion.identifiers(text)` lists a file's identifiers and `keywordsFor(fileName)` the
-Kotlin or Java keywords.
+`CodeCompletion.identifiers(text, excluded)` lists a file's identifiers (leaving out the range
+that is exactly the one being completed) and `keywordsFor(fileName)` the Kotlin or Java keywords.
 
 `stride.app.editor.UndoManager` keeps the undo and redo stacks:
 
@@ -538,8 +543,9 @@ restores it, and returns the count. `replaceRange` is the popup's insert path.
 
 `GOTO_LINE` sets `gotoLineVisible`, which draws a small `raised` panel in the editor's top-right
 corner with a `Go to line:` label and a `line[:column]` field. Enter calls `gotoLine(input)` and
-closes the panel on success; Esc closes it. The panel is inside the editor area, so
-`AppState.focus` stays `EDITOR`.
+closes the panel on success; Esc closes it. While the field has focus it reports the
+`EDITOR_FIELD` context through `TextFileEditor.onFocusContext`, so `EDITOR` bindings do not act
+on the buffer while typing there; closing the panel restores `EDITOR`.
 
 `dispatchAction` sends `UNDO`/`REDO` to the selected `TextFileEditor` and always returns `true`
 (with no selected editor it does nothing): `BasicTextField` maps ⌘Z/⌘⇧Z to its own undo and
@@ -550,12 +556,14 @@ the other open editors' text to the editor.
 
 ### Completion and rename popups
 
-`CODE_COMPLETION` calls `openCodeCompletion(state)`: it collects the caret's identifier prefix,
-the identifiers of the current file, the other open files, the `DeclarationIndex` names and the
-language keywords, ranks them with `CodeCompletion.candidates` and stores a `CompletionRequest`
-in `AppState.completion`. `RENAME_ELEMENT` calls `openRename(state)`, which stores a
-`RenameRequest` with the word at the caret in `AppState.rename`. Both set
-`AppState.focus = CONTEXT_POPUP`.
+`CODE_COMPLETION` calls `openCodeCompletion(state)`: it reads the caret's identifier prefix and
+stores a `CompletionRequest` in `AppState.completion`. The popup ranks the names once per open,
+off the UI thread: the identifiers of the current file (the one under the caret left out), the
+other open files, the `DeclarationIndex` names and the language keywords, through
+`CodeCompletion.candidates`. Editor identifier scans and declaration-line scans are memoised per
+text revision. `RENAME_ELEMENT` calls `openRename(state)`, which stores a `RenameRequest` with
+the word at the caret in `AppState.rename`. Both refuse a read-only editor with a
+`File is read-only` status message, and both set `AppState.focus = CONTEXT_POPUP`.
 
 `App` draws `CompletionPopup` and `RenamePopup` over the whole window. They are modal: while one
 is open `Keymap.actionFor` answers no `GLOBAL` binding, Escape closes it, and both closing paths
@@ -564,7 +572,8 @@ popup has its own field, prefilled with the prefix and with the caret at its end
 filtering inside the popup. ↑↓ move the selection, Enter or Tab inserts the chosen name in place
 of the original prefix, and a click on a row inserts it too. The rename popup's field is prefilled
 with the old name and selected; Enter applies `applyRename`, which sets the status bar to
-`Renamed N occurrences`.
+`Renamed N occurrences`, or to `Nothing to rename` when the name did not change. Enter on an
+empty field keeps the popup open and shows a hint.
 
 ### Caret following
 

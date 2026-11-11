@@ -14,7 +14,9 @@ enum class ActionId {
     HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
 }
 
-enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP }
+enum class KeyContext {
+    GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
+}
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
@@ -160,8 +162,10 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control shift DOWN", ActionId.METHOD_DOWN, KeyContext.EDITOR)
     // HippieCompletion alt SLASH
     bind("alt SLASH", ActionId.HIPPIE_COMPLETION, KeyContext.EDITOR)
-    // CodeCompletion control SPACE
+    // CodeCompletion control SPACE; the system input-source switch often owns this stroke,
+    // so control alt SPACE is the same action for keyboards with more than one input source.
     bind("control SPACE", ActionId.CODE_COMPLETION, KeyContext.EDITOR)
+    bind("control alt SPACE", ActionId.CODE_COMPLETION, KeyContext.EDITOR)
     // RenameElement shift F6
     bind("shift F6", ActionId.RENAME_ELEMENT, KeyContext.EDITOR)
     // $Copy and $Cut with an empty selection take the whole line

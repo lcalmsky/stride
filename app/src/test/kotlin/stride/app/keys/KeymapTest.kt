@@ -114,8 +114,9 @@ class KeymapTest {
         assertEquals(ActionId.METHOD_DOWN, action("control shift DOWN", KeyContext.EDITOR))
         // HippieCompletion alt SLASH
         assertEquals(ActionId.HIPPIE_COMPLETION, action("alt SLASH", KeyContext.EDITOR))
-        // CodeCompletion control SPACE
+        // CodeCompletion control SPACE; control alt SPACE avoids the system input-source switch
         assertEquals(ActionId.CODE_COMPLETION, action("control SPACE", KeyContext.EDITOR))
+        assertEquals(ActionId.CODE_COMPLETION, action("control alt SPACE", KeyContext.EDITOR))
         // RenameElement shift F6
         assertEquals(ActionId.RENAME_ELEMENT, action("shift F6", KeyContext.EDITOR))
         // $Copy and $Cut take the whole line when nothing is selected
@@ -157,6 +158,14 @@ class KeymapTest {
         // Escape is not a keymap binding: the popup itself closes on it.
         assertNull(action("ESCAPE", KeyContext.CONTEXT_POPUP))
         assertNull(action("ESCAPE", KeyContext.SEARCH_POPUP))
+    }
+
+    @Test
+    fun `editor sub-fields take no editor binding but still reach global ones`() {
+        assertNull(action("meta C", KeyContext.EDITOR_FIELD))
+        assertNull(action("control SPACE", KeyContext.EDITOR_FIELD))
+        assertNull(action("ESCAPE", KeyContext.EDITOR_FIELD))
+        assertEquals(ActionId.SAVE, action("meta S", KeyContext.EDITOR_FIELD))
     }
 
     @Test

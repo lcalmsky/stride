@@ -19,8 +19,9 @@ object EditActions {
         val end = lineEnd(text, min)
         val line = text.substring(start, end)
         val column = min - start
-        val newText = text.substring(0, end) + "\n" + line + text.substring(end)
-        return EditResult(newText, TextRange(end + 1 + column))
+        val separator = separatorAfter(text, end)
+        val newText = text.substring(0, end) + separator + line + text.substring(end)
+        return EditResult(newText, TextRange(end + separator.length + column))
     }
 
     fun deleteLines(text: String, selection: TextRange): EditResult {
@@ -193,7 +194,20 @@ object EditActions {
     }
 
     /** Every identifier in [text], in document order. */
-    fun identifierRanges(text: String): List<IntRange> = IDENTIFIER.findAll(text).map { it.range }.toList()
+    fun identifierRanges(text: String): List<IntRange> {
+        val ranges = ArrayList<IntRange>()
+        var index = 0
+        while (index < text.length) {
+            if (!isIdentifierStart(text[index])) {
+                index++
+                continue
+            }
+            val start = index
+            while (index < text.length && isIdentifierPart(text[index])) index++
+            ranges.add(start until index)
+        }
+        return ranges
+    }
 
     /**
      * The next larger selection around [selection]: the word, string-literal contents, bracket
@@ -239,14 +253,20 @@ object EditActions {
         val collapsed = selection.min == selection.max
         val lastCovered = if (collapsed) selection.min else selection.max - 1
         val lastLine = lineIndexOf(text, lastCovered)
-        val joinThrough = if (collapsed) firstLine + 1 else lastLine
+        val joinThrough = if (collapsed || lastLine == firstLine) firstLine + 1 else lastLine
         if (joinThrough <= firstLine || joinThrough > lines.lastIndex) return EditResult(text, selection)
 
         val merged = StringBuilder(lines[firstLine].trimEnd())
         var joinPoint = -1
         for (line in firstLine + 1..joinThrough) {
-            val trimmed = lines[line].trimStart()
-            val separator = if (trimmed.isEmpty() || trimmed[0] in NO_SPACE_BEFORE) "" else " "
+            val content = lines[line].trimStart()
+            // The last joined line keeps the carriage return that terminates the merged line.
+            val trimmed = if (line == joinThrough && content.endsWith('\r')) {
+                content.trimEnd() + '\r'
+            } else {
+                content.trimEnd()
+            }
+            val separator = if (trimmed.isEmpty() || trimmed == "\r" || trimmed[0] in NO_SPACE_BEFORE) "" else " "
             if (joinPoint < 0) joinPoint = merged.length + separator.length
             merged.append(separator).append(trimmed)
         }
@@ -263,18 +283,23 @@ object EditActions {
         val start = lineStart(text, caret)
         val end = lineEnd(text, caret)
         val indent = text.substring(start, start + leadingWhitespaceLength(text.substring(start, end)))
+        val separator = lineSeparator(text, end)
         return if (before) {
-            val newText = text.substring(0, start) + indent + "\n" + text.substring(start)
+            val newText = text.substring(0, start) + indent + separator + text.substring(start)
             EditResult(newText, TextRange(start + indent.length))
         } else {
-            val newText = text.substring(0, end) + "\n" + indent + text.substring(end)
-            EditResult(newText, TextRange(end + 1 + indent.length))
+            val carriageReturn = end < text.length && text[end] == '\n' && end > start && text[end - 1] == '\r'
+            val contentEnd = if (carriageReturn) end - 1 else end
+            val newText = text.substring(0, contentEnd) + separator + indent + text.substring(contentEnd)
+            EditResult(newText, TextRange(contentEnd + separator.length + indent.length))
         }
     }
 
     /** The bracket matching the one at or just before [caret], ignoring strings and comments. */
-    fun matchBrace(text: String, caret: Int): TextRange? {
-        val scan = CodeScan(text)
+    fun matchBrace(text: String, caret: Int): TextRange? = matchBrace(text, caret, CodeScan(text))
+
+    /** [matchBrace] with a [scan] the caller shares across the actions of one press. */
+    internal fun matchBrace(text: String, caret: Int, scan: CodeScan): TextRange? {
         val position = caret.coerceIn(0, text.length)
         val index = when {
             position < text.length && scan.isCode(position) && text[position] in BRACKET_OPENING + BRACKET_CLOSING -> position
@@ -285,8 +310,10 @@ object EditActions {
     }
 
     /** The `{` that encloses [caret], or `null` outside any block. */
-    fun codeBlockStart(text: String, caret: Int): TextRange? {
-        val scan = CodeScan(text)
+    fun codeBlockStart(text: String, caret: Int): TextRange? = codeBlockStart(text, caret, CodeScan(text))
+
+    /** [codeBlockStart] with a [scan] the caller shares across the actions of one press. */
+    internal fun codeBlockStart(text: String, caret: Int, scan: CodeScan): TextRange? {
         val position = caret.coerceIn(0, text.length)
         var depth = 0
         for (index in position - 1 downTo 0) {
@@ -300,9 +327,11 @@ object EditActions {
     }
 
     /** The `}` that closes the block holding [caret], or `null` outside any block. */
-    fun codeBlockEnd(text: String, caret: Int): TextRange? {
-        if (codeBlockStart(text, caret) == null) return null
-        val scan = CodeScan(text)
+    fun codeBlockEnd(text: String, caret: Int): TextRange? = codeBlockEnd(text, caret, CodeScan(text))
+
+    /** [codeBlockEnd] with a [scan] the caller shares across the actions of one press. */
+    internal fun codeBlockEnd(text: String, caret: Int, scan: CodeScan): TextRange? {
+        if (codeBlockStart(text, caret, scan) == null) return null
         val position = caret.coerceIn(0, text.length)
         val startsOnBrace = position < text.length && scan.isCode(position) && text[position] == '{'
         val from = if (startsOnBrace) position + 1 else position
@@ -423,6 +452,9 @@ object EditActions {
         val lastCovered = if (selection.max > selection.min) selection.max - 1 else selection.max
         return TextRange(start, lineEnd(text, lastCovered))
     }
+
+    private fun isIdentifierStart(character: Char): Boolean =
+        character.isLetter() || character == '_' || character == '$'
 
     private fun isIdentifierPart(character: Char): Boolean =
         character.isLetterOrDigit() || character == '_' || character == '$'
@@ -562,9 +594,29 @@ object EditActions {
         while (i < line.length && (line[i] == ' ' || line[i] == '\t')) i++
         return i
     }
+
+    /** The separator ending the line whose content ends at [lineEnd]. */
+    private fun lineSeparator(text: String, lineEnd: Int): String = when {
+        lineEnd < text.length && text[lineEnd] == '\n' && lineEnd > 0 && text[lineEnd - 1] == '\r' -> "\r\n"
+        lineEnd < text.length && text[lineEnd] == '\n' -> "\n"
+        // A final lone carriage return already supplies half of a CRLF.
+        lineEnd > 0 && text[lineEnd - 1] == '\r' -> "\n"
+        else -> documentLineSeparator(text)
+    }
+
+    /** The separator to insert before [offset] when the line ends there. */
+    private fun separatorAfter(text: String, offset: Int): String = when {
+        offset < text.length -> "\n"
+        offset > 0 && text[offset - 1] == '\r' -> "\n"
+        else -> documentLineSeparator(text)
+    }
+
+    private fun documentLineSeparator(text: String): String {
+        val newline = text.indexOf('\n')
+        return if (newline > 0 && text[newline - 1] == '\r') "\r\n" else "\n"
+    }
 }
 
-private val IDENTIFIER = Regex("[A-Za-z_$][A-Za-z0-9_$]*")
 private const val BRACKET_OPENING = "([{"
 private const val BRACKET_CLOSING = ")]}"
 private val NO_SPACE_BEFORE = charArrayOf(')', ']', '.', ',')
@@ -579,7 +631,7 @@ private val BRACKET_PARTNER = mapOf(
  * The scan is best effort: a line comment ends at the newline, and a normal string ends at its
  * quote or the newline.
  */
-private class CodeScan(private val text: String) {
+internal class CodeScan(private val text: String) {
     private val kinds = ByteArray(text.length)
 
     /** Content ranges of string and character literals, delimiters excluded. */

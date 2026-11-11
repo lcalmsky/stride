@@ -22,12 +22,14 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.isSelected
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
@@ -45,6 +47,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.editor.COMPLETION_FIELD_TAG
+import stride.app.editor.COMPLETION_SELECTED_ROW_TAG
 import stride.app.editor.RENAME_FIELD_TAG
 import stride.app.editor.TextFileEditor
 import stride.app.keys.ActionId
@@ -974,6 +977,10 @@ class KeyFlowUiTest {
             assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
             waitForIdle()
             onNodeWithTag(COMPLETION_FIELD_TAG).assertIsFocused()
+            // Candidates are computed off the UI thread, so the list arrives a moment later.
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithTag(COMPLETION_SELECTED_ROW_TAG).fetchSemanticsNodes().isNotEmpty()
+            }
 
             onRoot().performKeyInput {
                 withKeyDown(Key.CtrlLeft) { pressKey(Key.R) }
@@ -1045,6 +1052,83 @@ class KeyFlowUiTest {
             assertEquals("bar = bar + fooBar\n", editor.value.text)
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
             onNode(hasSetTextAction()).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `rename with an empty field stays open and shows a hint`() = runComposeUiTest {
+        val root = temp.resolve("rename-empty-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "foo = foo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.rename != null }
+            waitForIdle()
+            onNodeWithTag(RENAME_FIELD_TAG).performTextClearance()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitForIdle()
+
+            assertTrue(state.rename != null)
+            onNodeWithText("Type a new name").assertExists()
+            assertEquals("foo = foo\n", editor.value.text)
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.rename == null }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `editor shortcuts stay off the buffer while the goto line field is focused`() = runComposeUiTest {
+        val root = temp.resolve("goto-field-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "one\ntwo\nthree")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { pressKey(Key.L) }
+            }
+            waitUntil(timeoutMillis = 5_000) { editor.gotoLineVisible }
+            onNodeWithTag(TextFileEditor.GOTO_LINE_TAG).assertIsFocused()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR_FIELD }
+
+            val before = editor.value.text
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { pressKey(Key.C) }
+            }
+            onRoot().performKeyInput {
+                withKeyDown(Key.CtrlLeft) { pressKey(Key.Spacebar) }
+            }
+            waitForIdle()
+
+            assertEquals(before, editor.value.text)
+            assertNull(state.completion)
+            assertTrue(editor.gotoLineVisible)
         } finally {
             state.dispose()
         }

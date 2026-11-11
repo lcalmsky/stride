@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.contentTint
@@ -102,6 +104,14 @@ class TextFileEditor(
     private var selectionStep = false
     private var hippieStep = false
     private var hippie: HippieState? = null
+    private var identifiersText: String? = null
+    private var identifierRangesCache: List<IntRange> = emptyList()
+    private var identifiersCache: List<String> = emptyList()
+    private var declarationLinesText: String? = null
+    private var declarationLinesCache: List<Int> = emptyList()
+
+    /** Reports the focus context of editor sub-fields, such as the goto-line input. */
+    var onFocusContext: (KeyContext) -> Unit = {}
 
     val isReadOnly: Boolean get() = readOnly || forcedReadOnly
 
@@ -128,6 +138,34 @@ class TextFileEditor(
         private set
 
     private val text: String get() = value.text
+
+    /**
+     * Identifiers of the current text, skipping the range that is exactly [excluded] — the
+     * identifier being completed. The ranges are scanned once per text revision.
+     */
+    internal fun identifiers(excluded: IntRange? = null): List<String> {
+        val current = text
+        if (identifiersText != current) {
+            identifiersText = current
+            identifierRangesCache = EditActions.identifierRanges(current)
+            identifiersCache = identifierRangesCache.map { current.substring(it.first, it.last + 1) }
+        }
+        if (excluded == null) return identifiersCache
+        return identifierRangesCache.indices
+            .filter { identifierRangesCache[it] != excluded }
+            .map { identifiersCache[it] }
+    }
+
+    /** Declaration start lines of the current text, computed once per text revision. */
+    internal val declarationLines: List<Int>
+        get() {
+            val current = text
+            if (declarationLinesText != current) {
+                declarationLinesText = current
+                declarationLinesCache = DeclarationScan.lines(file.name, current)
+            }
+            return declarationLinesCache
+        }
 
     init {
         savedText = try {
@@ -291,22 +329,22 @@ class TextFileEditor(
             true
         }
         ActionId.EDITOR_MATCH_BRACE -> {
-            moveCaret(EditActions.matchBrace(text, value.selection.start))
+            moveCaret(EditActions.matchBrace(text, value.selection.start, CodeScan(text)))
             true
         }
         ActionId.EDITOR_CODE_BLOCK_START -> {
-            moveCaret(EditActions.codeBlockStart(text, value.selection.start))
+            moveCaret(EditActions.codeBlockStart(text, value.selection.start, CodeScan(text)))
             true
         }
         ActionId.EDITOR_CODE_BLOCK_END -> {
-            moveCaret(EditActions.codeBlockEnd(text, value.selection.start))
+            moveCaret(EditActions.codeBlockEnd(text, value.selection.start, CodeScan(text)))
             true
         }
         ActionId.METHOD_UP, ActionId.METHOD_DOWN -> {
             val target = EditActions.declarationTarget(
                 text,
                 value.selection.start,
-                DeclarationScan.lines(file.name, text),
+                declarationLines,
                 up = action == ActionId.METHOD_UP,
             )
             moveCaret(target)
@@ -612,6 +650,7 @@ class TextFileEditor(
     @Composable
     private fun GotoLinePopup(modifier: Modifier) {
         var input by remember { mutableStateOf("") }
+        var fieldHadFocus by remember { mutableStateOf(false) }
         val inputFocus = remember { FocusRequester() }
         val shape = RoundedCornerShape(8.dp)
         LaunchedEffect(Unit) {
@@ -649,6 +688,15 @@ class TextFileEditor(
                         .width(96.dp)
                         .focusRequester(inputFocus)
                         .testTag(GOTO_LINE_TAG)
+                        .onFocusChanged { focus ->
+                            if (focus.isFocused) {
+                                fieldHadFocus = true
+                                onFocusContext(KeyContext.EDITOR_FIELD)
+                            } else if (fieldHadFocus) {
+                                fieldHadFocus = false
+                                onFocusContext(KeyContext.EDITOR)
+                            }
+                        }
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) {
                                 false

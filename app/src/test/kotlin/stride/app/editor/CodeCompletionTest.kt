@@ -11,6 +11,15 @@ class CodeCompletionTest {
     }
 
     @Test
+    fun `identifiers leave out the one being completed`() {
+        assertEquals(
+            listOf("val", "main"),
+            CodeCompletion.identifiers("val ma = main", excluded = 4..5),
+        )
+        assertEquals(listOf("val", "ma"), CodeCompletion.identifiers("val ma", excluded = 6 until 6))
+    }
+
+    @Test
     fun `candidates rank prefix matches and drop duplicates`() {
         assertEquals(
             listOf("map", "main"),

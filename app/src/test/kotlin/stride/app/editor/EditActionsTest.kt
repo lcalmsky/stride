@@ -412,6 +412,31 @@ class EditActionsTest {
     }
 
     @Test
+    fun `join lines merges the next line when the selection covers one line`() {
+        val text = "one\n    two\nthree"
+        assertEquals(
+            EditResult("one two\nthree", TextRange(4)),
+            EditActions.joinLines(text, TextRange(0, 3)),
+        )
+        assertEquals(
+            EditResult("one two\nthree", TextRange(4)),
+            EditActions.joinLines(text, TextRange(0, 4)),
+        )
+    }
+
+    @Test
+    fun `join lines keeps the carriage returns of a CRLF file`() {
+        assertEquals(
+            EditResult("a b c\r", TextRange(2)),
+            EditActions.joinLines("a\r\n  b\r\n  c\r", TextRange(0, 12)),
+        )
+        assertEquals(
+            EditResult("a b\r\nc", TextRange(2)),
+            EditActions.joinLines("a\r\n  b\r\nc", TextRange(0)),
+        )
+    }
+
+    @Test
     fun `start new line keeps the current line indentation`() {
         assertEquals(
             EditResult("  val x = 1\n  \nnext", TextRange(14)),
@@ -424,6 +449,30 @@ class EditActionsTest {
         assertEquals(
             EditResult("a\n    b\n    ", TextRange(12)),
             EditActions.startNewLine("a\n    b", TextRange(6), before = false),
+        )
+    }
+
+    @Test
+    fun `start new line keeps the CRLF endings of the file`() {
+        assertEquals(
+            EditResult("a\r\n    b\r\n    ", TextRange(14)),
+            EditActions.startNewLine("a\r\n    b", TextRange(5), before = false),
+        )
+        assertEquals(
+            EditResult("\r\na\r\nb", TextRange(0)),
+            EditActions.startNewLine("a\r\nb", TextRange(0), before = true),
+        )
+        assertEquals(
+            EditResult("a\r\n\r\nb", TextRange(3)),
+            EditActions.startNewLine("a\r\nb", TextRange(0), before = false),
+        )
+    }
+
+    @Test
+    fun `duplicate of the last line keeps the CRLF ending of the file`() {
+        assertEquals(
+            EditResult("a\r\nb\r\nb", TextRange(6)),
+            EditActions.duplicateLineOrSelection("a\r\nb", TextRange(3)),
         )
     }
 
@@ -497,6 +546,15 @@ class EditActionsTest {
     @Test
     fun `hippie candidates are empty without a prefix`() {
         assertEquals(emptyList<String>(), EditActions.hippieCandidates("val", "", 3, 3))
+    }
+
+    @Test
+    fun `identifier ranges use the same characters as the identifier prefix`() {
+        assertEquals(listOf(0 until 4, 5 until 7), EditActions.identifierRanges("café au"))
+        assertEquals(
+            listOf("caféine"),
+            EditActions.hippieCandidates("café + caféine", "café", 0, 4),
+        )
     }
 
     @Test

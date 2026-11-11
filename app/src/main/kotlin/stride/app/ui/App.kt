@@ -128,6 +128,13 @@ fun App(
     val session = state.session
     var treeWidth by remember { mutableStateOf(DesignTokens.treeDefaultWidth) }
     var treeFocused by remember { mutableStateOf(false) }
+    val gotoLineEditor = session?.editors?.selected as? TextFileEditor
+    LaunchedEffect(gotoLineEditor, gotoLineEditor?.gotoLineVisible) {
+        // The goto-line field removes itself on close without a focus-lost event.
+        if (state.focus == KeyContext.EDITOR_FIELD && gotoLineEditor?.gotoLineVisible != true) {
+            state.focus = KeyContext.EDITOR
+        }
+    }
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
@@ -161,8 +168,12 @@ fun App(
                                     // The find bar sits inside this box and reports FIND_BAR itself.
                                     if (!state.findBar.visible) {
                                         if (focus.hasFocus) {
-                                            state.focus = KeyContext.EDITOR
-                                        } else if (state.focus == KeyContext.EDITOR) {
+                                            if (state.focus != KeyContext.EDITOR_FIELD) {
+                                                state.focus = KeyContext.EDITOR
+                                            }
+                                        } else if (state.focus == KeyContext.EDITOR ||
+                                            state.focus == KeyContext.EDITOR_FIELD
+                                        ) {
                                             state.focus = KeyContext.GLOBAL
                                         }
                                     }
@@ -634,6 +645,7 @@ private fun EditorArea(
             if (selected == null) {
                 EmptyEditor()
             } else {
+                if (selected is TextFileEditor) selected.onFocusContext = onFocusContext
                 selected.Content(Modifier.fillMaxSize())
             }
         }
@@ -1025,7 +1037,7 @@ private fun pathKey(file: VFile): String = file.path.toAbsolutePath().normalize(
 /** The status bar's context chip; `null` keeps the chip hidden while nothing specific has focus. */
 private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.GLOBAL -> null
-    KeyContext.EDITOR -> "Editor"
+    KeyContext.EDITOR, KeyContext.EDITOR_FIELD -> "Editor"
     KeyContext.FIND_BAR -> "Find"
     KeyContext.SEARCH_POPUP -> "Search"
     KeyContext.RUN_WINDOW -> "Run"

@@ -6,9 +6,14 @@ import stride.search.NameMatcher
 object CodeCompletion {
     const val MAX_RESULTS: Int = 200
 
-    /** Identifiers of [text] in document order; callers deduplicate across sources. */
-    fun identifiers(text: String): List<String> =
-        EditActions.identifierRanges(text).map { text.substring(it.first, it.last + 1) }
+    /**
+     * Identifiers of [text] in document order; callers deduplicate across sources. The range
+     * that is exactly [excluded] — the identifier being completed — is left out.
+     */
+    fun identifiers(text: String, excluded: IntRange? = null): List<String> =
+        EditActions.identifierRanges(text)
+            .filter { it != excluded }
+            .map { text.substring(it.first, it.last + 1) }
 
     /** [names] matching [prefix], best first; a blank prefix keeps every name. */
     fun candidates(prefix: String, names: List<String>, limit: Int = MAX_RESULTS): List<String> {

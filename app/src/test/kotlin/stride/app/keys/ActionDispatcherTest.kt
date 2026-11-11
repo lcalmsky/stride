@@ -411,8 +411,47 @@ class ActionDispatcherTest {
         val request = requireNotNull(state.completion)
         assertEquals("ma", request.prefix)
         assertEquals(caret - 2, request.prefixStart)
-        assertTrue("main" in request.candidates)
+        assertTrue("main" in request.candidates())
         assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+    }
+
+    @Test
+    fun `code completion leaves out the identifier being completed`() {
+        val root = temp.resolve("completion-exclude-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "val foo = main + ma\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        val caret = editor.value.text.lastIndexOf("ma") + 2
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+        assertTrue(dispatchAction(ActionId.CODE_COMPLETION, state) { null })
+
+        val names = requireNotNull(state.completion).candidates()
+        assertFalse("ma" in names)
+        assertTrue("main" in names)
+    }
+
+    @Test
+    fun `code completion and rename refuse a read-only editor`() {
+        val root = temp.resolve("read-only-project")
+        Files.createDirectories(root)
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        // A missing file fails to read and opens forced read-only.
+        val editor = session.editors.openFile(VFile(root.resolve("missing.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo = foo", TextRange(0, 3)))
+        assertTrue(editor.isReadOnly)
+
+        assertTrue(dispatchAction(ActionId.CODE_COMPLETION, state) { null })
+        assertNull(state.completion)
+        assertEquals("File is read-only", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.RENAME_ELEMENT, state) { null })
+        assertNull(state.rename)
+        assertEquals("File is read-only", state.statusMessage)
     }
 
     @Test
@@ -430,6 +469,21 @@ class ActionDispatcherTest {
         assertEquals(2, applyRename(state, request, "bar"))
         assertEquals("bar = bar", editor.value.text)
         assertEquals("Renamed 2 occurrences", state.statusMessage)
+    }
+
+    @Test
+    fun `renaming to the same name changes nothing`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo = foo", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.RENAME_ELEMENT, state) { null })
+
+        val request = requireNotNull(state.rename)
+        assertEquals(0, applyRename(state, request, "foo"))
+        assertEquals("foo = foo", editor.value.text)
+        assertEquals("Nothing to rename", state.statusMessage)
     }
 
     @Test
