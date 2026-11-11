@@ -16,6 +16,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Canvas
@@ -225,6 +226,60 @@ fun Modifier.glassPanel(shape: Shape = RectangleShape, grid: Boolean = false): M
         .drawBehind {
             drawGlassPanel(state.bounds, shape, mesh, cache, grid)
         }
+}
+
+/**
+ * The crisp rim of a floating slab: one specular stroke brighter at the top and the left and
+ * fading to a faint line at the bottom, plus a faint inner lower rim. It draws over the slab
+ * fill and its content, so put it before the fill modifier in the chain. All Skia objects are
+ * cached for the slab's size; a frame only draws three paths.
+ */
+fun Modifier.glassSlabRims(shape: Shape): Modifier = composed {
+    val cache = remember { SlabRimCache() }
+    DisposableEffect(cache) { onDispose { cache.dispose() } }
+    drawWithContent {
+        drawContent()
+        drawSlabRims(shape, cache)
+    }
+}
+
+/**
+ * The soft neutral shadow under a floating slab. Unlike `Modifier.shadow` it does not create a
+ * render layer: the blurred rounded rect is baked into one image per slab size and every frame
+ * only draws that image, so static slabs cost a single image blit.
+ */
+fun Modifier.slabShadow(shape: Shape): Modifier = composed {
+    val cache = remember { SlabShadowCache() }
+    DisposableEffect(cache) { onDispose { cache.dispose() } }
+    drawBehind {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val radius = when (outline) {
+            is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+            is Outline.Rectangle -> 0f
+            is Outline.Generic -> 0f
+        }
+        cache.update(size.width, size.height, radius, DesignTokens.slabShadow.toPx())
+        cache.image?.let { image ->
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawImage(image, -cache.margin.toFloat(), -cache.margin.toFloat())
+            }
+        }
+    }
+}
+
+/** A soft dark band behind a label run on a bar that has editor content under it. */
+fun Modifier.labelScrim(active: Boolean): Modifier = drawBehind {
+    if (!active) return@drawBehind
+    val inset = DesignTokens.chromeLabelScrimInset.toPx()
+    val width = size.width - inset * 2f
+    val height = size.height - inset * 2f
+    if (width <= 0f || height <= 0f) return@drawBehind
+    drawRoundRect(
+        DesignTokens.chromeLabelScrim,
+        topLeft = Offset(inset, inset),
+        size = Size(width, height),
+        cornerRadius = CornerRadius(DesignTokens.radiusCapsule.toPx()),
+    )
 }
 
 /**
@@ -750,6 +805,177 @@ private fun DrawScope.drawHairlineRim(shape: Shape, innerSize: Size, insetX: Flo
     } finally {
         paint.close()
     }
+}
+
+private data class SlabRimKey(val width: Int, val height: Int, val radius: Int, val stroke: Float, val innerInset: Int)
+
+private data class SlabShadowKey(val width: Int, val height: Int, val radius: Int, val elevation: Float, val margin: Int)
+
+/** One baked soft shadow image per slab size; see [slabShadow]. */
+private class SlabShadowCache {
+    private var key: SlabShadowKey? = null
+    var image: Image? = null
+    var margin: Int = 0
+
+    fun dispose() {
+        image?.close()
+        image = null
+        key = null
+    }
+
+    fun update(width: Float, height: Float, radius: Float, elevation: Float) {
+        val margin = (elevation * 2f).roundToInt().coerceAtLeast(4)
+        val next = SlabShadowKey(width.roundToInt(), height.roundToInt(), radius.roundToInt(), elevation, margin)
+        if (next == key) return
+        dispose()
+        key = next
+        val w = width.roundToInt().coerceAtLeast(1) + margin * 2
+        val h = height.roundToInt().coerceAtLeast(1) + margin * 2
+        if (w <= 0 || h <= 0) return
+        val surface = Surface.makeRaster(ImageInfo(w, h, ColorType.N32, ColorAlphaType.PREMUL))
+        val path = org.jetbrains.skia.Path().apply {
+            addRRect(
+                RRect.makeLTRB(
+                    margin.toFloat(),
+                    margin + elevation * 0.3f,
+                    (margin + width).toFloat(),
+                    (margin + height + elevation * 0.3f).toFloat(),
+                    radius,
+                ),
+            )
+        }
+        val paint = Paint().apply {
+            isAntiAlias = true
+            color = SHADOW_COLOR
+            maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(
+                org.jetbrains.skia.FilterBlurMode.NORMAL,
+                elevation * 0.55f,
+            )
+        }
+        try {
+            surface.canvas.clear(0)
+            surface.canvas.drawPath(path, paint)
+            image = surface.makeImageSnapshot()
+            this.margin = margin
+        } finally {
+            paint.close()
+            path.close()
+            surface.close()
+        }
+    }
+
+    private companion object {
+        const val SHADOW_COLOR = 0x8C000000.toInt()
+    }
+}
+
+/** The three rim paths and their gradient paints, rebuilt only when the slab size changes. */
+private class SlabRimCache {
+    private var key: SlabRimKey? = null
+    private var outerPath: org.jetbrains.skia.Path? = null
+    private var outerPaint: Paint? = null
+    private var leftPath: org.jetbrains.skia.Path? = null
+    private var leftPaint: Paint? = null
+    private var innerPath: org.jetbrains.skia.Path? = null
+    private var innerPaint: Paint? = null
+    private var shaders: List<Shader> = emptyList()
+
+    fun dispose() {
+        outerPaint?.close()
+        outerPaint = null
+        leftPaint?.close()
+        leftPaint = null
+        innerPaint?.close()
+        innerPaint = null
+        outerPath?.close()
+        outerPath = null
+        leftPath?.close()
+        leftPath = null
+        innerPath?.close()
+        innerPath = null
+        shaders.forEach { it.close() }
+        shaders = emptyList()
+        key = null
+    }
+
+    fun update(width: Float, height: Float, radius: Float, stroke: Float, innerInset: Float) {
+        val next = SlabRimKey(width.roundToInt(), height.roundToInt(), radius.roundToInt(), stroke, innerInset.roundToInt())
+        if (next == key) return
+        dispose()
+        key = next
+        if (width <= stroke || height <= stroke) return
+        val half = stroke / 2f
+        val outerRadius = (radius - half).coerceAtLeast(0f)
+        val outerShader = Shader.makeLinearGradient(
+            0f, 0f, 0f, height,
+            intArrayOf(DesignTokens.slabRimTop.toArgb(), DesignTokens.slabRimTop.toArgb(), DesignTokens.slabRimBottom.toArgb()),
+            floatArrayOf(0f, 0.35f, 1f),
+        )
+        val leftShader = Shader.makeLinearGradient(
+            0f, 0f, 0f, height * 0.55f,
+            intArrayOf(DesignTokens.slabRimLeft.toArgb(), DesignTokens.slabRimLeft.copy(alpha = 0f).toArgb()),
+            floatArrayOf(0f, 1f),
+        )
+        val inner = innerInset.coerceAtMost(min(width, height) / 2f - stroke)
+        val innerRadius = (radius - inner).coerceAtLeast(1f)
+        val innerShader = Shader.makeLinearGradient(
+            0f, 0f, 0f, height,
+            intArrayOf(
+                DesignTokens.slabInnerRim.copy(alpha = 0f).toArgb(),
+                DesignTokens.slabInnerRim.copy(alpha = 0f).toArgb(),
+                DesignTokens.slabInnerRim.toArgb(),
+            ),
+            floatArrayOf(0f, 0.62f, 1f),
+        )
+        shaders = listOf(outerShader, leftShader, innerShader)
+        outerPath = org.jetbrains.skia.Path().apply {
+            addRRect(RRect.makeLTRB(half, half, width - half, height - half, outerRadius))
+        }
+        outerPaint = strokePaint(outerShader, stroke)
+        leftPath = org.jetbrains.skia.Path().apply {
+            moveTo(half, outerRadius.coerceAtMost(height / 2f))
+            lineTo(half, height - outerRadius.coerceAtMost(height / 2f))
+        }
+        leftPaint = strokePaint(leftShader, stroke)
+        if (inner > 0f && width - inner * 2f > 0f && height - inner * 2f > 0f) {
+            innerPath = org.jetbrains.skia.Path().apply {
+                addRRect(
+                    RRect.makeLTRB(inner, inner, width - inner, height - inner, innerRadius),
+                )
+            }
+            innerPaint = strokePaint(innerShader, stroke)
+        }
+    }
+
+    fun draw(canvas: org.jetbrains.skia.Canvas) {
+        outerPath?.let { path -> outerPaint?.let { canvas.drawPath(path, it) } }
+        leftPath?.let { path -> leftPaint?.let { canvas.drawPath(path, it) } }
+        innerPath?.let { path -> innerPaint?.let { canvas.drawPath(path, it) } }
+    }
+
+    private fun strokePaint(shader: Shader, width: Float): Paint = Paint().apply {
+        isAntiAlias = true
+        mode = org.jetbrains.skia.PaintMode.STROKE
+        strokeWidth = width
+        this.shader = shader
+    }
+}
+
+private fun DrawScope.drawSlabRims(shape: Shape, cache: SlabRimCache) {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    val radius = when (outline) {
+        is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+        is Outline.Rectangle -> 0f
+        is Outline.Generic -> 0f
+    }
+    cache.update(
+        width = size.width,
+        height = size.height,
+        radius = radius,
+        stroke = 1.dp.toPx(),
+        innerInset = DesignTokens.slabInnerRimInset.toPx(),
+    )
+    drawIntoCanvas { canvas -> cache.draw(canvas.nativeCanvas) }
 }
 
 /** The crisp top rim of a capsule: lit at the top edge and fading down the sides. */

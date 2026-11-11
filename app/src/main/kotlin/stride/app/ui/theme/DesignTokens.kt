@@ -29,7 +29,7 @@ object DesignTokens {
     val onAccent = Color.White
     val selection = accent.copy(alpha = 0.22f)
     val currentLine = Color(0x0AFFFFFF)
-    val scrim = Color(0x66000000)
+    val scrim = Color(0x4D000000)
     val gutter = surface.copy(alpha = 0.6f)
     val json = Color(0xFFE5C07B)
     val xml = Color(0xFFE06C75)
@@ -80,7 +80,6 @@ object DesignTokens {
     val treeDefaultWidth = 280.dp
     val treeMinWidth = 200.dp
     val treeMaxWidth = 480.dp
-    val splitterWidth = 4.dp
     val tabMaxWidth = 220.dp
 
     val popupWidth = 680.dp
@@ -119,12 +118,12 @@ object DesignTokens {
      * blurred backdrop's luminance (plus [glassChromaGain] of its hue) shows through it, so code
      * behind a popup or a bar stays visible as a soft impression.
      */
-    val glassBase = Color(0xFF17181E)
-    val glassBackdropMix = 0.40f
-    val glassChromaGain = 0.6f
-    val liquidGlassBlurRadius = 18.dp
-    val glassBezel = 16.dp
-    val glassLensStrength = 14.dp
+    val glassBase = Color(0xFF14151B)
+    val glassBackdropMix = 0.52f
+    val glassChromaGain = 0.8f
+    val liquidGlassBlurRadius = 8.dp
+    val glassBezel = 18.dp
+    val glassLensStrength = 17.dp
     val glassAberration = 0.5.dp
     val glassSpecular = 0.42f
 
@@ -138,15 +137,44 @@ object DesignTokens {
     val capsuleLensStrength = 3.5.dp
     val capsuleEndTaper = 10.dp
 
+    /**
+     * Flying slabs: every chrome surface is inset from the window edge by [slabMargin] and cast
+     * the same neutral shadow, so the window field shows in the gaps between them.
+     */
+    val slabMargin = 8.dp
+    val slabRadiusSide = 16.dp
+    val slabRadiusTitle = 14.dp
+    val slabRadiusTab = 13.dp
+    val slabRadiusStatus = 12.dp
+    val slabRadiusToolWindow = 14.dp
+    val slabShadow = 16.dp
+
+    /** The specular slab rim: bright at the top and left, a faint line at the bottom. */
+    val slabRimTop = Color.White.copy(alpha = 0.22f)
+    val slabRimBottom = Color.White.copy(alpha = 0.06f)
+    val slabRimLeft = Color.White.copy(alpha = 0.12f)
+    val slabInnerRimInset = 2.dp
+    val slabInnerRim = Color.White.copy(alpha = 0.06f)
+
+    /** Label band for a bar with code under it, so the label run keeps its contrast. */
+    val chromeLabelScrim = Color.Black.copy(alpha = 0.45f)
+    val chromeLabelScrimInset = 2.dp
+
+    /** Labels on a bar over the editor: brighter than [textSecondaryOnGlass] for busy backdrops. */
+    val textOnBusyGlass = Color(0xFFC4CBDA)
+
+    /** The search pill's dark glass fill on the title bar slab. */
+    val searchPillFill = Color.Black.copy(alpha = 0.30f)
+
     /** Hairline grid baked into the project tree glass, so its lens has neutral detail to bend. */
-    val glassGridSpacing = 48.dp
-    val glassGrid = Color.White.copy(alpha = 0.03f)
+    val glassGridSpacing = 40.dp
+    val glassGrid = Color.White.copy(alpha = 0.06f)
 
     /** Soft shadow under chrome and popup text, which carries its own contrast on thin glass. */
     val chromeTextShadow = Shadow(
-        color = Color.Black.copy(alpha = 0.7f),
+        color = Color.Black.copy(alpha = 0.78f),
         offset = Offset(0f, 1f),
-        blurRadius = 3f,
+        blurRadius = 3.5f,
     )
     val chromeTextStyle = TextStyle(shadow = chromeTextShadow)
 

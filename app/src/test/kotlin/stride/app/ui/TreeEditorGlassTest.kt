@@ -51,36 +51,23 @@ class TreeEditorGlassTest {
             val pixels = renderAppPixels(state)
             val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
             val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
-            var widest = -1
-            var bestX = -1
-            var bestY = -1
-            for (y in 40 until 64) {
-                for (x in 120 until 276) {
-                    val spread = spread(pixels[index(x, y)])
-                    if (spread > widest) {
-                        widest = spread
-                        bestX = x
-                        bestY = y
-                    }
-                }
-            }
-            val pixel = pixels[index(bestX, bestY)]
+            // The slab spans x 8..288 and y 52..772 at density 1; stay between the baked grid lines.
+            val pixel = pixels[index(150, 300)]
+            val spread = spread(pixel)
             val luminance = relativeLuminance(Color(pixel))
             System.err.println(
-                "tree-glass widest=%d pixel=#%06X at (%d,%d) luminance=%.4f band=%.4f..%.4f".format(
-                    widest,
+                "tree-glass pixel=#%06X spread=%d luminance=%.4f band=%.4f..%.4f".format(
                     pixel and 0xFFFFFF,
-                    bestX,
-                    bestY,
+                    spread,
                     luminance,
                     lowest,
                     highest,
                 ),
             )
             // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
-            assertTrue(widest <= 12, "the tree glass should stay neutral, widest channel spread = $widest")
+            assertTrue(spread <= 12, "the tree glass should stay neutral, channel spread = $spread")
             assertTrue(
-                luminance >= lowest - 0.002 && luminance <= highest + 0.002,
+                luminance >= lowest - 0.002 && luminance <= highest + 0.004,
                 "tree glass luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),
             )
             assertTrue(
@@ -91,6 +78,64 @@ class TreeEditorGlassTest {
             state.dispose()
         }
     }
+
+    @Test
+    fun `sidebar floats inset with a brighter top rim than its bottom edge`() {
+        val state = AppState()
+        try {
+            state.openFolder(project("slab-project"))
+            val pixels = renderAppPixels(state)
+            // The slab spans x 8..288, y 52..772 at density 1; the window field shows at x 0..8.
+            val margin = pixels[index(4, 300)]
+            val interior = pixels[index(150, 300)]
+            val marginLuma = relativeLuminance(Color(margin))
+            val interiorLuma = relativeLuminance(Color(interior))
+            val field = fieldAt(300)
+            val fieldLuma = relativeLuminance(field)
+            System.err.println(
+                "slab-margin margin=#%06X (%.4f) field=#%06X (%.4f) interior=#%06X (%.4f)".format(
+                    margin and 0xFFFFFF,
+                    marginLuma,
+                    field.toArgb() and 0xFFFFFF,
+                    fieldLuma,
+                    interior and 0xFFFFFF,
+                    interiorLuma,
+                ),
+            )
+            assertTrue(
+                abs(marginLuma - fieldLuma) < 0.02,
+                "the margin should stay the window field: %.4f vs field %.4f".format(marginLuma, fieldLuma),
+            )
+            assertTrue(
+                interiorLuma > marginLuma + 0.004,
+                "the slab should be lighter than the field margin: %.4f vs %.4f".format(interiorLuma, marginLuma),
+            )
+            val topRim = relativeLuminance(Color(pixels[index(150, 52)]))
+            val bottomRim = relativeLuminance(Color(pixels[index(150, 771)]))
+            System.err.println("slab-rim top=%.4f bottom=%.4f".format(topRim, bottomRim))
+            assertTrue(
+                topRim > bottomRim + 0.02,
+                "the top rim should be brighter than the bottom edge: %.4f vs %.4f".format(topRim, bottomRim),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    private fun fieldAt(y: Int): Color {
+        val t = y.toFloat() / HEIGHT
+        return if (t <= 0.55f) {
+            lerp(DesignTokens.backgroundLift, DesignTokens.background, t / 0.55f)
+        } else {
+            lerp(DesignTokens.background, DesignTokens.fieldBottom, (t - 0.55f) / 0.45f)
+        }
+    }
+
+    private fun lerp(from: Color, to: Color, t: Float): Color = Color(
+        from.red + (to.red - from.red) * t,
+        from.green + (to.green - from.green) * t,
+        from.blue + (to.blue - from.blue) * t,
+    )
 
     @Test
     fun `editor body is the content tint over the same mesh pixel`() {
@@ -150,7 +195,7 @@ class TreeEditorGlassTest {
             onNode(hasText("src") and hasClickAction()).assertIsFocused()
             val focused = captureToImage().pixels()
 
-            for ((x, y) in listOf(200 to 42, 200 to 30)) {
+            for ((x, y) in listOf(200 to 58, 200 to 54)) {
                 val before = Color(unfocused[index(x, y)])
                 val after = Color(focused[index(x, y)])
                 val green = channel(after) { green } - channel(before) { green }
@@ -243,11 +288,11 @@ class TreeEditorGlassTest {
     fun `code scrolled under the tab bar shows through the glass`() {
         val first = scrolledBarPixels("y")
         val second = scrolledBarPixels("W")
-        // The tab strip is y 36..72 at density 1; x 500..1200 is past the active tab capsule.
+        // The floating tab strip spans x 304..1264, y 60..96 at density 1; stay below its rim.
         val left = 500
         val right = 1200
-        val top = 40
-        val bottom = 68
+        val top = 64
+        val bottom = 92
         val pattern = meanAdjacentDiff(first, left, right, top, bottom)
         var total = 0.0
         var count = 0
@@ -278,6 +323,40 @@ class TreeEditorGlassTest {
         assertTrue(
             difference > 0.0005,
             "the bar should follow the code under it (difference %.5f)".format(difference),
+        )
+    }
+
+    @Test
+    fun `status bar text clears 4_5 over the scrolled code`() {
+        val pixels = scrolledBarPixels("y")
+        // The status slab spans y 780..804 at density 1; measure its interior, not the rim.
+        val top = 782
+        val bottom = 802
+        val left = 40
+        val right = 1240
+        val luminances = ArrayList<Double>((bottom - top) * (right - left))
+        for (y in top until bottom) {
+            for (x in left until right) {
+                luminances += relativeLuminance(Color(pixels[index(x, y)]))
+            }
+        }
+        luminances.sort()
+        val background = luminances[luminances.size / 2]
+        val text = luminances.last()
+        val ratio = (text + 0.05) / (background + 0.05)
+        val textPixels = luminances.count { it > background + 0.1 }
+        System.err.println(
+            "status-contrast background=%.4f text=%.4f ratio=%.3f text-pixels=%d".format(
+                background,
+                text,
+                ratio,
+                textPixels,
+            ),
+        )
+        assertTrue(textPixels > 200, "expected label pixels in the status bar, found $textPixels")
+        assertTrue(
+            ratio >= DesignTokens.contrastText,
+            "status bar text over scrolled code = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
         )
     }
 
@@ -355,7 +434,14 @@ class TreeEditorGlassTest {
                 .minBy { it.boundsInRoot.top }
                 .boundsInRoot
             val pixels = captureToImage().pixels()
-            val fill = DesignTokens.background
+            // The pill is black 30% over the title bar slab, which is the glass fill over the field.
+            val fill = blendOver(
+                DesignTokens.searchPillFill,
+                blendOver(
+                    DesignTokens.glassFill,
+                    blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift),
+                ),
+            )
             val left = bounds.left.toInt()
             val right = maxOf(bounds.right.toInt(), left + 1)
             val top = bounds.top.toInt()

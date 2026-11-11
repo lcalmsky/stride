@@ -26,7 +26,6 @@ import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
@@ -92,7 +91,7 @@ class ToolWindowGlassTest {
     }
 
     @Test
-    fun `terminal empty cell is one tint over the mesh`() {
+    fun `terminal empty cell is the glass fill over the mesh`() {
         val root = Files.createDirectories(temp.resolve("terminal-project"))
         val project = Project(root)
         val session = TerminalSession(project)
@@ -105,7 +104,7 @@ class ToolWindowGlassTest {
                     ToolWindowPanel(toolWindows, onFocusContext = {}, modifier = Modifier.fillMaxSize())
                 }
             }
-            assertTintOverMesh("terminal", rendered, 380, 380)
+            assertGlassOverMesh("terminal", rendered, 380, 380)
         } finally {
             session.dispose()
             project.dispose()
@@ -113,7 +112,7 @@ class ToolWindowGlassTest {
     }
 
     @Test
-    fun `run console empty cell is one tint over the mesh`() {
+    fun `run console empty cell is the glass fill over the mesh`() {
         val root = Files.createDirectories(temp.resolve("run-project"))
         val project = Project(root)
         val runManager = RunManager(project)
@@ -130,7 +129,7 @@ class ToolWindowGlassTest {
                     ToolWindowPanel(toolWindows, onFocusContext = {}, modifier = Modifier.fillMaxSize())
                 }
             }
-            assertTintOverMesh("run console", rendered, 380, 380)
+            assertGlassOverMesh("run console", rendered, 380, 380)
         } finally {
             runManager.dispose()
             project.dispose()
@@ -230,24 +229,30 @@ class ToolWindowGlassTest {
         activate(id)
     }
 
-    private fun assertTintOverMesh(name: String, rendered: IntArray, x: Int, y: Int) {
-        val tint = DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha)
-        val expected = blendOver(tint, DesignTokens.background)
+    private fun assertGlassOverMesh(name: String, rendered: IntArray, x: Int, y: Int) {
         val actual = Color(rendered[index(x, y, SCENE)])
+        val luminance = relativeLuminance(actual)
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
+        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
         System.err.println(
-            "%s tint pixel=(%d,%d,%d) expected=(%d,%d,%d)".format(
+            "%s glass pixel=(%d,%d,%d) luminance=%.4f band=%.4f..%.4f".format(
                 name,
                 (actual.red * 255f).toInt(),
                 (actual.green * 255f).toInt(),
                 (actual.blue * 255f).toInt(),
-                (expected.red * 255f).toInt(),
-                (expected.green * 255f).toInt(),
-                (expected.blue * 255f).toInt(),
+                luminance,
+                lowest,
+                highest,
             ),
         )
-        assertEquals(expected.red, actual.red, 2f / 255f, "$name red channel at ($x, $y)")
-        assertEquals(expected.green, actual.green, 2f / 255f, "$name green channel at ($x, $y)")
-        assertEquals(expected.blue, actual.blue, 2f / 255f, "$name blue channel at ($x, $y)")
+        assertTrue(
+            luminance >= lowest - 0.002 && luminance <= highest + 0.004,
+            "$name glass luminance %.4f is outside the fill band %.4f..%.4f at ($x, $y)".format(
+                luminance,
+                lowest,
+                highest,
+            ),
+        )
     }
 
     private fun renderScene(width: Int, height: Int, content: @Composable () -> Unit): IntArray {

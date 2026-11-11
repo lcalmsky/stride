@@ -22,12 +22,14 @@ import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
+import stride.app.run.openContextActions
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.search.FileNameIndex
+import stride.search.SearchTab
 
 /**
  * Renders the real [App] composable through [ImageComposeScene] and writes the result to
@@ -324,6 +326,45 @@ class UiSnapshotTest {
 
     @Test
     @Order(13)
+    fun `search over code snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            openEditor(session, root.resolve("docs/notes.md"))
+            openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            state.openSearch(SearchTab.ALL)
+            renderApp("13-search-over-code.png", state, initialQuery = "greet", renderMillis = 1_800)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    @Order(14)
+    fun `context actions over code snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val editor = openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            placeCaret(editor, "fun main()")
+            check(openContextActions(state) && state.contextActionsVisible) {
+                "no context actions for the main line"
+            }
+            renderApp("14-context-actions.png", state, renderMillis = 800)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    @Order(15)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
             val file = SnapshotRenderer.snapshotDir().resolve(name)
@@ -428,6 +469,8 @@ class UiSnapshotTest {
             "10-terminal.png",
             "11-run-window.png",
             "12-editor-scrolled.png",
+            "13-search-over-code.png",
+            "14-context-actions.png",
         )
 
         @BeforeAll

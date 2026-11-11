@@ -124,7 +124,10 @@ import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
 import stride.app.ui.theme.glassPanel
+import stride.app.ui.theme.glassSlabRims
+import stride.app.ui.theme.labelScrim
 import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.slabShadow
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
 import stride.core.services.service
@@ -181,15 +184,18 @@ fun App(
     MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
-            // Without a tool window the editor runs to the window bottom, under the status bar.
+            // Without a tool window the editor runs to the bottom and the status bar floats over it.
             val statusBarOverlaps = !state.toolWindows.visible
-            val statusBarInset = if (statusBarOverlaps) DesignTokens.statusBarHeight else 0.dp
-            Column(Modifier.fillMaxSize()) {
+            // Status slab, the gap above it and the window margin: content stops above all three.
+            val statusBarGap = DesignTokens.statusBarHeight + DesignTokens.slabMargin * 2
+            val statusBarInset = if (statusBarOverlaps) statusBarGap else DesignTokens.slabMargin
+            Column(Modifier.fillMaxSize().padding(DesignTokens.slabMargin)) {
                 TopBar(
                     projectName = session?.displayName() ?: "strIDE",
                     searchEnabled = session != null,
                     onSearch = { state.openSearch(SearchTab.ALL) },
                 )
+                Spacer(Modifier.height(DesignTokens.slabMargin))
                 if (session == null) {
                     NoProjectState(onOpenFolder, Modifier.weight(1f))
                 } else {
@@ -200,7 +206,7 @@ fun App(
                         Column(
                             Modifier
                                 .fillMaxSize()
-                                .padding(bottom = if (statusBarOverlaps) 0.dp else DesignTokens.statusBarHeight),
+                                .padding(bottom = if (statusBarOverlaps) 0.dp else statusBarGap),
                         ) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 if (state.projectTreeVisible) {
@@ -209,11 +215,11 @@ fun App(
                                         Modifier
                                             .width(treeWidth)
                                             .fillMaxHeight()
+                                            .padding(bottom = if (statusBarOverlaps) statusBarGap else 0.dp)
                                             .onFocusChanged { treeFocused = it.hasFocus },
                                         focused = treeFocused,
                                         focusRequests = state.treeFocusRequests,
                                         revealRequests = state.revealRequests,
-                                        bottomInset = statusBarInset,
                                     )
                                     Splitter(onResize = { delta ->
                                         treeWidth = (treeWidth + delta)
@@ -277,7 +283,9 @@ fun App(
                             session,
                             focusLabel = focusLabel(state.focus),
                             message = state.statusMessage,
-                            modifier = Modifier.align(Alignment.BottomCenter),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = DesignTokens.slabMargin),
                             overlapsEditor = statusBarOverlaps,
                         )
                     }
@@ -605,11 +613,14 @@ private fun refocusEditor(state: AppState) {
 
 @Composable
 private fun TopBar(projectName: String, searchEnabled: Boolean, onSearch: () -> Unit) {
+    val shape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.topBarHeight)
-            .glassPanel()
+            .slabShadow(shape)
+            .glassSlabRims(shape)
+            .glassPanel(shape)
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -649,9 +660,9 @@ private fun SearchPill(onClick: () -> Unit) {
     Row(
         Modifier
             .height(24.dp)
-            .clip(shape)
-            .background(if (hovered) DesignTokens.raised else DesignTokens.background)
-            .border(1.dp, if (hovered) DesignTokens.accent2 else DesignTokens.border, shape)
+            .background(DesignTokens.searchPillFill.copy(alpha = if (hovered) 0.2f else 0.3f), shape)
+            .glassSlabRims(shape)
+            .then(if (hovered) Modifier.border(1.dp, DesignTokens.accent2, shape) else Modifier)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = DesignTokens.space8),
@@ -679,7 +690,7 @@ private fun SearchPill(onClick: () -> Unit) {
 private fun Splitter(onResize: (Dp) -> Unit) {
     Box(
         Modifier
-            .width(DesignTokens.splitterWidth)
+            .width(DesignTokens.slabMargin)
             .fillMaxHeight()
             .pointerHoverIcon(resizeCursor)
             .pointerInput(Unit) {
@@ -699,7 +710,7 @@ private fun VerticalSplitter(onResize: (Dp) -> Unit) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(DesignTokens.splitterWidth)
+            .height(DesignTokens.slabMargin)
             .pointerHoverIcon(horizontalResizeCursor)
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
@@ -728,9 +739,12 @@ private fun ProjectTreePanel(
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
     }
+    val slabShape = RoundedCornerShape(DesignTokens.slabRadiusSide)
     Column(
         modifier
-            .glassPanel(grid = true)
+            .slabShadow(slabShape)
+            .glassSlabRims(slabShape)
+            .glassPanel(slabShape, grid = true)
             .focusHalo(focused)
             .focusRequester(focusRequester)
             .focusable(),
@@ -864,10 +878,11 @@ private fun EditorArea(
         withFrameNanos { }
         (session.editors.selected as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
     }
-    // The editor fills the area and draws under the chrome; the bars only reserve insets.
+    // The editor fills the area and draws under the chrome; the floating bars only reserve insets.
+    val tabBottom = DesignTokens.slabMargin + DesignTokens.tabStripHeight
     Box(modifier.focusHalo(focused)) {
         val barHeight = if (findBar.visible) findBarHeight(findBar) else 0.dp
-        val topInset = DesignTokens.tabStripHeight + barHeight
+        val topInset = if (findBar.visible) tabBottom + DesignTokens.slabMargin + barHeight else tabBottom
         CompositionLocalProvider(LocalEditorInsets provides EditorInsets(top = topInset, bottom = bottomInset)) {
             val selected = session.editors.selected
             if (selected == null) {
@@ -881,16 +896,28 @@ private fun EditorArea(
                 selected.Content(Modifier.fillMaxSize())
             }
         }
-        TabBar(session.editors, Modifier.align(Alignment.TopCenter))
+        TabBar(
+            session.editors,
+            Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = DesignTokens.slabMargin, start = DesignTokens.slabMargin, end = DesignTokens.slabMargin),
+        )
         if (findBar.visible) {
+            val findShape = RoundedCornerShape(DesignTokens.slabRadiusTitle)
             FindBar(
                 findBar,
                 session.editors.selected as? TextFileEditor,
                 onFocusContext,
                 Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = DesignTokens.tabStripHeight)
-                    .fillMaxWidth(),
+                    .padding(
+                        top = tabBottom + DesignTokens.slabMargin,
+                        start = DesignTokens.slabMargin,
+                        end = DesignTokens.slabMargin,
+                    )
+                    .fillMaxWidth()
+                    .slabShadow(findShape)
+                    .glassSlabRims(findShape),
             )
         }
     }
@@ -916,11 +943,14 @@ private fun TabBar(manager: FileEditorManager, modifier: Modifier = Modifier) {
         }
         scrollState.scrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
     }
+    val shape = RoundedCornerShape(DesignTokens.slabRadiusTab)
     Row(
         modifier
             .fillMaxWidth()
             .height(DesignTokens.tabStripHeight)
-            .then(if (scrolled) Modifier.chromeGlass() else Modifier.glassPanel())
+            .slabShadow(shape)
+            .glassSlabRims(shape)
+            .then(if (scrolled) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
             .horizontalScroll(scrollState),
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
@@ -980,7 +1010,7 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
         Spacer(Modifier.width(8.dp))
         Text(
             editor.file.name,
-            color = if (active) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
+            color = if (active) DesignTokens.selectedText else DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.tabTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -1029,11 +1059,15 @@ private fun StatusBar(
     val textEditor = editor as? TextFileEditor
     val scroll = LocalEditorScrollState.current
     val overCode = overlapsEditor && scroll != null && scroll.value > 0 && scroll.value < scroll.maxValue
+    val shape = RoundedCornerShape(DesignTokens.slabRadiusStatus)
     Row(
         modifier
             .fillMaxWidth()
             .height(DesignTokens.statusBarHeight)
-            .then(if (overCode) Modifier.chromeGlass() else Modifier.glassPanel())
+            .slabShadow(shape)
+            .glassSlabRims(shape)
+            .then(if (overCode) Modifier.chromeGlass(shape) else Modifier.glassPanel(shape))
+            .labelScrim(overCode)
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {

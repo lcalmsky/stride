@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,11 +28,12 @@ import androidx.compose.ui.unit.dp
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassPanel
+import stride.app.ui.theme.glassSlabRims
 import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.slabShadow
 
 /** Bottom panel: a 28 dp tab strip over the active window's content. */
 @Composable
@@ -55,9 +57,12 @@ fun ToolWindowPanel(
         if (hasFocus) onFocusContext(context)
     }
 
+    val shape = RoundedCornerShape(DesignTokens.slabRadiusToolWindow)
     Column(
         modifier
-            .contentTint()
+            .slabShadow(shape)
+            .glassSlabRims(shape)
+            .glassPanel(shape)
             .focusHalo(hasFocus)
             .focusRequester(focusRequester)
             .onFocusChanged { focusState ->
@@ -69,8 +74,7 @@ fun ToolWindowPanel(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(28.dp)
-                .glassPanel(),
+                .height(28.dp),
         ) {
             manager.windows.forEach { window ->
                 ToolWindowTab(

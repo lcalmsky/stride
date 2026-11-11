@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
@@ -249,7 +250,8 @@ class GlassModifiersTest {
         val top = 80
         val right = 300
         val bottom = 220
-        val depth = 6
+        // Sample past the specular bezel so the top-left rim does not skew the corner comparison.
+        val depth = 26
         val radius = 18
         val inset = (radius - (radius - depth) / kotlin.math.sqrt(2f)).toInt()
         val corners = listOf(
@@ -272,7 +274,7 @@ class GlassModifiersTest {
     }
 
     @Test
-    fun `the thin popup glass shows the backdrop at two to three to one`() {
+    fun `the thin popup glass shows the backdrop at about three to one`() {
         // A popup draws its scrim before the glass, so the glass sees the scrimmed backdrop.
         val pixels = pixelArray(400, 300) {
             Box(Modifier.fillMaxSize()) {
@@ -292,8 +294,8 @@ class GlassModifiersTest {
         val ratio = (maxOf(light, dark) + 0.05) / (minOf(light, dark) + 0.05)
         System.err.println("glass-thin light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
         assertTrue(
-            ratio >= 1.9 && ratio <= 3.2,
-            "backdrop detail through the popup glass is %.3f:1, expected about 2:1 to 3:1".format(ratio),
+            ratio >= 2.5 && ratio <= 4.0,
+            "backdrop detail through the popup glass is %.3f:1, expected about 3:1 to 4:1".format(ratio),
         )
     }
 
@@ -462,7 +464,11 @@ class GlassModifiersTest {
 
     private fun capsulePixels(): IntArray = pixelArray(400, 240) {
         Box(Modifier.fillMaxSize()) {
-            Checkerboard(cellSize = 32f)
+            // A smooth vertical ramp turns the lens displacement into a stable signal; a hard
+            // checker phases in and out at the capsule ends.
+            Canvas(Modifier.fillMaxSize()) {
+                drawRect(Brush.verticalGradient(listOf(Color.Black, Color.White)))
+            }
             Box(
                 Modifier
                     .offset(100.dp, 100.dp)
