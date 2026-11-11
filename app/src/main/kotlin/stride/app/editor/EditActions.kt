@@ -164,6 +164,269 @@ object EditActions {
         return TextRange(offset)
     }
 
+    /** The identifier touching [offset], including the one that ends exactly at it. */
+    fun wordAt(text: String, offset: Int): TextRange? {
+        val position = offset.coerceIn(0, text.length)
+        if (position > 0 && isIdentifierPart(text[position - 1])) {
+            var start = position - 1
+            while (start > 0 && isIdentifierPart(text[start - 1])) start--
+            var end = position
+            while (end < text.length && isIdentifierPart(text[end])) end++
+            return TextRange(start, end)
+        }
+        if (position < text.length && isIdentifierPart(text[position])) {
+            var start = position
+            while (start > 0 && isIdentifierPart(text[start - 1])) start--
+            var end = position + 1
+            while (end < text.length && isIdentifierPart(text[end])) end++
+            return TextRange(start, end)
+        }
+        return null
+    }
+
+    /** The identifier characters immediately before [offset]; empty when there are none. */
+    fun identifierPrefix(text: String, offset: Int): IntRange {
+        val position = offset.coerceIn(0, text.length)
+        var start = position
+        while (start > 0 && isIdentifierPart(text[start - 1])) start--
+        return start until position
+    }
+
+    /** Every identifier in [text], in document order. */
+    fun identifierRanges(text: String): List<IntRange> = IDENTIFIER.findAll(text).map { it.range }.toList()
+
+    /**
+     * The next larger selection around [selection]: the word, string-literal contents, bracket
+     * contents, the brackets themselves, the touched lines, then the whole text. `null` when the
+     * selection already covers everything.
+     */
+    fun selectWord(text: String, selection: TextRange): TextRange? {
+        val current = TextRange(
+            selection.min.coerceIn(0, text.length),
+            selection.max.coerceIn(0, text.length),
+        )
+        for (candidate in selectionLadder(text, current)) {
+            val larger = candidate.min <= current.min && candidate.max >= current.max &&
+                (candidate.min < current.min || candidate.max > current.max)
+            if (larger) return candidate
+        }
+        return null
+    }
+
+    /** Upper-cases [selection] (or the word at the caret) when it has a lower-case letter, else lower-cases it. */
+    fun toggleCase(text: String, selection: TextRange): EditResult {
+        val target = if (selection.min == selection.max) {
+            wordAt(text, selection.min) ?: return EditResult(text, selection)
+        } else {
+            selection
+        }
+        val start = target.min
+        val end = target.max
+        val selected = text.substring(start, end)
+        val replacement = if (selected.any { it.isLowerCase() }) selected.uppercase() else selected.lowercase()
+        val newText = text.substring(0, start) + replacement + text.substring(end)
+        return EditResult(newText, TextRange(start, start + replacement.length))
+    }
+
+    /**
+     * Joins the next line, or every line the selection touches, into the first touched line.
+     * The joined line loses its indentation and one space separates the parts unless it starts
+     * with a closing bracket, a dot or a comma. The caret lands on the first join point.
+     */
+    fun joinLines(text: String, selection: TextRange): EditResult {
+        val lines = splitLines(text)
+        val firstLine = lineIndexOf(text, selection.min)
+        val collapsed = selection.min == selection.max
+        val lastCovered = if (collapsed) selection.min else selection.max - 1
+        val lastLine = lineIndexOf(text, lastCovered)
+        val joinThrough = if (collapsed) firstLine + 1 else lastLine
+        if (joinThrough <= firstLine || joinThrough > lines.lastIndex) return EditResult(text, selection)
+
+        val merged = StringBuilder(lines[firstLine].trimEnd())
+        var joinPoint = -1
+        for (line in firstLine + 1..joinThrough) {
+            val trimmed = lines[line].trimStart()
+            val separator = if (trimmed.isEmpty() || trimmed[0] in NO_SPACE_BEFORE) "" else " "
+            if (joinPoint < 0) joinPoint = merged.length + separator.length
+            merged.append(separator).append(trimmed)
+        }
+        val newLines = ArrayList<String>(lines.size - (joinThrough - firstLine))
+        newLines.addAll(lines.subList(0, firstLine))
+        newLines.add(merged.toString())
+        newLines.addAll(lines.subList(joinThrough + 1, lines.size))
+        return EditResult(newLines.joinToString("\n"), TextRange(offsetOf(newLines, firstLine, joinPoint)))
+    }
+
+    /** Inserts an empty line with the current line's indentation after (or before) it. */
+    fun startNewLine(text: String, selection: TextRange, before: Boolean): EditResult {
+        val caret = selection.min
+        val start = lineStart(text, caret)
+        val end = lineEnd(text, caret)
+        val indent = text.substring(start, start + leadingWhitespaceLength(text.substring(start, end)))
+        return if (before) {
+            val newText = text.substring(0, start) + indent + "\n" + text.substring(start)
+            EditResult(newText, TextRange(start + indent.length))
+        } else {
+            val newText = text.substring(0, end) + "\n" + indent + text.substring(end)
+            EditResult(newText, TextRange(end + 1 + indent.length))
+        }
+    }
+
+    /** The bracket matching the one at or just before [caret], ignoring strings and comments. */
+    fun matchBrace(text: String, caret: Int): TextRange? {
+        val scan = CodeScan(text)
+        val position = caret.coerceIn(0, text.length)
+        val index = when {
+            position < text.length && scan.isCode(position) && text[position] in BRACKET_OPENING + BRACKET_CLOSING -> position
+            position > 0 && scan.isCode(position - 1) && text[position - 1] in BRACKET_OPENING + BRACKET_CLOSING -> position - 1
+            else -> return null
+        }
+        return scan.match(index)?.let { TextRange(it) }
+    }
+
+    /** The `{` that encloses [caret], or `null` outside any block. */
+    fun codeBlockStart(text: String, caret: Int): TextRange? {
+        val scan = CodeScan(text)
+        val position = caret.coerceIn(0, text.length)
+        var depth = 0
+        for (index in position - 1 downTo 0) {
+            if (!scan.isCode(index)) continue
+            when (text[index]) {
+                '}' -> depth++
+                '{' -> if (depth == 0) return TextRange(index) else depth--
+            }
+        }
+        return null
+    }
+
+    /** The `}` that closes the block holding [caret], or `null` outside any block. */
+    fun codeBlockEnd(text: String, caret: Int): TextRange? {
+        if (codeBlockStart(text, caret) == null) return null
+        val scan = CodeScan(text)
+        val position = caret.coerceIn(0, text.length)
+        val startsOnBrace = position < text.length && scan.isCode(position) && text[position] == '{'
+        val from = if (startsOnBrace) position + 1 else position
+        var depth = if (startsOnBrace) 1 else 0
+        for (index in from until text.length) {
+            if (!scan.isCode(index)) continue
+            when (text[index]) {
+                '{' -> depth++
+                '}' -> if (depth == 0) return TextRange(index) else depth--
+            }
+        }
+        return null
+    }
+
+    /** The whole line at [caret], including its newline when one follows. */
+    fun wholeLine(text: String, caret: Int): TextRange {
+        val start = lineStart(text, caret)
+        var end = lineEnd(text, caret)
+        if (end < text.length) end++
+        return TextRange(start, end)
+    }
+
+    /** The start of the previous or next line in [declarationLines], or `null` when there is none. */
+    fun declarationTarget(text: String, caret: Int, declarationLines: List<Int>, up: Boolean): TextRange? {
+        val line = lineIndexOf(text, caret)
+        val target = if (up) {
+            declarationLines.filter { it < line }.maxOrNull()
+        } else {
+            declarationLines.filter { it > line }.minOrNull()
+        } ?: return null
+        return TextRange(lineStartAt(text, target))
+    }
+
+    /** Every occurrence of [word] that is not part of a larger identifier. */
+    fun wholeWordRanges(text: String, word: String): List<IntRange> {
+        if (word.isEmpty()) return emptyList()
+        val ranges = ArrayList<IntRange>()
+        var index = text.indexOf(word)
+        while (index >= 0) {
+            val before = text.getOrNull(index - 1)
+            val after = text.getOrNull(index + word.length)
+            val whole = (before == null || !isIdentifierPart(before)) &&
+                (after == null || !isIdentifierPart(after))
+            if (whole) ranges.add(index until index + word.length)
+            index = text.indexOf(word, index + 1)
+        }
+        return ranges
+    }
+
+    /**
+     * Words starting with [prefix], nearest first: occurrences before the caret, then after it,
+     * then the words of [otherTexts]. The occurrence being replaced is left out.
+     */
+    fun hippieCandidates(
+        text: String,
+        prefix: String,
+        prefixStart: Int,
+        caret: Int,
+        otherTexts: List<String> = emptyList(),
+    ): List<String> {
+        if (prefix.isEmpty()) return emptyList()
+        val before = ArrayList<Pair<Int, String>>()
+        val after = ArrayList<Pair<Int, String>>()
+        for (range in identifierRanges(text)) {
+            if (range.first <= prefixStart && range.last + 1 >= caret) continue
+            val word = text.substring(range.first, range.last + 1)
+            if (word == prefix || !word.startsWith(prefix)) continue
+            if (range.last + 1 <= prefixStart) before.add((prefixStart - range.last) to word)
+            else if (range.first >= caret) after.add((range.first - caret) to word)
+        }
+        val ordered = buildList {
+            addAll(before.sortedBy { it.first }.map { it.second })
+            addAll(after.sortedBy { it.first }.map { it.second })
+            for (other in otherTexts) {
+                addAll(identifierRanges(other).map { other.substring(it.first, it.last + 1) })
+            }
+        }
+        return ordered.filter { it != prefix && it.startsWith(prefix) }.distinct()
+    }
+
+    private fun selectionLadder(text: String, selection: TextRange): List<TextRange> {
+        val scan = CodeScan(text)
+        val ladder = ArrayList<TextRange>(6)
+        val word = wordAt(text, selection.min)
+        if (word != null && word.min <= selection.min && word.max >= selection.max) ladder.add(word)
+        stringLiteralAt(scan, selection)?.let(ladder::add)
+        val bracket = enclosingBracket(scan, selection)
+        if (bracket != null) {
+            ladder.add(TextRange(bracket.first + 1, bracket.second))
+            ladder.add(TextRange(bracket.first, bracket.second + 1))
+        }
+        ladder.add(lineSpan(text, selection))
+        ladder.add(TextRange(0, text.length))
+        return ladder
+    }
+
+    private fun stringLiteralAt(scan: CodeScan, selection: TextRange): TextRange? {
+        val range = scan.stringContents.firstOrNull {
+            it.first <= selection.min && it.last + 1 >= selection.max
+        } ?: return null
+        return TextRange(range.first, range.last + 1)
+    }
+
+    private fun enclosingBracket(scan: CodeScan, selection: TextRange): Pair<Int, Int>? {
+        var best: Pair<Int, Int>? = null
+        for (pair in scan.bracketPairs()) {
+            if (pair.first < selection.min && pair.second >= selection.max &&
+                (best == null || pair.first > best.first)
+            ) {
+                best = pair
+            }
+        }
+        return best
+    }
+
+    private fun lineSpan(text: String, selection: TextRange): TextRange {
+        val start = lineStart(text, selection.min)
+        val lastCovered = if (selection.max > selection.min) selection.max - 1 else selection.max
+        return TextRange(start, lineEnd(text, lastCovered))
+    }
+
+    private fun isIdentifierPart(character: Char): Boolean =
+        character.isLetterOrDigit() || character == '_' || character == '$'
+
     private fun addLineComments(
         text: String,
         selection: TextRange,
@@ -298,5 +561,141 @@ object EditActions {
         var i = 0
         while (i < line.length && (line[i] == ' ' || line[i] == '\t')) i++
         return i
+    }
+}
+
+private val IDENTIFIER = Regex("[A-Za-z_$][A-Za-z0-9_$]*")
+private const val BRACKET_OPENING = "([{"
+private const val BRACKET_CLOSING = ")]}"
+private val NO_SPACE_BEFORE = charArrayOf(')', ']', '.', ',')
+private val BRACKET_PARTNER = mapOf(
+    '(' to ')', ')' to '(',
+    '[' to ']', ']' to '[',
+    '{' to '}', '}' to '{',
+)
+
+/**
+ * Marks the characters inside string literals and comments so bracket matching can skip them.
+ * The scan is best effort: a line comment ends at the newline, and a normal string ends at its
+ * quote or the newline.
+ */
+private class CodeScan(private val text: String) {
+    private val kinds = ByteArray(text.length)
+
+    /** Content ranges of string and character literals, delimiters excluded. */
+    val stringContents = ArrayList<IntRange>()
+
+    private val brackets: List<Pair<Int, Int>> by lazy { computeBrackets() }
+
+    init {
+        scan()
+    }
+
+    fun isCode(index: Int): Boolean = kinds[index] == CODE
+
+    /** Every matched bracket pair as (open, close), innermost included. */
+    fun bracketPairs(): List<Pair<Int, Int>> = brackets
+
+    /** The index of the bracket matching the one at [index], or `null` when it does not match. */
+    fun match(index: Int): Int? {
+        val bracket = text[index]
+        val partner = BRACKET_PARTNER[bracket] ?: return null
+        if (bracket in BRACKET_OPENING) {
+            var depth = 0
+            for (i in index + 1 until text.length) {
+                if (!isCode(i)) continue
+                val current = text[i]
+                if (current == bracket) {
+                    depth++
+                } else if (current == partner) {
+                    if (depth == 0) return i
+                    depth--
+                }
+            }
+        } else {
+            var depth = 0
+            for (i in index - 1 downTo 0) {
+                if (!isCode(i)) continue
+                val current = text[i]
+                if (current == bracket) {
+                    depth++
+                } else if (current == partner) {
+                    if (depth == 0) return i
+                    depth--
+                }
+            }
+        }
+        return null
+    }
+
+    private fun scan() {
+        var i = 0
+        while (i < text.length) {
+            val character = text[i]
+            when {
+                character == '/' && text.getOrNull(i + 1) == '/' -> {
+                    while (i < text.length && text[i] != '\n') kinds[i++] = COMMENT
+                }
+                character == '/' && text.getOrNull(i + 1) == '*' -> {
+                    while (i < text.length && !(text[i] == '*' && text.getOrNull(i + 1) == '/')) {
+                        if (text[i] != '\n') kinds[i] = COMMENT
+                        i++
+                    }
+                    repeat(2) { if (i < text.length) kinds[i++] = COMMENT }
+                }
+                text.startsWith("\"\"\"", i) -> {
+                    i += 3
+                    val start = i
+                    while (i < text.length && !text.startsWith("\"\"\"", i)) {
+                        if (text[i] != '\n') kinds[i] = STRING
+                        i++
+                    }
+                    if (i > start) stringContents.add(start until i)
+                    if (i < text.length) i += 3
+                }
+                character == '"' || character == '\'' -> {
+                    val quote = character
+                    i++
+                    val start = i
+                    while (i < text.length && text[i] != quote && text[i] != '\n') {
+                        if (text[i] == '\\' && i + 1 < text.length) {
+                            kinds[i++] = STRING
+                            if (i < text.length && text[i] != '\n') kinds[i++] = STRING
+                        } else {
+                            kinds[i++] = STRING
+                        }
+                    }
+                    if (i > start) stringContents.add(start until i)
+                    if (i < text.length && text[i] == quote) i++
+                }
+                else -> i++
+            }
+        }
+    }
+
+    private fun computeBrackets(): List<Pair<Int, Int>> {
+        val pairs = ArrayList<Pair<Int, Int>>()
+        val stack = ArrayDeque<Pair<Char, Int>>()
+        for (index in text.indices) {
+            if (!isCode(index)) continue
+            val character = text[index]
+            when {
+                character in BRACKET_OPENING -> stack.addLast(character to index)
+                character in BRACKET_CLOSING -> {
+                    val top = stack.lastOrNull() ?: continue
+                    if (BRACKET_PARTNER[top.first] == character) {
+                        stack.removeLast()
+                        pairs.add(top.second to index)
+                    }
+                }
+            }
+        }
+        return pairs
+    }
+
+    private companion object {
+        const val CODE: Byte = 0
+        const val STRING: Byte = 1
+        const val COMMENT: Byte = 2
     }
 }

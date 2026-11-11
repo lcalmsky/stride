@@ -60,6 +60,7 @@ fun keyLabel(key: Key): String = when (key) {
     Key.Eight -> "8"
     Key.Nine -> "9"
     Key.Tab -> "Tab"
+    Key.Spacebar -> "Space"
     Key.Backspace -> "⌫"
     Key.Delete -> "Del"
     Key.Escape -> "Esc"

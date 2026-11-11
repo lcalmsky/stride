@@ -53,6 +53,22 @@ object ActionNames {
         ActionId.SHOW_INTENTION_ACTIONS to "Show Context Actions",
         ActionId.CHOOSE_RUN_CONFIGURATION to "Choose Run Configuration",
         ActionId.BUILD_PROJECT to "Build Project",
+        ActionId.EDITOR_SELECT_WORD to "Extend Selection",
+        ActionId.EDITOR_UNSELECT_WORD to "Shrink Selection",
+        ActionId.EDITOR_TOGGLE_CASE to "Toggle Case",
+        ActionId.EDITOR_JOIN_LINES to "Join Lines",
+        ActionId.EDITOR_START_NEW_LINE to "Start New Line",
+        ActionId.EDITOR_START_NEW_LINE_BEFORE to "Start New Line Before",
+        ActionId.EDITOR_MATCH_BRACE to "Match Brace",
+        ActionId.EDITOR_CODE_BLOCK_START to "Code Block Start",
+        ActionId.EDITOR_CODE_BLOCK_END to "Code Block End",
+        ActionId.METHOD_UP to "Method Up",
+        ActionId.METHOD_DOWN to "Method Down",
+        ActionId.HIPPIE_COMPLETION to "Hippie Completion",
+        ActionId.CODE_COMPLETION to "Code Completion",
+        ActionId.RENAME_ELEMENT to "Rename Element",
+        ActionId.COPY_LINE to "Copy Line",
+        ActionId.CUT_LINE to "Cut Line",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

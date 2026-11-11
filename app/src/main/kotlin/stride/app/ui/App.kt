@@ -70,10 +70,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.editor.CompletionPopup
 import stride.app.editor.FileEditor
 import stride.app.editor.FileEditorManager
+import stride.app.editor.RenamePopup
 import stride.app.editor.TextFileEditor
+import stride.app.editor.applyRename
 import stride.app.editor.find.FindBar
+import stride.app.editor.insertCompletion
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
 import stride.app.run.ContextActionsPopup
@@ -323,6 +327,52 @@ fun App(
                     },
                     onClose = {
                         state.runConfigurationsVisible = false
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val completion = state.completion
+        if (completion != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                CompletionPopup(
+                    request = completion,
+                    onChoose = { item ->
+                        state.completion = null
+                        insertCompletion(completion, item)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.completion = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val rename = state.rename
+        if (rename != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                RenamePopup(
+                    initialName = rename.original,
+                    onRename = { name ->
+                        state.rename = null
+                        applyRename(state, rename, name)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.rename = null
                         refocusEditor(state)
                     },
                 )

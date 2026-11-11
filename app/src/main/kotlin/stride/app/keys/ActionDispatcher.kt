@@ -2,6 +2,8 @@ package stride.app.keys
 
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
+import stride.app.editor.openCodeCompletion
+import stride.app.editor.openRename
 import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
@@ -110,8 +112,22 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.EDITOR_DUPLICATE, ActionId.EDITOR_DELETE_LINE, ActionId.COMMENT_LINE, ActionId.COMMENT_BLOCK,
     ActionId.MOVE_LINE_UP, ActionId.MOVE_LINE_DOWN, ActionId.GOTO_LINE, ActionId.INDENT, ActionId.UNINDENT,
-    ActionId.EDITOR_ESCAPE,
+    ActionId.EDITOR_ESCAPE, ActionId.EDITOR_SELECT_WORD, ActionId.EDITOR_UNSELECT_WORD,
+    ActionId.EDITOR_TOGGLE_CASE, ActionId.EDITOR_JOIN_LINES, ActionId.EDITOR_START_NEW_LINE,
+    ActionId.EDITOR_START_NEW_LINE_BEFORE, ActionId.EDITOR_MATCH_BRACE, ActionId.EDITOR_CODE_BLOCK_START,
+    ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN, ActionId.COPY_LINE,
+    ActionId.CUT_LINE,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.HIPPIE_COMPLETION -> {
+        val session = state.session ?: return false
+        val editor = session.editors.selected as? TextFileEditor ?: return false
+        val others = session.editors.openFiles
+            .filter { it !== editor }
+            .mapNotNull { (it as? TextFileEditor)?.value?.text }
+        editor.hippieComplete(others)
+    }
+    ActionId.CODE_COMPLETION -> openCodeCompletion(state)
+    ActionId.RENAME_ELEMENT -> openRename(state)
     ActionId.RUN -> {
         val session = state.session ?: return false
         val manager = session.project.service<RunManager>()

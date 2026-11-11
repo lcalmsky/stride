@@ -5,7 +5,9 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import stride.app.editor.CompletionRequest
 import stride.app.editor.FileEditorManager
+import stride.app.editor.RenameRequest
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
 import stride.app.run.ContextAction
@@ -84,6 +86,12 @@ class AppState {
     var runConfigurationChoices: List<RunConfiguration> by mutableStateOf(emptyList())
     var runConfigurationsVisible by mutableStateOf(false)
 
+    /** The open completion popup; `null` when it is closed. */
+    var completion by mutableStateOf<CompletionRequest?>(null)
+
+    /** The open rename popup; `null` when it is closed. */
+    var rename by mutableStateOf<RenameRequest?>(null)
+
     var statusMessage: String? by mutableStateOf(null)
 
     val toolWindows = ToolWindowManager()
@@ -156,6 +164,8 @@ class AppState {
         contextActionsVisible = false
         runConfigurationChoices = emptyList()
         runConfigurationsVisible = false
+        completion = null
+        rename = null
         statusMessage = null
         toolWindows.hide()
         focus = KeyContext.GLOBAL

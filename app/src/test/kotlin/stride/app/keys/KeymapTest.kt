@@ -91,6 +91,43 @@ class KeymapTest {
         assertEquals(ActionId.CHOOSE_RUN_CONFIGURATION, action("control alt R", KeyContext.GLOBAL))
         // CompileDirty control F9 (→meta)
         assertEquals(ActionId.BUILD_PROJECT, action("meta F9", KeyContext.GLOBAL))
+        // EditorSelectWord alt UP
+        assertEquals(ActionId.EDITOR_SELECT_WORD, action("alt UP", KeyContext.EDITOR))
+        // EditorUnSelectWord alt DOWN
+        assertEquals(ActionId.EDITOR_UNSELECT_WORD, action("alt DOWN", KeyContext.EDITOR))
+        // EditorToggleCase control shift U (→meta)
+        assertEquals(ActionId.EDITOR_TOGGLE_CASE, action("meta shift U", KeyContext.EDITOR))
+        // EditorJoinLines control shift J
+        assertEquals(ActionId.EDITOR_JOIN_LINES, action("control shift J", KeyContext.EDITOR))
+        // EditorStartNewLine shift ENTER
+        assertEquals(ActionId.EDITOR_START_NEW_LINE, action("shift ENTER", KeyContext.EDITOR))
+        // EditorStartNewLineBefore control alt ENTER (→meta)
+        assertEquals(ActionId.EDITOR_START_NEW_LINE_BEFORE, action("meta alt ENTER", KeyContext.EDITOR))
+        // EditorMatchBrace control M
+        assertEquals(ActionId.EDITOR_MATCH_BRACE, action("control M", KeyContext.EDITOR))
+        // EditorCodeBlockStart meta alt OPEN_BRACKET
+        assertEquals(ActionId.EDITOR_CODE_BLOCK_START, action("meta alt OPEN_BRACKET", KeyContext.EDITOR))
+        // EditorCodeBlockEnd meta alt CLOSE_BRACKET
+        assertEquals(ActionId.EDITOR_CODE_BLOCK_END, action("meta alt CLOSE_BRACKET", KeyContext.EDITOR))
+        // MethodUp control shift UP and MethodDown control shift DOWN
+        assertEquals(ActionId.METHOD_UP, action("control shift UP", KeyContext.EDITOR))
+        assertEquals(ActionId.METHOD_DOWN, action("control shift DOWN", KeyContext.EDITOR))
+        // HippieCompletion alt SLASH
+        assertEquals(ActionId.HIPPIE_COMPLETION, action("alt SLASH", KeyContext.EDITOR))
+        // CodeCompletion control SPACE
+        assertEquals(ActionId.CODE_COMPLETION, action("control SPACE", KeyContext.EDITOR))
+        // RenameElement shift F6
+        assertEquals(ActionId.RENAME_ELEMENT, action("shift F6", KeyContext.EDITOR))
+        // $Copy and $Cut take the whole line when nothing is selected
+        assertEquals(ActionId.COPY_LINE, action("meta C", KeyContext.EDITOR))
+        assertEquals(ActionId.CUT_LINE, action("meta X", KeyContext.EDITOR))
+    }
+
+    @Test
+    fun `alt enter stays the context actions popup`() {
+        assertEquals(ActionId.SHOW_INTENTION_ACTIONS, action("alt ENTER", KeyContext.EDITOR))
+        assertNull(action("meta alt ENTER", KeyContext.CONTEXT_POPUP))
+        assertNull(action("alt ENTER", KeyContext.CONTEXT_POPUP))
     }
 
     @Test

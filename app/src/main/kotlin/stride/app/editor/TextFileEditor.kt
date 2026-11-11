@@ -91,12 +91,17 @@ data class GutterMarker(val line: Int, val onClick: () -> Unit)
 class TextFileEditor(
     override val file: VFile,
     val readOnly: Boolean = false,
+    private val clipboard: TextClipboard = SystemTextClipboard,
 ) : FileEditor {
     private val log = Logger.getLogger("stride.app.editor")
 
     private var savedText: String = ""
     private var forcedReadOnly: Boolean = false
     private val highlighter: LineStateHighlighter?
+    private val selectionStack = ArrayList<TextRange>()
+    private var selectionStep = false
+    private var hippieStep = false
+    private var hippie: HippieState? = null
 
     val isReadOnly: Boolean get() = readOnly || forcedReadOnly
 
@@ -145,6 +150,11 @@ class TextFileEditor(
     fun updateValue(newValue: TextFieldValue) = applyValue(newValue, record = true)
 
     private fun applyValue(newValue: TextFieldValue, record: Boolean) {
+        val changed = newValue.text != text || newValue.selection != value.selection
+        if (changed && !selectionStep && !hippieStep) {
+            selectionStack.clear()
+            hippie = null
+        }
         if (newValue.text != text) {
             val change = computeTextChange(text, newValue.text)
             if (record) {
@@ -256,7 +266,158 @@ class TextFileEditor(
             }
             else -> false
         }
+        ActionId.EDITOR_SELECT_WORD -> {
+            expandWordSelection()
+            true
+        }
+        ActionId.EDITOR_UNSELECT_WORD -> {
+            shrinkWordSelection()
+            true
+        }
+        ActionId.EDITOR_TOGGLE_CASE -> {
+            if (!isReadOnly) applyEdit(EditActions.toggleCase(text, value.selection))
+            true
+        }
+        ActionId.EDITOR_JOIN_LINES -> {
+            if (!isReadOnly) applyEdit(EditActions.joinLines(text, value.selection))
+            true
+        }
+        ActionId.EDITOR_START_NEW_LINE -> {
+            if (!isReadOnly) applyEdit(EditActions.startNewLine(text, value.selection, before = false))
+            true
+        }
+        ActionId.EDITOR_START_NEW_LINE_BEFORE -> {
+            if (!isReadOnly) applyEdit(EditActions.startNewLine(text, value.selection, before = true))
+            true
+        }
+        ActionId.EDITOR_MATCH_BRACE -> {
+            moveCaret(EditActions.matchBrace(text, value.selection.start))
+            true
+        }
+        ActionId.EDITOR_CODE_BLOCK_START -> {
+            moveCaret(EditActions.codeBlockStart(text, value.selection.start))
+            true
+        }
+        ActionId.EDITOR_CODE_BLOCK_END -> {
+            moveCaret(EditActions.codeBlockEnd(text, value.selection.start))
+            true
+        }
+        ActionId.METHOD_UP, ActionId.METHOD_DOWN -> {
+            val target = EditActions.declarationTarget(
+                text,
+                value.selection.start,
+                DeclarationScan.lines(file.name, text),
+                up = action == ActionId.METHOD_UP,
+            )
+            moveCaret(target)
+            true
+        }
+        ActionId.COPY_LINE -> copyLine(cut = false)
+        ActionId.CUT_LINE -> copyLine(cut = true)
+        ActionId.HIPPIE_COMPLETION -> hippieComplete()
         else -> false
+    }
+
+    /** Moves the caret to [target]; `null` leaves it where it is. */
+    private fun moveCaret(target: TextRange?) {
+        if (target == null) return
+        applyValue(TextFieldValue(text, target), record = false)
+    }
+
+    private fun expandWordSelection() {
+        val current = value.selection
+        val next = EditActions.selectWord(text, current) ?: return
+        if (selectionStack.size >= MAX_SELECTION_STEPS) selectionStack.removeAt(0)
+        selectionStack.add(current)
+        selectionStep = true
+        applyValue(TextFieldValue(text, next), record = false)
+        selectionStep = false
+    }
+
+    private fun shrinkWordSelection() {
+        val previous = selectionStack.removeLastOrNull() ?: return
+        selectionStep = true
+        applyValue(TextFieldValue(text, previous), record = false)
+        selectionStep = false
+    }
+
+    /** Copies the line at the caret, or cuts it when [cut]; a real selection is left to the field. */
+    private fun copyLine(cut: Boolean): Boolean {
+        if (!value.selection.collapsed) return false
+        val range = EditActions.wholeLine(text, value.selection.start)
+        if (!clipboard.writeText(text.substring(range.min, range.max))) return false
+        if (cut && !isReadOnly) {
+            val start = range.min
+            val newText = text.substring(0, range.min) + text.substring(range.max)
+            applyEdit(EditResult(newText, TextRange(start.coerceAtMost(newText.length))))
+        }
+        return true
+    }
+
+    /** Cycles the identifier prefix before the caret through words of this and other files. */
+    fun hippieComplete(otherTexts: List<String> = emptyList()): Boolean {
+        if (isReadOnly) return true
+        val selection = value.selection
+        val current = hippie
+        if (current != null && selection.min == selection.max) {
+            val word = current.candidates[current.index]
+            if (selection.start == current.prefixStart + word.length &&
+                text.startsWith(word, current.prefixStart)
+            ) {
+                val next = current.copy(index = (current.index + 1) % current.candidates.size)
+                hippie = next
+                applyHippie(next, word.length)
+                return true
+            }
+        }
+        val prefixRange = EditActions.identifierPrefix(text, selection.start)
+        if (prefixRange.isEmpty()) return true
+        val prefix = text.substring(prefixRange.first, prefixRange.last + 1)
+        val candidates = EditActions.hippieCandidates(text, prefix, prefixRange.first, selection.start, otherTexts)
+        if (candidates.isEmpty()) return true
+        val state = HippieState(prefixRange.first, prefix, candidates, 0)
+        hippie = state
+        applyHippie(state, prefix.length)
+        return true
+    }
+
+    private fun applyHippie(state: HippieState, replaceLength: Int) {
+        val word = state.candidates[state.index]
+        val start = state.prefixStart
+        val end = start + replaceLength
+        val newText = text.substring(0, start) + word + text.substring(end)
+        hippieStep = true
+        applyEdit(EditResult(newText, TextRange(start + word.length)))
+        hippieStep = false
+    }
+
+    /** Renames every whole-word occurrence of [original]; returns how many were replaced. */
+    fun renameWord(original: String, replacement: String): Int {
+        if (isReadOnly || original.isEmpty()) return 0
+        val ranges = EditActions.wholeWordRanges(text, original)
+        if (ranges.isEmpty()) return 0
+        if (original == replacement) return ranges.size
+        val newText = buildString {
+            var cursor = 0
+            for (range in ranges) {
+                append(text, cursor, range.first)
+                append(replacement)
+                cursor = range.last + 1
+            }
+            append(text, cursor, text.length)
+        }
+        val caret = ranges.first().first + replacement.length
+        applyEdit(EditResult(newText, TextRange(caret)))
+        return ranges.size
+    }
+
+    /** Replaces `[start, end)` with [replacement] as one undo step; used by the popups. */
+    fun replaceRange(start: Int, end: Int, replacement: String) {
+        if (isReadOnly) return
+        val rangeStart = start.coerceIn(0, text.length)
+        val rangeEnd = end.coerceIn(rangeStart, text.length)
+        val newText = text.substring(0, rangeStart) + replacement + text.substring(rangeEnd)
+        applyEdit(EditResult(newText, TextRange(rangeStart + replacement.length)))
     }
 
     private fun applyEdit(result: EditResult) {
@@ -556,5 +717,14 @@ class TextFileEditor(
     companion object {
         const val MAX_HIGHLIGHTED_SIZE: Long = 2L * 1024 * 1024
         const val GOTO_LINE_TAG: String = "goto-line"
+        private const val MAX_SELECTION_STEPS: Int = 64
     }
 }
+
+/** The prefix replaced by hippie completion and the candidate it currently shows. */
+private data class HippieState(
+    val prefixStart: Int,
+    val prefix: String,
+    val candidates: List<String>,
+    val index: Int,
+)

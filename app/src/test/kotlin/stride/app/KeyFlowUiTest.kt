@@ -43,6 +43,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.app.editor.COMPLETION_FIELD_TAG
+import stride.app.editor.RENAME_FIELD_TAG
 import stride.app.editor.TextFileEditor
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
@@ -892,6 +894,108 @@ class KeyFlowUiTest {
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { !state.contextActionsVisible }
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `code completion filters, inserts and blocks global shortcuts`() = runComposeUiTest {
+        val root = temp.resolve("completion-ui-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "fun main() {}\nval ma = 1\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val caret = editor.value.text.lastIndexOf("ma") + 2
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.CtrlLeft) { pressKey(Key.Spacebar) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.completion != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+            onNodeWithTag(COMPLETION_FIELD_TAG).assertIsFocused()
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.CtrlLeft) { pressKey(Key.R) }
+            }
+            waitForIdle()
+            assertTrue(state.completion != null)
+            assertNull(state.statusMessage)
+
+            onNodeWithTag(COMPLETION_FIELD_TAG).performTextInput("i")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.completion == null }
+            assertEquals("fun main() {}\nval main = 1\n", editor.value.text)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onNode(hasSetTextAction()).assertIsFocused()
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.CtrlLeft) { pressKey(Key.Spacebar) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.completion != null }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.completion == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onNode(hasSetTextAction()).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `rename popup renames every occurrence and escape cancels`() = runComposeUiTest {
+        val root = temp.resolve("rename-ui-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "foo = foo + fooBar\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.rename != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+            onNodeWithTag(RENAME_FIELD_TAG).assertIsFocused()
+
+            onNodeWithTag(RENAME_FIELD_TAG).performTextInput("bar")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.rename == null }
+            assertEquals("bar = bar + fooBar\n", editor.value.text)
+            assertEquals("Renamed 2 occurrences", state.statusMessage)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onNode(hasSetTextAction()).assertIsFocused()
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.rename != null }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.rename == null }
+            assertEquals("bar = bar + fooBar\n", editor.value.text)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onNode(hasSetTextAction()).assertIsFocused()
         } finally {
             state.dispose()
         }

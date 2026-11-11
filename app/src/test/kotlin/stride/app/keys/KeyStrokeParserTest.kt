@@ -16,6 +16,7 @@ class KeyStrokeParserTest {
         assertEquals(KeyStroke(Key.Tab, shift = true), KeyStroke.parse("shift TAB"))
         assertEquals(KeyStroke(Key.Tab, ctrl = true), KeyStroke.parse("ctrl TAB"))
         assertEquals(KeyStroke(Key.DirectionDown, alt = true, shift = true), KeyStroke.parse("alt shift down"))
+        assertEquals(KeyStroke(Key.Spacebar, ctrl = true), KeyStroke.parse("control SPACE"))
     }
 
     @Test

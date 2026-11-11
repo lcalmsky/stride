@@ -8,6 +8,10 @@ enum class ActionId {
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
     FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
     GOTO_ACTION, RECENT_FILES, ACTIVATE_TERMINAL_TOOL_WINDOW,
+    EDITOR_SELECT_WORD, EDITOR_UNSELECT_WORD, EDITOR_TOGGLE_CASE, EDITOR_JOIN_LINES,
+    EDITOR_START_NEW_LINE, EDITOR_START_NEW_LINE_BEFORE, EDITOR_MATCH_BRACE,
+    EDITOR_CODE_BLOCK_START, EDITOR_CODE_BLOCK_END, METHOD_UP, METHOD_DOWN,
+    HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
 }
 
 enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP }
@@ -132,4 +136,35 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control alt R", ActionId.CHOOSE_RUN_CONFIGURATION, KeyContext.GLOBAL)
     // CompileDirty control F9 (→meta)
     bind("meta F9", ActionId.BUILD_PROJECT, KeyContext.GLOBAL)
+    // EditorSelectWord alt UP
+    bind("alt UP", ActionId.EDITOR_SELECT_WORD, KeyContext.EDITOR)
+    // EditorUnSelectWord alt DOWN
+    bind("alt DOWN", ActionId.EDITOR_UNSELECT_WORD, KeyContext.EDITOR)
+    // EditorToggleCase control shift U (→meta)
+    bind("meta shift U", ActionId.EDITOR_TOGGLE_CASE, KeyContext.EDITOR)
+    // EditorJoinLines control shift J
+    bind("control shift J", ActionId.EDITOR_JOIN_LINES, KeyContext.EDITOR)
+    // EditorStartNewLine shift ENTER
+    bind("shift ENTER", ActionId.EDITOR_START_NEW_LINE, KeyContext.EDITOR)
+    // EditorStartNewLineBefore control alt ENTER (→meta)
+    bind("meta alt ENTER", ActionId.EDITOR_START_NEW_LINE_BEFORE, KeyContext.EDITOR)
+    // EditorMatchBrace control M
+    bind("control M", ActionId.EDITOR_MATCH_BRACE, KeyContext.EDITOR)
+    // EditorCodeBlockStart meta alt OPEN_BRACKET
+    bind("meta alt OPEN_BRACKET", ActionId.EDITOR_CODE_BLOCK_START, KeyContext.EDITOR)
+    // EditorCodeBlockEnd meta alt CLOSE_BRACKET
+    bind("meta alt CLOSE_BRACKET", ActionId.EDITOR_CODE_BLOCK_END, KeyContext.EDITOR)
+    // MethodUp control shift UP
+    bind("control shift UP", ActionId.METHOD_UP, KeyContext.EDITOR)
+    // MethodDown control shift DOWN
+    bind("control shift DOWN", ActionId.METHOD_DOWN, KeyContext.EDITOR)
+    // HippieCompletion alt SLASH
+    bind("alt SLASH", ActionId.HIPPIE_COMPLETION, KeyContext.EDITOR)
+    // CodeCompletion control SPACE
+    bind("control SPACE", ActionId.CODE_COMPLETION, KeyContext.EDITOR)
+    // RenameElement shift F6
+    bind("shift F6", ActionId.RENAME_ELEMENT, KeyContext.EDITOR)
+    // $Copy and $Cut with an empty selection take the whole line
+    bind("meta C", ActionId.COPY_LINE, KeyContext.EDITOR)
+    bind("meta X", ActionId.CUT_LINE, KeyContext.EDITOR)
 }

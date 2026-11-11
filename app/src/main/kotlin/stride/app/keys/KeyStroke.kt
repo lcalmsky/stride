@@ -85,6 +85,7 @@ data class KeyStroke(
             "8" -> Key.Eight
             "9" -> Key.Nine
             "TAB" -> Key.Tab
+            "SPACE" -> Key.Spacebar
             "BACK_SPACE" -> Key.Backspace
             "DELETE" -> Key.Delete
             "ESCAPE" -> Key.Escape

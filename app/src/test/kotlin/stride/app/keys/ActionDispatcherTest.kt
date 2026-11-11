@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
+import stride.app.editor.applyRename
 import stride.app.run.ContextActionKind
 import stride.app.run.FakeProcess
 import stride.app.run.ProcessStarter
@@ -367,6 +368,81 @@ class ActionDispatcherTest {
         val configuration = requireNotNull(manager.lastRun)
         assertEquals(root.resolve("scripts").toAbsolutePath().normalize(), configuration.workingDir.toAbsolutePath().normalize())
         assertEquals(RunKind.APPLICATION, configuration.kind)
+    }
+
+    @Test
+    fun `editor actions without a selected editor are not consumed`() {
+        assertFalse(dispatchAction(ActionId.EDITOR_JOIN_LINES, state) { null })
+        assertFalse(dispatchAction(ActionId.EDITOR_SELECT_WORD, state) { null })
+        assertFalse(dispatchAction(ActionId.CODE_COMPLETION, state) { null })
+        assertFalse(dispatchAction(ActionId.RENAME_ELEMENT, state) { null })
+        assertFalse(dispatchAction(ActionId.HIPPIE_COMPLETION, state) { null })
+    }
+
+    @Test
+    fun `hippie completion falls back to the other open editors`() {
+        val session = openProjectWith("a.kt", "b.kt")
+        val root = temp.resolve("project")
+        val other = session.editors.openFile(VFile(root.resolve("b.kt"))) as TextFileEditor
+        other.updateValue(TextFieldValue("val validator", TextRange(13)))
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("val x = val", TextRange(11)))
+
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.HIPPIE_COMPLETION, state) { null })
+
+        assertEquals("val x = validator", editor.value.text)
+    }
+
+    @Test
+    fun `code completion opens on the prefix before the caret`() {
+        val root = temp.resolve("completion-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "fun main() { println(1) }\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        val caret = editor.value.text.indexOf("main") + 2
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+        assertTrue(dispatchAction(ActionId.CODE_COMPLETION, state) { null })
+
+        val request = requireNotNull(state.completion)
+        assertEquals("ma", request.prefix)
+        assertEquals(caret - 2, request.prefixStart)
+        assertTrue("main" in request.candidates)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+    }
+
+    @Test
+    fun `rename opens on the identifier and reports the count`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo = foo", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.RENAME_ELEMENT, state) { null })
+
+        val request = requireNotNull(state.rename)
+        assertEquals("foo", request.original)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+        assertEquals(2, applyRename(state, request, "bar"))
+        assertEquals("bar = bar", editor.value.text)
+        assertEquals("Renamed 2 occurrences", state.statusMessage)
+    }
+
+    @Test
+    fun `rename without an identifier reports it and opens nothing`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("a + b", TextRange(2)))
+
+        assertTrue(dispatchAction(ActionId.RENAME_ELEMENT, state) { null })
+
+        assertNull(state.rename)
+        assertEquals("No identifier at caret", state.statusMessage)
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

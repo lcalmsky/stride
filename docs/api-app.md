@@ -271,9 +271,13 @@ enum class ActionId {
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
     FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, RECENT_FILES,
     ACTIVATE_TERMINAL_TOOL_WINDOW,
+    EDITOR_SELECT_WORD, EDITOR_UNSELECT_WORD, EDITOR_TOGGLE_CASE, EDITOR_JOIN_LINES,
+    EDITOR_START_NEW_LINE, EDITOR_START_NEW_LINE_BEFORE, EDITOR_MATCH_BRACE,
+    EDITOR_CODE_BLOCK_START, EDITOR_CODE_BLOCK_END, METHOD_UP, METHOD_DOWN,
+    HIPPIE_COMPLETION, CODE_COMPLETION, RENAME_ELEMENT, COPY_LINE, CUT_LINE,
 }
 
-enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL }
+enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP }
 
 data class Binding(val action: ActionId, val context: KeyContext)
 
@@ -305,7 +309,7 @@ fun handleWindowKeyEvent(event: KeyEvent, router: KeyRouter, state: AppState, ch
 `KeyStroke.parse` reads a space-separated key stroke grammar: modifier tokens
 (`meta`, `control`/`ctrl`, `alt`, `shift`) followed by one key token (`A`–`Z`, `0`–`9`, `TAB`,
 `BACK_SPACE`, `DELETE`, `ESCAPE`, `ENTER`, `UP`/`DOWN`/`LEFT`/`RIGHT`, `HOME`, `END`, `SLASH`,
-`DIVIDE`, `MULTIPLY`, `OPEN_BRACKET`, `CLOSE_BRACKET`, `INSERT`, `F1`–`F12`, `NUMPAD0`–`NUMPAD9`).
+`SPACE`, `DIVIDE`, `MULTIPLY`, `OPEN_BRACKET`, `CLOSE_BRACKET`, `INSERT`, `F1`–`F12`, `NUMPAD0`–`NUMPAD9`).
 Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
 
 `Keymap.actionFor` prefers a binding whose context equals `focus`, then a `GLOBAL` binding, then
@@ -318,38 +322,59 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `OPEN_FOLDER` | GLOBAL | ⌘O | (none) | :53 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :55 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :57 |
+| `OPEN_FOLDER` | GLOBAL | ⌘O | (none) | :65 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :67 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :69 |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :59, :60 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :62, :63 |
-| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :65 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :67 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :69 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :71 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :73 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :75 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :77 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :79 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :81, :82 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :84 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :86 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :88 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :90 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :92 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :94 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :96 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :98 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :100 |
-| `FIND` | EDITOR | ⌘F | `Find` | :102 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :104 |
-| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :106 |
-| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :108 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :110 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :112 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :114 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :116 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :71, :72 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :74, :75 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :77 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :79 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :81 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :83 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :85 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :87 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :89 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :91 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :93, :94 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :96 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :98 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :100 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :102 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :104 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :106 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :108 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :110 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :112 |
+| `FIND` | EDITOR | ⌘F | `Find` | :114 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :116 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :118 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :120 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :122 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :124 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :126 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :128 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :130 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :132 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :134 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :136 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :138 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :140 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :142 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :144 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :146 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :148 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :150 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :152 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :154 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :156 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :158 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :160 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :162 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :164 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :166 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :168 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :169 |
 
 `KeyRouter` has no window dependency and is unit-tested. Modifier keys map to `ModifierKey`; a
 repeated down of an already-pressed modifier is ignored. `DoubleModifierDetector` turns a double
@@ -359,12 +384,9 @@ Non-modifier downs call `otherKeyPressed()` and then `keymap.actionFor(stroke, f
 
 `Main` wires `Window(onPreviewKeyEvent = ...)` to `handleWindowKeyEvent`, which reads
 `state.focus`, routes the event and calls `dispatchAction`. `dispatchAction` returns `true` only
-when the event is consumed; an action with no implementation returns `false` so the key reaches
-the focused component. `OPEN_FOLDER`, `SAVE`, `CLOSE_TAB`, `SEARCH_EVERYWHERE`, `NEXT_TAB`,
-`PREVIOUS_TAB`, `ACTIVATE_RUN_TOOL_WINDOW`, `ACTIVATE_TERMINAL_TOOL_WINDOW`, `HIDE_ACTIVE_WINDOW`
-and `GOTO_FILE` are implemented; `UNDO` and `REDO` are consumed without an implementation because
-`BasicTextField` maps ⌘Z and ⌘⇧Z to its own undo and redo (Foundation `KeyMapping.kt:71,82`). The
-rest return `false`. The folder chooser is a parameter, so the handler runs in headless tests.
+when the event is consumed; an action that needs an editor or a project returns `false` without
+one, so the key reaches the focused component. The folder chooser is a parameter, so the handler
+runs in headless tests.
 
 `AppState.focus` is the reported focus context. `App` sets it to `EDITOR` from the box around the
 editor area, to the active window's context (or `GLOBAL` when it loses focus) from the tool window
@@ -389,6 +411,26 @@ object EditActions {
     fun indent(text: String, selection: TextRange, unit: String = "    "): EditResult
     fun unindent(text: String, selection: TextRange, unit: String = "    "): EditResult
     fun gotoLine(text: String, line: Int, column: Int = 1): TextRange
+    fun wordAt(text: String, offset: Int): TextRange?
+    fun identifierPrefix(text: String, offset: Int): IntRange
+    fun identifierRanges(text: String): List<IntRange>
+    fun selectWord(text: String, selection: TextRange): TextRange?
+    fun toggleCase(text: String, selection: TextRange): EditResult
+    fun joinLines(text: String, selection: TextRange): EditResult
+    fun startNewLine(text: String, selection: TextRange, before: Boolean): EditResult
+    fun matchBrace(text: String, caret: Int): TextRange?
+    fun codeBlockStart(text: String, caret: Int): TextRange?
+    fun codeBlockEnd(text: String, caret: Int): TextRange?
+    fun wholeLine(text: String, caret: Int): TextRange
+    fun declarationTarget(text: String, caret: Int, declarationLines: List<Int>, up: Boolean): TextRange?
+    fun wholeWordRanges(text: String, word: String): List<IntRange>
+    fun hippieCandidates(
+        text: String,
+        prefix: String,
+        prefixStart: Int,
+        caret: Int,
+        otherTexts: List<String> = emptyList(),
+    ): List<String>
 }
 ```
 
@@ -401,6 +443,28 @@ remove it again when every non-blank touched line is already commented (blank li
 alone); block comments wrap the selection or strip an outer `prefix…suffix`; indent inserts the
 unit and widens the selection to the touched lines; unindent removes up to `unit.length` leading
 whitespace; `gotoLine` is 1-based and clamps to the nearest line end.
+
+The selection and caret actions are pure as well. `selectWord` returns the next larger selection
+around the input — word, string-literal contents, bracket contents, the brackets themselves, the
+touched lines, then the whole text — or `null` at the top; `wordAt` is the identifier touching an
+offset (including one ending exactly there), and `identifierPrefix` is the empty-or-filled range
+of identifier characters just before it. `toggleCase` upper-cases the selection or caret word when
+it holds a lower-case letter and lower-cases it otherwise. `joinLines` merges the next line, or
+every line the selection touches, into the first: the joined line loses its indentation, one
+space separates the parts unless it starts with `)`, `]`, `.` or `,`, and the caret lands on the
+first join point. `startNewLine` inserts a line with the current line's indentation after (or
+before) it and puts the caret there. `matchBrace`, `codeBlockStart` and `codeBlockEnd` skip
+characters inside comments and string literals; the two block functions return `null` outside any
+block. `wholeLine` includes the trailing newline when there is one. `declarationTarget` picks the
+previous or next line in a declaration-line list, which `DeclarationScan.lines(fileName, text)`
+produces from the search module's `DeclarationParser`. `wholeWordRanges` finds occurrences that
+are not part of a larger identifier. `hippieCandidates` orders words that start with the prefix by
+distance from the caret — preceding occurrences first, then following ones, then the words of
+`otherTexts` — and drops duplicates.
+
+`CodeCompletion.candidates(prefix, names, limit)` ranks names with `NameMatcher`;
+`CodeCompletion.identifiers(text)` lists a file's identifiers and `keywordsFor(fileName)` the
+Kotlin or Java keywords.
 
 `stride.app.editor.UndoManager` keeps the undo and redo stacks:
 
@@ -434,7 +498,11 @@ action is one undo step.
 same path, so the highlighter stays in step with the text:
 
 ```kotlin
-class TextFileEditor(file: VFile, readOnly: Boolean = false) : FileEditor {
+class TextFileEditor(
+    file: VFile,
+    readOnly: Boolean = false,
+    clipboard: TextClipboard = SystemTextClipboard,
+) : FileEditor {
     val undo: UndoManager
     val commenter: Commenter?
     var gotoLineVisible: Boolean
@@ -443,14 +511,30 @@ class TextFileEditor(file: VFile, readOnly: Boolean = false) : FileEditor {
     fun redo(): Boolean
     fun gotoLine(input: String): Boolean        // "12" or "12:5"; false for non-numeric input
     fun applyAction(action: ActionId): Boolean
+    fun hippieComplete(otherTexts: List<String> = emptyList()): Boolean
+    fun renameWord(original: String, replacement: String): Int
+    fun replaceRange(start: Int, end: Int, replacement: String)
 }
 ```
 
 `applyAction` handles `EDITOR_DUPLICATE`, `EDITOR_DELETE_LINE`, `MOVE_LINE_UP`,
 `MOVE_LINE_DOWN`, `INDENT`, `UNINDENT`, `COMMENT_LINE`, `COMMENT_BLOCK`, `UNDO`, `REDO`,
-`GOTO_LINE` and `EDITOR_ESCAPE`. A read-only editor consumes the edit actions without changing
-the text, and a file whose language has no commenter consumes the comment actions. Everything
-else returns `false`.
+`GOTO_LINE`, `EDITOR_ESCAPE`, `EDITOR_SELECT_WORD`, `EDITOR_UNSELECT_WORD`,
+`EDITOR_TOGGLE_CASE`, `EDITOR_JOIN_LINES`, `EDITOR_START_NEW_LINE`,
+`EDITOR_START_NEW_LINE_BEFORE`, `EDITOR_MATCH_BRACE`, `EDITOR_CODE_BLOCK_START`,
+`EDITOR_CODE_BLOCK_END`, `METHOD_UP`, `METHOD_DOWN`, `COPY_LINE`, `CUT_LINE` and
+`HIPPIE_COMPLETION` (without other editors' text). A read-only
+editor consumes the edit actions without changing the text, and a file whose language has no
+commenter consumes the comment actions. Everything else returns `false`.
+
+`EDITOR_SELECT_WORD` keeps a stack of previous selections (cleared whenever the text or the
+selection changes by another route) and `EDITOR_UNSELECT_WORD` pops it. `COPY_LINE` writes the
+caret line, newline included, through `TextClipboard`; `CUT_LINE` also deletes it. Both return
+`false` when a real selection exists or the clipboard refuses the write, so `BasicTextField`
+keeps its own copy and cut for selections. `hippieComplete` replaces the prefix before the caret
+with the next candidate of `hippieCandidates` and restarts the cycle after any other edit.
+`renameWord` replaces every whole-word occurrence through one `updateValue`, so one undo step
+restores it, and returns the count. `replaceRange` is the popup's insert path.
 
 `GOTO_LINE` sets `gotoLineVisible`, which draws a small `raised` panel in the editor's top-right
 corner with a `Go to line:` label and a `line[:column]` field. Enter calls `gotoLine(input)` and
@@ -460,8 +544,27 @@ closes the panel on success; Esc closes it. The panel is inside the editor area,
 `dispatchAction` sends `UNDO`/`REDO` to the selected `TextFileEditor` and always returns `true`
 (with no selected editor it does nothing): `BasicTextField` maps ⌘Z/⌘⇧Z to its own undo and
 redo (Foundation `KeyMapping.kt:71,82`), and consuming them here keeps the two stacks from
-diverging. The same table entry carries the other ten editor actions and returns their
-`applyAction` result, which is `false` when no editor is selected.
+diverging. The same table entry carries the other editor actions and returns their
+`applyAction` result, which is `false` when no editor is selected. `HIPPIE_COMPLETION` also hands
+the other open editors' text to the editor.
+
+### Completion and rename popups
+
+`CODE_COMPLETION` calls `openCodeCompletion(state)`: it collects the caret's identifier prefix,
+the identifiers of the current file, the other open files, the `DeclarationIndex` names and the
+language keywords, ranks them with `CodeCompletion.candidates` and stores a `CompletionRequest`
+in `AppState.completion`. `RENAME_ELEMENT` calls `openRename(state)`, which stores a
+`RenameRequest` with the word at the caret in `AppState.rename`. Both set
+`AppState.focus = CONTEXT_POPUP`.
+
+`App` draws `CompletionPopup` and `RenamePopup` over the whole window. They are modal: while one
+is open `Keymap.actionFor` answers no `GLOBAL` binding, Escape closes it, and both closing paths
+reset the request, call `refocusEditor` and give focus back to the text field. The completion
+popup has its own field, prefilled with the prefix and with the caret at its end, so typing keeps
+filtering inside the popup. ↑↓ move the selection, Enter or Tab inserts the chosen name in place
+of the original prefix, and a click on a row inserts it too. The rename popup's field is prefilled
+with the old name and selected; Enter applies `applyRename`, which sets the status bar to
+`Renamed N occurrences`.
 
 ### Caret following
 
@@ -1253,7 +1356,7 @@ Maven Central alone does not carry it.
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
 | `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
-| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor |
+| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
 | `FindBarStateTest` | span painting and current match, next cycling, replace all, close clearing spans |
 | `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop |
@@ -1273,9 +1376,11 @@ Maven Central alone does not carry it.
 | `RunManagerTest` | last run and starter, one session per configuration, replacing a tab on rerun, stop/rerun on the selected tab, recent identity, dispose destroying every child |
 | `RunConfigurationPopupTest` | the kind secondary text, and the working directory added when two rows share a name |
 | `GradleRunIntegrationTest` | a real `:core:test` child Gradle through the init script (tagged `slow`, opt-in with `-Dstride.runIntegration=true`) |
-| `EditActionsTest` | duplicate, delete, move, line/block comment, indent and unindent with no selection, one line, many lines, the first line and a last line without a newline; `gotoLine` clamping |
+| `EditActionsTest` | duplicate, delete, move, line/block comment, indent and unindent with no selection, one line, many lines, the first line and a last line without a newline; `gotoLine` clamping; the word/selection ladder through brackets, strings and lines; toggle case, join lines, start new line, brace matching outside strings and comments, code block start/end, declaration targets, whole-word ranges, hippie candidate order and whole-line ranges |
+| `CodeCompletionTest` | identifier order, prefix and camel-hump ranking with duplicates, blank-prefix ordering, the result limit and language keywords |
 | `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections |
 | `TextFileEditorUndoTest` | undo restores text, selection and a freshly highlighted editor; duplicate undo; read-only actions; commenter resolution; goto line parsing and the popup flag |
+| `TextFileEditorActionsTest` | extend/shrink selection and its reset, join and start-new-line undo steps, toggle case, brace and code-block caret moves, method up/down, whole-line copy and cut through a fake clipboard, hippie cycling and restart, one-step rename and replace range |
 | `CommenterEpTest` | `lang.commenter` resolves kotlin and json to `//` and `/* */`, plain text to `null`, one registration per language plugin |
 | `TerminalSessionTest` | fake-connector output, ANSI styles, carriage return and erase, resize, write, key encoding, dispose |
 | `PtyShellIntegrationTest` | a real `/bin/zsh -lc` PTY writing into the terminal model (skipped when no PTY is available) |
