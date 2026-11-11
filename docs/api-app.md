@@ -1454,8 +1454,11 @@ fun Modifier.contentTint(): Modifier
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
 fun Modifier.backgroundExtension(key: Any, cache: MirroredStripCache,
                                  sourceLeft: Dp, sourceTop: Dp, sourceWidth: Dp,
+                                 shapeLeft: Dp, shapeWidth: Dp, shapeRadius: Dp,
+                                 luminanceCap: Double = Double.MAX_VALUE,
                                  blurRadius: Dp = DesignTokens.backgroundExtensionBlur,
                                  source: (Canvas) -> Unit): Modifier
+val editorFieldLuminance: Double
 class MirroredStripCache
 data class SidebarChrome(val left: Dp, val width: Dp, val top: Dp, val bottom: Dp)
 val LocalSidebarChrome: ProvidableCompositionLocal<SidebarChrome?>
@@ -1496,8 +1499,13 @@ text layout, the spans, both scroll offsets, the sidebar geometry and the editor
 frame only blits the cached image; scrolling or editing rebuilds it once. `SidebarChrome` is
 provided by `App` so the editor knows where the sidebar sits; a layered editor skips the pass.
 The strip is painted at 1/16 resolution before the blur, so only a low-frequency colour field
-survives: no line rhythm, glyph shape or stripe. The element also covers the window inset left
-of the sidebar, so code does not leak past its outer edge.
+survives: no line rhythm, glyph shape or stripe. The field is drawn only inside the sidebar's
+rounded shape (`shapeLeft`, `shapeWidth`, `shapeRadius`); the window inset and the gap before
+the gutter keep the editor's own field colour, so no rectangle or strip shows around the
+sidebar. Its mean luminance is capped at `luminanceCap` by subtracting one level from every
+pixel, so dense code cannot raise the mean until the glass reads as a grey slab while the
+code's soft variation stays in the field. The editor passes `editorFieldLuminance`, the empty
+field's own luminance; its current-line glow stops at the sidebar's left edge.
 
 **Scroll edge effect.** A backdrop filter cannot sample the text-field's own drawing, so the
 editor paints the effect itself: `scrollEdgeBands` renders the visible document (text layout and

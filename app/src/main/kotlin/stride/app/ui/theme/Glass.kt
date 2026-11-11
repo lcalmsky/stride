@@ -42,7 +42,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.Canvas.SaveLayerRec
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
@@ -86,6 +88,9 @@ private val contentTintColor = blendOver(
     DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
     DesignTokens.background,
 )
+
+/** The empty editor field's luminance; a mirrored colour field never turns brighter than it. */
+val editorFieldLuminance: Double = relativeLuminance(contentTintColor)
 
 /**
  * Holds the cached field bitmap and the raster image drawn from it. Draw-phase data, not
@@ -811,7 +816,9 @@ class MirroredStripCache {
  * The background extension: the strip of real content right of this element is mirrored back
  * across its edge and drawn into the element, blurred. [source] paints that content in window
  * coordinates; it is rendered into a small offscreen image once per [key] and blurred once, so a
- * static frame only blits it. The element must cover the sidebar and be drawn after the content.
+ * static frame only blits it. Only the rounded shape at [shapeLeft]/[shapeWidth] receives the
+ * field, so outside it the editor's own background stays untouched and no rectangle shows. The
+ * element must cover the shape and be drawn after the content.
  */
 fun Modifier.backgroundExtension(
     key: Any,
@@ -819,6 +826,10 @@ fun Modifier.backgroundExtension(
     sourceLeft: Dp,
     sourceTop: Dp,
     sourceWidth: Dp,
+    shapeLeft: Dp,
+    shapeWidth: Dp,
+    shapeRadius: Dp,
+    luminanceCap: Double = Double.MAX_VALUE,
     blurRadius: Dp = DesignTokens.backgroundExtensionBlur,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
 ): Modifier = drawBehind {
@@ -831,11 +842,21 @@ fun Modifier.backgroundExtension(
         sourceTop = sourceTop.toPx(),
         sourceWidth = sourceWidth.toPx(),
         sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
+        luminanceCap = luminanceCap,
         source = source,
     ) ?: return@drawBehind
     val native = drawContext.canvas.nativeCanvas
+    val radius = shapeRadius.toPx()
     native.save()
-    native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
+    native.clipRRect(
+        RRect.makeLTRB(
+            shapeLeft.toPx(),
+            0f,
+            (shapeLeft + shapeWidth).toPx(),
+            size.height,
+            radius,
+        ),
+    )
     // The image's left edge is the content adjacent to the element's right edge; the flip
     // reverses it across that edge.
     native.translate(size.width, 0f)
@@ -859,6 +880,7 @@ private data class StripKey(
     val sourceTop: Int,
     val sourceWidth: Int,
     val sigma: Float,
+    val luminanceCap: Double,
 )
 
 /**
@@ -875,6 +897,7 @@ private fun MirroredStripCache.imageFor(
     sourceTop: Float,
     sourceWidth: Float,
     sigma: Float,
+    luminanceCap: Double,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
 ): Image? {
     val next = StripKey(
@@ -885,9 +908,10 @@ private fun MirroredStripCache.imageFor(
         sourceTop = sourceTop.roundToInt(),
         sourceWidth = sourceWidth.roundToInt(),
         sigma = sigma,
+        luminanceCap = luminanceCap,
     )
     if (next == this.key) return image
-    val built = buildMirroredStrip(width, height, sourceLeft, sourceTop, sourceWidth, sigma, source)
+    val built = buildMirroredStrip(width, height, sourceLeft, sourceTop, sourceWidth, sigma, luminanceCap, source)
     dispose()
     this.key = next
     image = built
@@ -901,6 +925,7 @@ private fun buildMirroredStrip(
     sourceTop: Float,
     sourceWidth: Float,
     sigma: Float,
+    luminanceCap: Double,
     source: (androidx.compose.ui.graphics.Canvas) -> Unit,
 ): Image? {
     if (sourceWidth <= 0f || width <= 0f || height <= 0f) return null
@@ -925,11 +950,89 @@ private fun buildMirroredStrip(
             paint.close()
             snapshot.close()
         }
-        return blurred.makeImageSnapshot()
+        val blurredImage = blurred.makeImageSnapshot()
+        try {
+            return clampFieldLuminance(blurredImage, luminanceCap)
+        } finally {
+            blurredImage.close()
+        }
     } finally {
         sharp.close()
         blurred.close()
     }
+}
+
+private fun srgbToLinear(value: Float): Float =
+    if (value <= 0.04045f) value / 12.92f else ((value + 0.055f) / 1.055f).pow(2.4f)
+
+private fun linearToSrgb(value: Float): Float =
+    if (value <= 0.0031308f) value * 12.92f else 1.055f * value.pow(1f / 2.4f) - 0.055f
+
+/**
+ * Caps the field's mean luminance at [cap]. Dense code would otherwise raise the mean until the
+ * glass reads as a grey slab; subtracting one luminance level from every pixel keeps the code's
+ * relative contrast, so changing the document still changes the pixels.
+ */
+private fun clampFieldLuminance(image: Image, cap: Double): Image? {
+    val width = image.width
+    val height = image.height
+    if (width <= 0 || height <= 0) return null
+    val bitmap = Bitmap()
+    try {
+        bitmap.allocN32Pixels(width, height, false)
+        if (!image.readPixels(bitmap)) return null
+        val colors = IntArray(width * height)
+        val luminances = DoubleArray(colors.size)
+        var total = 0.0
+        for (index in colors.indices) {
+            val argb = bitmap.getColor(index % width, index / width)
+            colors[index] = argb
+            val luminance = relativeLuminance(Color(argb))
+            luminances[index] = luminance
+            total += luminance
+        }
+        val offset = if (total / colors.size > cap) luminanceFloor(luminances, cap) else 0.0
+        val bytes = ByteArray(colors.size * 4)
+        for (index in colors.indices) {
+            val argb = colors[index]
+            val at = index * 4
+            // N32 is BGRA in memory, and every blurred pixel is opaque.
+            bytes[at] = shiftedChannel(argb and 0xFF, offset)
+            bytes[at + 1] = shiftedChannel((argb ushr 8) and 0xFF, offset)
+            bytes[at + 2] = shiftedChannel((argb ushr 16) and 0xFF, offset)
+            bytes[at + 3] = 0xFF.toByte()
+        }
+        if (!bitmap.installPixels(
+                ImageInfo(width, height, ColorType.N32, ColorAlphaType.PREMUL),
+                bytes,
+                width * 4,
+            )
+        ) {
+            return null
+        }
+        return Image.makeFromBitmap(bitmap)
+    } finally {
+        bitmap.close()
+    }
+}
+
+/** The amount subtracted from every pixel so the field's mean luminance falls back to [cap]. */
+private fun luminanceFloor(luminances: DoubleArray, cap: Double): Double {
+    var low = 0.0
+    var high = luminances.max()
+    repeat(32) {
+        val mid = (low + high) / 2
+        var total = 0.0
+        for (luminance in luminances) total += maxOf(0.0, luminance - mid)
+        if (total / luminances.size > cap) low = mid else high = mid
+    }
+    return (low + high) / 2
+}
+
+private fun shiftedChannel(channel: Int, offset: Double): Byte {
+    if (offset == 0.0) return channel.toByte()
+    val linear = (srgbToLinear(channel / 255f) - offset).coerceAtLeast(0.0)
+    return (linearToSrgb(linear.toFloat()).coerceIn(0f, 1f) * 255f).roundToInt().toByte()
 }
 
 /** One cached blurred copy of the editor viewport, drawn by [scrollEdgeBands]. */

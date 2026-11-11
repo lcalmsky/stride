@@ -748,6 +748,207 @@ class TreeEditorGlassTest {
         }
     }
 
+    /**
+     * The background extension covers only the sidebar's rounded shape: the gap left of the
+     * gutter is the editor's own field, so no vertical step appears at the gutter's left edge.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the gap left of the gutter is the editor field with no step`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("field-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+
+            val gutterLeft = (DesignTokens.chromeInset + DesignTokens.treeDefaultWidth +
+                DesignTokens.contentGap).value
+            val lineCount = editor.value.text.count { it == '\n' } + 1
+            val gutterWidth = (lineCount.toString().length.coerceAtLeast(2) * 9 + 16 + 14).toFloat()
+            val fieldLeft = (gutterLeft + gutterWidth + 2).toInt()
+            val gapX = (gutterLeft - 1).toInt()
+            // A row between two line boxes: the scrolled glyphs fill the text column, so the
+            // field right of the gutter is only visible in the gaps between lines.
+            val row = (120 until 700).first { y ->
+                var low = 1.0
+                var high = 0.0
+                for (x in fieldLeft until fieldLeft + 200) {
+                    val luma = relativeLuminance(Color(pixels[index(x, y)]))
+                    low = minOf(low, luma)
+                    high = maxOf(high, luma)
+                }
+                high - low < 0.01
+            }
+            var gap = 0.0
+            var field = 0.0
+            for (x in fieldLeft until fieldLeft + 8) {
+                gap += relativeLuminance(Color(pixels[index(gapX, row)]))
+                field += relativeLuminance(Color(pixels[index(x, row)]))
+            }
+            gap /= 8
+            field /= 8
+            var textLow = 1.0
+            var textHigh = 0.0
+            for (x in fieldLeft until fieldLeft + 400) {
+                val luma = relativeLuminance(Color(pixels[index(x, row + 10)]))
+                textLow = minOf(textLow, luma)
+                textHigh = maxOf(textHigh, luma)
+            }
+            System.err.println(
+                "field-step row=%d gap=%.5f field=%.5f step=%.5f text-range=%.4f".format(
+                    row, gap, field, abs(gap - field), textHigh - textLow,
+                ),
+            )
+            assertTrue(
+                abs(gap - field) < 0.003,
+                "the gap should match the editor field (%.5f vs %.5f)".format(gap, field),
+            )
+            assertTrue(
+                textHigh - textLow > 0.2,
+                "the text column should carry glyphs (range %.4f)".format(textHigh - textLow),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /**
+     * The window inset left of and above the sidebar is the editor's own field colour; the
+     * extension never paints a slab or a strip there.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the window inset beside the sidebar is the editor field`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("inset-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+
+            val inset = (DesignTokens.chromeInset.value * 0.8f).toInt()
+            var corner = 0.0
+            var cornerCount = 0
+            for (y in 0 until inset) {
+                for (x in 0 until inset) {
+                    corner += relativeLuminance(Color(pixels[index(x, y)]))
+                    cornerCount += 1
+                }
+            }
+            corner /= cornerCount
+            // The same plane just above the sidebar, then the empty field's own colour.
+            var plane = 0.0
+            var planeCount = 0
+            for (y in 0 until inset) {
+                for (x in 120 until 280) {
+                    plane += relativeLuminance(Color(pixels[index(x, y)]))
+                    planeCount += 1
+                }
+            }
+            plane /= planeCount
+            val fieldColor = blendOver(
+                DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
+                DesignTokens.background,
+            )
+            val field = relativeLuminance(fieldColor)
+            System.err.println(
+                "inset-corner mean=%.5f plane=%.5f plane-delta=%.5f field=%.5f field-delta=%.5f".format(
+                    corner, plane, abs(corner - plane), field, abs(corner - field),
+                ),
+            )
+            assertTrue(
+                abs(corner - plane) < 0.001,
+                "the top-left inset should be the editor plane (%.5f vs %.5f)".format(corner, plane),
+            )
+            assertTrue(
+                abs(corner - field) < 0.003,
+                "the top-left inset should be the editor field (%.5f vs %.5f)".format(corner, field),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /**
+     * A dense document must not turn the sidebar into a grey slab: its interior stays at the
+     * sparse document's brightness while the mirrored field still carries the code's variation.
+     */
+    @Test
+    fun `dense code keeps the sidebar interior at the sparse brightness`() {
+        val denseState = AppState()
+        val dense = try {
+            val root = longProject("dense-project", glyph = 'y')
+            denseState.openFolder(root)
+            val editor = requireNotNull(denseState.session)
+                .editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            renderAppPixels(denseState)
+        } finally {
+            denseState.dispose()
+        }
+        val sparseState = AppState()
+        val sparse = try {
+            val root = project("sparse-project")
+            sparseState.openFolder(root)
+            requireNotNull(sparseState.session).editors.openFile(VFile(root.resolve("src/Main.kt")))
+            renderAppPixels(sparseState)
+        } finally {
+            sparseState.dispose()
+        }
+        fun sidebarMean(pixels: IntArray): Double {
+            var total = 0.0
+            var count = 0
+            for (y in 400 until 700) {
+                for (x in 40 until 270) {
+                    total += relativeLuminance(Color(pixels[index(x, y)]))
+                    count += 1
+                }
+            }
+            return total / count
+        }
+        val denseMean = sidebarMean(dense)
+        val sparseMean = sidebarMean(sparse)
+        System.err.println(
+            "sidebar-luminance dense=%.5f sparse=%.5f delta=%.5f".format(
+                denseMean, sparseMean, abs(denseMean - sparseMean),
+            ),
+        )
+        assertTrue(
+            abs(denseMean - sparseMean) < 0.003,
+            "the sidebar should stay at the sparse brightness (%.5f vs %.5f)"
+                .format(denseMean, sparseMean),
+        )
+    }
+
     /** Mean luminance of each row across `x` from `fromY` to `toY`. */
     private fun rowMeans(pixels: IntArray, fromX: Int, toX: Int, fromY: Int, toY: Int): DoubleArray =
         DoubleArray(toY - fromY) { row ->

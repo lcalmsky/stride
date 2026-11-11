@@ -565,6 +565,9 @@ class GlassModifiersTest {
                                 sourceLeft = 200.dp,
                                 sourceTop = 0.dp,
                                 sourceWidth = 100.dp,
+                                shapeLeft = 0.dp,
+                                shapeWidth = 100.dp,
+                                shapeRadius = 0.dp,
                             ) { canvas ->
                                 canvas.drawRect(
                                     250f,

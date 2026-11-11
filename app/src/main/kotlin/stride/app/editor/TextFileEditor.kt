@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -81,6 +82,7 @@ import stride.app.ui.theme.SidebarChrome
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.backgroundExtension
 import stride.app.ui.theme.contentTint
+import stride.app.ui.theme.editorFieldLuminance
 import stride.app.ui.theme.neonBorder
 import stride.app.ui.theme.scrollEdgeBands
 import stride.core.vfs.VFile
@@ -631,20 +633,25 @@ class TextFileEditor(
             }
             val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * lineCount)
             val textMinWidth = (maxWidth - leftPad - gutterWidth - 32.dp).coerceAtLeast(0.dp)
+            val sidebar = LocalSidebarChrome.current
             Canvas(Modifier.matchParentSize()) {
                 val linePx = DesignTokens.codeLineHeight.toPx()
                 val top = topPadPx + caretLine * linePx - vertical.value
                 if (top + linePx > 0f && top < size.height) {
-                    drawRect(
-                        DesignTokens.currentLineGlow,
-                        topLeft = Offset(0f, top),
-                        size = Size(size.width, linePx),
-                    )
-                    drawRect(
-                        DesignTokens.accent2Glow,
-                        topLeft = Offset(0f, top),
-                        size = Size(2.dp.toPx(), linePx),
-                    )
+                    // Nothing of the current line paints left of the floating sidebar; that strip
+                    // keeps the editor's own field colour.
+                    clipRect(left = sidebar?.left?.toPx() ?: 0f) {
+                        drawRect(
+                            DesignTokens.currentLineGlow,
+                            topLeft = Offset(0f, top),
+                            size = Size(size.width, linePx),
+                        )
+                        drawRect(
+                            DesignTokens.accent2Glow,
+                            topLeft = Offset(0f, top),
+                            size = Size(2.dp.toPx(), linePx),
+                        )
+                    }
                 }
             }
             VerticalScrollViewport(vertical, Modifier.fillMaxSize(), layered = layered) {
@@ -793,7 +800,6 @@ class TextFileEditor(
                 }
             }
             }
-            val sidebar = LocalSidebarChrome.current
             val textLayout = layout
             if (sidebar != null && textLayout != null && !layered) {
                 val extensionWidth = (maxHeight - sidebar.top - sidebar.bottom).coerceAtLeast(0.dp)
@@ -814,21 +820,24 @@ class TextFileEditor(
                 val textStartPx = with(density) {
                     (leftPad + gutterWidth + DesignTokens.space16).toPx()
                 }
-                // The extension covers everything left of the gutter, the window inset included,
-                // so nothing but its soft field shows beside the sidebar.
                 val extensionLeft = sidebar.left + sidebar.width
                 Box(
                     Modifier
                         .offset(x = 0.dp, y = sidebar.top)
                         .width(leftPad)
                         .height(extensionWidth)
-                        // The document right of the sidebar's edge, mirrored under its glass.
+                        // The document right of the sidebar's edge, mirrored into its rounded
+                        // shape only; the field around it stays the editor's own.
                         .backgroundExtension(
                             key = extensionKey,
                             cache = stripCache,
                             sourceLeft = extensionLeft,
                             sourceTop = sidebar.top,
                             sourceWidth = extensionLeft,
+                            shapeLeft = sidebar.left,
+                            shapeWidth = sidebar.width,
+                            shapeRadius = DesignTokens.sidebarRadius,
+                            luminanceCap = editorFieldLuminance,
                         ) { canvas ->
                             canvas.save()
                             canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
