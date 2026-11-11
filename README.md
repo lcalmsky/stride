@@ -141,7 +141,7 @@ brew install --cask lcalmsky/stride/stride
 
 ### 키보드
 
-아래는 기본 키입니다. 단축키는 IntelliJ IDEA 의 macOS 기본 키맵과 호환됩니다. macOS 가 아닌 플랫폼에서는 같은 조합을 `Ctrl`·`Shift` 라벨로 보여 줍니다. 전체 목록과 문맥별 우선순위의 정본은 `app/src/main/kotlin/stride/app/keys/Keymap.kt` 의 `bind(` 호출입니다.
+아래는 기본 키입니다. 단축키는 IntelliJ IDEA 의 macOS 기본 키맵과 호환됩니다. macOS 가 아닌 플랫폼에서는 Command 와 Control 이 서로 바뀌어(`⌘S` 는 `Ctrl+S`, `⌃R` 은 `Meta+R`) `Ctrl`·`Alt`·`Shift`·`Meta` 라벨로 표시됩니다. 전체 목록과 문맥별 우선순위의 정본은 `app/src/main/kotlin/stride/app/keys/Keymap.kt` 의 `bind(` 호출입니다.
 
 | 키 | 동작 |
 |---|---|
@@ -166,6 +166,7 @@ brew install --cask lcalmsky/stride/stride
 | `⌘/` · `⌘⌥/` | 줄 주석 토글 · 블록 주석 토글 |
 | `Tab` / `⇧Tab` | 들여쓰기 / 내어쓰기 |
 | `⌘L` | 줄로 이동 |
+| `Esc` | 줄로 이동 닫기, 선택을 커서로 접기 |
 | `⌘Z` / `⌘⇧Z` | 실행 취소 / 다시 실행 |
 | `⌥↑` / `⌥↓` | 선택 넓히기 / 좁히기 |
 | `⌘⇧U` | 대소문자 바꾸기 |
@@ -199,7 +200,7 @@ brew install --cask lcalmsky/stride/stride
 | `⌘4` · `⌘R` (Run 창) | Run 창 열기 · Run 창에서 다시 실행 |
 | **터미널** | |
 | `⌥F12` | Terminal 창 열기 |
-| `⇧Esc` | 도구 창 숨기기 |
+| `⇧Esc` | 도구 창 숨기기 (Terminal·Run 창) |
 | **기타** | |
 | Actions 탭 | Switch UI Font |
 

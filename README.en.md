@@ -141,7 +141,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 ### Keyboard
 
-These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macOS default keymap; on non-macOS platforms the same strokes are labelled with `Ctrl` and `Shift`. The full list and the context precedence are defined by the `bind(` calls in `app/src/main/kotlin/stride/app/keys/Keymap.kt`.
+These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macOS default keymap; on non-macOS platforms Command and Control are swapped (`⌘S` becomes `Ctrl+S`, `⌃R` becomes `Meta+R`) and keys are shown with `Ctrl`, `Alt`, `Shift` and `Meta` labels. The full list and the context precedence are defined by the `bind(` calls in `app/src/main/kotlin/stride/app/keys/Keymap.kt`.
 
 | Key | Action |
 |---|---|
@@ -166,6 +166,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘/` · `⌘⌥/` | Toggle line comment · toggle block comment |
 | `Tab` / `⇧Tab` | Indent / unindent |
 | `⌘L` | Go to line |
+| `Esc` | Close Go to Line, collapse the selection to the caret |
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `⌥↑` / `⌥↓` | Grow / shrink the selection |
 | `⌘⇧U` | Toggle case |
@@ -199,7 +200,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘4` · `⌘R` (Run window) | Open the Run window · rerun from the Run window |
 | **Terminal** | |
 | `⌥F12` | Open the Terminal window |
-| `⇧Esc` | Hide the tool window |
+| `⇧Esc` | Hide the tool window (Terminal and Run windows) |
 | **Other** | |
 | Actions tab | Switch UI Font |
 
