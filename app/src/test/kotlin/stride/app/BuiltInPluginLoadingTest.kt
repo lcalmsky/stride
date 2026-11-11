@@ -69,14 +69,14 @@ class BuiltInPluginLoadingTest {
     fun `the core descriptor declares exactly one extension for each interface extension point`() {
         val core = result.enabled.single { it.id == "stride.core" }
 
-        assertEquals(1, core.extensions.count { it.first == SEARCH_EVERYWHERE_CONTRIBUTOR_EP })
+        assertEquals(3, core.extensions.count { it.first == SEARCH_EVERYWHERE_CONTRIBUTOR_EP })
         assertEquals(1, core.extensions.count { it.first == FILE_EDITOR_PROVIDER_EP })
         assertEquals(1, core.extensions.count { it.first == TREE_STRUCTURE_PROVIDER_EP })
 
         val area = Application.extensionArea
-        assertTrue(
-            area.getExtensionList<Any>(SEARCH_EVERYWHERE_CONTRIBUTOR_EP).single() is SearchEverywhereContributorFactory<*>
-        )
+        val contributors = area.getExtensionList<Any>(SEARCH_EVERYWHERE_CONTRIBUTOR_EP)
+        assertEquals(3, contributors.size)
+        assertTrue(contributors.all { it is SearchEverywhereContributorFactory<*> })
         assertTrue(area.getExtensionList<Any>(FILE_EDITOR_PROVIDER_EP).single() is FileEditorProvider)
         assertTrue(area.getExtensionList<Any>(TREE_STRUCTURE_PROVIDER_EP).single() is TreeStructureProvider)
     }

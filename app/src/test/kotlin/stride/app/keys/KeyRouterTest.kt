@@ -58,13 +58,13 @@ class KeyRouterTest {
     @Test
     fun `shortcuts follow the platform modifier`() {
         val mac = router(isMac = true)
-        assertEquals(ActionId.OPEN_FOLDER, mac.route(KeyEventType.DOWN, Key.O, meta = true))
+        assertEquals(ActionId.GOTO_CLASS, mac.route(KeyEventType.DOWN, Key.O, meta = true))
         assertEquals(ActionId.SAVE, mac.route(KeyEventType.DOWN, Key.S, meta = true))
         assertEquals(ActionId.CLOSE_TAB, mac.route(KeyEventType.DOWN, Key.W, meta = true))
         assertNull(mac.route(KeyEventType.DOWN, Key.O, ctrl = true))
 
         val other = router(isMac = false)
-        assertEquals(ActionId.OPEN_FOLDER, other.route(KeyEventType.DOWN, Key.O, ctrl = true))
+        assertEquals(ActionId.GOTO_CLASS, other.route(KeyEventType.DOWN, Key.O, ctrl = true))
         assertEquals(ActionId.SAVE, other.route(KeyEventType.DOWN, Key.S, ctrl = true))
         assertEquals(ActionId.CLOSE_TAB, other.route(KeyEventType.DOWN, Key.W, ctrl = true))
         assertNull(other.route(KeyEventType.DOWN, Key.O, meta = true))

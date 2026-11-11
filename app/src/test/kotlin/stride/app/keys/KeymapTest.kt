@@ -2,6 +2,7 @@ package stride.app.keys
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class KeymapTest {
@@ -12,8 +13,8 @@ class KeymapTest {
 
     @Test
     fun `every macOS binding resolves in its context`() {
-        // stride-only binding; GotoClass owns meta O.
-        assertEquals(ActionId.OPEN_FOLDER, action("meta O", KeyContext.GLOBAL))
+        // GotoClass meta O; OPEN_FOLDER has no stroke and is reachable from the Actions tab.
+        assertEquals(ActionId.GOTO_CLASS, action("meta O", KeyContext.GLOBAL))
         // SaveAll control S (→meta)
         assertEquals(ActionId.SAVE, action("meta S", KeyContext.GLOBAL))
         // CloseContent meta W
@@ -76,6 +77,10 @@ class KeymapTest {
         assertEquals(ActionId.FIND_IN_PATH, action("meta shift F", KeyContext.GLOBAL))
         // GotoFile meta shift O
         assertEquals(ActionId.GOTO_FILE, action("meta shift O", KeyContext.GLOBAL))
+        // GotoSymbol meta alt O
+        assertEquals(ActionId.GOTO_SYMBOL, action("meta alt O", KeyContext.GLOBAL))
+        // GotoAction control shift A (→meta)
+        assertEquals(ActionId.GOTO_ACTION, action("meta shift A", KeyContext.GLOBAL))
         // RecentFiles control E (→meta)
         assertEquals(ActionId.RECENT_FILES, action("meta E", KeyContext.GLOBAL))
         // ActivateTerminalToolWindow alt F12
@@ -97,6 +102,11 @@ class KeymapTest {
         // SaveAll is global and answers from every context
         assertEquals(ActionId.SAVE, action("meta S", KeyContext.EDITOR))
         assertEquals(ActionId.SAVE, action("meta S", KeyContext.TERMINAL))
+    }
+
+    @Test
+    fun `open folder keeps no stroke but stays an action`() {
+        assertTrue(keymap.strokesFor(ActionId.OPEN_FOLDER).isEmpty())
     }
 
     @Test

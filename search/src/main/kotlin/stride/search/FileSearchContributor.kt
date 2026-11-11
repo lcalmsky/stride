@@ -24,6 +24,8 @@ class FileSearchContributor(private val index: FileNameIndex) : SearchEverywhere
 
     override val sortWeight: Int get() = 100
 
+    override val tab: SearchTab get() = SearchTab.FILES
+
     override fun fetch(query: String, limit: Int): List<FoundItem<VFile>> {
         if (limit <= 0) return emptyList()
         return index.snapshot()

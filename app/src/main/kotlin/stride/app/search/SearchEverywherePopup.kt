@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -66,8 +67,13 @@ import stride.app.ui.theme.neonBorder
 import stride.app.ui.theme.neonGlow
 import stride.app.ui.theme.neonGlowLayered
 import stride.app.ui.theme.neonSelectionBar
+import stride.app.ui.theme.neonUnderline
 import stride.app.ui.theme.rememberNeonAlpha
 import stride.core.vfs.VFile
+import stride.search.SearchTab
+
+private val MAX_LIST_HEIGHT =
+    DesignTokens.popupRowHeight * DesignTokens.popupMaxRows - DesignTokens.popupTabHeight - DesignTokens.popupGroupHeight
 
 @Composable
 fun SearchEverywherePopup(
@@ -76,8 +82,10 @@ fun SearchEverywherePopup(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     initialQuery: String = "",
+    initialTab: SearchTab = SearchTab.ALL,
 ) {
     var query by remember { mutableStateOf(initialQuery) }
+    var tab by remember { mutableStateOf(initialTab) }
     var results by remember { mutableStateOf(emptyList<SearchResultEntry>()) }
     var selectedIndex by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(true) }
@@ -85,15 +93,16 @@ fun SearchEverywherePopup(
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
+    val rows = remember(results, tab) { popupRows(results, grouped = tab == SearchTab.ALL) }
 
-    LaunchedEffect(query) {
+    LaunchedEffect(query, tab) {
         if (query.isEmpty()) {
             results = emptyList()
             loading = false
             return@LaunchedEffect
         }
         loading = true
-        val fetched = withContext(Dispatchers.Default) { search.fetch(query) }
+        val fetched = withContext(Dispatchers.Default) { search.fetch(query, tab) }
         results = fetched
         selectedIndex = 0
         loading = false
@@ -129,6 +138,10 @@ fun SearchEverywherePopup(
                                 onClose()
                                 true
                             }
+                            Key.Tab -> {
+                                tab = if (event.isShiftPressed) tab.previous() else tab.next()
+                                true
+                            }
                             Key.DirectionDown -> {
                                 if (results.isNotEmpty()) selectedIndex = (selectedIndex + 1).coerceAtMost(results.lastIndex)
                                 true
@@ -146,19 +159,18 @@ fun SearchEverywherePopup(
                     }
                 },
         ) {
-            PopupHeader(search.displayName, query, focusRequester, onQueryChange = { query = it })
-            if (query.isNotEmpty()) {
-                when {
-                    loading && results.isEmpty() -> Unit
-                    results.isEmpty() -> Text(
-                        "No matching files",
-                        color = DesignTokens.textSecondaryOnGlass,
-                        fontSize = DesignTokens.uiTextSize,
-                        fontFamily = DesignTokens.uiFont,
-                        modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
-                    )
-                    else -> ResultList(results, selectedIndex, onChoose)
-                }
+            PopupHeader(query, focusRequester, onQueryChange = { query = it })
+            TabRow(selected = tab, onSelect = { tab = it })
+            if (query.isNotEmpty() && results.isEmpty() && !loading) {
+                Text(
+                    "No matching results",
+                    color = DesignTokens.textSecondaryOnGlass,
+                    fontSize = DesignTokens.uiTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                    modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
+                )
+            } else if (rows.isNotEmpty()) {
+                ResultList(rows, results.size, selectedIndex, onChoose)
             }
             Footer()
         }
@@ -167,7 +179,6 @@ fun SearchEverywherePopup(
 
 @Composable
 private fun PopupHeader(
-    contributorName: String,
     query: String,
     focusRequester: FocusRequester,
     onQueryChange: (String) -> Unit,
@@ -184,7 +195,7 @@ private fun PopupHeader(
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    "Search files by name",
+                    "Search everywhere",
                     color = DesignTokens.textSecondaryOnGlass,
                     fontSize = 15.sp,
                     fontFamily = DesignTokens.uiFont,
@@ -203,51 +214,115 @@ private fun PopupHeader(
                 cursorBrush = SolidColor(DesignTokens.accent),
             )
         }
-        Spacer(Modifier.width(DesignTokens.space12))
-        ContributorChip(contributorName)
     }
 }
 
 @Composable
-private fun ContributorChip(name: String) {
-    val chipShape = RoundedCornerShape(DesignTokens.radiusSmall)
-    Box(
+private fun TabRow(selected: SearchTab, onSelect: (SearchTab) -> Unit) {
+    val shape = RoundedCornerShape(DesignTokens.radiusSmall)
+    Row(
         Modifier
-            .background(DesignTokens.glassFill, chipShape)
-            .glassBorder(chipShape)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .fillMaxWidth()
+            .height(DesignTokens.popupTabHeight)
+            .padding(horizontal = DesignTokens.space16),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            name,
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.labelTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
+        for (tab in SearchTab.entries) {
+            val neon = rememberNeonAlpha(tab == selected)
+            Box(
+                Modifier
+                    .clip(shape)
+                    .neonUnderline(DesignTokens.accent2, thickness = 2.dp, alpha = neon)
+                    .then(
+                        if (tab == selected) Modifier.background(DesignTokens.selectionGlowBackground) else Modifier
+                    )
+                    .clickable(onClick = { onSelect(tab) })
+                    .padding(horizontal = DesignTokens.space12, vertical = 3.dp),
+            ) {
+                Text(
+                    tab.title,
+                    color = if (tab == selected) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+                    fontSize = DesignTokens.uiTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                )
+            }
+            if (tab != SearchTab.entries.last()) Spacer(Modifier.width(DesignTokens.space8))
+        }
     }
+}
+
+/** One row of the result list: either a group label or an entry with its index in [results]. */
+internal sealed interface PopupRow {
+    data class Group(val label: String) : PopupRow
+
+    data class Entry(val entry: SearchResultEntry, val index: Int) : PopupRow
+}
+
+/** Flattens [results] into rows, inserting a [PopupRow.Group] whenever the group label changes. */
+internal fun popupRows(results: List<SearchResultEntry>, grouped: Boolean): List<PopupRow> {
+    if (!grouped) return results.mapIndexed { index, entry -> PopupRow.Entry(entry, index) }
+    val rows = ArrayList<PopupRow>(results.size)
+    var label: String? = null
+    var index = 0
+    for (entry in results) {
+        if (entry.groupLabel.isNotEmpty() && entry.groupLabel != label) {
+            rows.add(PopupRow.Group(entry.groupLabel))
+            label = entry.groupLabel
+        }
+        rows.add(PopupRow.Entry(entry, index))
+        index++
+    }
+    return rows
 }
 
 @Composable
 private fun ResultList(
-    results: List<SearchResultEntry>,
+    rows: List<PopupRow>,
+    resultCount: Int,
     selectedIndex: Int,
     onChoose: (SearchResultEntry) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    val visibleRows = results.size.coerceAtMost(DesignTokens.popupMaxRows)
+    val groups = rows.count { it is PopupRow.Group }
+    // The tab row must not make the glass panel taller than the popup's old maximum height.
+    val available = (MAX_LIST_HEIGHT - DesignTokens.popupGroupHeight * groups).coerceAtLeast(0.dp)
+    val visibleItems = resultCount.coerceAtMost((available / DesignTokens.popupRowHeight).toInt())
+    val height = DesignTokens.popupRowHeight * visibleItems + DesignTokens.popupGroupHeight * groups
     Box(
         Modifier
             .fillMaxWidth()
-            .height(DesignTokens.popupRowHeight * visibleRows),
+            .height(height),
     ) {
         LazyColumn(state = listState) {
-            itemsIndexed(results) { index, entry ->
-                ResultRow(entry, index == selectedIndex) { onChoose(entry) }
+            items(rows) { row ->
+                when (row) {
+                    is PopupRow.Group -> GroupHeader(row.label)
+                    is PopupRow.Entry -> ResultRow(row.entry, row.index == selectedIndex) { onChoose(row.entry) }
+                }
             }
         }
         VerticalScrollbar(
             adapter = rememberScrollbarAdapter(listState),
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
             style = DesignTokens.scrollbarStyle,
+        )
+    }
+}
+
+@Composable
+private fun GroupHeader(label: String) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(DesignTokens.popupGroupHeight)
+            .padding(horizontal = DesignTokens.space16),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            label,
+            color = DesignTokens.textSecondaryOnGlass,
+            fontSize = DesignTokens.labelTextSize,
+            fontFamily = DesignTokens.uiFont,
         )
     }
 }
@@ -289,11 +364,11 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        val directory = entry.secondaryText.substringBeforeLast('/', "")
-        if (directory.isNotEmpty()) {
+        val secondary = secondaryText(entry)
+        if (secondary.isNotEmpty()) {
             Spacer(Modifier.width(DesignTokens.space8))
             Text(
-                "$directory/",
+                secondary,
                 color = DesignTokens.textSecondaryOnGlass,
                 fontSize = DesignTokens.smallTextSize,
                 fontFamily = DesignTokens.uiFont,
@@ -304,6 +379,15 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
         }
     }
 }
+
+/** Files show the directory prefix only; other contributors carry their own secondary text. */
+private fun secondaryText(entry: SearchResultEntry): String =
+    if (entry.item is VFile) {
+        val directory = entry.secondaryText.substringBeforeLast('/', "")
+        if (directory.isEmpty()) "" else "$directory/"
+    } else {
+        entry.secondaryText
+    }
 
 @Composable
 private fun Footer() {
@@ -318,6 +402,8 @@ private fun Footer() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         FooterHint("↑↓ Navigate")
+        Spacer(Modifier.width(20.dp))
+        FooterHint("⇥ Switch Tab")
         Spacer(Modifier.width(20.dp))
         FooterHint("↵ Open")
         Spacer(Modifier.width(20.dp))

@@ -5,6 +5,7 @@ import stride.app.editor.TextFileEditor
 import stride.app.run.RunManager
 import stride.app.run.runAtCaret
 import stride.core.services.service
+import stride.search.SearchTab
 import java.nio.file.Path
 
 /**
@@ -25,7 +26,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.SEARCH_EVERYWHERE -> {
-        if (state.session != null) state.searchVisible = true
+        if (state.session != null) state.openSearch(SearchTab.ALL)
         true
     }
     ActionId.NEXT_TAB -> {
@@ -50,7 +51,23 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.GOTO_FILE -> {
-        if (state.session != null) state.searchVisible = true
+        if (state.session != null) state.openSearch(SearchTab.FILES)
+        true
+    }
+    ActionId.GOTO_CLASS -> {
+        if (state.session != null) {
+            state.openSearch(SearchTab.CLASSES)
+        } else {
+            chooseFolder()?.let(state::openFolder)
+        }
+        true
+    }
+    ActionId.GOTO_SYMBOL -> {
+        if (state.session != null) state.openSearch(SearchTab.SYMBOLS)
+        true
+    }
+    ActionId.GOTO_ACTION -> {
+        if (state.session != null) state.openSearch(SearchTab.ACTIONS)
         true
     }
     ActionId.FIND, ActionId.REPLACE -> {

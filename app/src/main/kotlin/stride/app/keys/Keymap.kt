@@ -5,8 +5,8 @@ enum class ActionId {
     RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
     EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
-    FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, RECENT_FILES,
-    ACTIVATE_TERMINAL_TOOL_WINDOW,
+    FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
+    GOTO_ACTION, RECENT_FILES, ACTIVATE_TERMINAL_TOOL_WINDOW,
 }
 
 enum class KeyContext { GLOBAL, EDITOR, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL }
@@ -49,8 +49,8 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
         put(parsed, (get(parsed).orEmpty()) + contexts.map { Binding(action, it) })
     }
 
-    // stride-only binding; GotoClass owns meta O.
-    bind("meta O", ActionId.OPEN_FOLDER, KeyContext.GLOBAL)
+    // GotoClass meta O; OPEN_FOLDER has no stroke and is reachable from the Actions tab.
+    bind("meta O", ActionId.GOTO_CLASS, KeyContext.GLOBAL)
     // SaveAll control S (→meta)
     bind("meta S", ActionId.SAVE, KeyContext.GLOBAL)
     // CloseContent meta W
@@ -110,6 +110,10 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta shift F", ActionId.FIND_IN_PATH, KeyContext.GLOBAL)
     // GotoFile meta shift O
     bind("meta shift O", ActionId.GOTO_FILE, KeyContext.GLOBAL)
+    // GotoSymbol meta alt O
+    bind("meta alt O", ActionId.GOTO_SYMBOL, KeyContext.GLOBAL)
+    // GotoAction control shift A (→meta)
+    bind("meta shift A", ActionId.GOTO_ACTION, KeyContext.GLOBAL)
     // RecentFiles control E (→meta)
     bind("meta E", ActionId.RECENT_FILES, KeyContext.GLOBAL)
     // ActivateTerminalToolWindow alt F12

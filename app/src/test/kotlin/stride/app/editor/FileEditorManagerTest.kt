@@ -1,5 +1,6 @@
 package stride.app.editor
 
+import androidx.compose.ui.text.TextRange
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -115,6 +116,15 @@ class FileEditorManagerTest {
         assertEquals(50, manager.recentFiles.size)
         assertEquals("file50.kt", manager.recentFiles.first().name)
         assertEquals("file1.kt", manager.recentFiles.last().name)
+    }
+
+    @Test
+    fun `opening a file at a line puts the caret at that line start`() {
+        val content = "line 1\nline 2\nline 3"
+        val editor = manager.openFileAtLine(VFile(write("a.kt", content)), 1) as TextFileEditor
+
+        val lineStart = content.lines().take(1).sumOf { it.length + 1 }
+        assertEquals(TextRange(lineStart), editor.value.selection)
     }
 
     @Test

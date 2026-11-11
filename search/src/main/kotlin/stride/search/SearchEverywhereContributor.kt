@@ -40,6 +40,9 @@ interface SearchEverywhereContributor<T : Any> {
 
     val sortWeight: Int
 
+    /** Tab that lists this contributor's results; it always appears in [SearchTab.ALL]. */
+    val tab: SearchTab get() = SearchTab.ALL
+
     /** Returns at most [limit] results, best match first; [limit] may be zero or negative. */
     fun fetch(query: String, limit: Int): List<FoundItem<T>>
 

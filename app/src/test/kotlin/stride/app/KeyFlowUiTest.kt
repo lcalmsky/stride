@@ -61,6 +61,7 @@ import stride.app.ui.LocalWordmarkCaretBlink
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 
 class KeyFlowUiTest {
@@ -98,7 +99,7 @@ class KeyFlowUiTest {
                 pressKey(Key.ShiftLeft)
             }
             waitUntil(timeoutMillis = 5_000) { state.searchVisible }
-            onNodeWithText("Search files by name").assertExists()
+            onNodeWithText("Search everywhere").assertExists()
 
             onNode(hasSetTextAction()).performTextInput("Alpha")
             waitUntil(timeoutMillis = 5_000) { onAllNodesWithText("Alpha.kt").fetchSemanticsNodes().isNotEmpty() }
@@ -108,6 +109,47 @@ class KeyFlowUiTest {
             waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "Alpha.kt" }
             assertFalse(state.searchVisible)
             assertEquals(1, session.editors.openFiles.size)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `tab cycles the search tabs and keeps the query`() = runComposeUiTest {
+        val root = temp.resolve("tabs-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Alpha.kt"), "package demo\n\nclass AlphaService\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000), "declaration index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+            onRoot().performKeyInput {
+                pressKey(Key.ShiftLeft)
+                pressKey(Key.ShiftLeft)
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+
+            onNode(hasSetTextAction()).performTextInput("Alpha")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Alpha.kt").fetchSemanticsNodes().isNotEmpty() &&
+                    onAllNodesWithText("AlphaService").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.Tab) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Alpha.kt").fetchSemanticsNodes().isEmpty()
+            }
+            onNodeWithText("AlphaService").assertExists()
+
+            onRoot().performKeyInput { withKeyDown(Key.ShiftLeft) { pressKey(Key.Tab) } }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Alpha.kt").fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
             state.dispose()
         }

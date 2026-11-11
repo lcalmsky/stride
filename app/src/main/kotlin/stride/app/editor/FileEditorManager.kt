@@ -52,6 +52,16 @@ class FileEditorManager(private val project: Project) : Disposable {
         return editor
     }
 
+    /**
+     * Opens [file] and moves the caret to the start of [line] (0-based); the editor scrolls
+     * there once it is composed. Returns `null` when no provider accepts the file.
+     */
+    fun openFileAtLine(file: VFile, line: Int): FileEditor? {
+        val editor = openFile(file) ?: return null
+        (editor as? TextFileEditor)?.gotoLine((line + 1).toString())
+        return editor
+    }
+
     /** Closes [file]'s tab, disposing its editor. */
     fun closeFile(file: VFile) {
         val index = openFilesState.indexOfFirst { keyOf(it.file) == keyOf(file) }

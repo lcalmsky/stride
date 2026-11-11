@@ -24,7 +24,9 @@ import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.core.vfs.VirtualFileManager
+import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
+import stride.search.SearchTab
 import java.nio.file.Path
 
 /** One opened folder: its project, tree model and editor tabs. */
@@ -35,6 +37,7 @@ class ProjectSession private constructor(val project: Project) : Disposable {
     init {
         project.service<VirtualFileManager>().start()
         project.service<FileNameIndex>()
+        project.service<DeclarationIndex>()
         editors = project.service()
         val providers = ExtensionPointName<TreeStructureProvider>(TREE_STRUCTURE_PROVIDER_EP).extensionList()
         tree = ProjectTreeModel(VFile(project.root), providers, project)
@@ -57,6 +60,9 @@ class AppState {
         private set
 
     var searchVisible by mutableStateOf(false)
+
+    /** Tab the popup opens on; set by the action that opens Search Everywhere. */
+    var searchTab by mutableStateOf(SearchTab.ALL)
 
     var focus by mutableStateOf(KeyContext.GLOBAL)
 
@@ -113,6 +119,12 @@ class AppState {
         )
     }
 
+    /** Opens Search Everywhere on [tab]. */
+    fun openSearch(tab: SearchTab) {
+        searchTab = tab
+        searchVisible = true
+    }
+
     fun openFolder(path: Path) {
         closeSession()
         session = ProjectSession.open(path)
@@ -122,6 +134,7 @@ class AppState {
         session?.dispose()
         session = null
         searchVisible = false
+        searchTab = SearchTab.ALL
         findBar.close()
         findInPathVisible = false
         recentFilesVisible = false

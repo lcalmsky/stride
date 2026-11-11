@@ -78,7 +78,9 @@ object DesignTokens {
 
     val popupWidth = 680.dp
     val popupTop = 96.dp
+    val popupTabHeight = 30.dp
     val popupRowHeight = 32.dp
+    val popupGroupHeight = 22.dp
     val popupFooterHeight = 28.dp
     val popupMaxRows = 12
 

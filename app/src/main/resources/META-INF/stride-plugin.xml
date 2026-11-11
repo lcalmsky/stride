@@ -13,6 +13,8 @@
   </extensionPoints>
   <extensions defaultExtensionNs="stride">
     <searchEverywhereContributor implementation="stride.search.FileSearchContributorFactory"/>
+    <searchEverywhereContributor implementation="stride.search.ClassSearchContributorFactory"/>
+    <searchEverywhereContributor implementation="stride.search.SymbolSearchContributorFactory"/>
     <fileEditorProvider implementation="stride.app.editor.TextEditorProvider"/>
     <treeStructureProvider implementation="stride.app.tree.HiddenDirectoriesTreeStructureProvider"/>
   </extensions>

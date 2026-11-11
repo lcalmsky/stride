@@ -52,7 +52,11 @@ fun main(args: Array<String>) {
                 handleWindowKeyEvent(event, router, state, ::chooseFolder)
             },
         ) {
-            App(state, onOpenFolder = { chooseFolder()?.let(state::openFolder) })
+            App(
+                state,
+                onOpenFolder = { chooseFolder()?.let(state::openFolder) },
+                chooseFolder = ::chooseFolder,
+            )
         }
     }
 }

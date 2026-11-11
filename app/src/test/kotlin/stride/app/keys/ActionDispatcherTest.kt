@@ -16,6 +16,7 @@ import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
 import stride.core.services.Application
 import stride.core.vfs.VFile
+import stride.search.SearchTab
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -132,6 +133,43 @@ class ActionDispatcherTest {
         } finally {
             withoutSession.dispose()
         }
+    }
+
+    @Test
+    fun `go to class without a session opens the folder chooser`() {
+        var chooserCalls = 0
+        val root = temp.resolve("chosen")
+        Files.createDirectories(root)
+
+        assertTrue(dispatchAction(ActionId.GOTO_CLASS, state) {
+            chooserCalls++
+            root
+        })
+
+        assertEquals(1, chooserCalls)
+        assertEquals(root.toAbsolutePath().normalize(), state.session?.project?.root)
+        assertFalse(state.searchVisible)
+    }
+
+    @Test
+    fun `the go to actions open search on their tab`() {
+        openProjectWith()
+
+        assertTrue(dispatchAction(ActionId.GOTO_CLASS, state) { null })
+        assertTrue(state.searchVisible)
+        assertEquals(SearchTab.CLASSES, state.searchTab)
+
+        assertTrue(dispatchAction(ActionId.GOTO_FILE, state) { null })
+        assertEquals(SearchTab.FILES, state.searchTab)
+
+        assertTrue(dispatchAction(ActionId.GOTO_SYMBOL, state) { null })
+        assertEquals(SearchTab.SYMBOLS, state.searchTab)
+
+        assertTrue(dispatchAction(ActionId.GOTO_ACTION, state) { null })
+        assertEquals(SearchTab.ACTIONS, state.searchTab)
+
+        assertTrue(dispatchAction(ActionId.SEARCH_EVERYWHERE, state) { null })
+        assertEquals(SearchTab.ALL, state.searchTab)
     }
 
     @Test

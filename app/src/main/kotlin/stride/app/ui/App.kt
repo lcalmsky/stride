@@ -95,8 +95,10 @@ import stride.app.ui.toolwindow.ToolWindowPanel
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.lang.FileTypeRegistry
+import stride.search.Declaration
 import stride.search.FileNameIndex
 import java.awt.Cursor
+import java.nio.file.Path
 
 private val resizeCursor: PointerIcon by lazy {
     PointerIcon(Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR))
@@ -111,6 +113,7 @@ fun App(
     state: AppState,
     onOpenFolder: () -> Unit,
     searchInitialQuery: String = "",
+    chooseFolder: () -> Path? = { null },
 ) {
     val session = state.session
     var treeWidth by remember { mutableStateOf(DesignTokens.treeDefaultWidth) }
@@ -200,17 +203,19 @@ fun App(
                         }
                     },
             ) {
-                val search = remember(session) { SearchEverywhere(session.project) }
+                val search = remember(session) { SearchEverywhere(session.project, state, chooseFolder) }
                 SearchEverywherePopup(
                     search = search,
                     initialQuery = searchInitialQuery,
+                    initialTab = state.searchTab,
                     onChoose = { entry ->
-                        val close = search.process(entry)
-                        if (close) {
-                            state.searchVisible = false
-                        } else if (entry.item is VFile) {
-                            session.editors.openFile(entry.item)
-                            state.searchVisible = false
+                        // Close first so an action that opens another popup (e.g. Go to Class) is not closed again.
+                        state.searchVisible = false
+                        if (!search.process(entry)) {
+                            when (val item = entry.item) {
+                                is VFile -> session.editors.openFile(item)
+                                is Declaration -> session.editors.openFileAtLine(item.file, item.line)
+                            }
                         }
                     },
                     onClose = { state.searchVisible = false },

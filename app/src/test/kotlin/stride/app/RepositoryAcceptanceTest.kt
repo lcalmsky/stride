@@ -127,7 +127,7 @@ class RepositoryAcceptanceTest {
                 "file index did not finish within $MAX_INDEX_WAIT_MILLIS ms",
             )
 
-            val ranked = SearchEverywhere(session.project).fetch("api-search", 5)
+            val ranked = SearchEverywhere(session.project).fetch("api-search", limit = 5)
             println(
                 "SEARCH api-search top ${ranked.size}: " +
                     ranked.mapIndexed { index, entry -> "${index + 1}. ${entry.presentationText} <- ${entry.secondaryText}" },
@@ -140,7 +140,7 @@ class RepositoryAcceptanceTest {
                 pressKey(Key.ShiftLeft)
             }
             waitUntil(timeoutMillis = 5_000) { state.searchVisible }
-            onNodeWithText("Search files by name").assertExists()
+            onNodeWithText("Search everywhere").assertExists()
 
             onNode(hasSetTextAction()).performTextInput("api-search")
             waitUntil(timeoutMillis = 10_000) {
