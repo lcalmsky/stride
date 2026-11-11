@@ -1406,7 +1406,7 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `chromeInset` / `chromeGap` / `contentGap` | 10 dp / 8 dp / 10 dp |
 | `capsuleHeight` / `statusCapsuleHeight` / `sidebarRadius` | 34 dp / 32 dp / 20 dp |
 | `sidebarFill` / `capsuleFill` | #14151B at 30% / 58% alpha |
-| `capsuleFrostBlur` / `scrollEdgeBlur` | 20 dp (capsule backdrop) / 14 dp (edge band) |
+| `capsuleFrostBlur` / `scrollEdgeBlur` / `scrollEdgeTail` | 20 dp (capsule backdrop) / 14 dp (edge band) / 24 dp (ease-out past each band) |
 | `backgroundExtensionBlur` | 56 dp (mirrored strip, cached) |
 | `slabShadow` | 16 dp |
 | `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% |
@@ -1433,7 +1433,11 @@ files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing 
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
 fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
 fun Modifier.capsuleGlass(shape: Shape): Modifier
-fun Modifier.backdropBlur(blurRadius: Dp = DesignTokens.scrollEdgeBlur): Modifier
+fun Modifier.scrollEdgeBands(key: Any, cache: EdgeBandCache, topBand: Dp, bottomBand: Dp,
+                             clipStart: Dp, blurRadius: Dp = DesignTokens.scrollEdgeBlur,
+                             tail: Dp = DesignTokens.scrollEdgeTail,
+                             source: (Canvas) -> Unit): Modifier
+class EdgeBandCache
 fun Modifier.sidebarGlass(shape: Shape): Modifier
 fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
                           fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
@@ -1495,11 +1499,18 @@ The strip is painted at 1/16 resolution before the blur, so only a low-frequency
 survives: no line rhythm, glyph shape or stripe. The element also covers the window inset left
 of the sidebar, so code does not leak past its outer edge.
 
-**Scroll edge effect.** `backdropBlur` blurs the content under each capsule row at
-`scrollEdgeBlur` (14 dp) across the full window width, and two gradients of `scrim` (black 30%)
-fade it toward the field, so content softens into the edge instead of staying crisp up to the
-window boundary. There is no painted bar; the bands are 52 dp (top) and 50 dp (bottom), inside
-the 40–56 dp the design calls for.
+**Scroll edge effect.** A backdrop filter cannot sample the text-field's own drawing, so the
+editor paints the effect itself: `scrollEdgeBands` renders the visible document (text layout and
+gutter numbers) into a small offscreen image, blurs it at `scrollEdgeBlur` (14 dp), masks it
+opaque under the top and bottom bands and fades it out over `scrollEdgeTail` (24 dp) past each
+band's inner edge, then blits it. The blurred copy covers the content instead of stacking glyphs
+on glyphs, and its soft tail means sharpness never ends on a straight line. `EdgeBandCache` is
+keyed by the layout, both scroll offsets and the editor geometry, so a static frame only blits;
+scrolling or editing rebuilds it once. The bands are 52 dp (top) and 50 dp (bottom), inside the
+40–56 dp the design calls for, and the content viewport itself reaches the window edges, so the
+code keeps flowing under the control rows. Two gradients of `scrim` (black 30%), drawn by the
+app over the editor, do the fade half; there is no painted bar. The editor's `EditorInsets` still
+bound the region the caret scrolls into, so navigation never stops under a control row.
 
 `backdropGlass` runs the liquid glass shader over what is already drawn beneath it.
 `GlassShader` compiles one SkSL program (`RuntimeEffect.makeForShader`) whose uniforms are the
@@ -1583,8 +1594,9 @@ The glass is deliberately cheap:
   selected tree row and the tab group's selection pill draw it.
 - The background extension is rendered at 1/16 resolution and blurred and cached once per
   document/scroll/size key; a static frame only blits it. A layered editor (≥1 000 lines) skips
-  it. Each floating capsule and each scroll edge band runs one backdrop layer per frame; a
-  layered editor falls back to the capsule frost fill and skips the band blur.
+  it. Each floating capsule runs one backdrop layer per frame; a layered editor falls back to
+  the capsule frost fill. The scroll edge bands are a cached offscreen copy of the document,
+  painted once per scroll/edit and blitted per frame.
 - The floating glass lens filter is cached per panel size and radius, and is evaluated on a
   1/4-resolution copy. `liquidGlassBlurRadius` must stay at 8 dp or above: at 5 dp Skia stops
   downscaling inside the blur and the Search Everywhere scene costs about 5 ms more.
@@ -1670,16 +1682,17 @@ sidebar, the capsule rows and the find bar. `EditorArea` supplies `LocalEditorIn
 band plus the find bar, the bottom band, the sidebar-derived left inset, and the right inset) and
 `TextFileEditor` applies the left inset as the text column's start and the top/bottom insets to
 the scrolled content's padding and the caret's viewport, so line 1, the last line and the caret
-stay reachable. The text field spans the window and scrolls horizontally under the gutter and
-the sidebar: the gutter is an opaque `contentTint` overlay at the text column's start, and the
-line numbers stay put while text slides under them. The find bar floats under the tab group as a
+stay reachable. The text field spans the window and scrolls horizontally, but its drawing is
+clipped at the gutter's right edge, so glyphs never appear left of or under the line numbers:
+the gutter is an opaque `contentTint` overlay at the text column's start, and the line numbers
+stay put while text slides under it up to that edge. The find bar floats under the tab group as a
 `capsuleGlass` panel (`capsuleHeight / 2` radius) with a 1 dp `neonUnderline` inset by that
 radius. The top row (project capsule, tab group, search capsule) and the bottom row (path
 capsule, status capsule group) all use `capsuleGlass`; each capsule registers a passive pointer
 node and blocks presses from reaching the editor, while the gaps between capsules stay
-clickable. The scroll edge effect fades the content in the 52 dp top and 50 dp bottom bands
-toward the field (`scrim` gradients), so content passes under the floating controls without a
-bar.
+clickable. The scroll edge effect blurs the content in the 52 dp top and 50 dp bottom bands
+(the editor's own offscreen copy, easing out 24 dp past each band) and fades it toward the field
+(`scrim` gradients), so content passes under the floating controls without a bar or a cut line.
 
 The vertical and horizontal scroll views (`VerticalScrollViewport` / `HorizontalScrollViewport`,
 `EditorScrollState`) have two paths. Below `LAYERED_SCROLL_ENTER_LINES` (1 000) the content is
@@ -1817,4 +1830,4 @@ Maven Central alone does not carry it.
 | `BuiltInPluginLoadingTest` | the three bundled descriptors enabled, kt/json file types and highlighter lexers through the extension points, one core extension per interface EP |
 | `TextEditorProviderTest` | a file at the highlighted-size limit stays editable and one byte above the limit is read-only |
 | `RepositoryAcceptanceTest` | repository tree top level with generated directories hidden, `Main.kt` as a selected highlighted tab, double-Shift search opening `docs/api-search.md`, and the repository Kotlin and search snapshots |
-| `TreeEditorGlassTest` | the sidebar showing the mirrored document (rewriting the code changes its pixels), the gap between the top capsules following the code under the row instead of a full-width bar, the top capsule's rim brighter than its bottom edge, the tab-group selection pill moving to the newly selected tab, the editor tint over the same field pixel, the status capsule's label run clearing 4.5:1 over scrolled code (5.6:1), the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search capsule's shortcut hint clearing 4.5:1 on its glass (5.5:1) |
+| `TreeEditorGlassTest` | the sidebar showing the mirrored document (rewriting the code changes its pixels), the gap between the top capsules following the code under the row instead of a full-width bar, the top capsule's rim brighter than its bottom edge, the tab-group selection pill moving to the newly selected tab, the editor tint over the same field pixel, the status capsule's label run clearing 4.5:1 over scrolled code (5.6:1), the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint, the search capsule's shortcut hint clearing 4.5:1 on its glass (5.5:1), the gap left of the gutter carrying no glyph contrast while the text column does, and the top and bottom edge bands following the code with no single-row luminance jump |

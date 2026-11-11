@@ -20,6 +20,8 @@ import androidx.compose.ui.semantics.horizontalScrollAxisRange
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.verticalScrollAxisRange
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
@@ -161,6 +163,7 @@ fun HorizontalScrollViewport(
     state: EditorScrollState,
     modifier: Modifier = Modifier,
     layered: Boolean = false,
+    clipStart: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     val scrollable = rememberScrollableState { delta -> state.dispatchRawDelta(delta) }
@@ -168,7 +171,11 @@ fun HorizontalScrollViewport(
         content = content,
         modifier = modifier
             .drawWithContent {
-                clipRect(0f, 0f, size.width, size.height) { this@drawWithContent.drawContent() }
+                // The text is clipped at the gutter's right edge: horizontally scrolled glyphs must
+                // never show left of it.
+                clipRect(clipStart.toPx(), 0f, size.width, size.height) {
+                    this@drawWithContent.drawContent()
+                }
             }
             .scrollable(scrollable, Orientation.Horizontal)
             .semantics {

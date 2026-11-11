@@ -154,6 +154,9 @@ object DesignTokens {
     /** The scroll edge effect: the content band under the capsule rows softens toward the edge. */
     val scrollEdgeBlur = 14.dp
 
+    /** How far past each band the edge blur eases out, so sharpness never ends on a hard line. */
+    val scrollEdgeTail = 24.dp
+
     /** The strip mirrored behind the sidebar is blurred hard so only its colour and rhythm remain. */
     val backgroundExtensionBlur = 56.dp
 

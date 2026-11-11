@@ -45,6 +45,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.EdgeBandCache
 import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MirroredStripCache
@@ -80,6 +82,7 @@ import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.backgroundExtension
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.neonBorder
+import stride.app.ui.theme.scrollEdgeBands
 import stride.core.vfs.VFile
 import stride.lang.ColorScheme
 import stride.lang.Commenter
@@ -108,6 +111,19 @@ private data class ExtensionKey(
     val chrome: SidebarChrome,
     val width: androidx.compose.ui.unit.Dp,
     val height: androidx.compose.ui.unit.Dp,
+)
+
+/** Everything the blurred scroll edge bands depend on. */
+private data class BandKey(
+    val layout: TextLayoutResult,
+    val gutter: TextLayoutResult?,
+    val horizontal: Int,
+    val vertical: Int,
+    val width: androidx.compose.ui.unit.Dp,
+    val height: androidx.compose.ui.unit.Dp,
+    val top: androidx.compose.ui.unit.Dp,
+    val bottom: androidx.compose.ui.unit.Dp,
+    val left: androidx.compose.ui.unit.Dp,
 )
 
 /**
@@ -545,6 +561,7 @@ class TextFileEditor(
         val fieldScroll = rememberTextFieldVerticalScrollState()
         // Keyed on the editor: switching tabs reuses this composition slot with a new document.
         var layout by remember(this) { mutableStateOf<TextLayoutResult?>(null) }
+        var gutterLayout by remember(this) { mutableStateOf<TextLayoutResult?>(null) }
         val latestLayout = rememberUpdatedState(layout)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
         var layeredScroll by remember(this) { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
@@ -583,6 +600,8 @@ class TextFileEditor(
                 val contentLeft = with(density) { (leftPad + gutterWidth + DesignTokens.space16).toPx() }
                 val visibleLeft = with(density) { (leftPad + gutterWidth).toPx() }
                 val visibleRight = with(density) { maxWidth.toPx() }
+                // The viewport reaches the window edges; the insets bound the region scrolling
+                // keeps the caret inside, and the content keeps a padding at rest.
                 val contentTop = topPadPx
                 val margin = with(density) { 24.dp.toPx() }
 
@@ -634,7 +653,12 @@ class TextFileEditor(
                     .fillMaxWidth()
                     .padding(top = topPad, bottom = bottomPad),
             ) {
-                HorizontalScrollViewport(horizontal, Modifier.fillMaxWidth(), layered = layered) {
+                HorizontalScrollViewport(
+                    horizontal,
+                    Modifier.fillMaxWidth(),
+                    layered = layered,
+                    clipStart = leftPad + gutterWidth,
+                ) {
                     CompositionLocalProvider(
                         LocalTextSelectionColors provides TextSelectionColors(
                             handleColor = DesignTokens.accent,
@@ -719,6 +743,8 @@ class TextFileEditor(
                         gutterText,
                         modifier = Modifier.fillMaxWidth(),
                         style = codeStyle.copy(color = DesignTokens.muted, textAlign = TextAlign.End),
+                        // The edge bands paint the numbers into their blurred copy.
+                        onTextLayout = { gutterLayout = it },
                     )
                     val bookmarked = bookmarkLines
                     if (bookmarked.isNotEmpty()) {
@@ -788,13 +814,13 @@ class TextFileEditor(
                 val textStartPx = with(density) {
                     (leftPad + gutterWidth + DesignTokens.space16).toPx()
                 }
-                // The extension also covers the window inset left of the sidebar, so code never
-                // leaks past its outer edge; both regions show the same soft field.
+                // The extension covers everything left of the gutter, the window inset included,
+                // so nothing but its soft field shows beside the sidebar.
                 val extensionLeft = sidebar.left + sidebar.width
                 Box(
                     Modifier
                         .offset(x = 0.dp, y = sidebar.top)
-                        .width(extensionLeft)
+                        .width(leftPad)
                         .height(extensionWidth)
                         // The document right of the sidebar's edge, mirrored under its glass.
                         .backgroundExtension(
@@ -808,6 +834,57 @@ class TextFileEditor(
                             canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
                             textLayout.multiParagraph.paint(canvas)
                             canvas.restore()
+                        },
+                )
+            }
+            // The scroll edge effect: the editor paints its own blurred copy, because a backdrop
+            // filter cannot sample the text field.
+            val bandLayout = layout
+            if (bandLayout != null && (chromeInsets.top > 0.dp || chromeInsets.bottom > 0.dp)) {
+                val bandCache = remember { EdgeBandCache() }
+                DisposableEffect(bandCache) {
+                    onDispose { bandCache.dispose() }
+                }
+                val bandKey = BandKey(
+                    layout = bandLayout,
+                    gutter = gutterLayout,
+                    horizontal = horizontal.value,
+                    vertical = vertical.value,
+                    width = maxWidth,
+                    height = maxHeight,
+                    top = chromeInsets.top,
+                    bottom = chromeInsets.bottom,
+                    left = leftPad,
+                )
+                val textStartPx = with(density) {
+                    (leftPad + gutterWidth + DesignTokens.space16).toPx()
+                }
+                val gutterLeftPx = with(density) { leftPad.toPx() }
+                val gutterRightPx = with(density) { (leftPad + gutterWidth).toPx() }
+                val bandWidthPx = with(density) { maxWidth.toPx() }
+                val bandHeightPx = with(density) { maxHeight.toPx() }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .scrollEdgeBands(
+                            key = bandKey,
+                            cache = bandCache,
+                            topBand = chromeInsets.top,
+                            bottomBand = chromeInsets.bottom,
+                            clipStart = leftPad,
+                        ) { canvas ->
+                            canvas.save()
+                            // Same clip as the live field: the copy carries no glyphs left of the gutter.
+                            canvas.clipRect(gutterRightPx, 0f, bandWidthPx, bandHeightPx, ClipOp.Intersect)
+                            canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)
+                            bandLayout.multiParagraph.paint(canvas)
+                            canvas.restore()
+                            gutterLayout?.let { gutter ->
+                                canvas.save()
+                                canvas.translate(gutterLeftPx, topPadPx - vertical.value)
+                                gutter.multiParagraph.paint(canvas)
+                                canvas.restore()
+                            }
                         },
                 )
             }

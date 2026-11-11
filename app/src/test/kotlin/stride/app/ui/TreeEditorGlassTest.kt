@@ -606,6 +606,156 @@ class TreeEditorGlassTest {
         }
     }
 
+    /**
+     * Horizontally scrolled glyphs stay right of the gutter: the gap between the sidebar and the
+     * gutter shows only the background extension's soft field.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `scrolled text never draws left of the gutter`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("clip-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+
+            val sidebarRight = (DesignTokens.chromeInset + DesignTokens.treeDefaultWidth).value
+            val gutterLeft = sidebarRight + DesignTokens.contentGap.value
+            var gapSpread = 0.0
+            for (y in 120 until 700) {
+                var low = 1.0
+                var high = 0.0
+                for (x in (sidebarRight + 1).toInt() until (gutterLeft - 1).toInt()) {
+                    val luma = relativeLuminance(Color(pixels[index(x, y)]))
+                    low = minOf(low, luma)
+                    high = maxOf(high, luma)
+                }
+                gapSpread = maxOf(gapSpread, high - low)
+            }
+            var textLow = 1.0
+            var textHigh = 0.0
+            for (y in 120 until 700) {
+                for (x in 420 until 700) {
+                    val luma = relativeLuminance(Color(pixels[index(x, y)]))
+                    textLow = minOf(textLow, luma)
+                    textHigh = maxOf(textHigh, luma)
+                }
+            }
+            System.err.println(
+                "gutter-gap spread=%.5f text-range=%.4f".format(gapSpread, textHigh - textLow),
+            )
+            assertTrue(gapSpread < 0.02, "glyph contrast left of the gutter (spread %.5f)".format(gapSpread))
+            assertTrue(
+                textHigh - textLow > 0.2,
+                "the text column should carry glyphs (range %.4f)".format(textHigh - textLow),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /**
+     * The scroll edge effect: content keeps flowing to the window edge and the top and bottom
+     * bands blur/fade it with no single-row luminance jump.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `code softens into the window edge instead of a cut`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("edge-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            val pixels = captureToImage().pixels()
+            val topBand = (DesignTokens.chromeInset + DesignTokens.capsuleHeight + DesignTokens.chromeGap)
+                .value.toInt()
+            val bottomBand = (DesignTokens.chromeInset + DesignTokens.statusCapsuleHeight +
+                DesignTokens.chromeGap).value.toInt()
+
+            val topMeans = rowMeans(pixels, 600, 1000, 0, topBand)
+            var topJump = 0.0
+            for (y in 1 until topMeans.size) topJump = maxOf(topJump, abs(topMeans[y] - topMeans[y - 1]))
+            val bottomMeans = rowMeans(pixels, 450, 700, HEIGHT - bottomBand, HEIGHT)
+            var bottomJump = 0.0
+            for (y in 1 until bottomMeans.size) {
+                bottomJump = maxOf(bottomJump, abs(bottomMeans[y] - bottomMeans[y - 1]))
+            }
+            System.err.println(
+                "edge-band top-jump=%.5f top-range=%.4f bottom-jump=%.5f bottom-range=%.4f".format(
+                    topJump,
+                    topMeans.max() - topMeans.min(),
+                    bottomJump,
+                    bottomMeans.max() - bottomMeans.min(),
+                ),
+            )
+
+            var before = 0.0
+            for (y in 16 until 44) before += topMeans[y]
+            before /= 28
+            val text = editor.value.text
+            val selection = editor.value.selection
+            editor.updateValue(TextFieldValue(text.map { if (it == '\n') it else ' ' }.joinToString(""), selection))
+            waitForIdle()
+            val blank = captureToImage().pixels()
+            var after = 0.0
+            val blankMeans = rowMeans(blank, 600, 1000, 0, topBand)
+            for (y in 16 until 44) after += blankMeans[y]
+            after /= 28
+            System.err.println("edge-band under-capsules code=%.5f blank=%.5f".format(before, after))
+            assertTrue(
+                topJump < 0.02,
+                "the top band should not cut the code (largest row jump %.5f)".format(topJump),
+            )
+            assertTrue(
+                bottomJump < 0.02,
+                "the bottom band should not cut the code (largest row jump %.5f)".format(bottomJump),
+            )
+            assertTrue(
+                abs(before - after) > 0.002,
+                "the band should blur real code, not a flat fill (%.5f vs %.5f)".format(before, after),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /** Mean luminance of each row across `x` from `fromY` to `toY`. */
+    private fun rowMeans(pixels: IntArray, fromX: Int, toX: Int, fromY: Int, toY: Int): DoubleArray =
+        DoubleArray(toY - fromY) { row ->
+            var sum = 0.0
+            for (x in fromX until toX) sum += relativeLuminance(Color(pixels[index(x, fromY + row)]))
+            sum / (toX - fromX)
+        }
+
     /** The cyan amount of the selected-tab line under [label]'s topmost node. */
     @OptIn(ExperimentalTestApi::class)
     private fun ComposeUiTest.topText(pixels: IntArray, label: String, lineY: Int): Int {

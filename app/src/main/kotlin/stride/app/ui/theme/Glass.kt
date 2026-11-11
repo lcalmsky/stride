@@ -20,6 +20,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
@@ -693,35 +694,6 @@ private fun Modifier.capsuleFrost(shape: Shape): Modifier = composed {
 }
 
 /**
- * Blurs the content already drawn under this element, without tinting it: the scroll edge effect
- * uses it so code softens toward the window edge. Skipped when the editor scrolls in a layer.
- */
-fun Modifier.backdropBlur(blurRadius: Dp = DesignTokens.scrollEdgeBlur): Modifier = composed {
-    val layered = LocalEditorScrollState.current?.layered == true
-    val density = LocalDensity.current
-    val filter = remember(blurRadius, layered, density) {
-        if (layered) null else backdropImageFilter(with(density) { blurRadius.toPx() } * BLUR_SIGMA_SCALE)
-    }
-    DisposableEffect(filter) {
-        onDispose { filter?.close() }
-    }
-    if (filter == null) {
-        Modifier
-    } else {
-        drawBehind {
-            if (size.width <= 0f || size.height <= 0f) return@drawBehind
-            val bounds = org.jetbrains.skia.Rect.makeWH(size.width, size.height)
-            val native = drawContext.canvas.nativeCanvas
-            native.save()
-            native.clipRect(bounds)
-            native.saveLayer(SaveLayerRec(bounds, null, filter))
-            native.restore()
-            native.restore()
-        }
-    }
-}
-
-/**
  * The floating sidebar: a translucent tint over the background extension, so the mirrored,
  * blurred content shows through it with the same specular rim and shadow as the capsules.
  */
@@ -957,6 +929,202 @@ private fun buildMirroredStrip(
     } finally {
         sharp.close()
         blurred.close()
+    }
+}
+
+/** One cached blurred copy of the editor viewport, drawn by [scrollEdgeBands]. */
+class EdgeBandCache {
+    internal var key: Any? = null
+    internal var image: Image? = null
+
+    fun dispose() {
+        image?.close()
+        image = null
+        key = null
+    }
+}
+
+/**
+ * The scroll edge effect: a blurred copy of the editor content, opaquely covering the top and
+ * bottom bands and easing out [tail] beyond each band's inner edge, so the content under the
+ * control rows softens toward the window edge without a cut line. [source] paints the editor
+ * content in the element's coordinates at full resolution; it is rendered into a small offscreen
+ * image and masked once per [key], so a static frame only blits it. Nothing is drawn left of
+ * [clipStart] (the gutter), where the sidebar's background extension owns the pixels.
+ */
+fun Modifier.scrollEdgeBands(
+    key: Any,
+    cache: EdgeBandCache,
+    topBand: Dp,
+    bottomBand: Dp,
+    clipStart: Dp,
+    blurRadius: Dp = DesignTokens.scrollEdgeBlur,
+    tail: Dp = DesignTokens.scrollEdgeTail,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Modifier = drawBehind {
+    if (size.width <= 0f || size.height <= 0f) return@drawBehind
+    val image = cache.imageFor(
+        key = key,
+        width = size.width,
+        height = size.height,
+        topBand = topBand.toPx(),
+        bottomBand = bottomBand.toPx(),
+        tail = tail.toPx(),
+        sigma = blurRadius.toPx() * BLUR_SIGMA_SCALE,
+        source = source,
+    ) ?: return@drawBehind
+    val native = drawContext.canvas.nativeCanvas
+    native.save()
+    native.clipRect(org.jetbrains.skia.Rect.makeLTRB(clipStart.toPx(), 0f, size.width, size.height))
+    // Only the two bands (plus their tails) are visible; blitting the whole viewport would
+    // upscale a full window of pixels every frame.
+    blitBand(
+        native, image, 0f, (topBand + tail).toPx().coerceAtMost(size.height), size.width, size.height,
+    )
+    blitBand(
+        native,
+        image,
+        (size.height - (bottomBand + tail).toPx()).coerceAtLeast(0f),
+        size.height,
+        size.width,
+        size.height,
+    )
+    native.restore()
+}
+
+/** Draws the `top..bottom` slice of the band image, upscaled to the element's `top..bottom`. */
+private fun blitBand(
+    native: org.jetbrains.skia.Canvas,
+    image: Image,
+    top: Float,
+    bottom: Float,
+    width: Float,
+    height: Float,
+) {
+    if (bottom <= top) return
+    val scaleY = image.height / height
+    native.drawImageRect(
+        image,
+        Rect.makeLTRB(0f, top * scaleY, image.width.toFloat(), bottom * scaleY),
+        Rect.makeLTRB(0f, top, width, bottom),
+        SamplingMode.LINEAR,
+        null,
+        true,
+    )
+}
+
+/** 1/[EDGE_BAND_DOWNSCALE] copy is blurred once; the full-size blit upsamples it back. */
+private const val EDGE_BAND_DOWNSCALE = 8
+
+private data class EdgeBandKey(
+    val key: Any,
+    val width: Int,
+    val height: Int,
+    val topBand: Int,
+    val bottomBand: Int,
+    val tail: Int,
+    val sigma: Int,
+)
+
+private fun EdgeBandCache.imageFor(
+    key: Any,
+    width: Float,
+    height: Float,
+    topBand: Float,
+    bottomBand: Float,
+    tail: Float,
+    sigma: Float,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Image? {
+    val next = EdgeBandKey(
+        key = key,
+        width = width.roundToInt(),
+        height = height.roundToInt(),
+        topBand = topBand.roundToInt(),
+        bottomBand = bottomBand.roundToInt(),
+        tail = tail.roundToInt(),
+        sigma = sigma.roundToInt(),
+    )
+    if (next == this.key) return image
+    val built = buildEdgeBand(width, height, topBand, bottomBand, tail, sigma, source)
+    dispose()
+    this.key = next
+    image = built
+    return built
+}
+
+private fun buildEdgeBand(
+    width: Float,
+    height: Float,
+    topBand: Float,
+    bottomBand: Float,
+    tail: Float,
+    sigma: Float,
+    source: (androidx.compose.ui.graphics.Canvas) -> Unit,
+): Image? {
+    if (width <= 0f || height <= 0f) return null
+    val scale = 1f / EDGE_BAND_DOWNSCALE
+    val bandWidth = (width * scale).roundToInt().coerceAtLeast(1)
+    val bandHeight = (height * scale).roundToInt().coerceAtLeast(1)
+    val sharp = Surface.makeRaster(ImageInfo(bandWidth, bandHeight, ColorType.N32, ColorAlphaType.PREMUL))
+    val blurred = Surface.makeRaster(ImageInfo(bandWidth, bandHeight, ColorType.N32, ColorAlphaType.PREMUL))
+    try {
+        // The field behind the code is opaque, so the band replaces the content instead of
+        // stacking a second set of glyphs on top of the sharp ones.
+        sharp.canvas.clear(contentTintColor.toArgb())
+        sharp.canvas.scale(scale, scale)
+        source(sharp.canvas.asComposeCanvas())
+        val snapshot = sharp.makeImageSnapshot()
+        val paint = Paint().apply {
+            imageFilter = ImageFilter.makeBlur(sigma * scale, sigma * scale, FilterTileMode.CLAMP)
+        }
+        try {
+            blurred.canvas.clear(0)
+            blurred.canvas.drawImage(snapshot, 0f, 0f, paint)
+        } finally {
+            paint.close()
+            snapshot.close()
+        }
+        maskEdgeBands(blurred, width, height, topBand, bottomBand, tail)
+        return blurred.makeImageSnapshot()
+    } finally {
+        sharp.close()
+        blurred.close()
+    }
+}
+
+/** Keeps the blurred copy under the bands, fading it out [tail] past each band's inner edge. */
+private fun maskEdgeBands(
+    surface: Surface,
+    width: Float,
+    height: Float,
+    topBand: Float,
+    bottomBand: Float,
+    tail: Float,
+) {
+    val scale = 1f / EDGE_BAND_DOWNSCALE
+    val h = (height * scale).coerceAtLeast(1f)
+    val topEnd = ((topBand + tail) * scale / h).coerceIn(0f, 1f)
+    val bottomStart = ((height - bottomBand - tail) * scale / h).coerceIn(0f, 1f)
+    if (topEnd > bottomStart) return // The bands meet in a short window: keep the field opaque.
+    val topFull = (topBand * scale / h).coerceIn(0f, topEnd)
+    val bottomFull = ((height - bottomBand) * scale / h).coerceIn(bottomStart, 1f)
+    val opaque = Color.White.toArgb()
+    val clear = Color.White.copy(alpha = 0f).toArgb()
+    val shader = Shader.makeLinearGradient(
+        0f, 0f, 0f, h,
+        intArrayOf(opaque, opaque, clear, clear, opaque, opaque),
+        floatArrayOf(0f, topFull, topEnd, bottomStart, bottomFull, 1f),
+    )
+    val paint = Paint().apply {
+        blendMode = org.jetbrains.skia.BlendMode.DST_IN
+        this.shader = shader
+    }
+    try {
+        surface.canvas.drawRect(Rect.makeWH(width * scale, h), paint)
+    } finally {
+        paint.close()
+        shader.close()
     }
 }
 
