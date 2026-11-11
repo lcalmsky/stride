@@ -15,10 +15,12 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -54,6 +56,7 @@ import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
 import stride.app.run.TestStatus
+import stride.app.search.SEARCH_SELECTED_ROW_TAG
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
 import stride.app.ui.App
@@ -151,6 +154,120 @@ class KeyFlowUiTest {
             waitUntil(timeoutMillis = 5_000) {
                 onAllNodesWithText("Alpha.kt").fetchSemanticsNodes().isNotEmpty()
             }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `choosing go to class from the actions tab switches to the classes tab`() = runComposeUiTest {
+        val root = temp.resolve("actions-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/AlphaService.kt"), "package demo\n\nclass AlphaService\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000), "declaration index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                keyDown(Key.MetaLeft)
+                keyDown(Key.ShiftLeft)
+                pressKey(Key.A)
+                keyUp(Key.ShiftLeft)
+                keyUp(Key.MetaLeft)
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasText("Actions") and isSelected()).assertExists()
+
+            onNode(hasSetTextAction()).performTextInput("go to cla")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Go to Class").fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodes(hasText("Classes") and isSelected()).fetchSemanticsNodes().isNotEmpty()
+            }
+            onNodeWithText("Search everywhere").assertExists()
+            onNodeWithText("Go to Class").assertDoesNotExist()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the toolbar search button opens the all tab`() = runComposeUiTest {
+        val root = temp.resolve("toolbar-project")
+        Files.createDirectories(root)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { pressKey(Key.O) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasText("Classes") and isSelected()).assertExists()
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { !state.searchVisible }
+
+            onNode(hasText("Search") and hasClickAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasText("All") and isSelected()).assertExists()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the selected search row stays visible and a tab switch returns to the top`() = runComposeUiTest {
+        val root = temp.resolve("scroll-project")
+        Files.createDirectories(root.resolve("src"))
+        for (number in 1..12) {
+            val suffix = number.toString().padStart(2, '0')
+            Files.writeString(
+                root.resolve("src/Item$suffix.kt"),
+                "package demo\n\nclass ItemKlass$suffix\n",
+            )
+        }
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000), "declaration index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                pressKey(Key.ShiftLeft)
+                pressKey(Key.ShiftLeft)
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasSetTextAction()).performTextInput("Item")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Item04.kt").fetchSemanticsNodes().isNotEmpty() &&
+                    onAllNodesWithText("ItemKlass01").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { repeat(10) { pressKey(Key.DirectionDown) } }
+            waitForIdle()
+            onNodeWithTag(SEARCH_SELECTED_ROW_TAG).assertIsDisplayed()
+
+            onRoot().performKeyInput { pressKey(Key.Tab) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodes(hasText("Classes") and isSelected()).fetchSemanticsNodes().isNotEmpty() &&
+                    onAllNodesWithText("ItemKlass01").fetchSemanticsNodes().size == 1
+            }
+            onNodeWithText("ItemKlass01").assertIsDisplayed()
         } finally {
             state.dispose()
         }

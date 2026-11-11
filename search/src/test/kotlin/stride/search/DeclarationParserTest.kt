@@ -148,6 +148,93 @@ class DeclarationParserTest {
     }
 
     @Test
+    fun `kotlin local classes and objects inside a function body are skipped`() {
+        val declarations = parseKotlin(
+            """
+            fun build() {
+                class Local(val x: Int)
+                object LocalObject
+                fun helper() {}
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(declarations.any { it.name == "Local" }, "a local class inside a function body is skipped")
+        assertFalse(declarations.any { it.name == "LocalObject" }, "a local object inside a function body is skipped")
+        assertFalse(declarations.any { it.name == "helper" }, "local functions are skipped")
+        assertEquals(listOf("build"), declarations.map { it.name })
+    }
+
+    @Test
+    fun `a brace in a class header default value does not start the body`() {
+        val declarations = parseKotlin(
+            """
+            class Inline(val onDone: () -> Unit = {}) {
+                fun inlineMember() {}
+            }
+            class MultiLine(
+                val onDone: () -> Unit = {},
+            ) {
+                fun multiLineMember() {}
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("Inline", declarations.single { it.name == "inlineMember" }.container)
+        assertEquals("MultiLine", declarations.single { it.name == "multiLineMember" }.container)
+        assertFalse(declarations.any { it.name == "onDone" }, "header parameters are not symbols")
+    }
+
+    @Test
+    fun `java constructors are not symbols`() {
+        val declarations = parseJava(
+            """
+            public class Sample {
+                public Sample(int x) {
+                }
+
+                protected Sample(String name, int x) {
+                }
+
+                public int add(int a) {
+                    return a;
+                }
+            }
+            """.trimIndent()
+        )
+
+        assertFalse(declarations.any { it.kind == DeclarationKind.SYMBOL && it.name == "Sample" })
+        assertEquals("Sample", declarations.single { it.name == "add" }.container)
+    }
+
+    @Test
+    fun `java multi line method signatures are symbols`() {
+        val declarations = parseJava(
+            """
+            public class Sample {
+                public void render(
+                    String id
+                ) {
+                }
+
+                public void draw(
+                    String id
+                )
+                {
+                }
+            }
+            """.trimIndent()
+        )
+
+        val render = declarations.single { it.name == "render" }
+        assertEquals(DeclarationKind.SYMBOL, render.kind)
+        assertEquals("Sample", render.container)
+        assertEquals(1, render.line)
+        assertEquals("Sample", declarations.single { it.name == "draw" }.container)
+        assertFalse(declarations.any { it.name == "id" }, "parameters are not symbols")
+    }
+
+    @Test
     fun `unsupported extensions parse to nothing`() {
         assertTrue(DeclarationParser.parse("notes.md", "class NotASource").isEmpty())
         assertFalse(DeclarationParser.isSourceFile("notes.md"))

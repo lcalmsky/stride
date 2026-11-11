@@ -41,6 +41,7 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -101,6 +102,7 @@ import stride.core.vfs.VFile
 import stride.lang.FileTypeRegistry
 import stride.search.Declaration
 import stride.search.FileNameIndex
+import stride.search.SearchTab
 import java.awt.Cursor
 import java.nio.file.Path
 
@@ -129,7 +131,7 @@ fun App(
                 TopBar(
                     projectName = session?.displayName() ?: "strIDE",
                     searchEnabled = session != null,
-                    onSearch = { state.searchVisible = true },
+                    onSearch = { state.openSearch(SearchTab.ALL) },
                 )
                 if (session == null) {
                     NoProjectState(onOpenFolder, Modifier.weight(1f))
@@ -208,22 +210,24 @@ fun App(
                     },
             ) {
                 val search = remember(session) { SearchEverywhere(session.project, state, chooseFolder) }
-                SearchEverywherePopup(
-                    search = search,
-                    initialQuery = searchInitialQuery,
-                    initialTab = state.searchTab,
-                    onChoose = { entry ->
-                        // Close first so an action that opens another popup (e.g. Go to Class) is not closed again.
-                        state.searchVisible = false
-                        if (!search.process(entry)) {
-                            when (val item = entry.item) {
-                                is VFile -> session.editors.openFile(item)
-                                is Declaration -> session.editors.openFileAtLine(item.file, item.line)
+                key(state.searchGeneration) {
+                    SearchEverywherePopup(
+                        search = search,
+                        initialQuery = searchInitialQuery,
+                        initialTab = state.searchTab,
+                        onChoose = { entry ->
+                            // Close first so an action that opens another popup (e.g. Go to Class) is not closed again.
+                            state.searchVisible = false
+                            if (!search.process(entry)) {
+                                when (val item = entry.item) {
+                                    is VFile -> session.editors.openFile(item)
+                                    is Declaration -> session.editors.openFileAtLine(item.file, item.line)
+                                }
                             }
-                        }
-                    },
-                    onClose = { state.searchVisible = false },
-                )
+                        },
+                        onClose = { state.searchVisible = false },
+                    )
+                }
             }
         }
         if (state.findInPathVisible && session != null) {

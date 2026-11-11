@@ -51,11 +51,15 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.LocalAnimationsEnabled
@@ -74,6 +78,9 @@ import stride.search.SearchTab
 
 private val MAX_LIST_HEIGHT =
     DesignTokens.popupRowHeight * DesignTokens.popupMaxRows - DesignTokens.popupTabHeight - DesignTokens.popupGroupHeight
+
+/** Test tag on the row the keyboard selection is on; UI tests check it stays visible. */
+internal const val SEARCH_SELECTED_ROW_TAG = "search-selected-row"
 
 @Composable
 fun SearchEverywherePopup(
@@ -96,13 +103,17 @@ fun SearchEverywherePopup(
     val rows = remember(results, tab) { popupRows(results, grouped = tab == SearchTab.ALL) }
 
     LaunchedEffect(query, tab) {
+        // Drop the previous tab's list before the new fetch so Enter can never open a stale row.
+        results = emptyList()
+        selectedIndex = 0
         if (query.isEmpty()) {
-            results = emptyList()
             loading = false
             return@LaunchedEffect
         }
         loading = true
-        val fetched = withContext(Dispatchers.Default) { search.fetch(query, tab) }
+        val fetched = withContext(Dispatchers.Default) {
+            search.fetch(query, tab, isActive = { isActive })
+        }
         results = fetched
         selectedIndex = 0
         loading = false
@@ -170,7 +181,7 @@ fun SearchEverywherePopup(
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
                 )
             } else if (rows.isNotEmpty()) {
-                ResultList(rows, results.size, selectedIndex, onChoose)
+                ResultList(rows, tab, results.size, selectedIndex, onChoose)
             }
             Footer()
         }
@@ -236,6 +247,7 @@ private fun TabRow(selected: SearchTab, onSelect: (SearchTab) -> Unit) {
                     .then(
                         if (tab == selected) Modifier.background(DesignTokens.selectionGlowBackground) else Modifier
                     )
+                    .semantics { this.selected = tab == selected }
                     .clickable(onClick = { onSelect(tab) })
                     .padding(horizontal = DesignTokens.space12, vertical = 3.dp),
             ) {
@@ -278,11 +290,25 @@ internal fun popupRows(results: List<SearchResultEntry>, grouped: Boolean): List
 @Composable
 private fun ResultList(
     rows: List<PopupRow>,
+    tab: SearchTab,
     resultCount: Int,
     selectedIndex: Int,
     onChoose: (SearchResultEntry) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    LaunchedEffect(tab) { listState.scrollToItem(0) }
+    LaunchedEffect(selectedIndex, rows) {
+        // Rows include group headers, so find the selected entry's row rather than its index.
+        val target = rows.indexOfFirst { it is PopupRow.Entry && it.index == selectedIndex }
+        if (target < 0) return@LaunchedEffect
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return@LaunchedEffect
+        when {
+            target < visible.first().index -> listState.scrollToItem(target)
+            target > visible.last().index ->
+                listState.scrollToItem((target - visible.size + 1).coerceAtLeast(0))
+        }
+    }
     val groups = rows.count { it is PopupRow.Group }
     // The tab row must not make the glass panel taller than the popup's old maximum height.
     val available = (MAX_LIST_HEIGHT - DesignTokens.popupGroupHeight * groups).coerceAtLeast(0.dp)
@@ -346,6 +372,7 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
             .then(if (selected) Modifier.background(DesignTokens.raised) else Modifier)
             .background(background)
             .neonSelectionBar(alpha = neon)
+            .then(if (selected) Modifier.testTag(SEARCH_SELECTED_ROW_TAG) else Modifier)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = DesignTokens.space16),

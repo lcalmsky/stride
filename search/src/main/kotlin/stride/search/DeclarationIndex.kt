@@ -17,6 +17,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -35,6 +36,11 @@ class DeclarationIndex(private val project: Project) : Disposable {
     private val byFile = ConcurrentHashMap<String, List<Declaration>>()
     private val ready = CountDownLatch(1)
     private val scanThread = Thread({ scan() }, "stride-declaration-index").apply { isDaemon = true }
+    private val writeLocks = Array(WRITE_LOCK_STRIPES) { Any() }
+    private val version = AtomicLong(0)
+
+    @Volatile
+    private var cachedSnapshot: CachedSnapshot? = null
 
     @Volatile
     private var disposed = false
@@ -53,9 +59,17 @@ class DeclarationIndex(private val project: Project) : Disposable {
     fun awaitReady(timeoutMillis: Long = WAIT_TIMEOUT_MILLIS): Boolean =
         ready.await(timeoutMillis, TimeUnit.MILLISECONDS)
 
-    /** Current declarations ordered by path, line and name. */
-    fun snapshot(): List<Declaration> = byFile.values.flatten()
-        .sortedWith(compareBy({ it.relativePath }, { it.line }, { it.name }))
+    /**
+     * Current declarations in no particular order. The same list is returned while the index
+     * does not change, so callers sort the matches they keep instead of the whole index.
+     */
+    fun snapshot(): List<Declaration> {
+        cachedSnapshot?.let { cached -> if (cached.version == version.get()) return cached.declarations }
+        val start = version.get()
+        val declarations = byFile.values.flatten()
+        if (version.get() == start) cachedSnapshot = CachedSnapshot(start, declarations)
+        return declarations
+    }
 
     override fun dispose() {
         disposed = true
@@ -109,27 +123,42 @@ class DeclarationIndex(private val project: Project) : Disposable {
         if (!DeclarationParser.isSourceFile(fileName)) return
         if (isExcluded(absolute)) return
         val relativePath = relativePath(absolute) ?: return
-        val size = try {
-            Files.size(absolute)
-        } catch (e: IOException) {
-            return
+        val key = absolute.toString()
+        // The initial scan and a VFS event can reach the same path at once; the lock keeps the
+        // later read (and its write) from being overwritten by the earlier one.
+        synchronized(lockFor(key)) {
+            val size = try {
+                Files.size(absolute)
+            } catch (e: IOException) {
+                return
+            }
+            if (size > MAX_FILE_SIZE) return
+            val text = try {
+                Files.readString(absolute)
+            } catch (e: IOException) {
+                return
+            }
+            val file = VFile(absolute)
+            byFile[key] = DeclarationParser.parse(fileName, text)
+                .map { Declaration(it.name, it.kind, file, relativePath, it.line, it.container) }
+            changed()
         }
-        if (size > MAX_FILE_SIZE) return
-        val text = try {
-            Files.readString(absolute)
-        } catch (e: IOException) {
-            return
-        }
-        val file = VFile(absolute)
-        byFile[absolute.toString()] = DeclarationParser.parse(fileName, text)
-            .map { Declaration(it.name, it.kind, file, relativePath, it.line, it.container) }
     }
 
     private fun remove(path: Path) {
         val key = path.toAbsolutePath().normalize().toString()
-        byFile.remove(key)
         val prefix = key + File.separator
-        byFile.keys.removeIf { it.startsWith(prefix) }
+        for (target in byFile.keys.filter { it == key || it.startsWith(prefix) }) {
+            synchronized(lockFor(target)) { byFile.remove(target) }
+        }
+        changed()
+    }
+
+    private fun lockFor(key: String): Any = writeLocks[(key.hashCode() and Int.MAX_VALUE) % writeLocks.size]
+
+    private fun changed() {
+        version.incrementAndGet()
+        cachedSnapshot = null
     }
 
     private fun isExcluded(absolute: Path): Boolean {
@@ -159,9 +188,12 @@ class DeclarationIndex(private val project: Project) : Disposable {
         return relative.joinToString("/") { it.toString() }
     }
 
+    private class CachedSnapshot(val version: Long, val declarations: List<Declaration>)
+
     companion object {
         const val WAIT_TIMEOUT_MILLIS: Long = 5_000L
         const val MAX_FILE_SIZE: Long = 1024L * 1024L
+        private const val WRITE_LOCK_STRIPES = 32
         private val EXCLUDED_DIRS = setOf(".git", "build", ".gradle", "node_modules", ".idea", "out")
     }
 }

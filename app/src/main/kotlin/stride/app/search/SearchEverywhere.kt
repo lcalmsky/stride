@@ -45,12 +45,19 @@ class SearchEverywhere(
     /**
      * Results of [tab], best match first. [SearchTab.ALL] groups by contributor (Files, Classes,
      * Symbols, Actions), gives each at most [ALL_PER_CONTRIBUTOR] results and stops at [limit].
+     * A caller in a coroutine passes [isActive] so a superseded fetch stops between contributors.
      */
-    fun fetch(query: String, tab: SearchTab = SearchTab.ALL, limit: Int = MAX_RESULTS): List<SearchResultEntry> {
+    fun fetch(
+        query: String,
+        tab: SearchTab = SearchTab.ALL,
+        limit: Int = MAX_RESULTS,
+        isActive: () -> Boolean = { true },
+    ): List<SearchResultEntry> {
         if (limit <= 0) return emptyList()
         val result = ArrayList<SearchResultEntry>()
         val perContributor = if (tab == SearchTab.ALL) minOf(limit, ALL_PER_CONTRIBUTOR) else limit
         for (contributor in contributorsFor(tab)) {
+            if (!isActive()) break
             val remaining = minOf(limit - result.size, perContributor)
             if (remaining <= 0) break
             for (found in contributor.fetchAny(query, remaining)) {

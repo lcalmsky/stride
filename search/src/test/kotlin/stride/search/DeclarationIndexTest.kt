@@ -1,6 +1,8 @@
 package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -35,9 +37,10 @@ class DeclarationIndexTest {
             assertTrue(index.awaitReady(5_000), "initial scan did not finish")
             assertTrue(index.isReady)
 
+            // The snapshot is unordered; callers sort the matches they keep.
             assertEquals(
-                listOf("Alpha", "run", "Beta", "count"),
-                index.snapshot().map { it.name }
+                setOf("Alpha", "run", "Beta", "count"),
+                index.snapshot().map { it.name }.toSet()
             )
             val run = index.snapshot().single { it.name == "run" }
             assertEquals(DeclarationKind.SYMBOL, run.kind)
@@ -83,6 +86,31 @@ class DeclarationIndexTest {
 
             publisher.after(listOf(VFileEvent.Deleted(VFile(directory))))
             assertTrue(index.snapshot().none { it.name == "Delta" })
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `the snapshot is reused until the index changes`() {
+        Application.resetForTests()
+        Files.createDirectories(tempDir.resolve("src"))
+        val file = tempDir.resolve("src/Alpha.kt")
+        Files.writeString(file, "class Alpha\n")
+
+        val project = Project(tempDir)
+        try {
+            val index = project.service<DeclarationIndex>()
+            assertTrue(index.awaitReady(5_000), "initial scan did not finish")
+            val first = index.snapshot()
+            assertSame(first, index.snapshot(), "an unchanged index reuses its snapshot")
+
+            Files.writeString(file, "class Beta\n")
+            project.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Changed(VFile(file))))
+
+            val second = index.snapshot()
+            assertNotSame(first, second, "a change rebuilds the snapshot")
+            assertEquals(listOf("Beta"), second.map { it.name })
         } finally {
             project.dispose()
         }

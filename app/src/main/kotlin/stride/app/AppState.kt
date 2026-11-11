@@ -66,6 +66,10 @@ class AppState {
     /** Tab the popup opens on; set by the action that opens Search Everywhere. */
     var searchTab by mutableStateOf(SearchTab.ALL)
 
+    /** Incremented by [openSearch]; the popup is keyed on it so every open starts fresh. */
+    var searchGeneration by mutableStateOf(0)
+        private set
+
     var focus by mutableStateOf(KeyContext.GLOBAL)
 
     val findBar = FindBarState()
@@ -127,9 +131,10 @@ class AppState {
         )
     }
 
-    /** Opens Search Everywhere on [tab]. */
+    /** Opens Search Everywhere on [tab], resetting the popup even when it is already open. */
     fun openSearch(tab: SearchTab) {
         searchTab = tab
+        searchGeneration++
         searchVisible = true
     }
 
