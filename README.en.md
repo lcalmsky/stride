@@ -46,7 +46,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Editing** duplicate, delete, and move lines, toggle line and block comments, indent, and undo or redo from the keyboard. `⌘L` jumps to a `line` or `line:column`. With no selection, `⌘C`·`⌘X` copy or cut the whole line
 - **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, and `⇧F6` renames within the file
 - **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure, `⌘⇧T` goes to the test, `⌥F7` finds usages, and `F3`·`⌘F3` handle bookmarks
-- **Status bar** shows the relative path, `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
+- **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
 </td>
 </tr>
@@ -74,10 +74,10 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/find.png" alt="The find bar open below the editor" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/find.png" alt="The find bar open below the top capsules" width="480"></td>
 <td valign="top">
 
-- **Find bar** `⌘F` opens it below the tab strip. `Enter`·`⌘G` moves to the next match and `⇧Enter`·`⌘⇧G` to the previous one, wrapping around at either end
+- **Find bar** `⌘F` opens it below the top capsule row. `Enter`·`⌘G` moves to the next match and `⇧Enter`·`⌘⇧G` to the previous one, wrapping around at either end
 - **Replace** `⌘R` expands the replace row. Replace the current match or all matches
 - **Options** `Aa` matches case and `.*` uses a regular expression. In regular-expression replacements, `$1` refers to a group. An invalid expression shows an error
 - **Display** the current match and the other matches are painted in different neon colors, with an `n / total` counter. `Esc` closes the bar and returns focus to the editor
@@ -126,11 +126,15 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 <td valign="top">
 
 - **Background** a neutral graphite base with a soft top-to-bottom luminance falloff sits behind the window content. Color is reserved for emphasis
-- **Floating glass slabs** the sidebar, tab strip, find bar, status bar, title bar, and tool windows are rounded glass slabs inset 8 dp from the window edge. Each slab has a specular rim and a cached neutral shadow, and the window base shows through the gaps between them
-- **Code under glass** the editor runs under the tab strip and status bar, so scrolled code shows through the glass. Popups are thin glass that shows the code behind and bends it at the rim, and a strong text shadow keeps labels legible; they fall back to blur plus hairlines when the shader is unavailable
-- **Selection signal** a selected tree row and the active tab float as capsules with a small lens, a specular top rim, a 2 dp cyan bar, a bleeding glow, and white text. A focused panel draws a thin line around its border
-- **Large files** documents of 1,000 lines or more scroll through a constant-cost layer, and the bars become static glass; the layer is released once the document shrinks below 800 lines
-- **Motion and cost** a fade runs for 150 ms only when the selection changes; nothing animates continuously. Slab blur is computed once per size and cached, and the popup lens runs on a lower-resolution copy
+- **Glass only on the control layer** glass is used only for the sidebar, the top and bottom capsules, the find bar, popups, and the tool window switcher; the code fills the window edge to edge. No bar or slab crosses the window
+- **Floating glass sidebar** a rounded glass panel inset 10 dp from the top, left, and bottom edges. The real code right next to it is mirrored and blurred into a soft colour field under the panel, so the sidebar carries the tone of the code beside it. Outside the panel the pixels are the editor field
+- **Capsules instead of bars** the top row is split into a project name capsule, a tab capsule group, and a Search capsule; the bottom row into a file path capsule and a status capsule group. The selected tab is a glass pill that slides across the group, and a 2 dp cyan underline marks the selection instantly. The status group carries `Ln`·`Col`, the file type, `UTF-8`, and the read-only badge. Each capsule frosts the code under it so labels stay legible, and the code between capsules stays visible and clickable
+- **Scroll edge effect** scrolled code softens under the top and bottom capsule rows and fades out toward the window edge. Instead of a bar covering and cutting it, the blur eases out gradually
+- **Thin popups** Search Everywhere, recent files, and the context actions popup float as thin glass over the code, showing it behind and bending it at the rim. A strong text shadow keeps labels legible, and they fall back to blur plus hairlines when the shader is unavailable
+- **Welcome screen** without a project, the wordmark is the content, with an `Open Folder…` glass capsule and keycap hints below it
+- **Selection signal** a selected tree row floats as a capsule with a small lens and shows a 2 dp cyan bar, a bleeding glow, and white text. A focused tree panel draws a thin line around its border
+- **Large files** documents of 1,000 lines or more scroll through a constant-cost layer, and the capsules use a cached frost fill; the layer is released once the document shrinks below 800 lines
+- **Motion and cost** the selected tab's pill slides for 200 ms and nothing animates continuously. Capsule frost and the popup lens are computed on lower-resolution copies, and the background extension and scroll edge blur are cached so static frames do not compute them again
 - **UI font** the bundled UI font can be swapped for the system font with `Switch UI Font` in the Actions tab. The choice is saved for the next launch
 
 </td>
@@ -249,7 +253,7 @@ The app is split into six modules. `core` provides services, extension points, a
 
 Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
 
-The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the bars are drawn over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
+The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 
 <br>
 
