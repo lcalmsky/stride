@@ -47,7 +47,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg)
             packageName = "strIDE"
-            packageVersion = "1.2.0"
+            packageVersion = "1.3.0"
             description = "A keyboard-driven code editor"
             vendor = "stride"
             // suggestRuntimeModules output, plus java.logging (java.util.logging in Main)
