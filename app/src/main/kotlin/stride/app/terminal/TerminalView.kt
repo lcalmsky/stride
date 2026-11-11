@@ -200,7 +200,7 @@ fun TerminalView(session: TerminalSession, modifier: Modifier = Modifier, focusR
                     val top = row * cellHeight
                     if (selectionStart >= 0 && lineIndex in selectedFrom..selectedTo) {
                         drawRect(
-                            color = DesignTokens.selectionGlowBackground,
+                            color = DesignTokens.selection,
                             topLeft = Offset(0f, top),
                             size = Size(size.width, cellHeight),
                         )

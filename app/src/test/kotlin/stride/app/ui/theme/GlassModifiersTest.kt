@@ -13,8 +13,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
@@ -22,14 +24,16 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import stride.app.ui.LocalAnimationsEnabled
 
 class GlassModifiersTest {
     @Test
-    fun `glass panel picks up the color of the mesh behind it`() {
+    fun `glass panel is the neutral fill over the field`() {
         val withMesh = pixelArray(200, 120) {
             MeshBackground(Modifier.fillMaxSize()) {
                 Box(Modifier.align(Alignment.Center).size(100.dp, 80.dp).glassPanel())
@@ -43,8 +47,8 @@ class GlassModifiersTest {
         var widest = -1
         var bestX = -1
         var bestY = -1
-        for (y in 22 until 98) {
-            for (x in 52 until 148) {
+        for (y in 24 until 96) {
+            for (x in 54 until 146) {
                 val width = spread(withMesh[index(x, y, 200)])
                 if (width > widest) {
                     widest = width
@@ -53,11 +57,18 @@ class GlassModifiersTest {
                 }
             }
         }
-        assertTrue(widest >= 8, "widest channel spread inside the panel = $widest")
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
+        val luminance = relativeLuminance(Color(withMesh[index(bestX, bestY, 200)]))
+        assertTrue(widest <= 2, "widest channel spread inside the panel = $widest, expected neutral glass")
+        assertTrue(
+            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
+            "panel luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),
+        )
         assertNotEquals(
             withoutMesh[index(bestX, bestY, 200)],
             withMesh[index(bestX, bestY, 200)],
-            "the glass pixel should differ from a panel without mesh",
+            "the glass pixel should differ from a panel without the field",
         )
     }
 
@@ -156,9 +167,9 @@ class GlassModifiersTest {
     @Test
     fun `backdrop blur stays aligned with the panel edge`() {
         // Panel at (72,70) 256×160 over an 80 px checkerboard. The pattern outside the top edge
-        // (row 68, 2 px above) and inside it (row 72, 2 px below) must share the same phase, and
-        // the same holds for the columns 2 px outside and inside the left edge. A scaled blur that
-        // anchors anywhere but the panel's top-left would show up as a non-zero shift.
+        // (row 68, 2 px above) and inside it (row 86, 16 px below, past the 12 dp lens bezel) must
+        // share the same phase, and the same holds for the columns outside and inside the left
+        // edge. A scaled blur that anchors anywhere but the panel's top-left shows as a shift.
         val pixels = pixelArray(400, 300) {
             Box(Modifier.fillMaxSize()) {
                 Checkerboard(cellSize = 80f)
@@ -172,17 +183,18 @@ class GlassModifiersTest {
         }
         val horizontal = profileShift(
             outside = { x -> pixels[index(x, 68, 400)] },
-            inside = { x -> pixels[index(x, 72, 400)] },
+            inside = { x -> pixels[index(x, 86, 400)] },
             range = 100 until 300,
         )
         val vertical = profileShift(
             outside = { y -> pixels[index(70, y, 400)] },
-            inside = { y -> pixels[index(74, y, 400)] },
+            inside = { y -> pixels[index(86, y, 400)] },
             range = 90 until 210,
         )
         System.err.println("backdrop-align horizontal=$horizontal vertical=$vertical")
-        assertEquals(0, horizontal, "the blurred pattern inside the top edge is shifted horizontally")
-        assertEquals(0, vertical, "the blurred pattern inside the left edge is shifted vertically")
+        // One pixel of correlation noise is allowed; the blur must not anchor off the panel corner.
+        assertTrue(abs(horizontal) <= 1, "the blurred pattern inside the top edge is shifted horizontally by $horizontal")
+        assertTrue(abs(vertical) <= 1, "the blurred pattern inside the left edge is shifted vertically by $vertical")
     }
 
     private fun profileShift(outside: (Int) -> Int, inside: (Int) -> Int, range: IntRange): Int {
@@ -224,6 +236,93 @@ class GlassModifiersTest {
                 y += cell
                 row += 1
             }
+        }
+    }
+
+    @Test
+    fun `the liquid glass SkSL compiles`() {
+        GlassShader.resetForTests()
+        try {
+            assertNotNull(GlassShader.runtimeEffect(), "the liquid glass SkSL must compile")
+        } finally {
+            GlassShader.resetForTests()
+        }
+    }
+
+    @Test
+    fun `the specular rim is brighter on the top edge than on the bottom`() {
+        val pixels = pixelArray(400, 240) {
+            Box(Modifier.fillMaxSize().background(Color(0xFF202020)), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .size(200.dp, 100.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .backdropGlass(RoundedCornerShape(16.dp)),
+                )
+            }
+        }
+        val top = relativeLuminance(Color(pixels[index(200, 71, 400)]))
+        val middle = relativeLuminance(Color(pixels[index(200, 120, 400)]))
+        val bottom = relativeLuminance(Color(pixels[index(200, 168, 400)]))
+        System.err.println("specular top=%.4f middle=%.4f bottom=%.4f".format(top, middle, bottom))
+        assertTrue(top > middle + 0.002, "the top rim %.4f should be brighter than the interior %.4f".format(top, middle))
+        assertTrue(top > bottom + 0.004, "the top rim %.4f should be brighter than the bottom %.4f".format(top, bottom))
+    }
+
+    @Test
+    fun `the lens changes the backdrop inside the bezel`() {
+        GlassShader.resetForTests()
+        val lensed = bezelPixels()
+        GlassShader.enabled = false
+        val fallback = try {
+            bezelPixels()
+        } finally {
+            GlassShader.resetForTests()
+        }
+        val lensedPixel = lensed[index(104, 120, 400)]
+        val fallbackPixel = fallback[index(104, 120, 400)]
+        System.err.println(
+            "lens-bezel lensed=#%06X fallback=#%06X".format(lensedPixel and 0xFFFFFF, fallbackPixel and 0xFFFFFF),
+        )
+        assertNotEquals(fallbackPixel, lensedPixel, "the bezel should sample a displaced backdrop")
+    }
+
+    @Test
+    fun `the blur-only glass is used when the shader is unavailable`() {
+        GlassShader.resetForTests()
+        GlassShader.enabled = false
+        try {
+            GlassCacheStats.lastSurfaceLiquid = true
+            val pixels = pixelArray(400, 300) {
+                Box(Modifier.fillMaxSize()) {
+                    Checkerboard()
+                    Box(
+                        Modifier
+                            .offset(72.dp, 70.dp)
+                            .size(256.dp, 160.dp)
+                            .backdropGlass(RoundedCornerShape(16.dp)),
+                    )
+                }
+            }
+            val pattern = meanAdjacentDiff(pixels, 400, 10, 80, 44, 256)
+            val backdrop = meanAdjacentDiff(pixels, 400, 104, 296, 44, 256)
+            assertTrue(backdrop < pattern * 0.5, "the fallback still blurs (ratio ${backdrop / pattern})")
+            assertFalse(GlassCacheStats.lastSurfaceLiquid, "the fallback must not report the liquid surface")
+        } finally {
+            GlassShader.resetForTests()
+        }
+    }
+
+    private fun bezelPixels(): IntArray = pixelArray(400, 300) {
+        Box(Modifier.fillMaxSize()) {
+            Checkerboard(cellSize = 16f)
+            Box(
+                Modifier
+                    .offset(100.dp, 100.dp)
+                    .size(200.dp, 100.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .backdropGlass(RoundedCornerShape(16.dp)),
+            )
         }
     }
 

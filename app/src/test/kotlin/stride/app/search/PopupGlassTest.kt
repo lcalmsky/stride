@@ -41,7 +41,7 @@ import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.neonBorder
+import stride.app.ui.theme.blendOver
 import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Project
 import stride.core.vfs.VFile
@@ -148,7 +148,7 @@ class PopupGlassTest {
     }
 
     @Test
-    fun `selected recent row glows above the row while the calm row does not`() {
+    fun `the selected recent row carries the neon line on its capsule edge`() {
         val root = Path.of("build/tmp/recent-glass-project")
         val files = listOf(
             VFile(root.resolve("Alpha.kt")),
@@ -160,20 +160,22 @@ class PopupGlassTest {
                 RecentFilesPopup(files = files, projectRoot = root, onChoose = {}, onClose = {})
             }
         }
-        // Header 96..144, rows 144..176, 176..208 (selected), 208..240; sample 20 px above each row top.
-        val glow = pixels[index(700, 156, 800)]
-        val calm = pixels[index(700, 124, 800)]
-        System.err.println("recent-glow selected=${hex(glow)} calm=${hex(calm)}")
-        val glowSignal = green(glow) + blue(glow) - green(calm) - blue(calm)
+        // Panel left is (800-680)/2=60; rows are inset 6, the line sits 2 px wide from x=67.
+        // Header 96..144, rows 144..176 (calm), 176..208 (selected), 208..240.
+        val line = pixels[index(68, 192, 800)]
+        val calm = pixels[index(68, 160, 800)]
+        System.err.println("recent-line selected=${hex(line)} calm=${hex(calm)}")
+        val cyan = green(line) + blue(line) - 2 * red(line)
+        val calmCyan = green(calm) + blue(calm) - 2 * red(calm)
+        assertTrue(red(line) < green(line) && red(line) < blue(line), "the selected edge should be cyan: ${hex(line)}")
         assertTrue(
-            glowSignal >= 4,
-            "20 px above the selected row should be brighter toward accent2 than above a calm row " +
-                "(selected ${hex(glow)}, calm ${hex(calm)})",
+            cyan > calmCyan + 40,
+            "the selected row's left edge should carry the cyan line (selected ${hex(line)}, calm ${hex(calm)})",
         )
     }
 
     @Test
-    fun `find bar picks up the mesh color instead of the flat surface`() {
+    fun `find bar is the neutral glass fill instead of the flat surface`() {
         val pixels = scenePixels(600, 400) {
             MeshBackground(Modifier.fillMaxSize()) {
                 FindBar(
@@ -187,7 +189,7 @@ class PopupGlassTest {
         var widest = -1
         var widestX = -1
         var widestY = -1
-        // Below the underline glow (32..34) so only the panel fill is measured.
+        // Below the underline line so only the panel fill is measured.
         for (y in 6 until 22) {
             for (x in 60 until 400) {
                 val spread = spread(pixels[index(x, y, 600)])
@@ -199,11 +201,17 @@ class PopupGlassTest {
             }
         }
         val pixel = pixels[index(widestX, widestY, 600)]
-        System.err.println("find-bar widest=$widest at ($widestX,$widestY) pixel=${hex(pixel)} surface=${hex(DesignTokens.surface.toArgb())}")
-        assertTrue(widest >= 8, "the widest channel spread inside the find bar = $widest")
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
+        val luminance = relativeLuminance(Color(pixel))
+        System.err.println(
+            "find-bar widest=$widest at ($widestX,$widestY) pixel=${hex(pixel)} luminance=%.4f band=%.4f..%.4f"
+                .format(luminance, lowest, highest),
+        )
+        assertTrue(widest <= 2, "the find bar should stay neutral, widest channel spread = $widest")
         assertTrue(
-            channelDistance(pixel, DesignTokens.surface.toArgb()) > 2,
-            "the find bar should not be the flat surface color: ${hex(pixel)}",
+            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
+            "the find bar luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),
         )
     }
 
@@ -281,7 +289,6 @@ class PopupGlassTest {
     private fun panelChain(covers: List<Cover>): Modifier {
         var modifier: Modifier = Modifier
         if (Cover.SHADOW in covers) modifier = modifier.shadow(24.dp, panelShape, clip = false)
-        modifier = modifier.neonBorder(DesignTokens.accent, panelShape, radius = DesignTokens.glowRadiusLarge)
         if (Cover.CLIP in covers) modifier = modifier.clip(panelShape)
         return modifier.backdropGlass(panelShape)
     }

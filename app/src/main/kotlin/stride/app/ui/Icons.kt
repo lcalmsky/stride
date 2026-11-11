@@ -26,8 +26,7 @@ fun fileTypeColor(fileName: String): Color {
 }
 
 @Composable
-fun FileTypeIcon(fileName: String, modifier: Modifier = Modifier) {
-    val color = fileTypeColor(fileName)
+fun FileTypeIcon(fileName: String, modifier: Modifier = Modifier, color: Color = DesignTokens.muted) {
     Canvas(modifier) {
         val w = size.width
         val h = size.height

@@ -50,11 +50,12 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `neon pink stays off only large text on glass`() {
+    fun `neon pink clears only large text on every glass fill`() {
         val onPanel = contrastRatio(DesignTokens.neonPink, worstPanelGlass)
         val onStrong = contrastRatio(DesignTokens.neonPink, worstStrongGlass)
         assertTrue(onPanel >= DesignTokens.contrastLarge, "neonPink on worstPanelGlass = %.3f".format(onPanel))
-        assertTrue(onStrong < DesignTokens.contrastLarge, "neonPink on worstStrongGlass = %.3f".format(onStrong))
+        assertTrue(onStrong >= DesignTokens.contrastLarge, "neonPink on worstStrongGlass = %.3f".format(onStrong))
+        assertTrue(onStrong < DesignTokens.contrastText, "neonPink on worstStrongGlass = %.3f".format(onStrong))
     }
 
     @Test
@@ -89,7 +90,7 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `mesh orbs never exceed the worst single orb luminance`() {
+    fun `the field is neutral and stays inside its luminance band`() {
         val width = 1280
         val height = 820
         val scene = ImageComposeScene(width, height, Density(1f)) {
@@ -105,12 +106,35 @@ class DesignTokensContrastTest {
             image?.close()
             scene.close()
         }
-        val brightest = pixels.maxOf { relativeLuminance(Color(it)) }
-        val limit = relativeLuminance(worstMesh) + 0.002
+        var widestSpread = 0f
+        var brightest = 0.0
+        var darkest = 1.0
+        for (pixel in pixels) {
+            val color = Color(pixel)
+            widestSpread = maxOf(
+                widestSpread,
+                maxOf(color.red, color.green, color.blue) - minOf(color.red, color.green, color.blue),
+            )
+            val luminance = relativeLuminance(color)
+            brightest = maxOf(brightest, luminance)
+            darkest = minOf(darkest, luminance)
+        }
+        assertTrue(widestSpread * 255f <= 2f, "the field's widest channel spread = ${widestSpread * 255f}/255")
         assertTrue(
-            brightest <= limit,
-            "rendered max luminance %.6f > worst orb %.6f + 0.002".format(brightest, relativeLuminance(worstMesh)),
+            brightest <= relativeLuminance(DesignTokens.backgroundLift) + 0.001,
+            "rendered max luminance %.6f is above the lift %.6f".format(
+                brightest,
+                relativeLuminance(DesignTokens.backgroundLift),
+            ),
         )
+        assertTrue(
+            darkest >= relativeLuminance(DesignTokens.background) - 0.001,
+            "rendered min luminance %.6f is below the background %.6f".format(
+                darkest,
+                relativeLuminance(DesignTokens.background),
+            ),
+        )
+        assertTrue(brightest - darkest >= 0.002, "the falloff is too flat: %.6f".format(brightest - darkest))
     }
 
     private data class Step(val t: Double, val color: Color)
@@ -150,16 +174,8 @@ class DesignTokensContrastTest {
             "neonAmber" to DesignTokens.neonAmber,
         )
 
-        private val meshOrbs = listOf(
-            DesignTokens.accent,
-            DesignTokens.accent2,
-            DesignTokens.neonPink,
-        )
-
-        /** The brightest of the three orbs blended over `background` (WCAG F83, brightest spot). */
-        private val worstMesh: Color = meshOrbs
-            .map { blendOver(it.copy(alpha = DesignTokens.meshOrbAlpha), DesignTokens.background) }
-            .maxBy { relativeLuminance(it) }
+        /** The brightest plausible backdrop: the centre of the neutral field. */
+        private val worstMesh: Color = DesignTokens.backgroundLift
 
         private val worstStrongGlass: Color = blendOver(DesignTokens.glassFillStrong, worstMesh)
         private val worstPanelGlass: Color = blendOver(DesignTokens.glassFill, worstMesh)

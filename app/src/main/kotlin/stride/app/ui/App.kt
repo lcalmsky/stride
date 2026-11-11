@@ -109,13 +109,11 @@ import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
 import stride.app.tree.TreeRow
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.MeshBackground
-import stride.app.ui.theme.NeonEdge
-import stride.app.ui.theme.glassPanel
 import stride.app.ui.theme.focusHalo
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.neonUnderline
+import stride.app.ui.theme.glassCapsule
+import stride.app.ui.theme.glassPanel
 import stride.app.ui.theme.rememberNeonAlpha
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
@@ -582,11 +580,7 @@ private fun TopBar(projectName: String, searchEnabled: Boolean, onSearch: () -> 
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LogoMark(
-            Modifier
-                .size(18.dp)
-                .neonGlow(DesignTokens.accentGlow, radius = 8.dp, shape = CircleShape),
-        )
+        LogoMark(Modifier.size(18.dp))
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             projectName,
@@ -715,12 +709,11 @@ private fun ProjectTreePanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "PROJECT",
+                "Project",
                 color = DesignTokens.textSecondaryOnGlass,
-                fontSize = DesignTokens.labelTextSize,
+                fontSize = DesignTokens.uiTextSize,
                 fontFamily = DesignTokens.uiFont,
                 fontWeight = FontWeight.Medium,
-                letterSpacing = 1.sp,
             )
         }
         val listState = rememberLazyListState()
@@ -752,22 +745,17 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
     val selectedFile = session.editors.selected?.file
     val selected = selectedFile != null && samePath(selectedFile, row.file)
     val neon = rememberNeonAlpha(selected)
-    val background = when {
-        selected -> DesignTokens.selectionGlowBackground
-        hovered -> DesignTokens.raised.copy(alpha = 0.6f)
-        else -> DesignTokens.transparent
-    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.treeRowHeight)
-            .background(background)
-            .neonGlow(
-                DesignTokens.accent2Glow,
-                radius = DesignTokens.glowRadius,
-                alpha = neon * 0.6f,
+            .glassCapsule(
+                shape = RoundedCornerShape(DesignTokens.radiusSmall),
+                insetX = 6.dp,
+                insetY = 2.dp,
+                fillAlpha = if (hovered && !selected) 1f else 0f,
+                lineAlpha = neon,
             )
-            .neonSelectionBar(alpha = neon)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
                 if (row.file.isDirectory) session.tree.toggle(row.file) else session.editors.openFile(row.file)
@@ -784,12 +772,16 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
         } else {
             Spacer(Modifier.width(12.dp))
             Spacer(Modifier.width(DesignTokens.space4))
-            FileTypeIcon(row.file.name, Modifier.size(14.dp))
+            FileTypeIcon(
+                row.file.name,
+                Modifier.size(14.dp),
+                color = if (selected) DesignTokens.accent else DesignTokens.muted,
+            )
         }
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             row.file.name,
-            color = if (selected) DesignTokens.text else DesignTokens.text.copy(alpha = 0.9f),
+            color = if (selected) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -897,13 +889,18 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
     val hovered by interaction.collectIsHoveredAsState()
     val active = editor === manager.selected
     val neon = rememberNeonAlpha(active)
-    val background = if (hovered) DesignTokens.raised.copy(alpha = 0.6f) else DesignTokens.transparent
     Row(
         Modifier
             .fillMaxHeight()
             .widthIn(max = DesignTokens.tabMaxWidth)
-            .background(background)
-            .neonUnderline(DesignTokens.accent2, alpha = neon, edge = NeonEdge.BOTTOM)
+            .glassCapsule(
+                shape = RoundedCornerShape(DesignTokens.radiusCapsule),
+                insetX = 4.dp,
+                insetY = 4.dp,
+                fillAlpha = if (hovered && !active) 1f else 0f,
+                lineEdge = CapsuleEdge.BOTTOM,
+                lineAlpha = neon,
+            )
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
                 manager.openFile(editor.file)
@@ -911,8 +908,8 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
             .padding(start = DesignTokens.space8, end = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileTypeIcon(editor.file.name, Modifier.size(13.dp))
-        Spacer(Modifier.width(6.dp))
+        FileTypeIcon(editor.file.name, Modifier.size(13.dp), color = if (active) DesignTokens.accent else DesignTokens.muted)
+        Spacer(Modifier.width(8.dp))
         Text(
             editor.file.name,
             color = if (active) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
@@ -922,7 +919,7 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(8.dp))
         TabCloseButton(manager, editor, active, hovered)
     }
 }
@@ -945,7 +942,6 @@ private fun TabCloseButton(
             editor.isModified && !hovered -> Box(
                 Modifier
                     .size(6.dp)
-                    .neonGlow(DesignTokens.neonPinkGlow, radius = 6.dp, shape = CircleShape)
                     .background(DesignTokens.neonPink, CircleShape),
             )
             active || hovered -> CloseIcon(Modifier.size(9.dp))
@@ -993,9 +989,7 @@ private fun StatusBar(session: ProjectSession, focusLabel: String? = null, messa
                 fontSize = DesignTokens.statusTextSize,
                 fontFamily = DesignTokens.uiFont,
                 maxLines = 1,
-                modifier = Modifier
-                    .neonGlow(DesignTokens.neonAmberGlow, radius = 6.dp)
-                    .testTag("status-message"),
+                modifier = Modifier.testTag("status-message"),
             )
         }
         if (focusLabel != null) {
@@ -1007,11 +1001,7 @@ private fun StatusBar(session: ProjectSession, focusLabel: String? = null, messa
 @Composable
 private fun FocusChip(label: String) {
     Spacer(Modifier.width(DesignTokens.space16))
-    Box(
-        Modifier
-            .neonGlow(DesignTokens.accent2Glow, radius = 6.dp)
-            .padding(horizontal = 6.dp, vertical = 1.dp),
-    ) {
+    Box(Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
         Text(
             label,
             color = DesignTokens.accent2,

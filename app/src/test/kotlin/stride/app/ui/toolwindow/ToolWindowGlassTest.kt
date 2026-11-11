@@ -12,7 +12,6 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -46,6 +45,7 @@ import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.blendOver
 import stride.app.ui.theme.contrastRatio
+import stride.app.ui.theme.relativeLuminance
 import stride.core.services.Project
 
 class ToolWindowGlassTest {
@@ -53,7 +53,7 @@ class ToolWindowGlassTest {
     lateinit var temp: Path
 
     @Test
-    fun `tool window tab strip shows the mesh through glass`() {
+    fun `tool window tab strip is the glass fill over the neutral field`() {
         val toolWindows = managerWith("test", "Test") { modifier -> Box(modifier) }
         val pixels = renderScene(SCENE, SCENE) {
             MeshBackground(Modifier.fillMaxSize()) {
@@ -66,12 +66,25 @@ class ToolWindowGlassTest {
         }
         val pixel = pixels[index(380, 295, SCENE)]
         val spread = spread(pixel)
-        val distance = channelDistance(pixel, DesignTokens.raised.toArgb())
+        val luminance = relativeLuminance(Color(pixel))
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
         System.err.println(
-            "tab-strip pixel=(%d,%d,%d) spread=%d raised-distance=%d".format(red(pixel), green(pixel), blue(pixel), spread, distance),
+            "tab-strip pixel=(%d,%d,%d) spread=%d luminance=%.4f band=%.4f..%.4f".format(
+                red(pixel),
+                green(pixel),
+                blue(pixel),
+                spread,
+                luminance,
+                lowest,
+                highest,
+            ),
         )
-        assertTrue(spread >= 8, "tab strip channel spread = $spread, expected the mesh's color")
-        assertTrue(distance >= 8, "tab strip pixel differs from the raised fill by $distance")
+        assertTrue(spread <= 2, "tab strip channel spread = $spread, expected neutral glass")
+        assertTrue(
+            luminance >= lowest - 0.002 && luminance <= highest + 0.002,
+            "tab strip luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),
+        )
     }
 
     @Test
@@ -122,7 +135,7 @@ class ToolWindowGlassTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
-    fun `only the selected test row glyph glows`() = runComposeUiTest {
+    fun `status glyphs draw no halo`() = runComposeUiTest {
         val root = Files.createDirectories(temp.resolve("glow-project"))
         val project = Project(root)
         val runManager = RunManager(project)
@@ -169,9 +182,11 @@ class ToolWindowGlassTest {
             System.err.println(
                 "glyph-glow selected=%s unselected=%s".format(selectedPixel, unselectedPixel),
             )
+            val selectedPinkness = selectedPixel.red - selectedPixel.green
+            val unselectedPinkness = unselectedPixel.red - unselectedPixel.green
             assertTrue(
-                selectedPixel.red > unselectedPixel.red + 0.05f,
-                "selected glyph halo $selectedPixel should be pinker than unselected $unselectedPixel",
+                selectedPinkness <= unselectedPinkness + 0.02f,
+                "selected glyph halo $selectedPixel should not be pinker than unselected $unselectedPixel",
             )
         } finally {
             runManager.dispose()
@@ -181,13 +196,9 @@ class ToolWindowGlassTest {
 
     @Test
     fun `run status colors clear 4_5 on the worst tint`() {
-        val worstMesh = blendOver(
-            DesignTokens.accent2.copy(alpha = DesignTokens.meshOrbAlpha),
-            DesignTokens.background,
-        )
         val worstTint = blendOver(
             DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
-            worstMesh,
+            DesignTokens.backgroundLift,
         )
         val texts = linkedMapOf(
             "text" to DesignTokens.text,

@@ -54,11 +54,7 @@ import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.neonBorder
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonGlowLayered
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.selectionRow
 import stride.search.DeclarationKind
 
 const val FILE_STRUCTURE_FIELD_TAG: String = "file-structure-query"
@@ -97,7 +93,6 @@ fun FileStructurePopup(
                 .padding(top = DesignTokens.popupTop)
                 .width(DesignTokens.popupWidth)
                 .shadow(24.dp, shape, clip = false)
-                .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
                 .then(contentFade)
@@ -222,21 +217,11 @@ fun FileStructurePopup(
 private fun StructureRow(entry: FileStructureEntry, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val neon = rememberNeonAlpha(selected)
-    val background = when {
-        selected -> DesignTokens.selectionGlowBackground
-        hovered -> DesignTokens.glassFill
-        else -> DesignTokens.transparent
-    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.popupRowHeight)
-            .neonGlowLayered(DesignTokens.accent2, alpha = neon)
-            .neonGlow(DesignTokens.accent2Glow, radius = DesignTokens.glowRadius, alpha = neon * 0.6f)
-            .then(if (selected) Modifier.background(DesignTokens.raised) else Modifier)
-            .background(background)
-            .neonSelectionBar(alpha = neon)
+            .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(start = DesignTokens.space16 + 12.dp * entry.depth, end = DesignTokens.space16),

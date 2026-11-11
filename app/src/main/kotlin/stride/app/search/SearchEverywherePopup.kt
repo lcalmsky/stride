@@ -64,15 +64,12 @@ import kotlinx.coroutines.withContext
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.SearchIcon
+import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.glassBorder
-import stride.app.ui.theme.neonBorder
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonGlowLayered
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.neonUnderline
+import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.selectionRow
 import stride.core.vfs.VFile
 import stride.search.SearchTab
 
@@ -136,7 +133,6 @@ fun SearchEverywherePopup(
                 .padding(top = DesignTokens.popupTop)
                 .width(DesignTokens.popupWidth)
                 .shadow(24.dp, shape, clip = false)
-                .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
                 .then(contentFade)
@@ -243,10 +239,12 @@ private fun TabRow(selected: SearchTab, onSelect: (SearchTab) -> Unit) {
             val neon = rememberNeonAlpha(tab == selected)
             Box(
                 Modifier
-                    .clip(shape)
-                    .neonUnderline(DesignTokens.accent2, thickness = 2.dp, alpha = neon)
-                    .then(
-                        if (tab == selected) Modifier.background(DesignTokens.selectionGlowBackground) else Modifier
+                    .glassCapsule(
+                        shape = shape,
+                        insetX = 0.dp,
+                        insetY = 0.dp,
+                        lineEdge = CapsuleEdge.BOTTOM,
+                        lineAlpha = neon,
                     )
                     .semantics { this.selected = tab == selected }
                     .clickable(onClick = { onSelect(tab) })
@@ -361,21 +359,11 @@ private fun GroupHeader(label: String) {
 private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val neon = rememberNeonAlpha(selected)
-    val background = when {
-        selected -> DesignTokens.selectionGlowBackground
-        hovered -> DesignTokens.glassFill
-        else -> DesignTokens.transparent
-    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.popupRowHeight)
-            .neonGlowLayered(DesignTokens.accent2, alpha = neon)
-            .neonGlow(DesignTokens.accent2Glow, radius = DesignTokens.glowRadius, alpha = neon * 0.6f)
-            .then(if (selected) Modifier.background(DesignTokens.raised) else Modifier)
-            .background(background)
-            .neonSelectionBar(alpha = neon)
+            .selectionRow(selected = selected, hovered = hovered)
             .then(if (selected) Modifier.testTag(SEARCH_SELECTED_ROW_TAG) else Modifier)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
@@ -384,7 +372,7 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
     ) {
         val file = entry.item as? VFile
         if (file != null) {
-            FileTypeIcon(file.name, Modifier.size(13.dp))
+            FileTypeIcon(file.name, Modifier.size(13.dp), color = if (selected) DesignTokens.accent else DesignTokens.muted)
             Spacer(Modifier.width(DesignTokens.space8))
         }
         Text(

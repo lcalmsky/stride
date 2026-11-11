@@ -74,7 +74,7 @@ fun Modifier.neonUnderline(
 /** The focused panel's top neon line. Nothing is drawn when [active] is false. */
 fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Modifier =
     if (active) {
-        neonUnderline(color, thickness = 1.dp, radius = DesignTokens.glowRadiusLarge, edge = NeonEdge.TOP)
+        neonUnderline(color, thickness = 1.dp, radius = DesignTokens.focusGlowRadius, edge = NeonEdge.TOP)
     } else {
         this
     }

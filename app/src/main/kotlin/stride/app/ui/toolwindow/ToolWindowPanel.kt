@@ -21,14 +21,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import stride.app.keys.KeyContext
+import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.focusHalo
+import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassPanel
-import stride.app.ui.theme.neonUnderline
 import stride.app.ui.theme.rememberNeonAlpha
 
 /** Bottom panel: a 28 dp tab strip over the active window's content. */
@@ -89,8 +91,14 @@ private fun ToolWindowTab(title: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .fillMaxHeight()
+            .glassCapsule(
+                shape = RoundedCornerShape(DesignTokens.radiusSmall),
+                insetX = 2.dp,
+                insetY = 4.dp,
+                lineEdge = CapsuleEdge.BOTTOM,
+                lineAlpha = rememberNeonAlpha(active),
+            )
             .clickable(onClick = onClick)
-            .neonUnderline(DesignTokens.accent2, alpha = rememberNeonAlpha(active))
             .padding(horizontal = DesignTokens.space12),
         contentAlignment = Alignment.Center,
     ) {

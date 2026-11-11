@@ -42,12 +42,13 @@ class TreeEditorGlassTest {
     lateinit var temp: Path
 
     @Test
-    fun `tree panel shows the mesh through its glass`() {
+    fun `tree panel is the glass fill over the neutral field`() {
         val state = AppState()
         try {
             state.openFolder(project("tree-project"))
             val pixels = renderAppPixels(state)
-            val surface = DesignTokens.surface.toArgb()
+            val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+            val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
             var widest = -1
             var bestX = -1
             var bestY = -1
@@ -62,18 +63,26 @@ class TreeEditorGlassTest {
                 }
             }
             val pixel = pixels[index(bestX, bestY)]
+            val luminance = relativeLuminance(Color(pixel))
             System.err.println(
-                "tree-glass widest=%d pixel=#%06X at (%d,%d)".format(
+                "tree-glass widest=%d pixel=#%06X at (%d,%d) luminance=%.4f band=%.4f..%.4f".format(
                     widest,
                     pixel and 0xFFFFFF,
                     bestX,
                     bestY,
+                    luminance,
+                    lowest,
+                    highest,
                 ),
             )
-            assertTrue(widest >= 8, "widest channel spread in the tree header = $widest")
+            assertTrue(widest <= 2, "the tree glass should stay neutral, widest channel spread = $widest")
             assertTrue(
-                channelDistance(pixel, surface) > 4,
-                "tree pixel #%06X at (%d,%d) does not differ from surface".format(pixel and 0xFFFFFF, bestX, bestY),
+                luminance >= lowest - 0.002 && luminance <= highest + 0.002,
+                "tree glass luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),
+            )
+            assertTrue(
+                relativeLuminance(DesignTokens.surface) != luminance,
+                "tree glass still measures as the flat surface color",
             )
         } finally {
             state.dispose()
@@ -229,10 +238,10 @@ class TreeEditorGlassTest {
 
     @Test
     fun `gutter line numbers clear 4_5 on the worst content tint`() {
-        val worstMesh = listOf(DesignTokens.accent, DesignTokens.accent2, DesignTokens.neonPink)
-            .map { blendOver(it.copy(alpha = DesignTokens.meshOrbAlpha), DesignTokens.background) }
-            .maxBy { relativeLuminance(it) }
-        val worstTint = blendOver(DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha), worstMesh)
+        val worstTint = blendOver(
+            DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
+            DesignTokens.backgroundLift,
+        )
         val ratio = contrastRatio(DesignTokens.muted, worstTint)
         System.err.println("gutter-contrast muted-on-worst-tint=%.3f".format(ratio))
         assertTrue(

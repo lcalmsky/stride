@@ -44,7 +44,6 @@ import stride.app.editor.TextFileEditor
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.glassPanel
-import stride.app.ui.theme.neonGlow
 import stride.app.ui.theme.neonUnderline
 
 private val FIND_ROW_HEIGHT = 34.dp
@@ -76,7 +75,7 @@ fun FindBar(
         modifier
             .fillMaxWidth()
             .glassPanel()
-            .neonUnderline(DesignTokens.accent2),
+            .neonUnderline(DesignTokens.accent2, thickness = 1.dp),
     ) {
         Row(
             Modifier.fillMaxWidth().height(FIND_ROW_HEIGHT).padding(horizontal = DesignTokens.space8),
@@ -241,8 +240,6 @@ private fun Toggle(label: String, active: Boolean, onClick: () -> Unit) {
         fontSize = DesignTokens.smallTextSize,
         fontFamily = DesignTokens.uiFont,
         modifier = Modifier
-            .padding(horizontal = 4.dp)
-            .neonGlow(DesignTokens.accent2Glow, radius = 6.dp, alpha = if (active) 1f else 0f)
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 2.dp),
     )

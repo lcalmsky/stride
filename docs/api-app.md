@@ -283,6 +283,7 @@ enum class ActionId {
     GOTO_DECLARATION, BACK, FORWARD, FILE_STRUCTURE_POPUP, GOTO_TEST, FIND_USAGES,
     TOGGLE_BOOKMARK, SHOW_BOOKMARKS, ACTIVATE_PROJECT_TOOL_WINDOW, HIDE_ALL_WINDOWS,
     COPY_PATHS, COPY_REFERENCE, SWITCHER, SELECT_IN_PROJECT_VIEW, REOPEN_CLOSED_TAB, CLOSE_OTHER_TABS,
+    TOGGLE_UI_FONT,
 }
 
 enum class KeyContext {
@@ -325,7 +326,7 @@ Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
 `Keymap.actionFor` prefers a binding whose context equals `focus`, then a `GLOBAL` binding, then
 `null`. `Keymap.forPlatform(false)` is the macOS table with `meta` and `ctrl` swapped on every
 stroke. `SEARCH_EVERYWHERE` carries no stroke: `DoubleModifierDetector` produces it.
-`REOPEN_CLOSED_TAB` and `CLOSE_OTHER_TABS` also carry no stroke; they are reached from the
+`REOPEN_CLOSED_TAB`, `CLOSE_OTHER_TABS` and `TOGGLE_UI_FONT` also carry no stroke; they are reached from the
 Actions tab.
 
 ### macOS bindings
@@ -402,6 +403,7 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :204, :205 |
 | `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :206 |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
+| `TOGGLE_UI_FONT` | — | (none) | — | — |
 | `CLOSE_OTHER_TABS` | — | (none) | — | — |
 
 `KeyRouter` has no window dependency and is unit-tested. Modifier keys map to `ModifierKey`; a
@@ -1249,11 +1251,11 @@ sessions live only in the project.
 ## Look
 
 `stride.app.ui.theme.DesignTokens` is the single source of colors, type and spacing; UI
-files declare no colors of their own. The base palette is `ColorScheme.DARK_BACKGROUND`
-(#0F1117) with `surface` #151821 (tree panel, tab strip, status bar), `raised` #1B1F2A
-(popups, hover), `border` #262B3A, `text` #E6E8F0, `muted` #8A93A6, `subtle` #5A6274,
-`accent` (#7C5CFF, `DARK_ACCENT`), `accent2` (#00D1FF, `DARK_ACCENT_2`) and a selection of
-the accent at 22% alpha.
+files declare no colors of their own. The base palette is a neutral graphite: `background`
+#111111 with `backgroundLift` #1C1C1C (the centre of the field falloff), `surface` #161616
+(editor and console tint), `raised` #202020 (hover and key caps), `border` #2C2C2C,
+`text` #E6E8F0, `muted` #8A93A6, `subtle` #5A6274, `accent` (#7C5CFF), `accent2` (#00D1FF)
+and a selection of the accent at 22% alpha. The dark theme is the only theme.
 
 Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.uiFont` reads
 `UiFont.family`, so the whole UI follows a runtime choice between Pretendard and the system
@@ -1262,8 +1264,11 @@ Actions tab) flips it immediately and stores the choice with `java.util.prefs.Pr
 node `stride` under `uiFont` (`pretendard` / `system`), then shows `UI font: Pretendard` or
 `UI font: System` in the status bar. `UiFontPreference` takes the node so tests inject their
 own. The font files live in `app/src/main/resources/fonts/pretendard/` with `OFL.txt`. Code
-uses monospace at 13 sp with a 20 sp line height. Spacing follows a 4/8/12/16 dp scale; small
-controls use 6 dp radii and the Search Everywhere panel 12 dp.
+uses monospace at 13 sp with a 20 sp line height. Chrome uses one 13 sp step (15 sp for the
+search field, 24 sp for the wordmark fallback) with weights 400/500/600. Spacing follows a
+4 dp grid; small controls use 6 dp radii, capsules 8 dp and the floating panes 18 dp, with
+nested radii kept at `outer − inset` and never below 4 dp. Labels are sentence case (`Project`,
+not tracked caps).
 
 The window is 1280×820 dp, centered, with the icon from `logo/stride-icon-256.png`. It is a
 36 dp top bar (logo, project name, clickable Search pill with the `⇧⇧` hint), a 280 dp
@@ -1273,13 +1278,15 @@ project tree with a draggable splitter clamped to 200–480 dp, a tab strip and 
 
 Chevrons, folder/file icons, the magnifier and the close × are drawn with `Canvas`. The empty
 states load `logo/stride-wordmark-dark.svg` through `loadSvgPainter` and fall back to the PNG
-icon. The wordmark SVG has a transparent background, so it sits directly on the mesh. No UI
+icon. The wordmark SVG has a transparent background, so it sits directly on the field. No UI
 library beyond `compose.desktop.currentOs` is used.
 
 ### Neon palette
 
-`DesignTokens` also carries the neon accents and glow values. They are added on top of the base
-palette; none of the original values change.
+`DesignTokens` keeps the neon palette (violet `accent`, cyan `accent2`, pink, lime, amber) but
+uses it restrained: glow appears only on the selected or focused element, as the one neon line
+on its edge. Icons, labels and file glyphs are `muted`; only the selected row's icon may take
+`accent`. Nothing else glows, and ordinary glass has no outer glow.
 
 | token | value |
 |---|---|
@@ -1287,14 +1294,14 @@ palette; none of the original values change.
 | `neonLime` / `neonLimeGlow` | #B6FF3B / #B6FF3B at 55% alpha |
 | `neonAmber` / `neonAmberGlow` | #FFC83D / #FFC83D at 55% alpha |
 | `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha |
-| `selectionGlowBackground` | `accent2` at 14% alpha |
 | `selectionBar` | `accent2` |
 | `currentLineGlow` | `accent` at 10% alpha |
-| `glowRadius` / `glowRadiusLarge` | 10 dp / 18 dp |
+| `glowRadius` / `glowRadiusLarge` / `focusGlowRadius` | 10 dp / 18 dp / 6 dp |
 | `selectionBarWidth` | 3 dp |
 | `neonFadeMillis` | 150 |
 
-`selection` (the accent at 22%) stays the editor's text-selection color.
+`selection` (the accent at 22%) stays the editor's text-selection color and is now also the
+terminal's selection fill.
 
 ### Neon modifiers
 
@@ -1320,74 +1327,110 @@ A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` dra
 
 ### Selection signal language
 
-A selected tree row, tab, or popup entry is `selectionGlowBackground` plus an `accent2` neon
-bar on the left (the tab uses its bottom edge instead) plus `text`-colored label. A focused
-panel draws a `focusHalo` on its top edge. Unselected rows stay quiet. `StatusBar` takes an
-optional `focusLabel` and renders it as a right-aligned `accent2` `FocusChip`; `EditorArea` and
-`ProjectTreePanel` take `focused: Boolean = false` and draw the halo when true. `App` leaves
-both at their defaults.
+A selected tree row, tab, tool-window tab or popup entry is a glass capsule inset 2–6 dp from
+its row, with one `accent2` line on its left edge (tabs use the bottom edge) that carries a
+tight 6 dp glow. The label is `text`; the row's file icon may take `accent`. Hover is a faint
+neutral step (`hoverFill`, white 4%). A focused panel draws a 1 dp `focusHalo` line on its top
+edge and nothing else glows. Unselected rows and tabs stay quiet. `StatusBar` takes an
+optional `focusLabel` and renders it as a right-aligned `accent2` `FocusChip` without a glow;
+`EditorArea`, `ProjectTreePanel` and `ToolWindowPanel` draw the halo when focused.
+
+The two helpers are `glassCapsule(shape, insetX, insetY, fillAlpha, lineEdge, lineAlpha)` and
+`selectionRow(selected, hovered)`, which fixes the popup capsule at 6/2 dp inset with a left
+line. The line and capsule alpha fade through `rememberNeonAlpha`.
 
 ### Animation rules
 
-The only motion is the 150 ms glow fade when a selection changes, implemented by
-`rememberNeonAlpha`. When `stride.app.ui.LocalAnimationsEnabled` (a
-`staticCompositionLocalOf { true }`) is false, `rememberNeonAlpha` returns 0f/1f immediately and
-no animation keeps the test clock busy. `SnapshotRenderer` and the UI tests provide `false`.
-The wordmark caret blink keeps its own `LocalWordmarkCaretBlink` switch.
-`standardEasing` (`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is the easing for the motion tokens
-`motionShortMillis` 150, `motionMediumMillis` 200 and `motionPopupMillis` 250.
+Motion is limited to state transitions: the 150 ms selection capsule and neon line fade, and
+the popup open fade. Nothing loops; the run window's running glyph no longer pulses. When
+`stride.app.ui.LocalAnimationsEnabled` (a `staticCompositionLocalOf { true }`) is false,
+`rememberNeonAlpha` returns 0f/1f immediately and no animation keeps the test clock busy.
+`SnapshotRenderer` and the UI tests provide `false`. The wordmark caret blink keeps its own
+`LocalWordmarkCaretBlink` switch. `standardEasing` (`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is
+the easing for the motion tokens `motionShortMillis` 150, `motionMediumMillis` 200 and
+`motionPopupMillis` 250.
 
-### Glass, mesh and layered glow
+### Liquid glass, the field and the lens
 
-The surface is three layers: **L0 mesh → L1 glass → L2 neon**. `App` wraps its root in
-`MeshBackground`; panels drawn on it use `glassPanel`; transient surfaces use `backdropGlass`.
-Everything else is opaque: the editor, terminal and console use `contentTint`, one pre-blended
-opaque color, so the mesh is not drawn behind them.
+The surface is three layers: **L0 field → L1 glass → L2 the one neon line**. `App` wraps its
+root in `MeshBackground`; slabs and capsules drawn on it use `glassPanel`/`glassCapsule`;
+transient surfaces use `backdropGlass`. Everything else is opaque: the editor, terminal and
+console use `contentTint`, one pre-blended opaque color, so the field is not drawn behind them.
+
+The field is a neutral graphite fill with a very low-contrast radial luminance falloff (no hue
+gradients and no blobs), drawn once per size into a bitmap.
 
 | token | value |
 |---|---|
-| `meshOrbAlpha` / `meshOrbRadiusFactor` | 0.18 / 0.75 of the window's short side |
-| `glassFill` / `glassFillStrong` | white 7% / 12% |
-| `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 22% / 14% / 10% |
-| `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp |
+| `backgroundLift` / `fieldFalloffRadiusFactor` | #1C1C1C / 0.90 of the window's long side |
+| `glassFill` / `glassFillStrong` | white 7% / 10% |
+| `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 10% / 8% / 6% |
+| `hoverFill` | white 4% |
+| `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp (slabs) |
+| `liquidGlassBlurRadius` | 8 dp (floating glass) |
+| `glassBezel` / `glassLensStrength` / `glassAberration` | 12 dp / 10 dp / 0.5 dp |
+| `glassSaturation` / `glassBrightness` / `glassTintAlpha` / `glassSpecular` | 1.15 / 1.05 / 0.06 / 0.30 |
 | `contentTintAlpha` | 0.92 |
 | `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 |
 | `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
 | `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 |
-| `textSecondaryOnGlass` | `#B1B7C5` (muted→text at t=0.42; 4.54:1 on the worst strong glass) |
+| `textSecondaryOnGlass` | `#929BAD` (muted→text at t=0.09; 4.52:1 on the worst strong glass) |
 | `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 |
 
-`scrollbarStyle` now uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
+`scrollbarStyle` uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
 `motionShortMillis` for the hover duration.
 
-`stride.app.ui.theme.Glass.kt` draws L0 and L1. It and `Neon.kt` are the only UI files that
-import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing cursor glow).
+`stride.app.ui.theme.Glass.kt` draws L0, L1 and the lens. It and `Neon.kt` are the only UI
+files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing cursor glow).
 
 ```kotlin
 @Composable fun MeshBackground(modifier: Modifier = Modifier,
                                content: @Composable BoxScope.() -> Unit)
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
-fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
+fun Modifier.glassPanel(shape: Shape = RectangleShape, lens: Boolean = false): Modifier
+fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
+                          fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
+                          lineAlpha: Float = 1f): Modifier
+@Composable fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier
 fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier
 fun Modifier.contentTint(): Modifier
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
-fun Modifier.neonGlowLayered(color: Color, shape: Shape = RectangleShape, alpha: Float = 1f): Modifier
 ```
 
-`MeshBackground` draws `background` plus three radial orbs (accent top-left, accent2
-bottom-right, neonPink bottom-center) into a bitmap once per size and exposes it through
-`LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill` into
-an opaque cached image keyed by panel size, mesh size, root position and mesh version; each frame
-only draws that image and the border. `backdropGlass` blurs what is already drawn beneath it with
-Skia's `saveLayer(SaveLayerRec(backdrop = …))`, clipped to its shape. Its filter shrinks the
-backdrop to 1/8, blurs the small copy and scales it back up (`makeMatrixTransform` → `makeBlur` →
-`makeMatrixTransform`), so the scaling origin is the panel's top-left; `GlassModifiersTest`
-measures no pattern shift between 2 px outside and 2 px inside the panel's top and left edges. The
-backdrop path was measured on `ImageComposeScene`: **real**, not the bitmap fallback. Text on
-glass uses `textSecondaryOnGlass`; `muted` is 2.96:1 and `subtle`
-1.49:1 on the worst strong glass, so neither may carry information text there. `accent` is never
-text. `neonPink` reaches 3.14:1 over `glassFill` but only 2.65:1 over `glassFillStrong`, so it is
-limited to large text and graphics on `glassFill` panels.
+`MeshBackground` draws the neutral field into a bitmap once per size and exposes it through
+`LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill`
+into an opaque cached image keyed by panel size, field size, root position and field version;
+each frame only copies that image and draws the hairline rim. `glassCapsule` adds the lens to
+the cached image, so a frame draws the finished capsule, the rim and the line only.
+
+`backdropGlass` runs the liquid glass shader over what is already drawn beneath it.
+`GlassShader` compiles one SkSL program (`RuntimeEffect.makeForShader`) whose uniforms are the
+panel size, origin, radius, bezel, lens strength, chromatic split, tint, saturation, brightness
+and specular; the blurred backdrop arrives as the `content` child shader.
+
+- Interior: the lightly blurred backdrop (the existing `saveLayer(SaveLayerRec(backdrop = …))`
+  path, 1/8-resolution blur chain), saturation × 1.15, brightness × 1.05 and a neutral white
+  6% tint so text stays legible.
+- Lens: inside the 12 dp bezel the sample coordinate moves inward along the rounded-rect
+  normal with a convex cubic profile, so code lines visibly bend at the edge. The red and blue
+  channels split by at most 0.5 dp, only inside the bezel, and the bend tapers to zero at the
+  outermost 1.5 px.
+- Specular: light from the top-left gives a thin bright rim on the upper edge that fades along
+  the sides, with a faint darker inner rim at the bottom. Ordinary glass has no outer glow.
+- Cost: the shader is evaluated on a 1/4-resolution copy and scaled back up
+  (`LENS_DOWNSCALE`), and the filter is cached per panel size and radius. The interior takes a
+  single `content.eval`; only bezel pixels take three.
+
+When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `GlassShader` returns
+`null` and `backdropGlass` falls back to the previous blur-only glass with the hairline border.
+`GlassModifiersTest` asserts that the SkSL compiles, that the fallback still blurs, and that the
+bezel samples a displaced backdrop. The backdrop path was measured on `ImageComposeScene`:
+**real**, not the bitmap fallback.
+
+Text on glass uses `textSecondaryOnGlass`; `muted` (4.09:1) and `subtle` (2.07:1) are below or
+at body contrast on the worst strong glass, so neither may carry information text there.
+`accent` is never text. `neonPink` reaches 3.66:1 on `glassFillStrong` and 4.05:1 on
+`glassFill`, so it is limited to large text and graphics.
 
 Those ratios come from `stride.app.ui.theme.Contrast.kt`, which the theme and surface tests share:
 
@@ -1405,26 +1448,40 @@ The glass is deliberately cheap:
 
 - No `Modifier.blur` or `graphicsLayer { renderEffect }` on persistent panels; the blur is a
   cached bitmap (`GlassCacheStats.panelBlurCount` must not grow frame to frame).
-- No constant animation and no blur-radius animation. The mesh is static.
+- No looping animation and no blur-radius animation. The field is static.
 - One glass layer per region; a popup's scrim covers the glass beneath it.
 - The editor, terminal and console are `contentTint`, not glass. The tint is opaque, so it takes
-  the opaque fill path; its single color does not follow the mesh.
-- `neonBorder` and `glassPanel` go before `clip()` in a modifier chain.
-- The cached glass slice is opaque and already contains the fill, so a frame copies the image and
-  draws the border only.
-- The backdrop blur runs on a quarter-resolution copy of the backdrop, not at full resolution.
+  the opaque fill path; its single color does not follow the field.
+- The capsule lens is baked into the cached slice; only the selected row or active tab pays for
+  it, and it is paid once per size and position. Unselected capsules draw nothing.
+- The floating glass lens filter is cached per panel size and radius, and is evaluated on a
+  1/4-resolution copy.
+- The backdrop blur runs on a 1/8-resolution copy of the backdrop, not at full resolution.
 
 `SnapshotFrameTimingTest` caps each scenario at `baseline × factor + 1.0 ms` (factor 1.5 for
 content, 2.0 for popups). The baselines were measured on a solid background, so they cost
-effectively 0 ms; one opaque full-screen mesh image at 2560×1640 costs 0.948 ms in the
+effectively 0 ms; one opaque full-screen field image at 2560×1640 costs 0.948 ms in the
 software-raster harness, which is what the 1.0 ms L0 budget admits.
 
-Frame-cost evidence for the three fixes (P probe, single condition, p50): a translucent fill costs
-1.28 ms/Mpx against 0.11 ms/Mpx for an opaque one, and one full-resolution `saveLayer` backdrop
-blur costs about 22.8 ms at 1.09 Mpx almost regardless of σ. After the phase-3 fixes the 12
-snapshot scenarios measure 1.42–17.0 ms, and the popup scenes drop from about 30 ms to 12–17 ms.
-The content tint under the mesh differs from the new opaque color by at most 4/255 in one channel
-across the whole 2560×1640 mesh.
+With the liquid glass the twelve scenes measure (p50, software raster, unchanged baselines):
+1.48, 2.37, 2.78, 18.37, 13.17, 2.27, 16.92, 2.86, 13.71, 2.64, 2.87 and 2.30 ms. The popup
+scenes stay under their 2.0× limits because the lens filter runs on a 1/4-resolution copy; the
+GPU path evaluates the same SkSL as one shader pass.
+
+Sources for the material and the lens technique:
+
+- Apple, Meet Liquid Glass (WWDC25, session 219):
+  https://developer.apple.com/videos/play/wwdc2025/219
+- Apple, Platforms State of the Union (WWDC25, session 102):
+  https://developer.apple.com/videos/play/wwdc2025/102
+- Apple Newsroom, the new software design:
+  https://www.apple.com/newsroom/2025/06/apple-introduces-a-delightful-and-elegant-new-software-design/
+- LiquidLens, edge optics with a signed distance field and a convex squircle:
+  https://github.com/DevBehindYou/LiquidLens/blob/main/docs/02-optics-and-physics.md
+- Android Liquid Glass AGSL write-up (SDF, medial-axis fade, edge guard, Fresnel rim):
+  https://himanshu-lal4.github.io/react-native-liquid-glassmorphism/android-liquid-glass
+- A compact implementation of the same lens (SDF normal, bezel ramp, RGB split, specular rim):
+  https://raw.githubusercontent.com/OppaiHacker/MediaControll/main/CustomTheme/shaders/liquidglass.frag
 
 ### Applied surfaces: tool windows, run and terminal
 
@@ -1433,20 +1490,18 @@ whole panel, so `RunToolWindow` and `TerminalView` draw no background of their o
 one opaque tint per pixel, and the terminal and console pixel assertions in `ToolWindowGlassTest`
 fix that single value.
 
-The tab strip `Row` is `glassPanel()` instead of an opaque `raised` fill plus a 1 px `border`
-line (the glass border replaces that line). Inactive tab labels are `textSecondaryOnGlass`; the
-active tab keeps `text` and its `accent2` underline.
+The tool-window tab strip `Row` is `glassPanel()`; each tab is a `glassCapsule` inset 2/4 dp
+with the neon line on its bottom edge, so only the active tab shows a capsule and a line.
+Inactive tab labels are `textSecondaryOnGlass`.
 
 Run window text sits directly on the tint: the header status word (`accent2` while running,
 `neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
-panel. `MethodDetail` dropped its `raised` fill and stays transparent, so its text is read on
-the single tint layer; on the worst tint (the accent2 orb under `contentTintAlpha`) `neonPink`
-reaches 5.05:1 and `muted` 5.65:1, so no token changed. Selected rows keep
-`selectionGlowBackground`, `neonGlow` and `neonSelectionBar`.
+panel. `MethodDetail` stays transparent, so its text is read on the single tint layer; on the
+worst tint (the lift under `contentTintAlpha`) `neonPink` reaches 5.25:1 and `muted` 5.86:1.
+The selected method row is a `selectionRow` capsule with the accent2 line.
 
-Status glyphs keep their shapes (✓ ✕ ●). The three-layer `neonGlowLayered` runs only on the
-selected method row's glyph (fade through `rememberNeonAlpha(selected)`) and on a running glyph
-(class or method); every other glyph draws no glow.
+Status glyphs keep their shapes and colors (✓ ✕ ●) and draw no halo; the running pulse was
+removed.
 
 The terminal no longer paints `TerminalPalette.background` as a full-canvas rect. Default cells
 are left unpainted so the panel tint shows through, while cells with an explicit non-default
@@ -1455,21 +1510,22 @@ unchanged.
 
 ### Applied surfaces: tree, tabs and editor
 
-The project tree and the tab strip are `glassPanel`; the tree keeps its `focusHalo`, now fed by
-an `onFocusChanged` read of the panel subtree in `App` instead of the unused `focused` default
-(`KeyContext` has no tree context, so `state.focus` is unchanged). Selected rows keep the neon
-language (`selectionGlowBackground`, `neonGlow`, `neonSelectionBar`); unselected rows and tabs are
-transparent, so only the hover tint (translucent `raised`) and the active tab's `neonUnderline`
-mark state. `PROJECT` and inactive tab labels use `textSecondaryOnGlass`; the splitter hairlines
-and tree indent guides use `glassBorderSide`.
+The project tree and the tab strip are `glassPanel`; the tree keeps its `focusHalo`, fed by an
+`onFocusChanged` read of the panel subtree in `App` (`KeyContext` has no tree context, so
+`state.focus` is unchanged). The selected tree row and the active tab are `glassCapsule`s inset
+6/2 dp (tabs 4/4 dp) with the accent2 line on the left (tabs bottom) and a `hoverFill` step on
+hover. Unselected rows and tabs draw nothing, so the line is the only bright mark. The tree
+header is `Project` in 13 sp medium; inactive tab labels use `textSecondaryOnGlass`; splitter
+hairlines and indent guides use `glassBorderSide`. File icons are `muted`, the selected row's
+icon `accent`.
 
 The editor body is `contentTint()`, never glass: `EditorArea` has no fill, so the opaque tint is
 painted once by `TextFileEditor`. The gutter no longer paints `DesignTokens.gutter`; it
 keeps the same tint and draws a 1 dp `glassBorderSide` separator, and its line numbers are
-`muted`, which clears 4.5:1 on the worst content tint (5.65:1). The go-to-line popup is
-`backdropGlass(shape)` behind the same `neonBorder`, with `textSecondaryOnGlass` text;
-`TreeEditorGlassTest` measures the backdrop as real (dense document, adjacent-pixel difference
-ratio 0.002) with the faint document still visible behind the fill.
+`muted`, which clears 4.5:1 on the worst content tint (5.86:1). The go-to-line popup is
+`backdropGlass(shape)` with `textSecondaryOnGlass` text; `TreeEditorGlassTest` measures the
+backdrop as real (dense document, adjacent-pixel difference under the blur limit) with the faint
+document still visible behind the fill.
 
 ### Applied surfaces: popups and find bar
 
@@ -1482,15 +1538,16 @@ alpha layer above `backdropGlass` would leave the backdrop filter an empty layer
 adjacent-pixel ratio 0.81 against the 0.5 limit, versus 0.0032 with the draw-side fade). With
 animations enabled the content layer stays for the popup's lifetime; removing it mid-run
 re-breaks the backdrop. The `shadow` and `clip` that precede `backdropGlass` do not block the
-blur (ratios 0.0028 and 0.0008). Popup text uses `textSecondaryOnGlass`, chips and hovered rows
-use `glassFill` and `glassBorder`, and a selected row draws `neonGlowLayered(accent2)` behind an
-opaque `raised` base tinted with `selectionGlowBackground`, so the glow reads as a rim and the
-label keeps its contrast; the `neonSelectionBar` stays on top.
+blur (ratios 0.0028 and 0.0008). Popup text uses `textSecondaryOnGlass`; the panel is the
+liquid glass with radius 18 dp and a soft neutral shadow, with no neon border. A selected row
+is a `selectionRow` capsule inset 6/2 dp with the accent2 line on its left edge; hover is a
+`hoverFill` step. The Find in Path toggles and the Search Everywhere tab chips follow the same
+capsule-and-line language, and no popup draws an outer glow.
 
-The find bar uses `glassPanel()` (cached mesh slice) with its `neonUnderline`. Its labels and
-placeholders are `textSecondaryOnGlass`, the match counter turns `neonAmber` on a pattern error
-and the query field gains a `neonPink` border instead of pink text, and the row buttons use a
-`glassFill` fill instead of `raised`.
+The find bar uses `glassPanel()` (cached field slice) with a 1 dp `neonUnderline`. Its labels
+and placeholders are `textSecondaryOnGlass`, the match counter turns `neonAmber` on a pattern
+error and the query field gains a `neonPink` border instead of pink text, and the row buttons
+use a `glassFill` fill.
 
 ## Offscreen snapshots
 
@@ -1542,10 +1599,10 @@ Maven Central alone does not carry it.
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
 | `NeonModifiersTest` | glow pixels outside the shape, zero alpha, underline direction, `rememberNeonAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
-| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` limited to large text, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered mesh orbs staying under the worst single-orb luminance |
-| `GlassModifiersTest` | the panel taking the mesh color behind it, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint over the mesh, the cached slice being an opaque image, and the backdrop blur staying aligned with the panel edge |
-| `ToolWindowGlassTest` | the tab strip shows the mesh through glass, the terminal and run console paint exactly one opaque tint, only the selected row's glyph glows, run status colors clear 4.5 on the worst tint |
-| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent, the selected row's layered glow reaches beyond the row, the find bar takes the mesh color, and no fade runs with animations disabled |
+| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, and the rendered field staying neutral inside its luminance band |
+| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the bezel sampling a displaced backdrop, and the blur-only fallback when the shader is unavailable |
+| `ToolWindowGlassTest` | the tab strip is the neutral glass fill over the field, the terminal and run console paint exactly one opaque tint, status glyphs draw no halo, run status colors clear 4.5 on the worst tint |
+| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent, the selected row carries the neon line on its capsule edge, the find bar is the neutral glass fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere, the find bar, recent files, the terminal, the run window and an editor scrolled to a far column |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
 | `EditorScrollUiTest` | caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, and the gutter keeps its position while the text scrolls horizontally |
@@ -1568,4 +1625,4 @@ Maven Central alone does not carry it.
 | `BuiltInPluginLoadingTest` | the three bundled descriptors enabled, kt/json file types and highlighter lexers through the extension points, one core extension per interface EP |
 | `TextEditorProviderTest` | a file at the highlighted-size limit stays editable and one byte above the limit is read-only |
 | `RepositoryAcceptanceTest` | repository tree top level with generated directories hidden, `Main.kt` as a selected highlighted tab, double-Shift search opening `docs/api-search.md`, and the repository Kotlin and search snapshots |
-| `TreeEditorGlassTest` | tree glass over the mesh, the editor tint over the same mesh pixel, the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search pill shortcut hint clearing 4.5:1 on its fill |
+| `TreeEditorGlassTest` | tree glass over the field, the editor tint over the same field pixel, the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint and the search pill shortcut hint clearing 4.5:1 on its fill |

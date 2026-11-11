@@ -1,11 +1,5 @@
 package stride.app.run
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
@@ -23,7 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Text
@@ -51,14 +45,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.ui.CloseIcon
-import stride.app.ui.LocalAnimationsEnabled
+import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.NeonEdge
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonGlowLayered
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.neonUnderline
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.glassCapsule
+import stride.app.ui.theme.selectionRow
 
 private val consoleStyle = TextStyle(
     fontFamily = DesignTokens.codeFont,
@@ -126,8 +116,13 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
             Row(
                 Modifier
                     .fillMaxHeight()
-                    .background(if (active) DesignTokens.raised.copy(alpha = 0.6f) else DesignTokens.transparent)
-                    .neonUnderline(DesignTokens.accent2, alpha = if (active) 1f else 0f, edge = NeonEdge.BOTTOM)
+                    .glassCapsule(
+                        shape = RoundedCornerShape(DesignTokens.radiusSmall),
+                        insetX = 2.dp,
+                        insetY = 4.dp,
+                        lineEdge = CapsuleEdge.BOTTOM,
+                        lineAlpha = if (active) 1f else 0f,
+                    )
                     .clickable { manager.select(session) }
                     .padding(start = DesignTokens.space8, end = DesignTokens.space4),
                 verticalAlignment = Alignment.CenterVertically,
@@ -215,7 +210,7 @@ private fun ClassRow(node: TestClassNode) {
         Modifier.fillMaxWidth().padding(horizontal = DesignTokens.space8, vertical = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StatusGlyph(node.status, color, glowAlpha = if (node.status == TestStatus.RUNNING) 1f else 0f)
+        StatusGlyph(node.status, color)
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             node.className,
@@ -231,20 +226,19 @@ private fun ClassRow(node: TestClassNode) {
 
 @Composable
 private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> Unit) {
-    val neon = rememberNeonAlpha(selected)
     val color = statusColor(method.status)
-    val glowAlpha = maxOf(neon, if (method.status == TestStatus.RUNNING) 1f else 0f)
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (selected) DesignTokens.selectionGlowBackground else DesignTokens.transparent)
-            .neonGlow(DesignTokens.accent2Glow, radius = 6.dp, alpha = neon * 0.6f)
-            .neonSelectionBar(alpha = neon)
+            .selectionRow(
+                selected = selected,
+                hovered = false,
+            )
             .clickable(onClick = onClick)
             .padding(start = DesignTokens.space16, end = DesignTokens.space8, top = DesignTokens.space4, bottom = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        StatusGlyph(method.status, color, glowAlpha)
+        StatusGlyph(method.status, color)
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             method.name,
@@ -258,14 +252,12 @@ private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> 
 }
 
 @Composable
-private fun StatusGlyph(status: TestStatus, color: Color, glowAlpha: Float) {
-    val alpha = rememberStatusAlpha(status)
+private fun StatusGlyph(status: TestStatus, color: Color) {
     Text(
         statusGlyph(status),
-        color = color.copy(alpha = color.alpha * alpha),
+        color = color,
         fontSize = DesignTokens.smallTextSize,
         fontFamily = DesignTokens.codeFont,
-        modifier = Modifier.neonGlowLayered(color, shape = CircleShape, alpha = glowAlpha),
     )
 }
 
@@ -370,18 +362,6 @@ private fun MethodDetail(method: TestMethodNode) {
     }
 }
 
-@Composable
-private fun rememberStatusAlpha(status: TestStatus): Float {
-    if (status != TestStatus.RUNNING || !LocalAnimationsEnabled.current) return 1f
-    val transition = rememberInfiniteTransition(label = "run-pulse")
-    val alpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(600), repeatMode = RepeatMode.Reverse),
-        label = "run-pulse-alpha",
-    )
-    return alpha
-}
 
 private fun statusText(session: RunSession): String {
     if (session.isRunning) return "Running…"

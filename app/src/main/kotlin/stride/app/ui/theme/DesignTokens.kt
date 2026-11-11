@@ -10,10 +10,11 @@ import androidx.compose.ui.unit.sp
 
 /** Every color, size and spacing the app shell uses. UI files read values from here only. */
 object DesignTokens {
-    val background = Color(0xFF0F1117)
-    val surface = Color(0xFF151821)
-    val raised = Color(0xFF1B1F2A)
-    val border = Color(0xFF262B3A)
+    val background = Color(0xFF111111)
+    val backgroundLift = Color(0xFF1C1C1C)
+    val surface = Color(0xFF161616)
+    val raised = Color(0xFF202020)
+    val border = Color(0xFF2C2C2C)
     val text = Color(0xFFE6E8F0)
     val muted = Color(0xFF8A93A6)
     val subtle = Color(0xFF5A6274)
@@ -37,11 +38,11 @@ object DesignTokens {
     val neonPinkGlow = neonPink.copy(alpha = 0.55f)
     val neonLimeGlow = neonLime.copy(alpha = 0.55f)
     val neonAmberGlow = neonAmber.copy(alpha = 0.55f)
-    val selectionGlowBackground = accent2.copy(alpha = 0.14f)
     val selectionBar = accent2
     val currentLineGlow = accent.copy(alpha = 0.10f)
     val glowRadius = 10.dp
     val glowRadiusLarge = 18.dp
+    val focusGlowRadius = 6.dp
     val selectionBarWidth = 3.dp
     const val neonFadeMillis = 150
 
@@ -51,9 +52,10 @@ object DesignTokens {
     val codeTextSize = 13.sp
     val codeLineHeight = 20.sp
     val tabTextSize = 13.sp
-    val statusTextSize = 12.sp
-    val smallTextSize = 12.sp
-    val labelTextSize = 11.sp
+    val statusTextSize = 13.sp
+    val smallTextSize = 13.sp
+    val labelTextSize = 13.sp
+    val headingTextSize = 15.sp
 
     val space4 = 4.dp
     val space8 = 8.dp
@@ -62,7 +64,8 @@ object DesignTokens {
 
     val radiusTiny = 4.dp
     val radiusSmall = 6.dp
-    val radiusPopup = 12.dp
+    val radiusCapsule = 8.dp
+    val radiusPopup = 18.dp
 
     val topBarHeight = 36.dp
     val tabStripHeight = 36.dp
@@ -93,16 +96,29 @@ object DesignTokens {
         hoverColor = accent2,
     )
 
-    val meshOrbAlpha = 0.18f
-    val meshOrbRadiusFactor = 0.75f
+    /** Radius of the neutral luminance falloff behind the window, as a fraction of its long side. */
+    val fieldFalloffRadiusFactor = 0.90f
 
     val glassFill = Color.White.copy(alpha = 0.07f)
-    val glassFillStrong = Color.White.copy(alpha = 0.12f)
-    val glassBorderTop = Color.White.copy(alpha = 0.22f)
-    val glassBorderSide = Color.White.copy(alpha = 0.14f)
-    val glassBorderBottom = Color.White.copy(alpha = 0.10f)
+    val glassFillStrong = Color.White.copy(alpha = 0.10f)
+    val glassBorderTop = Color.White.copy(alpha = 0.10f)
+    val glassBorderSide = Color.White.copy(alpha = 0.08f)
+    val glassBorderBottom = Color.White.copy(alpha = 0.06f)
+    val hoverFill = Color.White.copy(alpha = 0.04f)
+
     val glassBlurRadius = 16.dp
     val glassBlurRadiusMax = 20.dp
+
+    /** The floating glass blur is lighter than a slab so the lens keeps code legible. */
+    val liquidGlassBlurRadius = 8.dp
+    val glassBezel = 12.dp
+    val glassLensStrength = 10.dp
+    val glassAberration = 0.5.dp
+    val glassSaturation = 1.15f
+    val glassBrightness = 1.05f
+    val glassTintAlpha = 0.06f
+    val glassSpecular = 0.30f
+
     val contentTintAlpha = 0.92f
 
     val glowCoreSigma = 3.dp
@@ -113,7 +129,7 @@ object DesignTokens {
     val glowBloomAlpha = 0.25f
 
     /** Secondary text on glass; first [muted]→[text] step that clears [contrastText] on `glassFillStrong`. */
-    val textSecondaryOnGlass = Color(0xFFB1B7C5)
+    val textSecondaryOnGlass = Color(0xFF929BAD)
 
     const val motionShortMillis = 150
     const val motionMediumMillis = 200

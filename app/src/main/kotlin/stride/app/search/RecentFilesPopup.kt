@@ -52,11 +52,7 @@ import androidx.compose.ui.unit.dp
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.neonBorder
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonGlowLayered
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.selectionRow
 import stride.core.vfs.VFile
 import java.nio.file.Path
 
@@ -91,7 +87,6 @@ fun RecentFilesPopup(
                 .padding(top = DesignTokens.popupTop)
                 .width(DesignTokens.popupWidth)
                 .shadow(24.dp, shape, clip = false)
-                .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
                 .then(contentFade)
@@ -196,27 +191,17 @@ private fun ResultList(
 private fun RecentRow(file: VFile, projectRoot: Path, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val neon = rememberNeonAlpha(selected)
-    val background = when {
-        selected -> DesignTokens.selectionGlowBackground
-        hovered -> DesignTokens.glassFill
-        else -> DesignTokens.transparent
-    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.popupRowHeight)
-            .neonGlowLayered(DesignTokens.accent2, alpha = neon)
-            .neonGlow(DesignTokens.accent2Glow, radius = DesignTokens.glowRadius, alpha = neon * 0.6f)
-            .then(if (selected) Modifier.background(DesignTokens.raised) else Modifier)
-            .background(background)
-            .neonSelectionBar(alpha = neon)
+            .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = DesignTokens.space16),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileTypeIcon(file.name, Modifier.size(13.dp))
+        FileTypeIcon(file.name, Modifier.size(13.dp), color = if (selected) DesignTokens.accent else DesignTokens.muted)
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             file.name,

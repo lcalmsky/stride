@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.min
@@ -47,8 +48,10 @@ import org.jetbrains.skia.ImageFilter
 import org.jetbrains.skia.ImageInfo
 import org.jetbrains.skia.Matrix33
 import org.jetbrains.skia.Paint
-import org.jetbrains.skia.Point
+import org.jetbrains.skia.RRect
 import org.jetbrains.skia.Rect
+import org.jetbrains.skia.RuntimeEffect
+import org.jetbrains.skia.RuntimeShaderBuilder
 import org.jetbrains.skia.SamplingMode
 import org.jetbrains.skia.Shader
 import org.jetbrains.skia.Surface
@@ -59,15 +62,18 @@ private const val BLUR_SIGMA_SCALE = 0.57735f
 /** Backdrop blur runs on a 1/this-resolution copy of the backdrop; see [backdropImageFilter]. */
 private const val BACKDROP_BLUR_DOWNSCALE = 8
 
+/** The lens filter is evaluated on a 1/[LENS_DOWNSCALE] copy and upscaled; the bend stays soft. */
+private const val LENS_DOWNSCALE = 4
+
 private val contentTintColor = blendOver(
     DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
     DesignTokens.background,
 )
 
 /**
- * Holds the cached mesh bitmap and the raster image drawn from it. Draw-phase data, not snapshot
- * state: the parent draws before its children, so a child can read the bitmap in the same frame
- * without a recomposition loop.
+ * Holds the cached field bitmap and the raster image drawn from it. Draw-phase data, not
+ * snapshot state: the parent draws before its children, so a child can read the bitmap in the
+ * same frame without a recomposition loop.
  */
 class MeshBitmapHolder {
     var bitmap: ImageBitmap? = null
@@ -77,21 +83,22 @@ class MeshBitmapHolder {
     var image: Image? = null
 }
 
-/** The mesh behind the current window, or `null` when no [MeshBackground] is above. */
+/** The field behind the current window, or `null` when no [MeshBackground] is above. */
 val LocalMeshBitmap = staticCompositionLocalOf<MeshBitmapHolder?> { null }
 
 /**
- * Test-only observation point: how many times [glassPanel] actually ran a blur, and whether its
- * last cached slice image was opaque.
+ * Test-only observation point: how many times [glassPanel] actually ran a blur, whether its
+ * last cached slice image was opaque, and whether the last liquid glass surface used the shader.
  */
 internal object GlassCacheStats {
     var panelBlurCount: Int = 0
     var lastSliceOpaque: Boolean = false
+    var lastSurfaceLiquid: Boolean = false
 }
 
 /**
- * Draws a solid [DesignTokens.background] with three radial orbs (accent top-left, accent2
- * bottom-right, neonPink bottom-center) into a cached bitmap, and provides it to the subtree.
+ * Draws a neutral graphite field with a very low-contrast radial luminance falloff into a cached
+ * bitmap, and provides it to the subtree.
  */
 @Composable
 fun MeshBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
@@ -108,7 +115,7 @@ fun MeshBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
             val height = size.height.roundToInt().coerceAtLeast(1)
             if (holder.bitmap == null || holder.width != width || holder.height != height) {
                 holder.image?.close()
-                val bitmap = buildMeshBitmap(width, height)
+                val bitmap = buildFieldBitmap(width, height)
                 holder.bitmap = bitmap
                 holder.image = Image.makeFromBitmap(bitmap.asSkiaBitmap())
                 holder.width = width
@@ -126,28 +133,20 @@ fun MeshBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
     }
 }
 
-private fun buildMeshBitmap(width: Int, height: Int): ImageBitmap {
+private fun buildFieldBitmap(width: Int, height: Int): ImageBitmap {
     val image = ImageBitmap(width, height, hasAlpha = false)
     val skia = Canvas(image).nativeCanvas
-    skia.clear(DesignTokens.background.toArgb())
-    val radius = min(width.toFloat(), height.toFloat()) * DesignTokens.meshOrbRadiusFactor
-    val orbs = listOf(
-        DesignTokens.accent to Point(0f, 0f),
-        DesignTokens.accent2 to Point(width.toFloat(), height.toFloat()),
-        DesignTokens.neonPink to Point(width / 2f, height.toFloat()),
+    val area = Rect.makeLTRB(0f, 0f, width.toFloat(), height.toFloat())
+    val radius = max(width.toFloat(), height.toFloat()) * DesignTokens.fieldFalloffRadiusFactor
+    val shader = Shader.makeRadialGradient(
+        org.jetbrains.skia.Point(width * 0.5f, height * 0.38f),
+        radius,
+        intArrayOf(DesignTokens.backgroundLift.toArgb(), DesignTokens.background.toArgb()),
     )
-    val area = Rect(0f, 0f, width.toFloat(), height.toFloat())
-    for ((color, center) in orbs) {
-        val shader = Shader.makeRadialGradient(
-            center,
-            radius,
-            intArrayOf(
-                color.copy(alpha = DesignTokens.meshOrbAlpha).toArgb(),
-                color.copy(alpha = 0f).toArgb(),
-            ),
-        )
-        val paint = Paint().apply { this.shader = shader }
+    val paint = Paint().apply { this.shader = shader }
+    try {
         skia.drawRect(area, paint)
+    } finally {
         paint.close()
         shader.close()
     }
@@ -182,11 +181,11 @@ private class GlassPanelCache {
 }
 
 /**
- * A cached glass panel: its slice of the mesh blurred once together with the
- * [DesignTokens.glassFill] fill, and the three-step border. The blur is cached by panel size, mesh
- * size, root position and mesh version.
+ * A cached glass panel: its slice of the field blurred once together with the
+ * [DesignTokens.glassFill] fill, and the hairline rim. The blur is cached by panel size, field
+ * size, root position and field version. [lens] adds the liquid glass lens and specular rim.
  */
-fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
+fun Modifier.glassPanel(shape: Shape = RectangleShape, lens: Boolean = false): Modifier = composed {
     val mesh = LocalMeshBitmap.current
     val state = remember { GlassPanelState() }
     val cache = remember { GlassPanelCache() }
@@ -201,15 +200,84 @@ fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier = composed {
         .onGloballyPositioned { coordinates ->
             state.update(coordinates.boundsInRoot().topLeft, coordinates.size.width, coordinates.size.height)
         }
-        .drawBehind { drawGlassPanel(state.bounds, shape, mesh, cache) }
+        .drawBehind {
+            drawGlassPanel(state.bounds, shape, mesh, cache, lens = lens, insetX = 0f, insetY = 0f)
+        }
 }
+
+/**
+ * A glass capsule inset from its row: the same cached field slice and rim as [glassPanel], plus
+ * the lens, a thin neon line on [lineEdge] and, when [fillAlpha] is above zero, a neutral fill.
+ */
+fun Modifier.glassCapsule(
+    shape: Shape,
+    insetX: Dp = 6.dp,
+    insetY: Dp = 2.dp,
+    fillAlpha: Float = 0f,
+    lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
+    lineAlpha: Float = 1f,
+): Modifier = composed {
+    val mesh = LocalMeshBitmap.current
+    val state = remember { GlassPanelState() }
+    val cache = remember { GlassPanelCache() }
+    DisposableEffect(cache) {
+        onDispose {
+            cache.image?.close()
+            cache.image = null
+            cache.key = null
+        }
+    }
+    this
+        .onGloballyPositioned { coordinates ->
+            state.update(coordinates.boundsInRoot().topLeft, coordinates.size.width, coordinates.size.height)
+        }
+        .drawBehind {
+            if (fillAlpha <= 0f && lineAlpha <= 0f) return@drawBehind
+            drawGlassPanel(
+                bounds = state.bounds,
+                shape = shape,
+                mesh = mesh,
+                cache = cache,
+                lens = true,
+                insetX = insetX.toPx(),
+                insetY = insetY.toPx(),
+                fillAlpha = fillAlpha,
+                lineEdge = lineEdge,
+                lineAlpha = lineAlpha,
+            )
+        }
+}
+
+enum class CapsuleEdge { LEFT, BOTTOM }
+
+/** A popup selection row: the capsule and neon line when selected, a faint step on hover. */
+@Composable
+fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier = glassCapsule(
+    shape = androidx.compose.foundation.shape.RoundedCornerShape(DesignTokens.radiusCapsule),
+    insetX = 6.dp,
+    insetY = 2.dp,
+    fillAlpha = if (hovered && !selected) 1f else 0f,
+    lineEdge = CapsuleEdge.LEFT,
+    lineAlpha = rememberNeonAlpha(selected),
+)
 
 private fun DrawScope.drawGlassPanel(
     bounds: GlassBounds?,
     shape: Shape,
     mesh: MeshBitmapHolder?,
     cache: GlassPanelCache,
+    lens: Boolean,
+    insetX: Float,
+    insetY: Float,
+    fillAlpha: Float = 0f,
+    lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
+    lineAlpha: Float = 0f,
 ) {
+    val innerWidth = size.width - insetX * 2f
+    val innerHeight = size.height - insetY * 2f
+    if (innerWidth <= 0f || innerHeight <= 0f) return
+    val innerSize = Size(innerWidth, innerHeight)
+
     val slice = if (bounds != null && mesh?.bitmap != null && mesh.width > 0 && mesh.height > 0) {
         val key = GlassKey(
             width = size.width.roundToInt(),
@@ -222,7 +290,19 @@ private fun DrawScope.drawGlassPanel(
         )
         if (cache.key != key) {
             cache.image?.close()
-            cache.image = glassSliceImage(mesh, bounds, size, DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE)
+            cache.image = glassSliceImage(
+                mesh = mesh,
+                bounds = bounds,
+                size = size,
+                sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE,
+                lens = lens,
+                radius = if (lens) cornerRadius(shape, innerSize) else 0f,
+                insetX = insetX,
+                insetY = insetY,
+                bezel = DesignTokens.glassBezel.toPx(),
+                strength = DesignTokens.glassLensStrength.toPx(),
+                aberration = DesignTokens.glassAberration.toPx(),
+            )
             cache.key = key
             GlassCacheStats.panelBlurCount += 1
         }
@@ -231,17 +311,59 @@ private fun DrawScope.drawGlassPanel(
         null
     }
 
-    clipToShape(shape) {
+    val innerPath = capsulePath(shape, innerSize).apply { translate(Offset(insetX, insetY)) }
+    clipPath(innerPath) {
         if (slice != null) {
-            drawIntoCanvas { canvas -> canvas.nativeCanvas.drawImage(slice, 0f, 0f) }
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawImage(slice, insetX, insetY)
+            }
         } else {
-            drawRect(DesignTokens.glassFill, size = size)
+            drawRect(DesignTokens.glassFill, topLeft = Offset(insetX, insetY), size = innerSize)
         }
-        drawGlassBorder()
+        if (fillAlpha > 0f) {
+            drawRect(
+                DesignTokens.hoverFill.copy(alpha = DesignTokens.hoverFill.alpha * fillAlpha),
+                topLeft = Offset(insetX, insetY),
+                size = innerSize,
+            )
+        }
+        drawHairlineRim(shape, innerSize, insetX, insetY)
+        if (lineAlpha > 0f) {
+            drawNeonLine(innerSize, insetX, insetY, lineEdge, lineAlpha)
+        }
     }
 }
 
-private fun glassSliceImage(mesh: MeshBitmapHolder, bounds: GlassBounds, size: Size, sigma: Float): Image {
+private fun DrawScope.cornerRadius(shape: Shape, size: Size): Float =
+    (shape.createOutline(size, layoutDirection, this) as? Outline.Rounded)
+        ?.roundRect?.topLeftCornerRadius?.x ?: 0f
+
+private fun DrawScope.capsulePath(shape: Shape, size: Size): Path {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    return when (outline) {
+        is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
+        is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
+        is Outline.Generic -> Path().apply { addPath(outline.path) }
+    }
+}
+
+/**
+ * The cached capsule image: the blurred field slice with the fill, and, when [lens] is set, the
+ * lens shader evaluated once over the inset capsule so the frame only copies pixels.
+ */
+private fun glassSliceImage(
+    mesh: MeshBitmapHolder,
+    bounds: GlassBounds,
+    size: Size,
+    sigma: Float,
+    lens: Boolean = false,
+    radius: Float = 0f,
+    insetX: Float = 0f,
+    insetY: Float = 0f,
+    bezel: Float = 0f,
+    strength: Float = 0f,
+    aberration: Float = 0f,
+): Image {
     val width = size.width.roundToInt().coerceAtLeast(1)
     val height = size.height.roundToInt().coerceAtLeast(1)
     val sourceLeft = max(0f, bounds.left.toFloat())
@@ -259,8 +381,8 @@ private fun glassSliceImage(mesh: MeshBitmapHolder, bounds: GlassBounds, size: S
         try {
             surface.canvas.drawImageRect(
                 image,
-                Rect(sourceLeft, sourceTop, sourceRight, sourceBottom),
-                Rect(
+                org.jetbrains.skia.Rect(sourceLeft, sourceTop, sourceRight, sourceBottom),
+                org.jetbrains.skia.Rect(
                     sourceLeft - bounds.left,
                     sourceTop - bounds.top,
                     sourceRight - bounds.left,
@@ -275,49 +397,138 @@ private fun glassSliceImage(mesh: MeshBitmapHolder, bounds: GlassBounds, size: S
         }
     }
     val fill = Paint().apply { color = DesignTokens.glassFill.toArgb() }
-    try {
-        surface.canvas.drawRect(Rect(0f, 0f, width.toFloat(), height.toFloat()), fill)
-        val snapshot = surface.makeImageSnapshot()
-        GlassCacheStats.lastSliceOpaque = snapshot.isOpaque
-        return snapshot
+    val base = try {
+        surface.canvas.drawRect(org.jetbrains.skia.Rect(0f, 0f, width.toFloat(), height.toFloat()), fill)
+        surface.makeImageSnapshot()
     } finally {
         fill.close()
         surface.close()
     }
+    if (!lens) {
+        GlassCacheStats.lastSliceOpaque = base.isOpaque
+        return base
+    }
+
+    val innerWidth = size.width - insetX * 2f
+    val innerHeight = size.height - insetY * 2f
+    val shader = if (innerWidth > 0f && innerHeight > 0f) {
+        GlassShader.surfaceShader(
+            slice = base,
+            width = innerWidth,
+            height = innerHeight,
+            radius = radius,
+            bezel = bezel,
+            strength = strength,
+            aberration = aberration,
+            tint = 0f,
+            originX = insetX,
+            originY = insetY,
+        )
+    } else {
+        null
+    }
+    if (shader == null) {
+        GlassCacheStats.lastSurfaceLiquid = false
+        GlassCacheStats.lastSliceOpaque = base.isOpaque
+        return base
+    }
+    val lensed = Surface.makeRaster(ImageInfo(width, height, ColorType.N32, ColorAlphaType.OPAQUE))
+    val paint = Paint().apply { this.shader = shader }
+    try {
+        lensed.canvas.clear(DesignTokens.background.toArgb())
+        lensed.canvas.drawImage(base, 0f, 0f)
+        lensed.canvas.drawRect(
+            org.jetbrains.skia.Rect(insetX, insetY, insetX + innerWidth, insetY + innerHeight),
+            paint,
+        )
+        val snapshot = lensed.makeImageSnapshot()
+        GlassCacheStats.lastSurfaceLiquid = true
+        GlassCacheStats.lastSliceOpaque = snapshot.isOpaque
+        return snapshot
+    } finally {
+        paint.close()
+        shader.close()
+        base.close()
+        lensed.close()
+    }
+}
+
+/** The liquid glass filter, rebuilt only when the panel's size or corner radius changes. */
+private class BackdropFilterCache {
+    var width: Int = -1
+    var height: Int = -1
+    var radius: Int = -1
+    var filter: ImageFilter? = null
 }
 
 /**
- * Blurs the already-drawn backdrop under this element with Skia's `saveLayer` backdrop filter,
- * then paints [DesignTokens.glassFillStrong] and the border over it. The filter shrinks the
- * backdrop, blurs the small copy and scales it back, which keeps the full-resolution layer copy out
- * of reach without changing the visible result.
+ * Blurs the already-drawn backdrop under this element through the liquid glass shader, then
+ * paints the rim and the content. When the shader is unavailable the previous blur-only glass is
+ * used instead.
  */
-fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = drawWithContent {
-    val sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE
-    val outline = shape.createOutline(size, layoutDirection, this)
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-        native.save()
-        when (outline) {
-            is Outline.Rectangle -> native.clipRect(Rect(0f, 0f, size.width, size.height))
-            is Outline.Rounded -> native.clipPath(Path().apply { addRoundRect(outline.roundRect) }.asSkiaPath())
-            is Outline.Generic -> native.clipPath(outline.path.asSkiaPath())
+fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = composed {
+    val cache = remember { BackdropFilterCache() }
+    DisposableEffect(cache) {
+        onDispose {
+            cache.filter?.close()
+            cache.filter = null
         }
-        native.saveLayer(
-            SaveLayerRec(
-                Rect(0f, 0f, size.width, size.height),
-                null,
-                backdropImageFilter(sigma),
-            ),
-        )
     }
-    drawRect(DesignTokens.glassFillStrong, size = size)
-    drawGlassBorder()
-    drawContent()
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-        native.restore()
-        native.restore()
+    drawWithContent {
+        val sigma = DesignTokens.glassBlurRadius.toPx() * BLUR_SIGMA_SCALE
+        val liquidSigma = DesignTokens.liquidGlassBlurRadius.toPx() * BLUR_SIGMA_SCALE
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val radius = when (outline) {
+            is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+            is Outline.Rectangle -> 0f
+            is Outline.Generic -> 0f
+        }
+        val width = size.width.roundToInt()
+        val height = size.height.roundToInt()
+        val radiusKey = radius.roundToInt()
+        if (cache.width != width || cache.height != height || cache.radius != radiusKey) {
+            cache.filter?.close()
+            cache.filter = GlassShader.backdropFilter(
+                width = size.width,
+                height = size.height,
+                radius = radius,
+                sigma = liquidSigma,
+                bezel = DesignTokens.glassBezel.toPx(),
+                strength = DesignTokens.glassLensStrength.toPx(),
+                aberration = DesignTokens.glassAberration.toPx(),
+                tint = DesignTokens.glassTintAlpha,
+                saturation = DesignTokens.glassSaturation,
+                brightness = DesignTokens.glassBrightness,
+                specular = DesignTokens.glassSpecular,
+            )
+            cache.width = width
+            cache.height = height
+            cache.radius = radiusKey
+        }
+        val liquid = cache.filter
+        GlassCacheStats.lastSurfaceLiquid = liquid != null
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.save()
+            when (outline) {
+                is Outline.Rectangle -> native.clipRect(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height))
+                is Outline.Rounded -> native.clipPath(Path().apply { addRoundRect(outline.roundRect) }.asSkiaPath())
+                is Outline.Generic -> native.clipPath(outline.path.asSkiaPath())
+            }
+            native.saveLayer(
+                SaveLayerRec(
+                    org.jetbrains.skia.Rect(0f, 0f, size.width, size.height),
+                    null,
+                    liquid ?: backdropImageFilter(sigma),
+                ),
+            )
+            if (liquid == null) {
+                drawRect(DesignTokens.glassFillStrong, size = size)
+                drawGlassBorder()
+            }
+            native.restore()
+        }
+        drawContent()
     }
 }
 
@@ -342,12 +553,11 @@ private fun backdropImageFilter(sigma: Float): ImageFilter {
 
 /**
  * An opaque near-[DesignTokens.surface] fill for content areas that must stay readable. It is
- * painted as one opaque color so it takes the opaque draw path; at [DesignTokens.contentTintAlpha]
- * the L0 mesh underneath would move a channel by at most 4/255 anyway, so it is not shown.
+ * painted as one opaque color so it takes the opaque draw path.
  */
 fun Modifier.contentTint(): Modifier = background(contentTintColor)
 
-/** The top, side and bottom hairlines of a glass panel. */
+/** The top, side and bottom hairlines of a glass slab. */
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier = drawBehind {
     clipToShape(shape) { drawGlassBorder() }
 }
@@ -367,6 +577,89 @@ private fun DrawScope.drawGlassBorder() {
     }
 }
 
+private fun DrawScope.drawHairlineRim(shape: Shape, innerSize: Size, insetX: Float, insetY: Float) {
+    val outline = shape.createOutline(innerSize, layoutDirection, this)
+    val paint = Paint().apply {
+        isAntiAlias = true
+        color = DesignTokens.glassBorderTop.toArgb()
+        mode = org.jetbrains.skia.PaintMode.STROKE
+        strokeWidth = 1.dp.toPx()
+    }
+    try {
+        drawIntoCanvas { canvas ->
+            canvas.nativeCanvas.save()
+            canvas.nativeCanvas.translate(insetX, insetY)
+            when (outline) {
+                is Outline.Rounded -> {
+                    val rect = outline.roundRect
+                    canvas.nativeCanvas.drawRRect(
+                        RRect.makeLTRB(
+                            rect.left,
+                            rect.top,
+                            rect.right,
+                            rect.bottom,
+                            rect.topLeftCornerRadius.x,
+                            rect.topLeftCornerRadius.y,
+                        ),
+                        paint,
+                    )
+                }
+                is Outline.Rectangle -> canvas.nativeCanvas.drawRect(
+                    org.jetbrains.skia.Rect(0f, 0f, innerSize.width, innerSize.height),
+                    paint,
+                )
+                is Outline.Generic -> canvas.nativeCanvas.drawPath(outline.path.asSkiaPath(), paint)
+            }
+            canvas.nativeCanvas.restore()
+        }
+    } finally {
+        paint.close()
+    }
+}
+
+/** A restrained neon line on the capsule edge: light bleeding a few pixels, one crisp line. */
+private fun DrawScope.drawNeonLine(
+    innerSize: Size,
+    insetX: Float,
+    insetY: Float,
+    edge: CapsuleEdge,
+    alpha: Float,
+) {
+    val color = DesignTokens.selectionBar
+    val width = 2.dp.toPx()
+    val glow = Paint().apply {
+        isAntiAlias = true
+        this.color = color.copy(alpha = 0.35f * alpha).toArgb()
+        maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(org.jetbrains.skia.FilterBlurMode.NORMAL, 3.dp.toPx())
+    }
+    val crisp = Paint().apply {
+        isAntiAlias = true
+        this.color = color.copy(alpha = alpha).toArgb()
+    }
+    try {
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.save()
+            native.translate(insetX, insetY)
+            if (edge == CapsuleEdge.LEFT) {
+                val x = width / 2f + 1.dp.toPx()
+                val top = 3.dp.toPx()
+                val bottom = innerSize.height - 3.dp.toPx()
+                native.drawLine(x, top, x, bottom, glow)
+                native.drawLine(x, top, x, bottom, crisp)
+            } else {
+                val y = innerSize.height - width / 2f - 1.dp.toPx()
+                native.drawLine(innerSize.width * 0.18f, y, innerSize.width * 0.82f, y, glow)
+                native.drawLine(innerSize.width * 0.18f, y, innerSize.width * 0.82f, y, crisp)
+            }
+            native.restore()
+        }
+    } finally {
+        glow.close()
+        crisp.close()
+    }
+}
+
 private fun DrawScope.clipToShape(shape: Shape, block: DrawScope.() -> Unit) {
     when (val outline = shape.createOutline(size, layoutDirection, this)) {
         is Outline.Rectangle -> clipRect(
@@ -379,4 +672,172 @@ private fun DrawScope.clipToShape(shape: Shape, block: DrawScope.() -> Unit) {
         is Outline.Rounded -> clipPath(Path().apply { addRoundRect(outline.roundRect) }, block = block)
         is Outline.Generic -> clipPath(outline.path, block = block)
     }
+}
+
+/**
+ * The liquid glass SkSL. The backdrop arrives as `content` (already blurred), the shader lifts
+ * its saturation and brightness, tints it neutral, bends it inward inside the bezel with a
+ * convex profile and a sub-pixel chromatic split, and lights a specular rim from the top-left.
+ */
+internal object GlassShader {
+    /** Test seam: `false` forces the blur-only fallback. */
+    var enabled: Boolean = true
+
+    private var cached: RuntimeEffect? = null
+    private var compiled = false
+
+    internal fun runtimeEffect(): RuntimeEffect? {
+        if (!enabled) return null
+        if (!compiled) {
+            cached = runCatching { RuntimeEffect.makeForShader(SKSL) }.getOrNull()
+            compiled = true
+        }
+        return cached
+    }
+
+    fun surfaceShader(
+        slice: Image,
+        width: Float,
+        height: Float,
+        radius: Float,
+        bezel: Float,
+        strength: Float,
+        aberration: Float,
+        tint: Float,
+        originX: Float = 0f,
+        originY: Float = 0f,
+    ): Shader? {
+        val effect = runtimeEffect() ?: return null
+        return runCatching {
+            val builder = RuntimeShaderBuilder(effect)
+            builder.uniform("size", width, height)
+            builder.uniform("origin", originX, originY)
+            builder.uniform("radius", radius)
+            builder.uniform("bezel", bezel)
+            builder.uniform("strength", strength)
+            builder.uniform("aberration", aberration)
+            builder.uniform("tint", tint)
+            builder.uniform("saturation", DesignTokens.glassSaturation)
+            builder.uniform("brightness", DesignTokens.glassBrightness)
+            builder.uniform("specular", DesignTokens.glassSpecular)
+            builder.child(
+                "content",
+                slice.makeShader(FilterTileMode.CLAMP, FilterTileMode.CLAMP, SamplingMode.LINEAR, Matrix33.IDENTITY),
+            )
+            builder.makeShader()
+        }.getOrNull()
+    }
+
+    fun backdropFilter(
+        width: Float,
+        height: Float,
+        radius: Float,
+        sigma: Float,
+        bezel: Float,
+        strength: Float,
+        aberration: Float,
+        tint: Float,
+        saturation: Float,
+        brightness: Float,
+        specular: Float,
+    ): ImageFilter? {
+        val effect = runtimeEffect() ?: return null
+        return runCatching {
+            val builder = RuntimeShaderBuilder(effect)
+            builder.uniform("size", width, height)
+            builder.uniform("origin", 0f, 0f)
+            builder.uniform("radius", radius)
+            builder.uniform("bezel", bezel)
+            builder.uniform("strength", strength)
+            builder.uniform("aberration", aberration)
+            builder.uniform("tint", tint)
+            builder.uniform("saturation", saturation)
+            builder.uniform("brightness", brightness)
+            builder.uniform("specular", specular)
+            val downscale = ImageFilter.makeMatrixTransform(
+                Matrix33.makeScale(1f / LENS_DOWNSCALE),
+                SamplingMode.LINEAR,
+                null,
+            )
+            val input = ImageFilter.makeBlur(
+                sigma / LENS_DOWNSCALE,
+                sigma / LENS_DOWNSCALE,
+                FilterTileMode.CLAMP,
+                downscale,
+            )
+            val runtime = ImageFilter.makeRuntimeShader(builder, "content", input)
+            ImageFilter.makeMatrixTransform(
+                Matrix33.makeScale(LENS_DOWNSCALE.toFloat()),
+                SamplingMode.LINEAR,
+                runtime,
+            )
+        }.getOrNull()
+    }
+
+    internal fun resetForTests() {
+        enabled = true
+        cached = null
+        compiled = false
+    }
+
+    private val SKSL = """
+        uniform shader content;
+        uniform float2 size;
+        uniform float2 origin;
+        uniform float radius;
+        uniform float bezel;
+        uniform float strength;
+        uniform float aberration;
+        uniform float tint;
+        uniform float saturation;
+        uniform float brightness;
+        uniform float specular;
+
+        float sdRoundRect(float2 p, float2 halfSize, float r) {
+            float2 q = abs(p) - halfSize + r;
+            return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+        }
+
+        half4 main(float2 fragCoord) {
+            float2 halfSize = size * 0.5;
+            float r = min(radius, min(halfSize.x, halfSize.y));
+            float2 c = fragCoord - origin - halfSize;
+            float d = sdRoundRect(c, halfSize, r);
+
+            // 1 at the outer rim, 0 at the inner end of the bezel; cubic so the bend curls at the rim.
+            float t = clamp(1.0 + d / bezel, 0.0, 1.0);
+
+            half3 col = content.eval(fragCoord).rgb;
+            float2 n = float2(0.0);
+            if (t > 0.0) {
+                n = float2(
+                    sdRoundRect(c + float2(1.0, 0.0), halfSize, r) - sdRoundRect(c - float2(1.0, 0.0), halfSize, r),
+                    sdRoundRect(c + float2(0.0, 1.0), halfSize, r) - sdRoundRect(c - float2(0.0, 1.0), halfSize, r)
+                );
+                n = n / max(length(n), 0.0001);
+
+                float bend = t * t * t * strength * smoothstep(0.0, 1.5, -d);
+                float split = aberration * t;
+                col = content.eval(fragCoord - n * bend).rgb;
+                if (split > 0.05) {
+                    col.r = content.eval(fragCoord - n * (bend + split)).r;
+                    col.b = content.eval(fragCoord - n * max(bend - split, 0.0)).b;
+                }
+            }
+
+            col = mix(col, half3(1.0), tint);
+            float luma = dot(col, half3(0.2126, 0.7152, 0.0722));
+            col = mix(half3(luma), col, saturation) * brightness;
+
+            float2 light = normalize(float2(-0.55, -0.85));
+            float facing = max(dot(n, light), 0.0);
+            float rim = smoothstep(0.0, 1.0, t) * smoothstep(0.0, 1.5, -d);
+            col += half3(rim * facing * facing * specular);
+
+            float bottomShade = smoothstep(0.5, 1.0, t) * max(n.y, 0.0);
+            col *= 1.0 - 0.16 * bottomShade;
+
+            return half4(col, 1.0);
+        }
+    """.trimIndent()
 }

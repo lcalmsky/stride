@@ -1,6 +1,5 @@
 package stride.app.run
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -45,11 +44,7 @@ import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
-import stride.app.ui.theme.neonBorder
-import stride.app.ui.theme.neonGlow
-import stride.app.ui.theme.neonGlowLayered
-import stride.app.ui.theme.neonSelectionBar
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.selectionRow
 
 private val contextPopupWidth = 360.dp
 
@@ -103,7 +98,6 @@ internal fun ChoicePopup(
                 .padding(top = DesignTokens.popupTop)
                 .width(width)
                 .shadow(24.dp, shape, clip = false)
-                .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
                 .then(contentFade)
@@ -162,21 +156,11 @@ internal fun ChoicePopup(
 private fun ChoiceRow(label: String, secondary: String?, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val neon = rememberNeonAlpha(selected)
-    val background = when {
-        selected -> DesignTokens.selectionGlowBackground
-        hovered -> DesignTokens.glassFill
-        else -> DesignTokens.transparent
-    }
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.popupRowHeight)
-            .neonGlowLayered(DesignTokens.accent2, alpha = neon)
-            .neonGlow(DesignTokens.accent2Glow, radius = DesignTokens.glowRadius, alpha = neon * 0.6f)
-            .then(if (selected) Modifier.background(DesignTokens.raised) else Modifier)
-            .background(background)
-            .neonSelectionBar(alpha = neon)
+            .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = DesignTokens.space16),
