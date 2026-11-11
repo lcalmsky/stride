@@ -57,10 +57,12 @@ class GlassModifiersTest {
                 }
             }
         }
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
         val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
         val luminance = relativeLuminance(Color(withMesh[index(bestX, bestY, 200)]))
-        assertTrue(widest <= 2, "widest channel spread inside the panel = $widest, expected neutral glass")
+        // The field carries the documented cool-graphite tint, so a few levels of channel spread
+        // are expected; anything wider would be a hue rather than a neutral surface.
+        assertTrue(widest <= 10, "widest channel spread inside the panel = $widest, expected neutral glass")
         assertTrue(
             luminance >= lowest - 0.002 && luminance <= highest + 0.002,
             "panel luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),
@@ -237,6 +239,84 @@ class GlassModifiersTest {
                 row += 1
             }
         }
+    }
+
+    @Test
+    fun `glass corners stay symmetric over a uniform backdrop`() {
+        GlassShader.resetForTests()
+        val pixels = glassRectPixels()
+        val left = 100
+        val top = 80
+        val right = 300
+        val bottom = 220
+        val depth = 6
+        val radius = 18
+        val inset = (radius - (radius - depth) / kotlin.math.sqrt(2f)).toInt()
+        val corners = listOf(
+            "top-left" to (left + inset to top + inset),
+            "top-right" to (right - inset to top + inset),
+            "bottom-left" to (left + inset to bottom - inset),
+            "bottom-right" to (right - inset to bottom - inset),
+        )
+        val means = corners.map { (name, point) ->
+            val mean = blockMean(pixels, 400, point.first, point.second, 2)
+            System.err.println("glass-corner %s (%d,%d) mean=%.4f".format(name, point.first, point.second, mean))
+            name to mean
+        }
+        val lowest = means.minOf { it.second }
+        val highest = means.maxOf { it.second }
+        assertTrue(
+            highest - lowest <= 0.01,
+            "the four corner bezel regions should match: ${means.joinToString { "${it.first}=%.4f".format(it.second) }}",
+        )
+    }
+
+    @Test
+    fun `the frosted base keeps backdrop detail under one point three`() {
+        val pixels = pixelArray(400, 300) {
+            Box(Modifier.fillMaxSize()) {
+                Checkerboard(cellSize = 180f)
+                Box(
+                    Modifier
+                        .offset(40.dp, 4.dp)
+                        .size(320.dp, 292.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .backdropGlass(RoundedCornerShape(18.dp)),
+                )
+            }
+        }
+        val light = blockMean(pixels, 400, 90, 90, 4)
+        val dark = blockMean(pixels, 400, 270, 90, 4)
+        val ratio = (maxOf(light, dark) + 0.05) / (minOf(light, dark) + 0.05)
+        System.err.println("glass-frost light=%.4f dark=%.4f contrast=%.3f".format(light, dark, ratio))
+        assertTrue(
+            ratio <= 1.3,
+            "backdrop detail through the glass is %.3f:1, expected at most 1.3:1".format(ratio),
+        )
+    }
+
+    private fun glassRectPixels(): IntArray = pixelArray(400, 300) {
+        Box(Modifier.fillMaxSize().background(Color(0xFF202020))) {
+            Box(
+                Modifier
+                    .offset(100.dp, 80.dp)
+                    .size(200.dp, 140.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .backdropGlass(RoundedCornerShape(18.dp)),
+            )
+        }
+    }
+
+    private fun blockMean(pixels: IntArray, width: Int, centerX: Int, centerY: Int, radius: Int): Double {
+        var total = 0.0
+        var count = 0
+        for (y in centerY - radius..centerY + radius) {
+            for (x in centerX - radius..centerX + radius) {
+                total += relativeLuminance(Color(pixels[index(x, y, width)]))
+                count += 1
+            }
+        }
+        return total / count
     }
 
     @Test

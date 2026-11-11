@@ -201,14 +201,15 @@ class PopupGlassTest {
             }
         }
         val pixel = pixels[index(widestX, widestY, 600)]
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
         val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
         val luminance = relativeLuminance(Color(pixel))
         System.err.println(
             "find-bar widest=$widest at ($widestX,$widestY) pixel=${hex(pixel)} luminance=%.4f band=%.4f..%.4f"
                 .format(luminance, lowest, highest),
         )
-        assertTrue(widest <= 2, "the find bar should stay neutral, widest channel spread = $widest")
+        // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
+        assertTrue(widest <= 12, "the find bar should stay neutral, widest channel spread = $widest")
         assertTrue(
             luminance >= lowest - 0.002 && luminance <= highest + 0.002,
             "the find bar luminance %.4f is outside the glass band %.4f..%.4f".format(luminance, lowest, highest),

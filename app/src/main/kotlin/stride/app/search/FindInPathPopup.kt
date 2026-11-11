@@ -35,11 +35,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -56,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import stride.app.editor.find.FindOptions
 import stride.app.ui.FileTypeIcon
+import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
@@ -172,7 +171,7 @@ fun FindInPathPopup(
                     else -> ResultList(hits, selectedIndex, onChoose)
                 }
             }
-            Footer()
+            PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
         }
     }
 }
@@ -308,7 +307,7 @@ private fun HitRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit) {
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             "${hit.relativePath}:${hit.line}",
-            color = DesignTokens.text,
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -333,26 +332,5 @@ private fun hitLine(hit: FindInPathHit) = buildAnnotatedString {
     val to = (from + (hit.end - hit.start)).coerceIn(from, hit.lineText.length)
     if (to > from) {
         addStyle(SpanStyle(color = DesignTokens.neonAmber, background = DesignTokens.neonAmberGlow), from, to)
-    }
-}
-
-@Composable
-private fun Footer() {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(DesignTokens.popupFooterHeight)
-            .drawBehind {
-                drawLine(DesignTokens.border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-            }
-            .padding(horizontal = DesignTokens.space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "↑↓ navigate · ⏎ open · esc close",
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.labelTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
     }
 }

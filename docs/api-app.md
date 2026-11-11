@@ -1251,11 +1251,13 @@ sessions live only in the project.
 ## Look
 
 `stride.app.ui.theme.DesignTokens` is the single source of colors, type and spacing; UI
-files declare no colors of their own. The base palette is a neutral graphite: `background`
-#111111 with `backgroundLift` #1C1C1C (the centre of the field falloff), `surface` #161616
-(editor and console tint), `raised` #202020 (hover and key caps), `border` #2C2C2C,
-`text` #E6E8F0, `muted` #8A93A6, `subtle` #5A6274, `accent` (#7C5CFF), `accent2` (#00D1FF)
-and a selection of the accent at 22% alpha. The dark theme is the only theme.
+files declare no colors of their own. The base palette is a cool graphite with a very low
+blue-violet chroma: `background` #13141A with `backgroundLift` #1A1B23 at the top of the
+field and `fieldBottom` #0B0C10 at the bottom, `surface` #0F1015 (the editor and console
+tint, darker than the chrome glass), `raised` #21232B (hover and key caps), `border`
+#2F313A, `text` #E6E8F0, `selectedText` (white), `muted` #8A93A6, `subtle` #5A6274,
+`accent` (#7C5CFF), `accent2` (#00D1FF) and a selection of the accent at 22% alpha. The
+dark theme is the only theme.
 
 Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.uiFont` reads
 `UiFont.family`, so the whole UI follows a runtime choice between Pretendard and the system
@@ -1327,17 +1329,28 @@ A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` dra
 
 ### Selection signal language
 
-A selected tree row, tab, tool-window tab or popup entry is a glass capsule inset 2–6 dp from
-its row, with one `accent2` line on its left edge (tabs use the bottom edge) that carries a
-tight 6 dp glow. The label is `text`; the row's file icon may take `accent`. Hover is a faint
-neutral step (`hoverFill`, white 4%). A focused panel draws a 1 dp `focusHalo` line on its top
-edge and nothing else glows. Unselected rows and tabs stay quiet. `StatusBar` takes an
-optional `focusLabel` and renders it as a right-aligned `accent2` `FocusChip` without a glow;
+A selected tree row, tab, tool-window tab or popup entry is a capsule inset 2–6 dp from its
+row: a neutral interior lift (`capsuleLift`, white 7%), a crisp top-lit 1 px rim
+(`capsuleRim`, white 16%, fading down the sides) and one 2 dp `accent2` line on its left edge
+(tabs use the bottom edge) with a soft 2.5 dp-blur glow at 30% alpha. Capsules never bend the
+backdrop, so tree guide lines and code behind them stay out of the selection. The selected
+label is `selectedText` (white) and its file icon takes `accent`. Hover is a faint neutral
+step (`hoverFill`, white 4%). A focused panel draws a 1 dp `focusHalo` line on its top edge
+and nothing else glows. Unselected rows and tabs stay quiet. `StatusBar` takes an optional
+`focusLabel` and renders it as a right-aligned `accent2` `FocusChip` without a glow;
 `EditorArea`, `ProjectTreePanel` and `ToolWindowPanel` draw the halo when focused.
 
 The two helpers are `glassCapsule(shape, insetX, insetY, fillAlpha, lineEdge, lineAlpha)` and
 `selectionRow(selected, hovered)`, which fixes the popup capsule at 6/2 dp inset with a left
 line. The line and capsule alpha fade through `rememberNeonAlpha`.
+
+Every popup footer uses `PopupHintBar(vararg hints)` (`stride.app.ui`): keycap glyphs followed
+by sentence-case words, separated by spacing only, over the 8% white hairline. The welcome
+screen's shortcuts come from `welcomeHints(keymap, hasProject)`, which reads every stroke from
+`Keymap.strokesFor` (and the `KeyRouter.SEARCH_EVERYWHERE_GESTURE` double-Shift gesture the
+keymap does not carry). With a project it shows Search Everywhere ⇧⇧, Go to File ⇧⌘O, Recent
+Files ⌘E and Find Action ⇧⌘A; without one it shows Open Folder ⌘O, the stroke that
+`GOTO_CLASS` — and therefore opening a folder — is bound to when no session exists.
 
 ### Animation rules
 
@@ -1357,24 +1370,25 @@ root in `MeshBackground`; slabs and capsules drawn on it use `glassPanel`/`glass
 transient surfaces use `backdropGlass`. Everything else is opaque: the editor, terminal and
 console use `contentTint`, one pre-blended opaque color, so the field is not drawn behind them.
 
-The field is a neutral graphite fill with a very low-contrast radial luminance falloff (no hue
+The field is a cool graphite fill with a gentle top-to-bottom luminance falloff (no hue
 gradients and no blobs), drawn once per size into a bitmap.
 
 | token | value |
 |---|---|
-| `backgroundLift` / `fieldFalloffRadiusFactor` | #1C1C1C / 0.90 of the window's long side |
+| `backgroundLift` / `background` / `fieldBottom` | #1A1B23 / #13141A / #0B0C10 |
 | `glassFill` / `glassFillStrong` | white 7% / 10% |
 | `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 10% / 8% / 6% |
-| `hoverFill` | white 4% |
+| `hoverFill` / `capsuleLift` / `capsuleRim` | white 4% / 7% / 16% |
 | `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp (slabs) |
-| `liquidGlassBlurRadius` | 8 dp (floating glass) |
-| `glassBezel` / `glassLensStrength` / `glassAberration` | 12 dp / 10 dp / 0.5 dp |
-| `glassSaturation` / `glassBrightness` / `glassTintAlpha` / `glassSpecular` | 1.15 / 1.05 / 0.06 / 0.30 |
+| `liquidGlassBlurRadius` | 14 dp (floating glass) |
+| `glassBase` / `glassBackdropMix` / `glassChromaGain` | #17181E / 0.06 / 0.35 |
+| `glassBezel` / `glassLensStrength` / `glassAberration` | 12 dp / 6 dp / 0.5 dp |
+| `glassSpecular` | 0.42 |
 | `contentTintAlpha` | 0.92 |
 | `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 |
 | `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
 | `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 |
-| `textSecondaryOnGlass` | `#929BAD` (muted→text at t=0.09; 4.52:1 on the worst strong glass) |
+| `textSecondaryOnGlass` | `#919AAC` (muted→text at t=0.08; 4.51:1 on the worst strong glass) |
 | `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 |
 
 `scrollbarStyle` uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
@@ -1387,7 +1401,7 @@ files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing 
 @Composable fun MeshBackground(modifier: Modifier = Modifier,
                                content: @Composable BoxScope.() -> Unit)
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
-fun Modifier.glassPanel(shape: Shape = RectangleShape, lens: Boolean = false): Modifier
+fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
 fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
                           fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
                           lineAlpha: Float = 1f): Modifier
@@ -1397,39 +1411,46 @@ fun Modifier.contentTint(): Modifier
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier
 ```
 
-`MeshBackground` draws the neutral field into a bitmap once per size and exposes it through
+`MeshBackground` draws the field into a bitmap once per size and exposes it through
 `LocalMeshBitmap`. `glassPanel` blurs its slice of that bitmap once and bakes the `glassFill`
 into an opaque cached image keyed by panel size, field size, root position and field version;
-each frame only copies that image and draws the hairline rim. `glassCapsule` adds the lens to
-the cached image, so a frame draws the finished capsule, the rim and the line only.
+each frame only copies that image and draws the hairline rim. `glassCapsule` draws the lift
+and rim directly: it never samples or blurs the backdrop.
 
 `backdropGlass` runs the liquid glass shader over what is already drawn beneath it.
 `GlassShader` compiles one SkSL program (`RuntimeEffect.makeForShader`) whose uniforms are the
-panel size, origin, radius, bezel, lens strength, chromatic split, tint, saturation, brightness
-and specular; the blurred backdrop arrives as the `content` child shader.
+panel size, origin, radius, bezel, lens strength, chromatic split, the frosted base color, the
+backdrop mix, the chroma gain and specular; the blurred backdrop arrives as the `content`
+child shader.
 
-- Interior: the lightly blurred backdrop (the existing `saveLayer(SaveLayerRec(backdrop = …))`
-  path, 1/8-resolution blur chain), saturation × 1.15, brightness × 1.05 and a neutral white
-  6% tint so text stays legible.
-- Lens: inside the 12 dp bezel the sample coordinate moves inward along the rounded-rect
-  normal with a convex cubic profile, so code lines visibly bend at the edge. The red and blue
-  channels split by at most 0.5 dp, only inside the bezel, and the bend tapers to zero at the
-  outermost 1.5 px.
-- Specular: light from the top-left gives a thin bright rim on the upper edge that fades along
-  the sides, with a faint darker inner rim at the bottom. Ordinary glass has no outer glow.
+- Frosted base: the panel is `glassBase` #17181E with only `glassBackdropMix` (6%) of the
+  backdrop's luminance and `glassChromaGain` (35%) of its hue. Backdrop detail through the
+  glass stays under 1.3:1, and popup text clears 4.5:1 on the base whatever is behind it.
+- Lens: the backdrop is blurred at `liquidGlassBlurRadius` (14 dp) before sampling. Inside the
+  12 dp bezel the sample coordinate moves inward along the rounded-rect normal with a
+  `4t(1-t)` profile peaking at 6 dp, so the bend is zero at the outer 2 dp and at the inner
+  bezel edge and never exceeds 6 dp. The red and blue channels split by at most 0.5 dp, only
+  inside the bezel.
+- Specular: light from the top-left gives a thin bright rim (the outer 28% of the bezel) on
+  the upper edge that fades along the sides, with a faint darker inner rim at the bottom.
+  Ordinary glass has no outer glow.
 - Cost: the shader is evaluated on a 1/4-resolution copy and scaled back up
-  (`LENS_DOWNSCALE`), and the filter is cached per panel size and radius. The interior takes a
+  (`LENS_DOWNSCALE`); its size, radius, bezel, strength and aberration uniforms are expressed
+  in that copy's pixels. Scaling the runtime shader's own output instead would magnify its
+  bezel from the top-left corner, which is why the scale is applied inside the filter chain
+  before the shader. The filter is cached per panel size and radius. The interior takes a
   single `content.eval`; only bezel pixels take three.
 
 When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `GlassShader` returns
 `null` and `backdropGlass` falls back to the previous blur-only glass with the hairline border.
-`GlassModifiersTest` asserts that the SkSL compiles, that the fallback still blurs, and that the
-bezel samples a displaced backdrop. The backdrop path was measured on `ImageComposeScene`:
+`GlassModifiersTest` asserts that the SkSL compiles, that the fallback still blurs, that the
+bezel samples a displaced backdrop, that the four corner bezels match over a uniform backdrop,
+and that the frosted base keeps backdrop detail under 1.3:1. The backdrop path was measured on `ImageComposeScene`:
 **real**, not the bitmap fallback.
 
-Text on glass uses `textSecondaryOnGlass`; `muted` (4.09:1) and `subtle` (2.07:1) are below or
-at body contrast on the worst strong glass, so neither may carry information text there.
-`accent` is never text. `neonPink` reaches 3.66:1 on `glassFillStrong` and 4.05:1 on
+Text on glass uses `textSecondaryOnGlass`; `muted` (4.13:1) and `subtle` (2.09:1) are below
+body contrast on the worst strong glass, so neither may carry information text there.
+`accent` is never text. `neonPink` reaches 3.70:1 on `glassFillStrong` and 4.09:1 on
 `glassFill`, so it is limited to large text and graphics.
 
 Those ratios come from `stride.app.ui.theme.Contrast.kt`, which the theme and surface tests share:

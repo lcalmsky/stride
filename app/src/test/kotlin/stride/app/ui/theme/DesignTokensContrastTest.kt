@@ -90,7 +90,30 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `the field is neutral and stays inside its luminance band`() {
+    fun `popup text clears 4_5 on the frosted base over any backdrop`() {
+        // The base is nearly opaque: a pure white and a pure black backdrop move it the most.
+        val backdrops = mapOf(
+            "brightest" to blendOver(Color.White.copy(alpha = DesignTokens.glassBackdropMix), DesignTokens.glassBase),
+            "darkest" to blendOver(Color.Black.copy(alpha = DesignTokens.glassBackdropMix), DesignTokens.glassBase),
+        )
+        val tokens = mapOf(
+            "text" to DesignTokens.text,
+            "selectedText" to DesignTokens.selectedText,
+            "textSecondaryOnGlass" to DesignTokens.textSecondaryOnGlass,
+        )
+        for ((token, color) in tokens) {
+            for ((backdrop, surface) in backdrops) {
+                val ratio = contrastRatio(color, surface)
+                assertTrue(
+                    ratio >= DesignTokens.contrastText,
+                    "$token on the $backdrop frosted base = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the field is cool graphite and stays inside its luminance band`() {
         val width = 1280
         val height = 820
         val scene = ImageComposeScene(width, height, Density(1f)) {
@@ -119,7 +142,9 @@ class DesignTokensContrastTest {
             brightest = maxOf(brightest, luminance)
             darkest = minOf(darkest, luminance)
         }
-        assertTrue(widestSpread * 255f <= 2f, "the field's widest channel spread = ${widestSpread * 255f}/255")
+        // A very low-chroma blue-violet graphite: a few levels of spread are the described tint,
+        // a wider one would read as a coloured wash rather than a neutral field.
+        assertTrue(widestSpread * 255f <= 10f, "the field's widest channel spread = ${widestSpread * 255f}/255")
         assertTrue(
             brightest <= relativeLuminance(DesignTokens.backgroundLift) + 0.001,
             "rendered max luminance %.6f is above the lift %.6f".format(
@@ -128,10 +153,10 @@ class DesignTokensContrastTest {
             ),
         )
         assertTrue(
-            darkest >= relativeLuminance(DesignTokens.background) - 0.001,
-            "rendered min luminance %.6f is below the background %.6f".format(
+            darkest >= relativeLuminance(DesignTokens.fieldBottom) - 0.001,
+            "rendered min luminance %.6f is below the field bottom %.6f".format(
                 darkest,
-                relativeLuminance(DesignTokens.background),
+                relativeLuminance(DesignTokens.fieldBottom),
             ),
         )
         assertTrue(brightest - darkest >= 0.002, "the falloff is too flat: %.6f".format(brightest - darkest))

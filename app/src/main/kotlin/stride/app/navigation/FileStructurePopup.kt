@@ -34,11 +34,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -52,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
+import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
@@ -192,23 +191,7 @@ fun FileStructurePopup(
                     )
                 }
             }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(DesignTokens.popupFooterHeight)
-                    .drawBehind {
-                        drawLine(DesignTokens.border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-                    }
-                    .padding(horizontal = DesignTokens.space16),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "↑↓ navigate · ⏎ jump · esc close",
-                    color = DesignTokens.textSecondaryOnGlass,
-                    fontSize = DesignTokens.labelTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                )
-            }
+            PopupHintBar("↑↓ Navigate", "↵ Jump", "Esc Close")
         }
     }
 }
@@ -229,7 +212,11 @@ private fun StructureRow(entry: FileStructureEntry, selected: Boolean, onClick: 
     ) {
         Text(
             entry.name,
-            color = if (entry.kind == DeclarationKind.CLASS) DesignTokens.accent2 else DesignTokens.text,
+            color = when {
+                selected -> DesignTokens.selectedText
+                entry.kind == DeclarationKind.CLASS -> DesignTokens.accent2
+                else -> DesignTokens.text
+            },
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,

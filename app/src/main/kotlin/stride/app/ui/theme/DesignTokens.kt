@@ -10,12 +10,14 @@ import androidx.compose.ui.unit.sp
 
 /** Every color, size and spacing the app shell uses. UI files read values from here only. */
 object DesignTokens {
-    val background = Color(0xFF111111)
-    val backgroundLift = Color(0xFF1C1C1C)
-    val surface = Color(0xFF161616)
-    val raised = Color(0xFF202020)
-    val border = Color(0xFF2C2C2C)
+    val background = Color(0xFF13141A)
+    val backgroundLift = Color(0xFF1A1B23)
+    val fieldBottom = Color(0xFF0B0C10)
+    val surface = Color(0xFF0F1015)
+    val raised = Color(0xFF21232B)
+    val border = Color(0xFF2F313A)
     val text = Color(0xFFE6E8F0)
+    val selectedText = Color.White
     val muted = Color(0xFF8A93A6)
     val subtle = Color(0xFF5A6274)
     val accent = Color(0xFF7C5CFF)
@@ -43,7 +45,7 @@ object DesignTokens {
     val glowRadius = 10.dp
     val glowRadiusLarge = 18.dp
     val focusGlowRadius = 6.dp
-    val selectionBarWidth = 3.dp
+    val selectionBarWidth = 2.dp
     const val neonFadeMillis = 150
 
     val uiFont: FontFamily get() = UiFont.family
@@ -96,9 +98,6 @@ object DesignTokens {
         hoverColor = accent2,
     )
 
-    /** Radius of the neutral luminance falloff behind the window, as a fraction of its long side. */
-    val fieldFalloffRadiusFactor = 0.90f
-
     val glassFill = Color.White.copy(alpha = 0.07f)
     val glassFillStrong = Color.White.copy(alpha = 0.10f)
     val glassBorderTop = Color.White.copy(alpha = 0.10f)
@@ -106,18 +105,25 @@ object DesignTokens {
     val glassBorderBottom = Color.White.copy(alpha = 0.06f)
     val hoverFill = Color.White.copy(alpha = 0.04f)
 
+    /** Interior lift and top rim of a selected capsule; the capsule keeps the backdrop out. */
+    val capsuleLift = Color.White.copy(alpha = 0.07f)
+    val capsuleRim = Color.White.copy(alpha = 0.16f)
+
     val glassBlurRadius = 16.dp
     val glassBlurRadiusMax = 20.dp
 
-    /** The floating glass blur is lighter than a slab so the lens keeps code legible. */
-    val liquidGlassBlurRadius = 8.dp
+    /**
+     * Floating glass is frosted: [glassBase] is nearly opaque and the backdrop only shows as a
+     * faint luminance impression plus [glassChromaGain] of its hue.
+     */
+    val glassBase = Color(0xFF17181E)
+    val glassBackdropMix = 0.06f
+    val glassChromaGain = 0.35f
+    val liquidGlassBlurRadius = 14.dp
     val glassBezel = 12.dp
-    val glassLensStrength = 10.dp
+    val glassLensStrength = 6.dp
     val glassAberration = 0.5.dp
-    val glassSaturation = 1.15f
-    val glassBrightness = 1.05f
-    val glassTintAlpha = 0.06f
-    val glassSpecular = 0.30f
+    val glassSpecular = 0.42f
 
     val contentTintAlpha = 0.92f
 
@@ -129,7 +135,7 @@ object DesignTokens {
     val glowBloomAlpha = 0.25f
 
     /** Secondary text on glass; first [muted]→[text] step that clears [contrastText] on `glassFillStrong`. */
-    val textSecondaryOnGlass = Color(0xFF929BAD)
+    val textSecondaryOnGlass = Color(0xFF919AAC)
 
     const val motionShortMillis = 150
     const val motionMediumMillis = 200

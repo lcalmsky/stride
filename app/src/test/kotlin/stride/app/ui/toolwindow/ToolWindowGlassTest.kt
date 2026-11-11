@@ -67,7 +67,7 @@ class ToolWindowGlassTest {
         val pixel = pixels[index(380, 295, SCENE)]
         val spread = spread(pixel)
         val luminance = relativeLuminance(Color(pixel))
-        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+        val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
         val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
         System.err.println(
             "tab-strip pixel=(%d,%d,%d) spread=%d luminance=%.4f band=%.4f..%.4f".format(
@@ -80,7 +80,8 @@ class ToolWindowGlassTest {
                 highest,
             ),
         )
-        assertTrue(spread <= 2, "tab strip channel spread = $spread, expected neutral glass")
+        // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
+        assertTrue(spread <= 12, "tab strip channel spread = $spread, expected neutral glass")
         assertTrue(
             luminance >= lowest - 0.002 && luminance <= highest + 0.002,
             "tab strip luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),

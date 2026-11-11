@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
+import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
@@ -147,7 +148,7 @@ internal fun ChoicePopup(
                     onClick = { onChoose(index) },
                 )
             }
-            Footer()
+            PopupHintBar("↑↓ Navigate", "↵ Run", "Esc Close")
         }
     }
 }
@@ -168,7 +169,7 @@ private fun ChoiceRow(label: String, secondary: String?, selected: Boolean, onCl
     ) {
         Text(
             label,
-            color = DesignTokens.text,
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -185,26 +186,5 @@ private fun ChoiceRow(label: String, secondary: String?, selected: Boolean, onCl
                 overflow = TextOverflow.Ellipsis,
             )
         }
-    }
-}
-
-@Composable
-private fun Footer() {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(DesignTokens.popupFooterHeight)
-            .drawBehind {
-                drawLine(DesignTokens.border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-            }
-            .padding(horizontal = DesignTokens.space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "↑↓ navigate · ⏎ run · esc close",
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.labelTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
     }
 }

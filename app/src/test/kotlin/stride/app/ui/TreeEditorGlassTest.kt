@@ -47,7 +47,7 @@ class TreeEditorGlassTest {
         try {
             state.openFolder(project("tree-project"))
             val pixels = renderAppPixels(state)
-            val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.background))
+            val lowest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.fieldBottom))
             val highest = relativeLuminance(blendOver(DesignTokens.glassFill, DesignTokens.backgroundLift))
             var widest = -1
             var bestX = -1
@@ -75,7 +75,8 @@ class TreeEditorGlassTest {
                     highest,
                 ),
             )
-            assertTrue(widest <= 2, "the tree glass should stay neutral, widest channel spread = $widest")
+            // The cool-graphite field keeps a few levels of spread; a wider one would be a hue.
+            assertTrue(widest <= 12, "the tree glass should stay neutral, widest channel spread = $widest")
             assertTrue(
                 luminance >= lowest - 0.002 && luminance <= highest + 0.002,
                 "tree glass luminance %.4f is outside the fill band %.4f..%.4f".format(luminance, lowest, highest),

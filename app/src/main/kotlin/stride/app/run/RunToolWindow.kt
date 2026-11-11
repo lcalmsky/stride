@@ -129,7 +129,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
             ) {
                 Text(
                     session.configuration.name,
-                    color = if (active) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+                    color = if (active) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
                     fontSize = DesignTokens.smallTextSize,
                     fontFamily = DesignTokens.uiFont,
                     maxLines = 1,
@@ -242,7 +242,7 @@ private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> 
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
             method.name,
-            color = if (selected) DesignTokens.text else DesignTokens.text.copy(alpha = 0.9f),
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text.copy(alpha = 0.9f),
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,

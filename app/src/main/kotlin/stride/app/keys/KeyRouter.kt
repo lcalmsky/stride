@@ -52,6 +52,9 @@ class KeyRouter(
     }
 
     companion object {
+        /** Double Shift is the only action the keymap does not carry; the hint bar shows this. */
+        const val SEARCH_EVERYWHERE_GESTURE = "⇧⇧"
+
         fun modifierOf(key: Key): ModifierKey? = when (key) {
             Key.ShiftLeft, Key.ShiftRight -> ModifierKey.SHIFT
             Key.CtrlLeft, Key.CtrlRight -> ModifierKey.CONTROL

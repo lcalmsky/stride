@@ -32,11 +32,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -56,6 +54,7 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
+import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
@@ -183,7 +182,7 @@ fun CompletionPopup(
                     )
                 }
             }
-            PopupFooter("↑↓ navigate · ⏎ insert · esc close")
+            PopupHintBar("↑↓ Navigate", "↵ Insert", "Esc Close")
         }
     }
 }
@@ -244,7 +243,7 @@ private fun CompletionRow(item: String, selected: Boolean, onClick: () -> Unit) 
     ) {
         Text(
             item,
-            color = DesignTokens.text,
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -359,28 +358,7 @@ fun RenamePopup(
                     modifier = Modifier.padding(horizontal = DesignTokens.space16),
                 )
             }
-            PopupFooter("⏎ rename · esc cancel")
+            PopupHintBar("↵ Rename", "Esc Cancel")
         }
-    }
-}
-
-@Composable
-private fun PopupFooter(text: String) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(DesignTokens.popupFooterHeight)
-            .drawBehind {
-                drawLine(DesignTokens.border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-            }
-            .padding(horizontal = DesignTokens.space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text,
-            color = DesignTokens.textSecondaryOnGlass,
-            fontSize = DesignTokens.labelTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
     }
 }

@@ -87,6 +87,8 @@ import stride.app.editor.find.FindBar
 import stride.app.editor.insertCompletion
 import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
+import stride.app.keys.KeyRouter
+import stride.app.keys.Keymap
 import stride.app.navigation.BookmarksPopup
 import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructure
@@ -634,7 +636,7 @@ private fun SearchPill(onClick: () -> Unit) {
         )
         Spacer(Modifier.width(DesignTokens.space8))
         Text(
-            "⇧⇧",
+            KeyRouter.SEARCH_EVERYWHERE_GESTURE,
             color = DesignTokens.textSecondaryOnGlass,
             fontSize = DesignTokens.labelTextSize,
             fontFamily = DesignTokens.uiFont,
@@ -781,7 +783,7 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
         Spacer(Modifier.width(8.dp))
         Text(
             row.file.name,
-            color = if (selected) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+            color = if (selected) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -912,7 +914,7 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
         Spacer(Modifier.width(8.dp))
         Text(
             editor.file.name,
-            color = if (active) DesignTokens.text else DesignTokens.textSecondaryOnGlass,
+            color = if (active) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
             fontSize = DesignTokens.tabTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -1051,7 +1053,7 @@ private fun EmptyEditor() {
     ) {
         Wordmark(alpha = 0.4f, width = 280.dp)
         Spacer(Modifier.height(28.dp))
-        ShortcutList()
+        ShortcutList(hasProject = true)
     }
 }
 
@@ -1066,7 +1068,7 @@ private fun NoProjectState(onOpenFolder: () -> Unit, modifier: Modifier) {
         Spacer(Modifier.height(24.dp))
         OpenFolderButton(onOpenFolder)
         Spacer(Modifier.height(28.dp))
-        ShortcutList()
+        ShortcutList(hasProject = false)
     }
 }
 
@@ -1169,17 +1171,10 @@ private fun OpenFolderButton(onClick: () -> Unit) {
     }
 }
 
-private data class Shortcut(val label: String, val keys: String)
-
-private val shortcuts = listOf(
-    Shortcut("Search Everywhere", "⇧⇧"),
-    Shortcut("Open Folder", "⌘O"),
-    Shortcut("Save", "⌘S"),
-    Shortcut("Close Tab", "⌘W"),
-)
-
 @Composable
-private fun ShortcutList() {
+private fun ShortcutList(hasProject: Boolean) {
+    val keymap = remember { Keymap.forPlatform(KeyRouter.isMacOs()) }
+    val shortcuts = remember(keymap, hasProject) { welcomeHints(keymap, hasProject) }
     Column(
         Modifier.width(300.dp),
         verticalArrangement = Arrangement.spacedBy(DesignTokens.space8),

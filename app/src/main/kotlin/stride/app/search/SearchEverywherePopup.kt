@@ -37,11 +37,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -62,6 +60,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import stride.app.ui.FileTypeIcon
+import stride.app.ui.PopupHintBar
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.SearchIcon
 import stride.app.ui.theme.CapsuleEdge
@@ -180,7 +179,7 @@ fun SearchEverywherePopup(
             } else if (rows.isNotEmpty()) {
                 ResultList(rows, tab, results.size, selectedIndex, onChoose)
             }
-            Footer()
+            PopupHintBar("↑↓ Navigate", "⇥ Switch Tab", "↵ Open", "Esc Close")
         }
     }
 }
@@ -377,7 +376,7 @@ private fun ResultRow(entry: SearchResultEntry, selected: Boolean, onClick: () -
         }
         Text(
             entry.presentationText,
-            color = DesignTokens.text,
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
@@ -407,38 +406,6 @@ private fun secondaryText(entry: SearchResultEntry): String =
     } else {
         entry.secondaryText
     }
-
-@Composable
-private fun Footer() {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(DesignTokens.popupFooterHeight)
-            .drawBehind {
-                drawLine(DesignTokens.border, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx())
-            }
-            .padding(horizontal = DesignTokens.space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        FooterHint("↑↓ Navigate")
-        Spacer(Modifier.width(20.dp))
-        FooterHint("⇥ Switch Tab")
-        Spacer(Modifier.width(20.dp))
-        FooterHint("↵ Open")
-        Spacer(Modifier.width(20.dp))
-        FooterHint("Esc Close")
-    }
-}
-
-@Composable
-private fun FooterHint(text: String) {
-    Text(
-        text,
-        color = DesignTokens.textSecondaryOnGlass,
-        fontSize = DesignTokens.labelTextSize,
-        fontFamily = DesignTokens.uiFont,
-    )
-}
 
 /** Popup open fade from 0 to 1; the final state on the first frame when animations are disabled. */
 @Composable
