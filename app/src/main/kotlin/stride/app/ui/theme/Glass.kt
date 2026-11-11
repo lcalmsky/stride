@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -57,6 +58,7 @@ import org.jetbrains.skia.RuntimeShaderBuilder
 import org.jetbrains.skia.SamplingMode
 import org.jetbrains.skia.Shader
 import org.jetbrains.skia.Surface
+import stride.app.editor.LocalEditorScrollState
 
 /** [Modifier.blur]'s radius-to-sigma factor, matching Compose's `BlurSigmaScale`. */
 private const val BLUR_SIGMA_SCALE = 0.57735f
@@ -66,6 +68,9 @@ private const val BACKDROP_BLUR_DOWNSCALE = 8
 
 /** The lens blur runs on a 1/[LENS_DOWNSCALE] copy of the backdrop; the bend stays soft. */
 private const val LENS_DOWNSCALE = 4
+
+/** Capsules frost the band they float over at a coarser scale; only the soft field is needed. */
+private const val CAPSULE_DOWNSCALE = 8
 
 /** The lens displacement fades to zero over this distance from the outer rim. */
 private val LENS_TAPER = 2.dp
@@ -618,11 +623,11 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = liquidBack
 )
 
 /**
- * A floating control capsule: a tinted glass fill, the specular rim and the soft shadow. It
- * carries no backdrop pass of its own: the scroll edge effect has already blurred the content
- * band it floats over, so the capsule reads as the same material at a fraction of the cost.
+ * A floating control capsule: its backdrop blurred through the liquid lens, the specular rim,
+ * the soft shadow and the tint, so code under it reads as a soft impression rather than glyphs.
  */
 fun Modifier.capsuleGlass(shape: Shape): Modifier = slabShadow(shape)
+    .capsuleFrost(shape)
     .glassSlabRims(shape)
     .drawBehind {
         clipPath(capsulePath(shape, size)) {
@@ -630,6 +635,91 @@ fun Modifier.capsuleGlass(shape: Shape): Modifier = slabShadow(shape)
             drawRect(DesignTokens.capsuleLift)
         }
     }
+
+/**
+ * The capsule's own backdrop pass. A layered editor viewport cannot be sampled, so in that mode
+ * the capsule keeps a cached frost fill instead of reading the backdrop.
+ */
+private fun Modifier.capsuleFrost(shape: Shape): Modifier = composed {
+    val layered = LocalEditorScrollState.current?.layered == true
+    val cache = remember { BackdropFilterCache() }
+    DisposableEffect(cache) {
+        onDispose { cache.dispose() }
+    }
+    if (layered) {
+        Modifier.drawBehind {
+            clipPath(capsulePath(shape, size)) {
+                drawRect(DesignTokens.glassBase.copy(alpha = 0.94f))
+            }
+        }
+    } else {
+        drawWithContent {
+            val outline = shape.createOutline(size, layoutDirection, this)
+            val radius = when (outline) {
+                is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
+                is Outline.Rectangle -> 0f
+                is Outline.Generic -> 0f
+            }
+            val liquid = cache.filterFor(
+                width = size.width,
+                height = size.height,
+                radius = radius,
+                density = density,
+                sigma = DesignTokens.capsuleFrostBlur.toPx() * BLUR_SIGMA_SCALE,
+                bezel = DesignTokens.capsuleBezel.toPx(),
+                strength = DesignTokens.capsuleLensStrength.toPx(),
+                aberration = DesignTokens.glassAberration.toPx(),
+                taper = LENS_TAPER.toPx() / CAPSULE_DOWNSCALE,
+                endTaper = DesignTokens.capsuleEndTaper.toPx() / CAPSULE_DOWNSCALE,
+                backdropMix = DesignTokens.glassBackdropMix,
+                downscale = CAPSULE_DOWNSCALE,
+            )
+            GlassCacheStats.lastSurfaceLiquid = liquid != null
+            val native = drawContext.canvas.nativeCanvas
+            native.save()
+            cache.path?.let { native.clipPath(it) } ?: native.clipPath(capsulePath(shape, size).asSkiaPath())
+            if (liquid != null) {
+                cache.layer?.let { native.saveLayer(it) } ?: native.saveLayer(
+                    SaveLayerRec(org.jetbrains.skia.Rect(0f, 0f, size.width, size.height), null, liquid),
+                )
+                native.restore()
+            } else {
+                drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = size)
+            }
+            native.restore()
+            drawContent()
+        }
+    }
+}
+
+/**
+ * Blurs the content already drawn under this element, without tinting it: the scroll edge effect
+ * uses it so code softens toward the window edge. Skipped when the editor scrolls in a layer.
+ */
+fun Modifier.backdropBlur(blurRadius: Dp = DesignTokens.scrollEdgeBlur): Modifier = composed {
+    val layered = LocalEditorScrollState.current?.layered == true
+    val density = LocalDensity.current
+    val filter = remember(blurRadius, layered, density) {
+        if (layered) null else backdropImageFilter(with(density) { blurRadius.toPx() } * BLUR_SIGMA_SCALE)
+    }
+    DisposableEffect(filter) {
+        onDispose { filter?.close() }
+    }
+    if (filter == null) {
+        Modifier
+    } else {
+        drawBehind {
+            if (size.width <= 0f || size.height <= 0f) return@drawBehind
+            val bounds = org.jetbrains.skia.Rect.makeWH(size.width, size.height)
+            val native = drawContext.canvas.nativeCanvas
+            native.save()
+            native.clipRect(bounds)
+            native.saveLayer(SaveLayerRec(bounds, null, filter))
+            native.restore()
+            native.restore()
+        }
+    }
+}
 
 /**
  * The floating sidebar: a translucent tint over the background extension, so the mirrored,
@@ -799,8 +889,11 @@ private data class StripKey(
     val sigma: Float,
 )
 
-/** 1/[MIRROR_DOWNSCALE] copy of the source strip; the blur hides the rest of the detail. */
-private const val MIRROR_DOWNSCALE = 3
+/**
+ * 1/[MIRROR_DOWNSCALE] copy of the source strip. Only a very low-frequency colour field may
+ * survive: at this scale the line rhythm and glyph shapes are gone even before the blur.
+ */
+private const val MIRROR_DOWNSCALE = 16
 
 private fun MirroredStripCache.imageFor(
     key: Any,

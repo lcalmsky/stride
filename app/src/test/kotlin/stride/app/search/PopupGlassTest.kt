@@ -301,14 +301,15 @@ class PopupGlassTest {
         val shape = RoundedCornerShape(DesignTokens.capsuleHeight / 2)
         val dark = findBarPixels(shape, DesignTokens.background)
         val bright = findBarPixels(shape, Color(0xFFE8E8E8))
-        // The liquid glass carries the backdrop's luminance, so a bright backdrop lifts it.
+        // The frosted glass carries a fraction of the backdrop's luminance, so a bright backdrop
+        // lifts it even though its detail is gone.
         val darkInterior = relativeLuminance(Color(dark[index(300, 18, 600)]))
         val brightInterior = relativeLuminance(Color(bright[index(300, 18, 600)]))
         System.err.println(
             "find-bar backdrop dark=%.4f bright=%.4f".format(darkInterior, brightInterior),
         )
         assertTrue(
-            brightInterior > darkInterior + 0.1,
+            brightInterior > darkInterior + 0.04,
             "the find bar glass should follow its backdrop: dark %.4f bright %.4f"
                 .format(darkInterior, brightInterior),
         )

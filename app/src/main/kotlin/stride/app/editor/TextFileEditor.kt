@@ -788,18 +788,21 @@ class TextFileEditor(
                 val textStartPx = with(density) {
                     (leftPad + gutterWidth + DesignTokens.space16).toPx()
                 }
+                // The extension also covers the window inset left of the sidebar, so code never
+                // leaks past its outer edge; both regions show the same soft field.
+                val extensionLeft = sidebar.left + sidebar.width
                 Box(
                     Modifier
-                        .offset(x = sidebar.left, y = sidebar.top)
-                        .width(sidebar.width)
+                        .offset(x = 0.dp, y = sidebar.top)
+                        .width(extensionLeft)
                         .height(extensionWidth)
                         // The document right of the sidebar's edge, mirrored under its glass.
                         .backgroundExtension(
                             key = extensionKey,
                             cache = stripCache,
-                            sourceLeft = sidebar.left + sidebar.width,
+                            sourceLeft = extensionLeft,
                             sourceTop = sidebar.top,
-                            sourceWidth = sidebar.width,
+                            sourceWidth = extensionLeft,
                         ) { canvas ->
                             canvas.save()
                             canvas.translate(textStartPx - horizontal.value, topPadPx - vertical.value)

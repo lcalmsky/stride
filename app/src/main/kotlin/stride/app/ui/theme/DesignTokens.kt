@@ -148,8 +148,14 @@ object DesignTokens {
     /** The capsule tint over the already blurred content band, plus its neutral lift. */
     val capsuleFill = Color(0xFF14151B).copy(alpha = 0.58f)
 
+    /** A capsule's own backdrop blur: strong enough that code under it is only a soft impression. */
+    val capsuleFrostBlur = 20.dp
+
+    /** The scroll edge effect: the content band under the capsule rows softens toward the edge. */
+    val scrollEdgeBlur = 14.dp
+
     /** The strip mirrored behind the sidebar is blurred hard so only its colour and rhythm remain. */
-    val backgroundExtensionBlur = 9.dp
+    val backgroundExtensionBlur = 56.dp
 
     /** The specular slab rim: bright at the top and left, a faint line at the bottom. */
     val slabRimTop = Color.White.copy(alpha = 0.22f)

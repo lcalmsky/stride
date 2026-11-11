@@ -131,6 +131,7 @@ import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.SidebarChrome
+import stride.app.ui.theme.backdropBlur
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
@@ -638,11 +639,14 @@ private fun refocusEditor(state: AppState) {
 }
 
 /**
- * The scroll edge effect: the content under the floating control rows fades into the dark field
- * toward the window edge and stays sharp at the band's inner edge, so there is no painted bar.
+ * The scroll edge effect: the content under the floating control rows softens toward the window
+ * edge — blurred and faded into the dark field — and stays sharp at the band's inner edge, so
+ * there is no painted bar.
  */
 @Composable
 private fun BoxScope.ContentEdgeFade(topBand: Dp, bottomBand: Dp) {
+    Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(topBand).backdropBlur())
+    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(bottomBand).backdropBlur())
     Canvas(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(topBand)) {
         drawRect(
             Brush.verticalGradient(

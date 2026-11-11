@@ -216,12 +216,14 @@ class TreeEditorGlassTest {
                 .boundsInRoot
             val pixels = captureToImage().pixels()
             val x = (nameBounds.right + 12 - 22).toInt()
-            val top = relativeLuminance(Color(pixels[index(x, DesignTokens.chromeInset.value.toInt() + 1)]))
+            // The rim is the outermost painted row of the capsule; its frosted interior carries the
+            // scroll edge fade, so the second row in is darker than the bottom interior.
+            val top = relativeLuminance(Color(pixels[index(x, DesignTokens.chromeInset.value.toInt())]))
             val bottom = relativeLuminance(
                 Color(
                     pixels[index(
                         x,
-                        (DesignTokens.chromeInset + DesignTokens.capsuleHeight).value.toInt() - 2,
+                        (DesignTokens.chromeInset + DesignTokens.capsuleHeight).value.toInt() - 1,
                     )],
                 ),
             )
@@ -439,6 +441,61 @@ class TreeEditorGlassTest {
             ratio >= DesignTokens.contrastText,
             "muted on the worst content tint = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
         )
+    }
+
+    /**
+     * At or past the layered-scroll threshold the capsules cannot sample the backdrop, so they
+     * paint the cached frost instead; the label must stay legible on that fill.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `layered scroll keeps the status capsule legible`() = runSkikoComposeUiTest(
+        size = Size(WIDTH.toFloat(), HEIGHT.toFloat()),
+        density = Density(1f),
+    ) {
+        val state = AppState()
+        try {
+            val root = longProject("layered-project", glyph = 'y')
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Long.kt"))) as TextFileEditor
+            editor.scrollLayerOverride = true
+            editor.gotoLine("100:290")
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    App(state, onOpenFolder = {})
+                }
+            }
+            waitForIdle()
+            assertTrue(editor.verticalScroll.layered, "the forced layered path should be active")
+            val bounds = onAllNodesWithText("UTF-8", useUnmergedTree = true)
+                .fetchSemanticsNodes()
+                .minBy { it.boundsInRoot.top }
+                .boundsInRoot
+            val pixels = captureToImage().pixels()
+            val luminances = ArrayList<Double>()
+            for (y in bounds.top.toInt() until bounds.bottom.toInt()) {
+                for (x in bounds.left.toInt() until bounds.right.toInt()) {
+                    luminances += relativeLuminance(Color(pixels[index(x, y)]))
+                }
+            }
+            luminances.sort()
+            val background = luminances[luminances.size / 2]
+            val text = luminances.last()
+            val ratio = (text + 0.05) / (background + 0.05)
+            System.err.println(
+                "layered-contrast background=%.4f text=%.4f ratio=%.3f".format(background, text, ratio),
+            )
+            assertTrue(
+                ratio >= DesignTokens.contrastText,
+                "layered status capsule text = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+            )
+        } finally {
+            state.dispose()
+        }
     }
 
     /** The status capsule sits over scrolled code; its label run keeps body contrast. */

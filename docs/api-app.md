@@ -1406,7 +1406,8 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `chromeInset` / `chromeGap` / `contentGap` | 10 dp / 8 dp / 10 dp |
 | `capsuleHeight` / `statusCapsuleHeight` / `sidebarRadius` | 34 dp / 32 dp / 20 dp |
 | `sidebarFill` / `capsuleFill` | #14151B at 30% / 58% alpha |
-| `backgroundExtensionBlur` | 9 dp (mirrored strip, cached) |
+| `capsuleFrostBlur` / `scrollEdgeBlur` | 20 dp (capsule backdrop) / 14 dp (edge band) |
+| `backgroundExtensionBlur` | 56 dp (mirrored strip, cached) |
 | `slabShadow` | 16 dp |
 | `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% |
 | `slabInnerRimInset` / `slabInnerRim` | 2 dp / white 6% |
@@ -1432,6 +1433,7 @@ files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing 
 val LocalMeshBitmap: ProvidableCompositionLocal<MeshBitmapHolder?>
 fun Modifier.glassPanel(shape: Shape = RectangleShape): Modifier
 fun Modifier.capsuleGlass(shape: Shape): Modifier
+fun Modifier.backdropBlur(blurRadius: Dp = DesignTokens.scrollEdgeBlur): Modifier
 fun Modifier.sidebarGlass(shape: Shape): Modifier
 fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
                           fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
@@ -1476,24 +1478,28 @@ inset 2 dp. Its Skia paths, paints and shaders are cached per size. `labelScrim`
 45% band inset 2 dp behind the run tool window's status word.
 
 `capsuleGlass` is the floating control material: a tinted fill (`capsuleFill`, #14151B at 58%)
-plus the neutral lift over it, with `slabShadow` and `glassSlabRims`. It carries no backdrop
-pass of its own; the scroll edge fade has already dimmed the content band it floats over, and
-the render harness measures each backdrop layer at about 6.5 ms, so capsules stay cheap.
+plus the neutral lift over it, with `slabShadow` and `glassSlabRims`. Its own backdrop pass
+(`capsuleFrost`) is the liquid lens blurring the content beneath at `capsuleFrostBlur` (20 dp)
+on a 1/8-resolution copy, clipped to the capsule; when the editor scrolls in a layer the
+backdrop cannot be sampled and the capsule paints a cached near-opaque frost fill instead.
 `sidebarGlass` is the sidebar's material: a more translucent tint (`sidebarFill`, 30%) over the
 background extension, plus the same shadow and rim.
 
 **Background extension.** The editor renders the strip of its real document that lies right of
 the sidebar's edge into a small offscreen image, mirrors it horizontally across that edge,
-blurs it at `backgroundExtensionBlur` (9 dp), and caches it (`MirroredStripCache`) keyed by the
+blurs it at `backgroundExtensionBlur` (56 dp), and caches it (`MirroredStripCache`) keyed by the
 text layout, the spans, both scroll offsets, the sidebar geometry and the editor size. A static
 frame only blits the cached image; scrolling or editing rebuilds it once. `SidebarChrome` is
 provided by `App` so the editor knows where the sidebar sits; a layered editor skips the pass.
-The strip is painted at 1/3 resolution before the blur, which is invisible through the blur.
+The strip is painted at 1/16 resolution before the blur, so only a low-frequency colour field
+survives: no line rhythm, glyph shape or stripe. The element also covers the window inset left
+of the sidebar, so code does not leak past its outer edge.
 
-**Scroll edge effect.** Two gradients of `scrim` (black 30%), one at the top and one at the
-bottom of the window, fade the content under the capsule rows toward the field and leave the
-content at the band's inner edge sharp. There is no painted bar and no per-frame blur layer;
-the bands are 52 dp (top) and 50 dp (bottom), inside the 40–56 dp the design calls for.
+**Scroll edge effect.** `backdropBlur` blurs the content under each capsule row at
+`scrollEdgeBlur` (14 dp) across the full window width, and two gradients of `scrim` (black 30%)
+fade it toward the field, so content softens into the edge instead of staying crisp up to the
+window boundary. There is no painted bar; the bands are 52 dp (top) and 50 dp (bottom), inside
+the 40–56 dp the design calls for.
 
 `backdropGlass` runs the liquid glass shader over what is already drawn beneath it.
 `GlassShader` compiles one SkSL program (`RuntimeEffect.makeForShader`) whose uniforms are the
@@ -1524,9 +1530,9 @@ child shader.
   that copy's pixels. Scaling the runtime shader's own output instead would
   magnify its bezel from the top-left corner, which is why the scale is applied inside the
   filter chain before the shader. The filter is cached per panel size and radius. The interior takes a
-  single `content.eval`; only bezel pixels take three. The shader is now used only by
-  `backdropGlass` (popups, the go-to-line field); the sidebar and control capsules do not run a
-  backdrop pass.
+  single `content.eval`; only bezel pixels take three. The shader is used by `backdropGlass`
+  (popups, the go-to-line field) and by the control capsules (`capsuleFrost`, on a coarser
+  1/8 copy); the sidebar does not run its own backdrop pass.
 
 When `RuntimeEffect.makeForShader` fails (or the filter cannot be built), `GlassShader` returns
 `null` and the glass falls back to the previous blur-only path with the hairline border.
@@ -1540,9 +1546,10 @@ strip untouched. `TreeEditorGlassTest` adds the pixel checks for the new chrome:
 document changes the pixels inside the sidebar (the mirror is real content), the 8 dp gap
 between the top capsules follows the code under the floating row (no full-width bar), the top
 capsule's rim is brighter than its bottom edge, the selected tab's pill moves to the newly
-selected tab, the status capsule's label run clears 4.5:1 over scrolled code (measured 5.6:1),
-and the search capsule's shortcut hint clears it on its glass (5.5:1). The backdrop path was
-measured on `ImageComposeScene`: **real**, not the bitmap fallback.
+selected tab, the status capsule's label run clears 4.5:1 over scrolled code (measured 5.0:1)
+and on the layered frost fill (5.6:1), and the search capsule's shortcut hint clears it on its
+glass (5.5:1). The backdrop path was measured on `ImageComposeScene`: **real**, not the bitmap
+fallback.
 
 Text on glass uses `textSecondaryOnGlass`; `muted` (4.13:1) and `subtle` (2.09:1) are below
 body contrast on the worst strong glass, so neither may carry information text there.
@@ -1574,11 +1581,10 @@ The glass is deliberately cheap:
   translucent tint over the cached mirror, and every control is a capsule over it.
 - The selection capsule lens is a small 6 dp bezel filter, cached per row or pill size; only the
   selected tree row and the tab group's selection pill draw it.
-- The background extension is rendered at 1/3 resolution and blurred and cached once per
+- The background extension is rendered at 1/16 resolution and blurred and cached once per
   document/scroll/size key; a static frame only blits it. A layered editor (≥1 000 lines) skips
-  it. The scroll edge effect is a gradient of `scrim`, not a backdrop layer: the render harness
-  measures each backdrop layer at about 6.5 ms, so the design uses no per-frame backdrop pass on
-  the chrome.
+  it. Each floating capsule and each scroll edge band runs one backdrop layer per frame; a
+  layered editor falls back to the capsule frost fill and skips the band blur.
 - The floating glass lens filter is cached per panel size and radius, and is evaluated on a
   1/4-resolution copy. `liquidGlassBlurRadius` must stay at 8 dp or above: at 5 dp Skia stops
   downscaling inside the blur and the Search Everywhere scene costs about 5 ms more.
@@ -1590,14 +1596,14 @@ content, 2.0 for popups). The baselines were measured on a solid background, so 
 effectively 0 ms; one opaque full-screen field image at 2560×1640 costs 0.948 ms in the
 software-raster harness, which is what the 1.0 ms L0 budget admits.
 
-The twelve scenes measured for the edge-to-edge chrome (p50, software raster, medians of three
-runs at 2560×1640) are 2.13, 9.85, 9.89, 19.11, 14.80, 10.19, 18.93, 11.63, 20.19, 9.34, 9.21
-and 10.18 ms. The parent commit (f8e659f, v1.2.0) measured 2.15, 5.38, 5.18, 17.90, 13.54,
-5.15, 18.33, 5.70, 15.44, 6.55, 6.31 and 7.51 ms on the same machine. The editor scenes pay
-about 4.5 ms for the sidebar's cached mirror blit and the capsule shadows/rims; the popup scenes
-pay about 2–4 ms for the same chrome behind the modal. The GPU path evaluates the popup's SkSL
-as one shader pass and blits the same cached mirror, so the desktop window's cost is bounded by
-the content draw.
+The twelve scenes measured for the frosted capsules (p50, software raster, medians of three
+runs at 2560×1640) are 2.58, 13.00, 13.15, 22.44, 18.01, 12.97, 22.47, 15.49, 22.87, 12.85,
+13.27 and 12.98 ms. The parent commit (cbdc5dd) measured 1.97, 9.82, 9.88, 18.67, 15.36, 9.39,
+18.69, 10.93, 19.83, 8.87, 9.03 and 9.97 ms on the same machine. The editor scenes pay about
+3 ms for the two edge bands and the capsule frost layers (one backdrop layer each); the popup
+scenes pay 3–4 ms for the same chrome behind the modal. On the GPU path each backdrop layer is
+one texture copy plus a blur shader, so the desktop window's cost stays bounded by the content
+draw.
 
 The material and the lens are built from three generic effects: a thin base (a neutral floor
 carrying a visible luminance and hue impression of the blurred backdrop), lens refraction at the
