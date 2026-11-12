@@ -172,7 +172,7 @@ class UiSnapshotTest {
     }
 
     @Test
-    @Order(5)
+    @Order(15)
     fun `search without results light snapshot`() {
         val state = AppState()
         try {

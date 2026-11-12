@@ -1023,18 +1023,16 @@ class TextFileEditor(
                     .fillMaxWidth(),
                 style = DesignTokens.scrollbarStyle,
             )
-            if (gotoLineVisible) {
-                GotoLinePopup(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = chromeInsets.top + DesignTokens.space12, end = DesignTokens.space12),
-                )
-            }
         }
     }
 
+    /**
+     * The Go to Line popup. It is hosted by the editor area, not by the editor content: the
+     * native editor surface clips its content to the popup's own hole, so a popup drawn there
+     * would clip its own text away.
+     */
     @Composable
-    private fun GotoLinePopup(modifier: Modifier) {
+    internal fun GotoLinePopup(modifier: Modifier = Modifier) {
         var input by remember { mutableStateOf("") }
         var fieldHadFocus by remember { mutableStateOf(false) }
         val inputFocus = remember { FocusRequester() }

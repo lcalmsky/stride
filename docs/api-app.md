@@ -988,8 +988,10 @@ resizes the buffer through `JediTerminal.resize` and the PTY through `TtyConnect
 `TerminalView` draws the screen and scrollback on a `Canvas`: per-cell foreground and
 background, bold and inverse, a neon cursor block with a glow when focused, and a whole-line
 selection copied with ⌘C. The wheel scrolls the history and new output returns to the bottom.
-ANSI indices 0–15 come from `TerminalPalette.ansi` (the same neon family as `DesignTokens`);
-256-color and truecolor values use the RGB `TerminalColor` directly.
+ANSI indices 0–15 come from `TerminalPalette.ansi` for glyphs and `originalAnsi` for fills (the
+same neon family as `DesignTokens`); on the native glass a foreground entry is moved through
+`readableOn` while a background keeps its original colour, and inverse video swaps the original
+colours. 256-color and truecolor values use the RGB `TerminalColor` directly.
 
 Key flow: `handleWindowKeyEvent` routes through the keymap first. In the `TERMINAL` context
 only GLOBAL bindings match (⌘S, ⌘W, ⌘O, ⌘⇧], ⌥F12, ⌘4, ⌘⇧F, ⌘⇧O, ⌘E, ⌃R, ⌘F2), so those never
@@ -1282,7 +1284,8 @@ tint, darker than the chrome glass), `raised` #21232B (hover and key caps), `bor
 
 **Light palette** (`LightPalette`): neutral light surfaces with dark ink — `background`
 #F3F4F8 with `backgroundLift` #FBFCFE and `fieldBottom` #E9ECF2, the opaque editor
-`surface` #FFFFFF (the reference light editor plane), `raised` #F0F2F6, `border` #D2D7E0,
+`surface` #FFFFFF (the Skia path's reference light editor plane; the native path has no
+opaque fill there), `raised` #F0F2F6, `border` #D2D7E0,
 `text` #1D2330, `selectedText` #10151F, `muted` #576070, `subtle` #8A92A2. The accents are
 darkened so text and indicators keep their contrast on white: `accent` #5B3FD6, `accent2`
 #085683, `accentHover` #4A32B8, and the selection is the accent at 30% alpha. The neon
@@ -1300,9 +1303,9 @@ Code highlighting takes the scheme of the effective appearance through
 parentheses, comma, dot, semicolon, bad character) at 4.5:1 or better on the white editor
 surface. The gutter numbers, current-line glow, selection fill, caret and find-match
 backgrounds are palette tokens, and `App` re-asserts the find-match spans when the
-appearance changes. `TerminalPalette` exposes `foreground`, `background`, `cursor` and the
-16 ANSI colors as appearance-aware getters; the light ANSI palette is a darkened set in
-which every index clears 4.5:1 on the light terminal plane.
+appearance changes. `TerminalPalette` exposes `foreground`, `background`, `defaultCellBackground`,
+`cursor` and the 16 ANSI colors as appearance-aware getters; the light ANSI palette is a
+darkened set in which every index clears 4.5:1 on the light terminal plane.
 
 Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.uiFont` reads
 `UiFont.family`, so the whole UI follows a runtime choice between Pretendard and the system
@@ -1714,11 +1717,13 @@ Status glyphs keep their shapes and colors (✓ ✕ ●) and draw no halo; the r
 removed.
 
 The terminal no longer paints `TerminalPalette.background` as a full-canvas rect. Default cells
-are left unpainted so the panel tint shows through, while cells with an explicit non-default
-background are still filled. `TerminalPalette` is appearance-aware: the light palette swaps
-in a darkened 16-colour ANSI set whose every index clears 4.5:1 on the light terminal plane,
-and the foreground, background and cursor follow the palette. The cursor and the selection
-drawing are unchanged.
+are left unpainted so the panel tint shows through (`defaultCellBackground` is transparent on
+the native glass), while cells with an explicit non-default background are still filled from
+`originalAnsi`, never from the contrast-adjusted foreground list; inverse video swaps those
+original colours. `TerminalPalette` is appearance-aware: the light palette swaps in a darkened
+16-colour ANSI set whose every index clears 4.5:1 on the light terminal plane, and the
+foreground, background and cursor follow the palette. The cursor and the selection drawing are
+unchanged.
 
 ### Applied surfaces: tree, tabs and editor
 
@@ -1881,8 +1886,10 @@ and background colour, and a failed attach restores before returning. `NativeGla
 asserts every value on a real Compose window peer that is never shown: the Skia layer is
 non-opaque with background alpha 0, all 4 ancestors are clear, the window background alpha is
 0 and the container is below the content view; after detach it reports the window opaque again
-and the restored layer count. The `layerTree` output (classes, opaque flags, background alpha)
-is printed by the test as the evidence.
+and the restored layer count. It also proves the popup shadow sibling: opacity above zero, a
+shadow path matching the popup's frame size, ordered below its glass view, and gone from the
+state (and the container) once the popup piece leaves the sync. The `layerTree` output
+(classes, opaque flags, background alpha) is printed by the test as the evidence.
 
 `NativeGlass` looks for the dylib at `stride.glass.library`, then
 `compose.application.resources.dir/libstrideglass.dylib`, then `../Resources` under the runtime.
@@ -1910,20 +1917,27 @@ number of attempts) and the reason is logged once when the path is given up.
   window's tab strip is a native piece too (`run-tabs`), and `capsuleGlass` has no
   `forceSkia` escape because no opaque panel is left.
 - A popup floats on system glass: `nativeGlass(..., hole = true, shadow = true)` reports its
-  window rectangle to `GlassHoles` and asks the native layer for its drop shadow. Compose
-  still clips the editor and console drawing to the surface minus those holes
+  window rectangle to `GlassHoles` and asks the native side for its drop shadow. Every popup
+  is composed outside the clipped content it casts a hole into; `EditorArea` hosts the Go to
+  Line popup for that reason (inside `TextFileEditor.Content` it was clipped away by its own
+  hole). Compose still clips the editor and console drawing to the surface minus those holes
   (`contentClip(shape, holes)`), because native glass is always below Compose drawing and code
   under a popup would otherwise show through the popup's own material.
 - The modal scrim uses `scrimSurface(alpha, holes)`: on the native path it cuts every
   reportable hole out of the scrim and scales the palette scrim by
   `nativeScrimFactor` (0.25), so the window stays glass instead of turning flat grey (on the
   Skia path the popup is painted over the full scrim and the fill is unchanged).
-- Text over the editor glass keeps 4.5:1 on the worst plate the glass can composite
-  (`editorGlassFloor`: the tint over a white and a black desktop, under the selection, current
-  line and find-match overlays). `glassColorScheme` moves only the syntax tokens that fall
-  short, `glassGutterColor` the line numbers, and `mutedOnGlass` / `accent2OnGlass` /
+- Text over the editor glass keeps 4.5:1 on every plate the glass can composite
+  (`editorGlassPlates`: the tint over a white and a black desktop, under the selection,
+  current line, glow and find-match overlays, and under the combinations that really stack —
+  selection + match, selection + match + glow, current line + match, selection + glow).
+  `editorGlassFloor` is the extreme plate of that set (the lightest for the dark palette, the
+  darkest for the light one). `glassColorScheme` moves only the syntax tokens that fall short,
+  `glassGutterColor` the line numbers, and `mutedOnGlass` / `accent2OnGlass` /
   `neonPinkOnGlass` / `neonLimeOnGlass` / `neonAmberOnGlass` the console labels.
-  `TerminalPalette.ansi` maps every ANSI entry through `readableOn` in the same way. The
+  `TerminalPalette.ansi` maps every ANSI foreground entry through `readableOn` in the same
+  way; ANSI backgrounds, including inverse-video blocks, keep the unadjusted
+  `TerminalPalette.originalAnsi` and the default cell background stays transparent. The
   find-match plate on the glass uses `GLASS_FIND_MATCH_ALPHA` (0.22) instead of 0.55.
 
 The merged title row and the title-bar client properties are one switch, decided by the pure
@@ -1943,10 +1957,15 @@ reports the element's window-relative bounds, its shape's corner radius, the sty
 `snapshotFlow { revision }` + `withFrameNanos`; unchanged frames never cross the bridge. The
 reported surfaces are the sidebar, the editor and tool-window bodies, the three top
 capsules, the bottom path/status capsules, the find bar, the tool-window switcher, the run
-tab strip, the open-folder button and every popup. A piece with `shadow = true` gets a CALayer
-drop shadow (black 26%, 24 pt radius, 8 pt below) sized to its rounded path; the popups use
-this instead of `Modifier.shadow`, whose penumbra would paint inside the panel's transparent
-Compose content and read as an opaque fill.
+tab strip, the open-folder button and every popup. A piece with `shadow = true` gets a sibling
+`NSView` in the container, ordered directly below its glass view: the glass layer sets
+`masksToBounds` and would clip a shadow on itself. The sibling has no mask, follows the piece's
+frame on every sync (rounded `shadowPath` of the same size and radius) and is removed in the
+same sync as the piece, so it carries the drop shadow (black 26%, 24 pt radius, 8 pt below).
+The popups use this instead of `Modifier.shadow`, whose penumbra would paint inside the
+panel's transparent Compose content and read as an opaque fill. The state query reports the
+shadow from the sibling: opacity, shadow-path bounds and whether it is ordered below its glass
+view.
 
 `Modifier.windowDragRegion(key)` reports the empty strip of the merged title row to the same
 registry. On flush the reported rows are cut by every glass piece on that band
@@ -2001,14 +2020,17 @@ class GlassRegistry(sync: (Long, List<GlassPiece>) -> Int = ...,
                     dragSync: (Long, List<DragRect>) -> Int = ...)
 data class NativeGlassView(val key: String, val x: Double, val y: Double, val width: Double,
                            val height: Double, val cornerRadius: Double, val style: Int,
-                           val tint: Int?, val shadowOpacity: Double)
+                           val tint: Int?, val shadowOpacity: Double,
+                           val shadowPathWidth: Double, val shadowPathHeight: Double,
+                           val shadowBelow: Boolean)
 data class NativeGlassState(val opaque: Boolean, val windowCount: Int, val baseView: Boolean,
                             val views: List<NativeGlassView>, val layer: NativeLayerState?)
 data class NativeLayerState(val drawingLayer: Boolean, val className: String, val opaque: Boolean,
                             val backgroundAlpha: Double, val ancestorsClear: Boolean,
                             val ancestorCount: Int, val windowBackgroundAlpha: Double,
                             val containerBelowContent: Boolean, val contentViewOpaque: Boolean,
-                            val containerOpaque: Boolean, val restoredLayers: Int)
+                            val containerOpaque: Boolean, val restoredLayers: Int,
+                            val shadowViewCount: Int)
 object GlassRuntime { val active: State<Boolean>; fun prepareTitleBar(window: Window)
                       fun prepare(window: Window); fun attach(window: Window); fun detach() }
 object SystemAppearance { fun start(); fun stop() }
@@ -2027,6 +2049,7 @@ fun Modifier.contentClip(shape: Shape, holes: List<Rect>): Modifier
 fun Modifier.popupShadow(shape: Shape, elevation: Dp = 24.dp): Modifier
 fun Modifier.scrimSurface(alpha: Float, holes: List<Rect>): Modifier
 fun Modifier.capsuleGlass(shape: Shape): Modifier
+fun editorGlassPlates(palette: Palette): List<Color>
 fun editorGlassFloor(palette: Palette): Color
 fun editorGlassBase(palette: Palette): Color
 fun readableOn(color: Color, background: Color, ratio: Double = 4.5): Color
@@ -2102,12 +2125,12 @@ Maven Central alone does not carry it.
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
 | `NeonModifiersTest` | underline glow direction and `rememberNeonAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
-| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), the rendered field staying neutral inside its luminance band, and both palettes' glass code scheme, gutter, console labels and all 16 ANSI entries clearing 4.5 on `editorGlassFloor` while the selection, current-line, find-match plates and the caret stay visible and their text stays at 4.5 |
+| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), the rendered field staying neutral inside its luminance band, both palettes' glass code scheme, gutter, console labels and all 16 ANSI foregrounds clearing 4.5 on every stacked plate in `editorGlassPlates`, and on the native path ANSI 0 as a background keeping its original dark colour, as a foreground moving to the readable one, with inverse video swapping the original lists; the selection, current-line, find-match plates and the caret stay visible and their text stays at 4.5 |
 | `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, the background extension mirroring and blurring the strip right of its edge while leaving the source untouched, and the blur-only fallback when the shader is unavailable |
-| `ToolWindowGlassTest` | the tool window content is the opaque content plane with one floating switcher capsule over it, the terminal and run console paint that plane, status glyphs draw no halo, run status colors clear 4.5 on the content plane, and the failed-status word clears it on its label band |
+| `ToolWindowGlassTest` | on the Skia path only: the tool window content is the opaque content plane with one floating switcher capsule over it, the terminal and run console paint that plane, status glyphs draw no halo, run status colors clear 4.5 on the content plane, and the failed-status word clears it on its label band (the native path has no such plane; its body is the `tool-window-surface` glass piece) |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected row carries the neon line on its capsule edge, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
-| `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup draws no Compose pixel inside its reported glass piece (the regression that produced the opaque box), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, no tree row, editor field or tool-window body carries a Compose fill, and the editor clip removes code from under an open popup |
+| `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup draws no Compose pixel inside its reported glass piece (the regression that produced the opaque box), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor, tool window and popups carry no Compose fill, the Go to Line popup draws its text outside the editor clip, and the editor clip removes code from under an open popup |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
 | `EditorScrollUiTest` | `EditorScrollState` viewports: caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, the gutter keeps its position while the text scrolls horizontally, and a small document stays layer-free while a large one layers and shrinks back across the hysteresis |
 | `EditorScrollStateTest` | sub-pixel wheel deltas accumulate, an edge-clamped delta is dropped, the scrollbar adapter excludes the chrome insets from its track, and the layer threshold has hysteresis |

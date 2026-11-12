@@ -230,7 +230,7 @@ private fun DrawScope.drawLineCells(
         val colors = buffer.cellColors(x, lineIndex)
         var end = x + 1
         while (end < columns && buffer.cellColors(end, lineIndex) == colors) end++
-        if (colors.background != TerminalPalette.background) {
+        if (colors.background != TerminalPalette.defaultCellBackground) {
             drawRect(
                 color = colors.background,
                 topLeft = Offset(x * glyphWidth, top),
@@ -302,11 +302,10 @@ private fun DrawScope.drawCursor(
 private fun TerminalTextBuffer.cellColors(x: Int, lineIndex: Int): CellColors {
     val style: JediTextStyle? = getStyleAt(x, lineIndex)
     val inverse = style?.hasOption(JediTextStyle.Option.INVERSE) == true
-    val foreground = TerminalPalette.colorOf(style?.foreground, TerminalPalette.foreground)
-    val background = TerminalPalette.colorOf(style?.background, TerminalPalette.background)
+    val (foreground, background) = TerminalPalette.cellColors(style?.foreground, style?.background, inverse)
     return CellColors(
-        foreground = if (inverse) background else foreground,
-        background = if (inverse) foreground else background,
+        foreground = foreground,
+        background = background,
         bold = style?.hasOption(JediTextStyle.Option.BOLD) == true,
     )
 }

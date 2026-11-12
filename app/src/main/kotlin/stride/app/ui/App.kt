@@ -1076,6 +1076,19 @@ private fun EditorArea(
                 shape = findShape,
             )
         }
+        // Outside the clipped content: a popup drawn inside the editor surface would be cut by
+        // its own hole. The insets reproduce the padded surface it used to sit in.
+        val gotoEditor = session.editors.selected as? TextFileEditor
+        if (gotoEditor != null && gotoEditor.gotoLineVisible) {
+            gotoEditor.GotoLinePopup(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(
+                        top = (if (nativeGlass) surfaceTop else topInset) + DesignTokens.space12,
+                        end = (if (nativeGlass) DesignTokens.chromeInset else 0.dp) + DesignTokens.space12,
+                    ),
+            )
+        }
     }
 }
 

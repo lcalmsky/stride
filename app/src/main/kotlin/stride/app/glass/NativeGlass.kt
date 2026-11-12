@@ -14,8 +14,13 @@ data class NativeGlassView(
     val cornerRadius: Double,
     val style: Int,
     val tint: Int?,
-    /** The native layer's shadow opacity: popups carry their drop shadow there. */
+    /** The shadow sibling's opacity: popups carry their drop shadow on that unclipped view. */
     val shadowOpacity: Double,
+    /** Bounds of the sibling's rounded shadow path; it must match the piece's frame size. */
+    val shadowPathWidth: Double,
+    val shadowPathHeight: Double,
+    /** Whether the shadow sibling is ordered below its glass view in the container. */
+    val shadowBelow: Boolean,
 )
 
 /**
@@ -35,6 +40,8 @@ data class NativeLayerState(
     val containerOpaque: Boolean,
     /** Layers whose original opaque flag and background a detach restored. */
     val restoredLayers: Int,
+    /** Shadow siblings under the container; zero once the shadowed pieces are gone. */
+    val shadowViewCount: Int,
 )
 
 /** The debug view of one attached window: what the native side really has. */
@@ -66,6 +73,12 @@ internal object NativeGlass {
     val available: Boolean get() = loadFailure == null
 
     val failure: String? get() = loadFailure
+
+    /** Values per piece in [NativeGlassState]: frame, radius, style, tint and the shadow block. */
+    private const val VIEW_VALUES = 11
+
+    /** Values in the transparency block that follows the pieces. */
+    private const val LAYER_VALUES = 11
 
     private fun load(): String? {
         if (!System.getProperty("os.name").lowercase().contains("mac")) return "not macOS"
@@ -144,8 +157,8 @@ internal object NativeGlass {
         val count = values[3].toInt()
         val views = ArrayList<NativeGlassView>(count)
         for (index in 0 until count) {
-            val at = 4 + index * 8
-            if (at + 7 >= values.size) break
+            val at = 4 + index * VIEW_VALUES
+            if (at + VIEW_VALUES - 1 >= values.size) break
             val tint = values[at + 6].toLong()
             views += NativeGlassView(
                 key = keys.getOrElse(index) { "" },
@@ -157,10 +170,13 @@ internal object NativeGlass {
                 style = values[at + 5].toInt(),
                 tint = if (tint == 0L) null else tint.toInt(),
                 shadowOpacity = values[at + 7],
+                shadowPathWidth = values[at + 8],
+                shadowPathHeight = values[at + 9],
+                shadowBelow = values[at + 10] != 0.0,
             )
         }
-        val layerAt = 4 + count * 8
-        val layer = if (values.size >= layerAt + 10) {
+        val layerAt = 4 + count * VIEW_VALUES
+        val layer = if (values.size >= layerAt + LAYER_VALUES) {
             NativeLayerState(
                 drawingLayer = values[layerAt] != 0.0,
                 className = runCatching { nativeLayerClass(handle) }.getOrDefault(""),
@@ -173,6 +189,7 @@ internal object NativeGlass {
                 contentViewOpaque = values[layerAt + 7] != 0.0,
                 containerOpaque = values[layerAt + 8] != 0.0,
                 restoredLayers = values[layerAt + 9].toInt(),
+                shadowViewCount = values[layerAt + 10].toInt(),
             )
         } else {
             null

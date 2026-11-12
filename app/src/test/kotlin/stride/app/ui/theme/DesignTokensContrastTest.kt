@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
+import com.jediterm.terminal.TerminalColor
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import org.junit.jupiter.api.AfterEach
@@ -140,30 +141,51 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `glass code console and terminal text clear 4_5 in both palettes`() {
+    fun `glass code console and terminal text clear 4_5 on every stacked plate in both palettes`() {
         val previous = GlassRuntime.active.value
         GlassRuntime.active.value = true
         try {
             for (appearance in listOf(Appearance.DARK, Appearance.LIGHT)) {
                 AppearanceState.set(appearance)
                 val palette = paletteOf(appearance)
+                val plates = editorGlassPlates(palette)
                 val floor = editorGlassFloor(palette)
+                fun assertOnEveryPlate(name: String, color: Color): Double {
+                    var minimum = Double.MAX_VALUE
+                    for (plate in plates) {
+                        val ratio = contrastRatio(color, plate)
+                        minimum = minOf(minimum, ratio)
+                        assertTrue(
+                            ratio >= DesignTokens.contrastText,
+                            "$appearance $name on glass plate #%02X%02X%02X = %.3f < %.1f".format(
+                                (plate.red * 255f).roundToInt(),
+                                (plate.green * 255f).roundToInt(),
+                                (plate.blue * 255f).roundToInt(),
+                                ratio,
+                                DesignTokens.contrastText,
+                            ),
+                        )
+                    }
+                    return minimum
+                }
+                var codeMinimum = Double.MAX_VALUE
                 for ((name, attributes) in glassColorScheme(appearance).attributes()) {
                     val foreground = attributes.foreground ?: continue
-                    val plate = attributes.background?.let { Color(it.toInt()) } ?: floor
-                    val ratio = contrastRatio(Color(foreground.toInt()), plate)
-                    assertTrue(
-                        ratio >= DesignTokens.contrastText,
-                        "$appearance code $name on the glass = %.3f < %.1f".format(
-                            ratio,
-                            DesignTokens.contrastText,
-                        ),
-                    )
+                    val background = attributes.background
+                    if (background != null) {
+                        val ratio = contrastRatio(Color(foreground.toInt()), Color(background.toInt()))
+                        assertTrue(
+                            ratio >= DesignTokens.contrastText,
+                            "$appearance code $name on its own plate = %.3f < %.1f".format(
+                                ratio,
+                                DesignTokens.contrastText,
+                            ),
+                        )
+                    } else {
+                        codeMinimum = minOf(codeMinimum, assertOnEveryPlate("code $name", Color(foreground.toInt())))
+                    }
                 }
-                assertTrue(
-                    contrastRatio(glassGutterColor(appearance), floor) >= DesignTokens.contrastText,
-                    "$appearance gutter on the glass = %.3f".format(contrastRatio(glassGutterColor(appearance), floor)),
-                )
+                val gutterMinimum = assertOnEveryPlate("gutter", glassGutterColor(appearance))
                 val console = mapOf(
                     "text" to DesignTokens.text,
                     "muted" to DesignTokens.mutedOnGlass,
@@ -172,49 +194,70 @@ class DesignTokensContrastTest {
                     "neonLime" to DesignTokens.neonLimeOnGlass,
                     "neonAmber" to DesignTokens.neonAmberOnGlass,
                 )
+                var consoleMinimum = Double.MAX_VALUE
                 for ((name, color) in console) {
-                    val ratio = contrastRatio(color, floor)
-                    assertTrue(
-                        ratio >= DesignTokens.contrastText,
-                        "$appearance console $name on the glass = %.3f < %.1f".format(
-                            ratio,
-                            DesignTokens.contrastText,
-                        ),
-                    )
+                    consoleMinimum = minOf(consoleMinimum, assertOnEveryPlate("console $name", color))
                 }
-                assertTrue(
-                    contrastRatio(TerminalPalette.foreground, floor) >= DesignTokens.contrastText,
-                    "$appearance terminal foreground = %.3f".format(contrastRatio(TerminalPalette.foreground, floor)),
-                )
+                assertOnEveryPlate("terminal foreground", TerminalPalette.foreground)
                 val ansi = TerminalPalette.ansi
                 assertEquals(16, ansi.size)
+                var ansiMinimum = Double.MAX_VALUE
                 for ((index, color) in ansi.withIndex()) {
-                    val ratio = contrastRatio(color, floor)
-                    assertTrue(
-                        ratio >= DesignTokens.contrastText,
-                        "$appearance terminal ANSI $index on the glass = %.3f < %.1f".format(
-                            ratio,
-                            DesignTokens.contrastText,
-                        ),
-                    )
+                    ansiMinimum = minOf(ansiMinimum, assertOnEveryPlate("terminal ANSI $index", color))
                 }
                 System.err.println(
-                    "glass-text $appearance floor=#%06X".format(palette.editorGlassTint and 0xFFFFFF) +
-                        " code-keyword=%.2f console-muted=%.2f ansi-min=%.2f".format(
-                            contrastRatio(
-                                Color(
-                                    requireNotNull(
-                                        glassColorScheme(appearance)
-                                            .getAttributes(stride.lang.TextAttributesKey.KEYWORD),
-                                    ).foreground!!.toInt(),
-                                ),
-                                floor,
-                            ),
-                            contrastRatio(DesignTokens.mutedOnGlass, floor),
-                            ansi.minOf { contrastRatio(it, floor) },
+                    "glass-text $appearance floor=#%02X%02X%02X".format(
+                        (floor.red * 255f).roundToInt(),
+                        (floor.green * 255f).roundToInt(),
+                        (floor.blue * 255f).roundToInt(),
+                    ) +
+                        " plates=${plates.size}" +
+                        " code-min=%.2f gutter-min=%.2f console-min=%.2f ansi-min=%.2f".format(
+                            codeMinimum,
+                            gutterMinimum,
+                            consoleMinimum,
+                            ansiMinimum,
                         ),
                 )
             }
+        } finally {
+            GlassRuntime.active.value = previous
+            AppearanceState.set(Appearance.DARK)
+        }
+    }
+
+    @Test
+    fun `ansi backgrounds keep the base colours on glass and inverse video swaps the lists`() {
+        val previous = GlassRuntime.active.value
+        GlassRuntime.active.value = true
+        try {
+            AppearanceState.set(Appearance.DARK)
+            val original = Color(0xFF0F1117)
+            assertEquals(original, TerminalPalette.originalAnsi[0])
+            assertEquals(original, TerminalPalette.backgroundOf(TerminalColor.index(0)))
+            val readable = TerminalPalette.foregroundOf(TerminalColor.index(0))
+            assertFalse(readable == original, "the ANSI 0 foreground must move on the glass")
+            val floor = editorGlassFloor(DarkPalette)
+            assertTrue(
+                contrastRatio(readable, floor) >= DesignTokens.contrastText,
+                "the ANSI 0 foreground on the glass = %.3f".format(contrastRatio(readable, floor)),
+            )
+            assertEquals(
+                Color.Transparent,
+                TerminalPalette.defaultCellBackground,
+                "the default cell background must stay transparent on the glass",
+            )
+            val (normalForeground, normalBackground) =
+                TerminalPalette.cellColors(TerminalColor.index(0), null, inverse = false)
+            assertEquals(readable, normalForeground)
+            assertEquals(Color.Transparent, normalBackground)
+            val (inverseForeground, inverseBackground) =
+                TerminalPalette.cellColors(TerminalColor.index(0), null, inverse = true)
+            assertEquals(DarkPalette.background, inverseForeground, "the inverse default glyph")
+            assertEquals(original, inverseBackground, "the inverse ANSI 0 block stays dark")
+            val swapped = TerminalPalette.cellColors(TerminalColor.index(1), TerminalColor.index(0), inverse = true)
+            assertEquals(original, swapped.first, "the original ANSI 0 becomes the inverse glyph")
+            assertEquals(TerminalPalette.originalAnsi[1], swapped.second, "the original ANSI 1 becomes the block")
         } finally {
             GlassRuntime.active.value = previous
             AppearanceState.set(Appearance.DARK)
@@ -226,7 +269,6 @@ class DesignTokensContrastTest {
         for (appearance in listOf(Appearance.DARK, Appearance.LIGHT)) {
             val palette = paletteOf(appearance)
             val base = editorGlassBase(palette)
-            val floor = editorGlassFloor(palette)
             val selection = blendOver(palette.selection, base)
             val currentLine = blendOver(palette.currentLine, base)
             val match = blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
@@ -254,16 +296,16 @@ class DesignTokensContrastTest {
                     glassColorScheme(appearance).getAttributes(stride.lang.TextAttributesKey.DEFAULT_TEXT),
                 ).foreground!!.toInt(),
             )
-            for ((name, plate) in listOf(
-                "selection" to blendOver(palette.selection, floor),
-                "current line" to blendOver(palette.currentLine, floor),
-                "find match" to blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), floor),
-                "other match" to blendOver(palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA), floor),
-            )) {
+            // The stacked plates are the ones that really paint (selection + match + glow); the
+            // text must clear 4.5 on each of them, not only on a single overlay over the floor.
+            for ((index, plate) in editorGlassPlates(palette).withIndex()) {
                 val ratio = contrastRatio(defaultText, plate)
                 assertTrue(
                     ratio >= DesignTokens.contrastText,
-                    "$appearance code on the $name plate = %.3f".format(ratio),
+                    "$appearance code on plate $index (#%06X) = %.3f".format(
+                        plate.value.toLong() and 0xFFFFFF,
+                        ratio,
+                    ),
                 )
             }
         }

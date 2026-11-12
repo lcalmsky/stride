@@ -17,17 +17,25 @@ object TerminalPalette {
     val background: Color get() = DesignTokens.background
     val cursor: Color get() = DesignTokens.accent2
 
+    /** The unpainted cell background: transparent over the native glass so the material shows. */
+    val defaultCellBackground: Color
+        get() = if (GlassRuntime.active.value) Color.Transparent else background
+
     private var cachedFor: Appearance? = null
     private var cachedAnsi: List<Color> = emptyList()
+    private var cachedOriginalFor: Appearance? = null
+    private var cachedOriginal: List<Color> = emptyList()
     private var cachedGlassFor: Appearance? = null
     private var cachedGlassAnsi: List<Color> = emptyList()
 
-    /** The 16 ANSI colors: normal 0–7 followed by their bright variants 8–15. */
+    /**
+     * The 16 ANSI colors as foregrounds: normal 0–7 followed by their bright variants 8–15.
+     * On the native glass each entry is moved to clear 4.5 on the worst plate.
+     */
     val ansi: List<Color>
         get() {
             val appearance = AppearanceState.appearance
             if (GlassRuntime.active.value) {
-                // On the tool-window glass every ANSI run must clear 4.5 on the worst plate.
                 if (cachedGlassFor != appearance) {
                     cachedGlassFor = appearance
                     val floor = editorGlassFloor(paletteOf(appearance))
@@ -40,6 +48,17 @@ object TerminalPalette {
                 cachedAnsi = baseAnsi(appearance)
             }
             return cachedAnsi
+        }
+
+    /** The unadjusted 16 ANSI colors. Backgrounds, including inverse-video blocks, use these. */
+    val originalAnsi: List<Color>
+        get() {
+            val appearance = AppearanceState.appearance
+            if (cachedOriginalFor != appearance) {
+                cachedOriginalFor = appearance
+                cachedOriginal = baseAnsi(appearance)
+            }
+            return cachedOriginal
         }
 
     private fun baseAnsi(appearance: Appearance): List<Color> =
@@ -82,13 +101,36 @@ object TerminalPalette {
         Color(0xFF10151F),
     )
 
-    /** The 0–15 palette lookup, 256-color or truecolor RGB, or [fallback] for no color. */
-    fun colorOf(terminalColor: TerminalColor?, fallback: Color): Color {
+    /** A glyph colour: 0–15 from [ansi], so readable over the glass, or [fallback] for none. */
+    fun foregroundOf(terminalColor: TerminalColor?, fallback: Color = foreground): Color =
+        colorOf(terminalColor, fallback, ansi)
+
+    /** A fill colour: 0–15 from [originalAnsi]; a background never takes the glyph adjustment. */
+    fun backgroundOf(terminalColor: TerminalColor?, fallback: Color = defaultCellBackground): Color =
+        colorOf(terminalColor, fallback, originalAnsi)
+
+    private fun colorOf(terminalColor: TerminalColor?, fallback: Color, palette: List<Color>): Color {
         if (terminalColor == null) return fallback
         if (terminalColor.isIndexed) {
-            val index = terminalColor.colorIndex
-            return ansi.getOrNull(index) ?: fallback
+            return palette.getOrNull(terminalColor.colorIndex) ?: fallback
         }
         return Color(terminalColor.toColor().rgb)
+    }
+
+    /**
+     * The drawn foreground and background of one cell. Inverse video swaps the intended colours,
+     * so both sides come from the unadjusted palette: a black block stays black rather than
+     * turning into a readable grey glyph colour.
+     */
+    fun cellColors(
+        foreground: TerminalColor?,
+        background: TerminalColor?,
+        inverse: Boolean,
+    ): Pair<Color, Color> {
+        if (inverse) {
+            return colorOf(background, this.background, originalAnsi) to
+                colorOf(foreground, this.foreground, originalAnsi)
+        }
+        return foregroundOf(foreground) to backgroundOf(background)
     }
 }

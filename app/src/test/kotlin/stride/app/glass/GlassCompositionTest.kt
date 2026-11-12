@@ -69,6 +69,17 @@ class GlassCompositionTest {
                     assertEquals(300f, requireNotNull(piece).x, 0.5f)
                     assertEquals(96f, piece.y, 0.5f)
                     assertEquals(680f, piece.width, 0.5f)
+                    // A grid over the popup: labels and hints are sparse glyphs, a fill is not.
+                    assertNoFillGrid(
+                        rendered,
+                        popup.left.toInt() + 6,
+                        popup.top.toInt() + 6,
+                        popup.right.toInt() - 6,
+                        popup.bottom.toInt() - 6,
+                        step = 8,
+                        what = "search popup",
+                        maxFilled = 0.35,
+                    )
                 } finally {
                     state.dispose()
                 }
@@ -101,18 +112,64 @@ class GlassCompositionTest {
                     }
                     assertEquals(300f, editor.x, 0.5f, "the editor glass starts at the content column")
                     // No Compose fill: the sidebar row background, the editor field and the tool
-                    // window body are the native material alone.
-                    for ((x, y, what) in listOf(
-                        Triple(200, 500, "tree row"),
-                        Triple(900, 400, "editor field"),
-                        Triple(900, 760, "tool window body"),
-                    )) {
-                        assertEquals(
-                            0,
-                            rendered.pixels[index(x, y)].ushr(24),
-                            "$what at ($x,$y) carries a Compose fill",
-                        )
+                    // window body are the native material alone. A grid, not a few points, so an
+                    // opaque plane anywhere in the region is caught.
+                    assertNoFillGrid(rendered, 30, 420, 270, 780, step = 24, what = "tree body")
+                    assertNoFillGrid(rendered, 400, 300, 1200, 540, step = 32, what = "editor field")
+                    assertNoFillGrid(
+                        rendered,
+                        400,
+                        700,
+                        1200,
+                        790,
+                        step = 24,
+                        what = "tool window body",
+                        maxFilled = 0.02,
+                    )
+                } finally {
+                    state.dispose()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the goto line popup draws its text outside the editor clip`() {
+        val state = AppState()
+        nativePath {
+            appearance(Appearance.LIGHT) {
+                try {
+                    val root = project("goto-line-project")
+                    state.openFolder(root)
+                    val session = requireNotNull(state.session)
+                    val editor = session.editors.openFile(VFile(root.resolve("src/Main.kt"))) as TextFileEditor
+                    editor.gotoLineVisible = true
+                    val rendered = render(state, initialQuery = "")
+                    val piece = rendered.pieces.firstOrNull { it.key == "popup-goto-line" }
+                    assertTrue(piece != null, "the goto line popup reported no native glass piece")
+                    val rect = requireNotNull(piece)
+                    System.err.println("glass-composition goto-line=$rect")
+                    // The clip used to cut the popup's own hole out of its own text; the label
+                    // and the input must reach the frame.
+                    var text = 0
+                    var sampled = 0
+                    for (y in (rect.y + 4).toInt() until (rect.y + rect.height - 4).toInt() step 3) {
+                        for (x in (rect.x + 4).toInt() until (rect.x + rect.width - 4).toInt() step 3) {
+                            sampled++
+                            // Glyph ink, not the soft text shadow: an opaque fill would also
+                            // pass this threshold, but at a much higher fraction.
+                            if (rendered.pixels[index(x, y)].ushr(24) >= FILL_ALPHA) text++
+                        }
                     }
+                    System.err.println("glass-composition goto-line text=$text/$sampled")
+                    assertTrue(text > 40, "the goto line popup drew no text ($text of $sampled samples)")
+                    // The popup is small and dense with glyphs, so a text-only frame reaches
+                    // roughly 40%; an opaque plane (the old regression was uniform alpha 38)
+                    // covers every sample.
+                    assertTrue(
+                        text.toDouble() / sampled < 0.6,
+                        "the goto line popup carries a Compose fill ($text of $sampled samples)",
+                    )
                 } finally {
                     state.dispose()
                 }
@@ -173,6 +230,38 @@ class GlassCompositionTest {
             Rect(-100f, -100f, 1260f, 120f),
             holeRectInLocal(hole, density = 2f, Offset(700f, 292f)),
         )
+    }
+
+    /**
+     * Samples a grid over a region and requires that at most [maxFilled] of the samples carry
+     * an opaque Compose fill ([FILL_ALPHA]). Counting only alpha above the threshold ignores
+     * glyph text shadows; an opaque plane (the regression was alpha 38) still fills the grid.
+     */
+    private fun assertNoFillGrid(
+        rendered: Rendered,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        step: Int,
+        what: String,
+        maxFilled: Double = 0.0,
+    ) {
+        var filled = 0
+        var total = 0
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                total++
+                if (rendered.pixels[index(x, y)].ushr(24) >= FILL_ALPHA) filled++
+                x += step
+            }
+            y += step
+        }
+        val fraction = filled.toDouble() / total
+        System.err.println("glass-composition fill $what=$filled/$total")
+        assertTrue(fraction <= maxFilled, "$what carries a Compose fill ($filled of $total samples)")
     }
 
     private fun nativePath(block: () -> Unit) {
@@ -248,6 +337,9 @@ class GlassCompositionTest {
         private const val WIDTH = 1280
         private const val HEIGHT = 820
         private const val HEADER_HEIGHT = 52f
+
+        /** Alpha from which a sample counts toward the fill budget; text shadows stay below it. */
+        private const val FILL_ALPHA = 32
 
         @BeforeAll
         @JvmStatic

@@ -204,20 +204,55 @@ fun editorGlassBase(palette: Palette): Color =
     }
 
 /**
- * The worst plate editor code can sit on over the native glass: the editor tint over a white
- * and a black desktop, plus the selection, current-line and find-match overlays. The dark
- * palette takes the lightest plate, the light palette the darkest; text must clear 4.5 on it.
+ * The overlays the editor can lay over the native glass, including the combinations that really
+ * stack: the current find match is also the editor selection and can sit on the caret line, so
+ * selection + match + glow is one plate, not three separate ones.
+ */
+private fun glassOverlayStacks(palette: Palette): List<List<Color>> {
+    val matchPink = palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA)
+    val matchAmber = palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA)
+    return listOf(
+        emptyList(),
+        listOf(palette.selection),
+        listOf(palette.currentLine),
+        listOf(palette.currentLineGlow),
+        listOf(matchPink),
+        listOf(matchAmber),
+        listOf(palette.selection, matchPink),
+        listOf(palette.selection, matchAmber),
+        listOf(palette.selection, matchPink, palette.currentLineGlow),
+        listOf(palette.selection, matchAmber, palette.currentLineGlow),
+        listOf(palette.currentLine, matchPink),
+        listOf(palette.currentLine, matchAmber),
+        listOf(palette.currentLineGlow, matchPink),
+        listOf(palette.currentLineGlow, matchAmber),
+        listOf(palette.selection, palette.currentLineGlow),
+    )
+}
+
+/**
+ * Every plate editor and console text can sit on over the native glass: the editor tint over a
+ * white and a black desktop, under each single overlay and each stacked combination above.
+ */
+fun editorGlassPlates(palette: Palette): List<Color> {
+    val stacks = glassOverlayStacks(palette)
+    val plates = ArrayList<Color>(stacks.size * 2)
+    for (base in glassBases(palette)) {
+        for (stack in stacks) {
+            var plate = base
+            for (overlay in stack) plate = blendOver(overlay, plate)
+            plates += plate
+        }
+    }
+    return plates
+}
+
+/**
+ * The worst plate text can sit on: the lightest plate for the dark palette, the darkest for the
+ * light one. Text must clear 4.5 on it, which also covers every other plate.
  */
 fun editorGlassFloor(palette: Palette): Color {
-    val plates = ArrayList<Color>(12)
-    for (base in glassBases(palette)) {
-        plates += base
-        plates += blendOver(palette.selection, base)
-        plates += blendOver(palette.currentLine, base)
-        plates += blendOver(palette.currentLineGlow, base)
-        plates += blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
-        plates += blendOver(palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
-    }
+    val plates = editorGlassPlates(palette)
     return if (relativeLuminance(palette.background) < 0.5) {
         plates.maxBy { relativeLuminance(it) }
     } else {

@@ -55,6 +55,9 @@ struct WindowState {
     NSView *container = nil;
     NSView *base = nil;
     std::map<std::string, NSView *__strong> pieces;
+    // One unclipped sibling per shadowed piece: a layer with masksToBounds would clip its own
+    // shadow, so the shadow cannot live on the glass view itself.
+    std::map<std::string, NSView *__strong> shadows;
     std::vector<LayerOriginal> layerOriginals;
     BOOL windowOpaque = YES;
     NSColor *__strong windowBackground = nil;
@@ -251,26 +254,44 @@ NSView *CreateGlassView(NSColor *tint, int style, CGFloat radius) {
 }
 
 /**
- * The popup drop shadow lives on the native layer: a Compose shadow would paint inside the
- * panel, whose Compose content is transparent over the system material.
+ * The popup drop shadow lives on the native side: a Compose shadow would paint inside the
+ * panel, whose Compose content is transparent over the system material. It sits on a separate
+ * sibling view without masksToBounds, because the glass view's own layer clips to its rounded
+ * content and would clip the shadow away.
  */
-void ApplyGlassShadow(NSView *view, const PieceSpec &spec) {
-    CALayer *layer = view.layer;
+NSView *CreateShadowView(void) {
+    NSView *view = [[NSView alloc] initWithFrame:NSZeroRect];
+    view.wantsLayer = YES;
+    view.layer.backgroundColor = NSColor.clearColor.CGColor;
+    return view;
+}
+
+void ApplyGlassShadow(NSView *shadow, const PieceSpec &spec) {
+    CALayer *layer = shadow.layer;
     if (!layer) return;
-    if (!spec.shadow) {
-        layer.shadowOpacity = 0.0f;
-        layer.shadowPath = nil;
-        return;
-    }
     layer.shadowColor = NSColor.blackColor.CGColor;
     layer.shadowOpacity = 0.26f;
     layer.shadowRadius = 24.0;
     layer.shadowOffset = CGSizeMake(0.0, -8.0);
-    CGPathRef path = CGPathCreateWithRoundedRect(view.bounds, spec.cornerRadius, spec.cornerRadius, NULL);
+    CGPathRef path = CGPathCreateWithRoundedRect(shadow.bounds, spec.cornerRadius, spec.cornerRadius, NULL);
     if (path) {
         layer.shadowPath = path;
         CGPathRelease(path);
     }
+}
+
+bool ShadowIsBelow(NSView *shadow, NSView *glass) {
+    NSView *container = glass.superview;
+    if (!container || shadow.superview != container) return false;
+    NSArray *siblings = container.subviews;
+    NSUInteger shadowIndex = [siblings indexOfObjectIdenticalTo:shadow];
+    NSUInteger glassIndex = [siblings indexOfObjectIdenticalTo:glass];
+    return shadowIndex != NSNotFound && glassIndex != NSNotFound && shadowIndex < glassIndex;
+}
+
+CGRect ShadowPathBounds(NSView *shadow) {
+    if (!shadow.layer || !shadow.layer.shadowPath) return CGRectZero;
+    return CGPathGetBoundingBox(shadow.layer.shadowPath);
 }
 
 NSWindow *WindowForComponent(JNIEnv *env, jobject component, JAWTGetAWTProc getAWT) {
@@ -751,6 +772,10 @@ Java_stride_app_glass_NativeGlass_nativeDetach(JNIEnv *, jobject, jlong handle) 
       for (auto &entry : state.pieces) {
           if (entry.second.superview) [entry.second removeFromSuperview];
       }
+      for (auto &entry : state.shadows) {
+          if (entry.second.superview) [entry.second removeFromSuperview];
+      }
+      state.shadows.clear();
       if (state.container && state.container.superview) [state.container removeFromSuperview];
       int restoredLayers = (int)state.layerOriginals.size();
       RestoreTransparency(state);
@@ -886,11 +911,32 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
           }
           view.autoresizingMask = NSViewNotSizable;
           view.frame = FrameFor(state.container, spec);
-          ApplyGlassShadow(view, spec);
+          NSView *shadow = nil;
+          auto shadowIt = state.shadows.find(spec.key);
+          if (shadowIt != state.shadows.end()) shadow = shadowIt->second;
+          if (spec.shadow) {
+              if (!shadow) {
+                  shadow = CreateShadowView();
+                  state.shadows[spec.key] = shadow;
+              }
+              // Re-adding positions it directly below its glass view and follows a move.
+              [state.container addSubview:shadow positioned:NSWindowBelow relativeTo:view];
+              shadow.autoresizingMask = NSViewNotSizable;
+              shadow.frame = view.frame;
+              ApplyGlassShadow(shadow, spec);
+          } else if (shadow) {
+              if (shadow.superview) [shadow removeFromSuperview];
+              state.shadows.erase(spec.key);
+          }
       }
       for (auto it = state.pieces.begin(); it != state.pieces.end();) {
           if (seen.count(it->first) == 0) {
               if (it->second.superview) [it->second removeFromSuperview];
+              auto shadow = state.shadows.find(it->first);
+              if (shadow != state.shadows.end()) {
+                  if (shadow->second.superview) [shadow->second removeFromSuperview];
+                  state.shadows.erase(shadow);
+              }
               it = state.pieces.erase(it);
           } else {
               ++it;
@@ -997,6 +1043,7 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
                   0.0,
                   0.0,
                   (double)gDetached.restoredLayers,
+                  0.0,
               };
               return;
           }
@@ -1019,7 +1066,14 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
           values->push_back(entry.second.layer ? entry.second.layer.cornerRadius : 0.0);
           values->push_back((double)ViewStyle(entry.second));
           values->push_back((double)(uint32_t)ViewTint(entry.second));
-          values->push_back(entry.second.layer ? entry.second.layer.shadowOpacity : 0.0);
+          NSView *shadow = nil;
+          auto shadowEntry = state.shadows.find(entry.first);
+          if (shadowEntry != state.shadows.end()) shadow = shadowEntry->second;
+          values->push_back(shadow && shadow.layer ? shadow.layer.shadowOpacity : 0.0);
+          CGRect shadowBounds = ShadowPathBounds(shadow);
+          values->push_back((double)shadowBounds.size.width);
+          values->push_back((double)shadowBounds.size.height);
+          values->push_back(ShadowIsBelow(shadow, entry.second) ? 1.0 : 0.0);
       }
       // The transparency chain of the Compose drawing layer: the value block is fixed-size so
       // the Java side can read it after the pieces.
@@ -1039,6 +1093,7 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
       values->push_back(state.contentView.isOpaque ? 1.0 : 0.0);
       values->push_back(state.container && state.container.isOpaque ? 1.0 : 0.0);
       values->push_back(0.0);  // restored layers, only reported after detach
+      values->push_back((double)state.shadows.size());
     });
     if (!answered) return nullptr;
     jdoubleArray result = env->NewDoubleArray((jsize)values->size());

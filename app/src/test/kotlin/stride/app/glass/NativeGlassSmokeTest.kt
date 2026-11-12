@@ -89,12 +89,24 @@ class NativeGlassSmokeTest {
                 assertTint(editorTint, piece.tint)
                 assertEquals(0.0, piece.shadowOpacity, 0.001, "${piece.key} carries no drop shadow")
             }
-            // The popup's drop shadow is on its native layer; a Compose shadow would paint
-            // inside the panel's transparent content.
+            // The popup's drop shadow is on a separate unclipped sibling: a layer with
+            // masksToBounds clips its own shadow, and a Compose shadow would paint inside the
+            // panel's transparent content.
+            val popup = byKey.getValue("popup")
             assertEquals(0.0, byKey.getValue("a").shadowOpacity, 0.001, "a chrome piece has no drop shadow")
             assertEquals(0.0, byKey.getValue("b").shadowOpacity, 0.001, "a clear piece has no drop shadow")
-            assertTrue(byKey.getValue("popup").shadowOpacity > 0.0, "the popup piece carries a native drop shadow")
-            System.err.println("native-glass-smoke shadow=${byKey.getValue("popup").shadowOpacity}")
+            assertTrue(popup.shadowOpacity > 0.0, "the popup piece carries a native drop shadow")
+            assertEquals(400.0, popup.shadowPathWidth, 1.0, "the shadow path must match the popup's width")
+            assertEquals(200.0, popup.shadowPathHeight, 1.0, "the shadow path must match the popup's height")
+            assertTrue(popup.shadowBelow, "the shadow sibling must sit below its glass view")
+            for (piece in state.views.filter { it.key != "popup" }) {
+                assertEquals(0.0, piece.shadowPathWidth, 0.001, "${piece.key} must have no shadow path")
+                assertFalse(piece.shadowBelow, "${piece.key} must have no shadow sibling")
+            }
+            System.err.println(
+                "native-glass-smoke shadow=${popup.shadowOpacity} " +
+                    "path=${popup.shadowPathWidth}x${popup.shadowPathHeight} below=${popup.shadowBelow}",
+            )
             // The style and tint are read back from the material view: a silently swallowed KVC
             // write would show up here instead of only on screen.
             assertEquals(0, state.views[0].style, "regular style was not applied")
@@ -128,6 +140,18 @@ class NativeGlassSmokeTest {
             assertFalse(layer.contentViewOpaque, "the content view must be non-opaque")
             assertFalse(layer.containerOpaque, "the glass container must be non-opaque")
             assertEquals(0, layer.restoredLayers, "nothing is restored while the window is attached")
+            assertEquals(1, layer.shadowViewCount, "exactly the shadowed popup carries a shadow sibling")
+
+            // Removing the popup removes its shadow sibling in the same sync.
+            assertEquals(4, NativeGlass.sync(handle, pieces.filter { it.key != "popup" }))
+            val withoutPopup = requireNotNull(NativeGlass.state(handle))
+            assertFalse(withoutPopup.views.any { it.key == "popup" }, "the popup piece outlived its sync")
+            assertEquals(
+                0,
+                requireNotNull(withoutPopup.layer).shadowViewCount,
+                "the popup's shadow sibling was left behind",
+            )
+            assertEquals(5, NativeGlass.sync(handle, pieces), "restoring the popup must be accepted")
 
             // Drag regions are top-left window points; the monitor is hit-tested through JNI.
             val dragRects = listOf(DragRect(0f, 0f, 300f, 28f), DragRect(400f, 0f, 200f, 28f))
