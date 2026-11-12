@@ -226,4 +226,11 @@ object DesignTokens {
     const val contrastText = 4.5
     const val contrastLarge = 3.0
     const val contrastUi = 3.0
+
+    /**
+     * The modal scrim's share on the native path. The window is real system glass there, so the
+     * full Skia scrim would flatten it; the popup's own material and drop shadow carry the modal
+     * separation instead.
+     */
+    const val nativeScrimFactor = 0.25f
 }

@@ -172,6 +172,22 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(5)
+    fun `search without results light snapshot`() {
+        val state = AppState()
+        try {
+            val root = analysisProject()
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            state.searchVisible = true
+            renderApp("05-search-empty-results-light.png", state, initialQuery = "", renderMillis = 1_200, appearance = Appearance.LIGHT)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(6)
     fun `selection editor snapshot`() {
         val root = demoProject()
@@ -758,6 +774,7 @@ class UiSnapshotTest {
             "03-editor-json.png",
             "04-search.png",
             "05-search-empty-results.png",
+            "05-search-empty-results-light.png",
             "06-selection-editor.png",
             "07-selection-popup.png",
             "08-find-bar.png",

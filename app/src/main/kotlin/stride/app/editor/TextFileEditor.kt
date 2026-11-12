@@ -1038,7 +1038,7 @@ class TextFileEditor(
                 .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
-                .nativeGlass("popup-goto-line", shape, tint = DesignTokens.nativeGlassTint, hole = true)
+                .nativeGlass("popup-goto-line", shape, tint = DesignTokens.nativeGlassTint, hole = true, shadow = true)
                 .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8)
                 // The popup floats over the text field; a passive node keeps a press in its
                 // padding from moving the caret underneath.

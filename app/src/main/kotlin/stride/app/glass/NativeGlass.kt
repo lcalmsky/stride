@@ -14,6 +14,8 @@ data class NativeGlassView(
     val cornerRadius: Double,
     val style: Int,
     val tint: Int?,
+    /** The native layer's shadow opacity: popups carry their drop shadow there. */
+    val shadowOpacity: Double,
 )
 
 /**
@@ -125,8 +127,9 @@ internal object NativeGlass {
         val radii = FloatArray(count) { pieces[it].cornerRadius }
         val styles = IntArray(count) { if (pieces[it].style == GlassStyle.CLEAR) 1 else 0 }
         val tints = IntArray(count) { pieces[it].tint ?: 0 }
+        val shadows = IntArray(count) { if (pieces[it].shadow) 1 else 0 }
         return runCatching {
-            nativeSync(handle, keys, xs, ys, widths, heights, radii, styles, tints)
+            nativeSync(handle, keys, xs, ys, widths, heights, radii, styles, tints, shadows)
         }.getOrElse {
             log.warning("native glass sync failed: ${it.message}")
             0
@@ -141,8 +144,8 @@ internal object NativeGlass {
         val count = values[3].toInt()
         val views = ArrayList<NativeGlassView>(count)
         for (index in 0 until count) {
-            val at = 4 + index * 7
-            if (at + 6 >= values.size) break
+            val at = 4 + index * 8
+            if (at + 7 >= values.size) break
             val tint = values[at + 6].toLong()
             views += NativeGlassView(
                 key = keys.getOrElse(index) { "" },
@@ -153,9 +156,10 @@ internal object NativeGlass {
                 cornerRadius = values[at + 4],
                 style = values[at + 5].toInt(),
                 tint = if (tint == 0L) null else tint.toInt(),
+                shadowOpacity = values[at + 7],
             )
         }
-        val layerAt = 4 + count * 7
+        val layerAt = 4 + count * 8
         val layer = if (values.size >= layerAt + 10) {
             NativeLayerState(
                 drawingLayer = values[layerAt] != 0.0,
@@ -233,6 +237,7 @@ internal object NativeGlass {
         radii: FloatArray,
         styles: IntArray,
         tints: IntArray,
+        shadows: IntArray,
     ): Int
 
     private external fun nativeState(handle: Long): DoubleArray

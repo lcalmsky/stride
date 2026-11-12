@@ -61,8 +61,9 @@ class NativeGlassSmokeTest {
             val pieces = listOf(
                 GlassPiece("a", 10f, 20f, 100f, 30f, 15f, tint = tint),
                 GlassPiece("b", 200f, 50f, 300f, 40f, 8f, style = GlassStyle.CLEAR),
+                GlassPiece("popup", 100f, 120f, 400f, 200f, 18f, tint = tint, shadow = true),
             )
-            assertEquals(2, NativeGlass.sync(handle, pieces))
+            assertEquals(3, NativeGlass.sync(handle, pieces))
             val state = requireNotNull(NativeGlass.state(handle)) { "no native state for the attached window" }
             System.err.println(
                 "native-glass-smoke opaque=${state.opaque} windows=${state.windowCount} " +
@@ -70,9 +71,16 @@ class NativeGlassSmokeTest {
             )
             assertFalse(state.opaque, "the window must be non-opaque so the glass shows the desktop")
             assertTrue(state.baseView, "the full-window glass base is missing")
-            assertEquals(listOf("a", "b"), state.views.map { it.key })
-            assertFrame(state.views[0], x = 10.0, y = 20.0, width = 100.0, height = 30.0, container = contentHeight)
-            assertFrame(state.views[1], x = 200.0, y = 50.0, width = 300.0, height = 40.0, container = contentHeight)
+            assertEquals(listOf("a", "b", "popup"), state.views.map { it.key })
+            assertFrame(state.views[0], x = 10.0, y = 20.0, width = 100.0, height = 30.0, container = contentHeight, radius = 15.0)
+            assertFrame(state.views[1], x = 200.0, y = 50.0, width = 300.0, height = 40.0, container = contentHeight, radius = 8.0)
+            assertFrame(state.views[2], x = 100.0, y = 120.0, width = 400.0, height = 200.0, container = contentHeight, radius = 18.0)
+            // The popup's drop shadow is on its native layer; a Compose shadow would paint
+            // inside the panel's transparent content.
+            assertEquals(0.0, state.views[0].shadowOpacity, 0.001, "a chrome piece has no drop shadow")
+            assertEquals(0.0, state.views[1].shadowOpacity, 0.001, "a clear piece has no drop shadow")
+            assertTrue(state.views[2].shadowOpacity > 0.0, "the popup piece carries a native drop shadow")
+            System.err.println("native-glass-smoke shadow=${state.views[2].shadowOpacity}")
             // The style and tint are read back from the material view: a silently swallowed KVC
             // write would show up here instead of only on screen.
             assertEquals(0, state.views[0].style, "regular style was not applied")
@@ -173,6 +181,7 @@ class NativeGlassSmokeTest {
         width: Double,
         height: Double,
         container: Double,
+        radius: Double,
     ) {
         // Compose reports top-left points; the native frame origin is bottom-left.
         val nativeY = container - y - height
@@ -184,7 +193,7 @@ class NativeGlassSmokeTest {
         assertEquals(nativeY, view.y, 1.5, "${view.key} y")
         assertEquals(width, view.width, 1.0, "${view.key} width")
         assertEquals(height, view.height, 1.0, "${view.key} height")
-        assertTrue(abs(view.cornerRadius - if (view.key == "a") 15.0 else 8.0) <= 0.51, "${view.key} corner radius")
+        assertTrue(abs(view.cornerRadius - radius) <= 0.51, "${view.key} corner radius")
     }
 
     private fun assertTint(expected: Int, actual: Int?) {

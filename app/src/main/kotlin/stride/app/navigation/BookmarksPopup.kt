@@ -37,7 +37,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Path
@@ -59,6 +58,7 @@ import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
+import stride.app.ui.theme.popupShadow
 
 /** Bookmarks: Enter jumps, Delete or Backspace removes the selected one. */
 @Composable
@@ -94,10 +94,10 @@ fun BookmarksPopup(
                 .align(Alignment.TopCenter)
                 .padding(top = DesignTokens.popupTop)
                 .width(DesignTokens.popupWidth)
-                .shadow(24.dp, shape, clip = false)
+                .popupShadow(shape)
                 .clip(shape)
                 .backdropGlass(shape)
-                .nativeGlass("popup-bookmarks", shape, tint = DesignTokens.nativeGlassTint, hole = true)
+                .nativeGlass("popup-bookmarks", shape, tint = DesignTokens.nativeGlassTint, hole = true, shadow = true)
                 .then(contentFade)
                 .focusRequester(focusRequester)
                 .focusable()

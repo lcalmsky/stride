@@ -23,6 +23,7 @@ fun Modifier.nativeGlass(
     style: GlassStyle = GlassStyle.REGULAR,
     tint: Int? = null,
     hole: Boolean = false,
+    shadow: Boolean = false,
 ): Modifier = composed {
     if (!LocalNativeGlass.current) return@composed this
     val density = LocalDensity.current
@@ -60,6 +61,7 @@ fun Modifier.nativeGlass(
                 cornerRadius = effectiveCornerRadius(radiusPx / density.density, width, height),
                 style = style,
                 tint = tint,
+                shadow = shadow,
             ),
         )
         if (hole) {

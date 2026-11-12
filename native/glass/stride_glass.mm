@@ -39,6 +39,7 @@ struct PieceSpec {
     int style = 0;
     bool hasTint = false;
     NSColor *tint = nil;
+    bool shadow = false;
 };
 
 /** A layer whose opaque flag and background the bridge changed; restored on detach or failure. */
@@ -247,6 +248,29 @@ NSView *CreateGlassView(NSColor *tint, int style, CGFloat radius) {
     view.layer.masksToBounds = YES;
     SetProperty(view, @"cornerRadius", @(radius));
     return view;
+}
+
+/**
+ * The popup drop shadow lives on the native layer: a Compose shadow would paint inside the
+ * panel, whose Compose content is transparent over the system material.
+ */
+void ApplyGlassShadow(NSView *view, const PieceSpec &spec) {
+    CALayer *layer = view.layer;
+    if (!layer) return;
+    if (!spec.shadow) {
+        layer.shadowOpacity = 0.0f;
+        layer.shadowPath = nil;
+        return;
+    }
+    layer.shadowColor = NSColor.blackColor.CGColor;
+    layer.shadowOpacity = 0.26f;
+    layer.shadowRadius = 24.0;
+    layer.shadowOffset = CGSizeMake(0.0, -8.0);
+    CGPathRef path = CGPathCreateWithRoundedRect(view.bounds, spec.cornerRadius, spec.cornerRadius, NULL);
+    if (path) {
+        layer.shadowPath = path;
+        CGPathRelease(path);
+    }
 }
 
 NSWindow *WindowForComponent(JNIEnv *env, jobject component, JAWTGetAWTProc getAWT) {
@@ -748,8 +772,10 @@ extern "C" JNIEXPORT jint JNICALL
 Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle, jobjectArray keys,
                                              jfloatArray xs, jfloatArray ys, jfloatArray widths,
                                              jfloatArray heights, jfloatArray radii, jintArray styles,
-                                             jintArray tints) {
-    if (!keys || !xs || !ys || !widths || !heights || !radii || !styles || !tints) return 0;
+                                             jintArray tints, jintArray shadows) {
+    if (!keys || !xs || !ys || !widths || !heights || !radii || !styles || !tints || !shadows) {
+        return 0;
+    }
     jsize count = env->GetArrayLength(keys);
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
@@ -758,7 +784,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
     if (env->GetArrayLength(xs) < count || env->GetArrayLength(ys) < count ||
         env->GetArrayLength(widths) < count || env->GetArrayLength(heights) < count ||
         env->GetArrayLength(radii) < count || env->GetArrayLength(styles) < count ||
-        env->GetArrayLength(tints) < count) {
+        env->GetArrayLength(tints) < count || env->GetArrayLength(shadows) < count) {
         return 0;
     }
     std::vector<PieceSpec> specs;
@@ -770,7 +796,8 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
     jfloat *rBuf = env->GetFloatArrayElements(radii, nullptr);
     jint *styleBuf = env->GetIntArrayElements(styles, nullptr);
     jint *tintBuf = env->GetIntArrayElements(tints, nullptr);
-    bool buffersReady = xBuf && yBuf && wBuf && hBuf && rBuf && styleBuf && tintBuf;
+    jint *shadowBuf = env->GetIntArrayElements(shadows, nullptr);
+    bool buffersReady = xBuf && yBuf && wBuf && hBuf && rBuf && styleBuf && tintBuf && shadowBuf;
     bool failed = !buffersReady;
     if (buffersReady) {
         for (jsize index = 0; index < count; index++) {
@@ -803,6 +830,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
                 spec.hasTint = true;
                 spec.tint = ColorFromArgb(tint);
             }
+            spec.shadow = shadowBuf[index] != 0;
             specs.push_back(spec);
         }
     }
@@ -813,6 +841,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
     if (rBuf) env->ReleaseFloatArrayElements(radii, rBuf, JNI_ABORT);
     if (styleBuf) env->ReleaseIntArrayElements(styles, styleBuf, JNI_ABORT);
     if (tintBuf) env->ReleaseIntArrayElements(tints, tintBuf, JNI_ABORT);
+    if (shadowBuf) env->ReleaseIntArrayElements(shadows, shadowBuf, JNI_ABORT);
     if (failed || env->ExceptionCheck()) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return 0;
@@ -857,6 +886,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
           }
           view.autoresizingMask = NSViewNotSizable;
           view.frame = FrameFor(state.container, spec);
+          ApplyGlassShadow(view, spec);
       }
       for (auto it = state.pieces.begin(); it != state.pieces.end();) {
           if (seen.count(it->first) == 0) {
@@ -989,6 +1019,7 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
           values->push_back(entry.second.layer ? entry.second.layer.cornerRadius : 0.0);
           values->push_back((double)ViewStyle(entry.second));
           values->push_back((double)(uint32_t)ViewTint(entry.second));
+          values->push_back(entry.second.layer ? entry.second.layer.shadowOpacity : 0.0);
       }
       // The transparency chain of the Compose drawing layer: the value block is fixed-size so
       // the Java side can read it after the pieces.

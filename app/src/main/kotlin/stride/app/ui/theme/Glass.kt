@@ -11,6 +11,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -1250,13 +1251,29 @@ fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geomet
 }
 
 /**
+ * A window-relative hole in dp (what [stride.app.glass.GlassHoles] stores) as the local drawing
+ * rectangle in pixels. The origin is the drawing element's own window position in pixels, so a
+ * hole and the content it must clip stay in the same space.
+ */
+internal fun holeRectInLocal(
+    hole: androidx.compose.ui.geometry.Rect,
+    density: Float,
+    origin: Offset,
+): androidx.compose.ui.geometry.Rect = androidx.compose.ui.geometry.Rect(
+    left = hole.left * density - origin.x,
+    top = hole.top * density - origin.y,
+    right = hole.right * density - origin.x,
+    bottom = hole.bottom * density - origin.y,
+)
+
+/**
  * The modal scrim. On the native path the popup's own glass sits below the AWT content view, so
  * a full-window scrim would darken the popup's material too; each [holes] rectangle is cut out.
  * On the Skia path the popup is painted over the scrim, so the plain fill is unchanged.
  */
 fun Modifier.scrimSurface(alpha: Float, holes: List<androidx.compose.ui.geometry.Rect>): Modifier = composed {
-    val color = DesignTokens.scrim.copy(alpha = alpha)
-    if (!LocalNativeGlass.current) return@composed background(color)
+    if (!LocalNativeGlass.current) return@composed background(DesignTokens.scrim.copy(alpha = alpha))
+    val color = DesignTokens.scrim.copy(alpha = alpha * DesignTokens.nativeScrimFactor)
     val density = LocalDensity.current
     val origin = remember { floatArrayOf(0f, 0f) }
     onGloballyPositioned { coordinates ->
@@ -1268,14 +1285,11 @@ fun Modifier.scrimSurface(alpha: Float, holes: List<androidx.compose.ui.geometry
         val path = Path()
         path.addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
         for (hole in holes) {
-            val left = hole.left * density.density - origin[0]
-            val top = hole.top * density.density - origin[1]
-            val right = hole.right * density.density - origin[0]
-            val bottom = hole.bottom * density.density - origin[1]
-            if (right > left && bottom > top) {
+            val local = holeRectInLocal(hole, density.density, Offset(origin[0], origin[1]))
+            if (local.right > local.left && local.bottom > local.top) {
                 path.addRoundRect(
                     RoundRect(
-                        rect = androidx.compose.ui.geometry.Rect(left, top, right, bottom),
+                        rect = local,
                         cornerRadius = CornerRadius(DesignTokens.radiusPopup.toPx()),
                     ),
                 )
@@ -1284,6 +1298,17 @@ fun Modifier.scrimSurface(alpha: Float, holes: List<androidx.compose.ui.geometry
         path.fillType = PathFillType.EvenOdd
         drawPath(path, color)
     }
+}
+
+/**
+ * The drop shadow around a floating glass panel. The Skia path draws it with Compose. The
+ * native path must not: the panel's own Compose content is transparent over the system material,
+ * so a Compose shadow paints its penumbra *inside* the panel, where it reads as an opaque fill
+ * (and leaves the unshadowed umbra as an offset light rectangle). There the shadow lives on the
+ * native glass view's layer instead; see [stride.app.glass.nativeGlass].
+ */
+fun Modifier.popupShadow(shape: Shape, elevation: Dp = 24.dp): Modifier = composed {
+    if (LocalNativeGlass.current) this else shadow(elevation, shape, clip = false)
 }
 
 /** The top, side and bottom hairlines of a glass slab. */
