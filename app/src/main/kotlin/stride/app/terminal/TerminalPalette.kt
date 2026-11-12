@@ -3,9 +3,13 @@ package stride.app.terminal
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import com.jediterm.terminal.TerminalColor
+import stride.app.glass.GlassRuntime
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.editorGlassFloor
+import stride.app.ui.theme.paletteOf
+import stride.app.ui.theme.readableOn
 
 /** The terminal's ANSI palette, kept in the neon family the rest of the shell uses. */
 object TerminalPalette {
@@ -15,17 +19,31 @@ object TerminalPalette {
 
     private var cachedFor: Appearance? = null
     private var cachedAnsi: List<Color> = emptyList()
+    private var cachedGlassFor: Appearance? = null
+    private var cachedGlassAnsi: List<Color> = emptyList()
 
     /** The 16 ANSI colors: normal 0–7 followed by their bright variants 8–15. */
     val ansi: List<Color>
         get() {
             val appearance = AppearanceState.appearance
+            if (GlassRuntime.active.value) {
+                // On the tool-window glass every ANSI run must clear 4.5 on the worst plate.
+                if (cachedGlassFor != appearance) {
+                    cachedGlassFor = appearance
+                    val floor = editorGlassFloor(paletteOf(appearance))
+                    cachedGlassAnsi = baseAnsi(appearance).map { readableOn(it, floor) }
+                }
+                return cachedGlassAnsi
+            }
             if (cachedFor != appearance) {
                 cachedFor = appearance
-                cachedAnsi = if (appearance == Appearance.LIGHT) lightAnsi else darkAnsi()
+                cachedAnsi = baseAnsi(appearance)
             }
             return cachedAnsi
         }
+
+    private fun baseAnsi(appearance: Appearance): List<Color> =
+        if (appearance == Appearance.LIGHT) lightAnsi else darkAnsi()
 
     private fun darkAnsi(): List<Color> {
         val normal = listOf(

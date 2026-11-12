@@ -13,6 +13,9 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import stride.app.editor.glassColorScheme
+import stride.app.editor.glassGutterColor
+import stride.app.glass.GlassRuntime
 import stride.app.terminal.TerminalPalette
 import stride.lang.ColorScheme
 
@@ -132,6 +135,136 @@ class DesignTokensContrastTest {
                         "$appearance $name over $label desktop through the native tint = %.3f".format(ratio),
                     )
                 }
+            }
+        }
+    }
+
+    @Test
+    fun `glass code console and terminal text clear 4_5 in both palettes`() {
+        val previous = GlassRuntime.active.value
+        GlassRuntime.active.value = true
+        try {
+            for (appearance in listOf(Appearance.DARK, Appearance.LIGHT)) {
+                AppearanceState.set(appearance)
+                val palette = paletteOf(appearance)
+                val floor = editorGlassFloor(palette)
+                for ((name, attributes) in glassColorScheme(appearance).attributes()) {
+                    val foreground = attributes.foreground ?: continue
+                    val plate = attributes.background?.let { Color(it.toInt()) } ?: floor
+                    val ratio = contrastRatio(Color(foreground.toInt()), plate)
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance code $name on the glass = %.3f < %.1f".format(
+                            ratio,
+                            DesignTokens.contrastText,
+                        ),
+                    )
+                }
+                assertTrue(
+                    contrastRatio(glassGutterColor(appearance), floor) >= DesignTokens.contrastText,
+                    "$appearance gutter on the glass = %.3f".format(contrastRatio(glassGutterColor(appearance), floor)),
+                )
+                val console = mapOf(
+                    "text" to DesignTokens.text,
+                    "muted" to DesignTokens.mutedOnGlass,
+                    "accent2" to DesignTokens.accent2OnGlass,
+                    "neonPink" to DesignTokens.neonPinkOnGlass,
+                    "neonLime" to DesignTokens.neonLimeOnGlass,
+                    "neonAmber" to DesignTokens.neonAmberOnGlass,
+                )
+                for ((name, color) in console) {
+                    val ratio = contrastRatio(color, floor)
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance console $name on the glass = %.3f < %.1f".format(
+                            ratio,
+                            DesignTokens.contrastText,
+                        ),
+                    )
+                }
+                assertTrue(
+                    contrastRatio(TerminalPalette.foreground, floor) >= DesignTokens.contrastText,
+                    "$appearance terminal foreground = %.3f".format(contrastRatio(TerminalPalette.foreground, floor)),
+                )
+                val ansi = TerminalPalette.ansi
+                assertEquals(16, ansi.size)
+                for ((index, color) in ansi.withIndex()) {
+                    val ratio = contrastRatio(color, floor)
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance terminal ANSI $index on the glass = %.3f < %.1f".format(
+                            ratio,
+                            DesignTokens.contrastText,
+                        ),
+                    )
+                }
+                System.err.println(
+                    "glass-text $appearance floor=#%06X".format(palette.editorGlassTint and 0xFFFFFF) +
+                        " code-keyword=%.2f console-muted=%.2f ansi-min=%.2f".format(
+                            contrastRatio(
+                                Color(
+                                    requireNotNull(
+                                        glassColorScheme(appearance)
+                                            .getAttributes(stride.lang.TextAttributesKey.KEYWORD),
+                                    ).foreground!!.toInt(),
+                                ),
+                                floor,
+                            ),
+                            contrastRatio(DesignTokens.mutedOnGlass, floor),
+                            ansi.minOf { contrastRatio(it, floor) },
+                        ),
+                )
+            }
+        } finally {
+            GlassRuntime.active.value = previous
+            AppearanceState.set(Appearance.DARK)
+        }
+    }
+
+    @Test
+    fun `glass selection current line and find match keep their plates and text`() {
+        for (appearance in listOf(Appearance.DARK, Appearance.LIGHT)) {
+            val palette = paletteOf(appearance)
+            val base = editorGlassBase(palette)
+            val floor = editorGlassFloor(palette)
+            val selection = blendOver(palette.selection, base)
+            val currentLine = blendOver(palette.currentLine, base)
+            val match = blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
+            val otherMatch = blendOver(palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
+            assertTrue(
+                contrastRatio(selection, base) >= 1.2,
+                "$appearance selection plate on the glass = %.3f".format(contrastRatio(selection, base)),
+            )
+            assertTrue(
+                contrastRatio(currentLine, base) >= 1.03,
+                "$appearance current line on the glass = %.3f".format(contrastRatio(currentLine, base)),
+            )
+            for ((name, plate) in listOf("match" to match, "other match" to otherMatch)) {
+                assertTrue(
+                    contrastRatio(plate, base) >= 1.1,
+                    "$appearance find $name on the glass = %.3f".format(contrastRatio(plate, base)),
+                )
+            }
+            assertTrue(
+                contrastRatio(palette.accent2, base) >= DesignTokens.contrastUi,
+                "$appearance caret on the glass = %.3f".format(contrastRatio(palette.accent2, base)),
+            )
+            val defaultText = Color(
+                requireNotNull(
+                    glassColorScheme(appearance).getAttributes(stride.lang.TextAttributesKey.DEFAULT_TEXT),
+                ).foreground!!.toInt(),
+            )
+            for ((name, plate) in listOf(
+                "selection" to blendOver(palette.selection, floor),
+                "current line" to blendOver(palette.currentLine, floor),
+                "find match" to blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), floor),
+                "other match" to blendOver(palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA), floor),
+            )) {
+                val ratio = contrastRatio(defaultText, plate)
+                assertTrue(
+                    ratio >= DesignTokens.contrastText,
+                    "$appearance code on the $name plate = %.3f".format(ratio),
+                )
             }
         }
     }

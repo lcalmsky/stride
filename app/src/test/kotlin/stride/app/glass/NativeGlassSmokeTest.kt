@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import stride.app.ui.theme.Appearance
+import stride.app.ui.theme.DesignTokens
 
 /**
  * Exercises the real JNI library against a window that is never ordered front: no setVisible
@@ -58,12 +59,15 @@ class NativeGlassSmokeTest {
             assertTrue(handle != 0L, "attach returned no handle for the unshown window")
 
             val tint = 0x9914151B.toInt()
+            val editorTint = DesignTokens.editorGlassTint
             val pieces = listOf(
                 GlassPiece("a", 10f, 20f, 100f, 30f, 15f, tint = tint),
                 GlassPiece("b", 200f, 50f, 300f, 40f, 8f, style = GlassStyle.CLEAR),
                 GlassPiece("popup", 100f, 120f, 400f, 200f, 18f, tint = tint, shadow = true),
+                GlassPiece("editor-surface", 10f, 330f, 400f, 120f, 12f, tint = editorTint),
+                GlassPiece("tool-window-surface", 420f, 330f, 200f, 120f, 12f, tint = editorTint),
             )
-            assertEquals(3, NativeGlass.sync(handle, pieces))
+            assertEquals(5, NativeGlass.sync(handle, pieces))
             val state = requireNotNull(NativeGlass.state(handle)) { "no native state for the attached window" }
             System.err.println(
                 "native-glass-smoke opaque=${state.opaque} windows=${state.windowCount} " +
@@ -71,16 +75,26 @@ class NativeGlassSmokeTest {
             )
             assertFalse(state.opaque, "the window must be non-opaque so the glass shows the desktop")
             assertTrue(state.baseView, "the full-window glass base is missing")
-            assertEquals(listOf("a", "b", "popup"), state.views.map { it.key })
-            assertFrame(state.views[0], x = 10.0, y = 20.0, width = 100.0, height = 30.0, container = contentHeight, radius = 15.0)
-            assertFrame(state.views[1], x = 200.0, y = 50.0, width = 300.0, height = 40.0, container = contentHeight, radius = 8.0)
-            assertFrame(state.views[2], x = 100.0, y = 120.0, width = 400.0, height = 200.0, container = contentHeight, radius = 18.0)
+            assertEquals(
+                listOf("a", "b", "editor-surface", "popup", "tool-window-surface"),
+                state.views.map { it.key },
+            )
+            val byKey = state.views.associateBy { it.key }
+            assertFrame(byKey.getValue("a"), x = 10.0, y = 20.0, width = 100.0, height = 30.0, container = contentHeight, radius = 15.0)
+            assertFrame(byKey.getValue("b"), x = 200.0, y = 50.0, width = 300.0, height = 40.0, container = contentHeight, radius = 8.0)
+            assertFrame(byKey.getValue("popup"), x = 100.0, y = 120.0, width = 400.0, height = 200.0, container = contentHeight, radius = 18.0)
+            // The editor and tool-window pieces keep the regular material and the denser tint.
+            for (piece in state.views.filter { it.key.startsWith("editor-surface") || it.key.startsWith("tool-window-surface") }) {
+                assertEquals(0, piece.style, "${piece.key} must use the regular style")
+                assertTint(editorTint, piece.tint)
+                assertEquals(0.0, piece.shadowOpacity, 0.001, "${piece.key} carries no drop shadow")
+            }
             // The popup's drop shadow is on its native layer; a Compose shadow would paint
             // inside the panel's transparent content.
-            assertEquals(0.0, state.views[0].shadowOpacity, 0.001, "a chrome piece has no drop shadow")
-            assertEquals(0.0, state.views[1].shadowOpacity, 0.001, "a clear piece has no drop shadow")
-            assertTrue(state.views[2].shadowOpacity > 0.0, "the popup piece carries a native drop shadow")
-            System.err.println("native-glass-smoke shadow=${state.views[2].shadowOpacity}")
+            assertEquals(0.0, byKey.getValue("a").shadowOpacity, 0.001, "a chrome piece has no drop shadow")
+            assertEquals(0.0, byKey.getValue("b").shadowOpacity, 0.001, "a clear piece has no drop shadow")
+            assertTrue(byKey.getValue("popup").shadowOpacity > 0.0, "the popup piece carries a native drop shadow")
+            System.err.println("native-glass-smoke shadow=${byKey.getValue("popup").shadowOpacity}")
             // The style and tint are read back from the material view: a silently swallowed KVC
             // write would show up here instead of only on screen.
             assertEquals(0, state.views[0].style, "regular style was not applied")

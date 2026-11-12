@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.ui.CloseIcon
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
@@ -72,7 +73,7 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
     if (session == null) {
         Text(
             "Run — no configuration yet",
-            color = DesignTokens.muted,
+            color = DesignTokens.mutedOnGlass,
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             modifier = modifier.padding(DesignTokens.space12),
@@ -118,11 +119,12 @@ internal fun showRunTabs(sessions: List<RunSession>): Boolean =
 @Composable
 private fun RunTabs(manager: RunManager, current: RunSession) {
     if (!showRunTabs(manager.sessions)) return
+    val shape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
             .height(DesignTokens.capsuleHeight)
-            // The tab strip floats over the opaque run panel, so it keeps the Skia material.
-            .capsuleGlass(RoundedCornerShape(percent = 50), forceSkia = true)
+            .capsuleGlass(shape)
+            .nativeGlass("run-tabs", shape, tint = DesignTokens.nativeGlassTint)
             .padding(horizontal = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -190,10 +192,10 @@ private fun RunHeader(session: RunSession) {
         Text(
             status,
             color = when {
-                session.isRunning -> DesignTokens.accent2
-                tree.failed > 0 -> DesignTokens.neonPink
-                tree.passed > 0 -> DesignTokens.neonLime
-                else -> DesignTokens.muted
+                session.isRunning -> DesignTokens.accent2OnGlass
+                tree.failed > 0 -> DesignTokens.neonPinkOnGlass
+                tree.passed > 0 -> DesignTokens.neonLimeOnGlass
+                else -> DesignTokens.mutedOnGlass
             },
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.uiFont,
@@ -326,7 +328,7 @@ private fun ConsoleInput(session: RunSession) {
     ) {
         Text(
             ">",
-            style = consoleStyle.copy(color = if (enabled) DesignTokens.accent2 else DesignTokens.muted),
+            style = consoleStyle.copy(color = if (enabled) DesignTokens.accent2OnGlass else DesignTokens.mutedOnGlass),
         )
         Spacer(Modifier.width(DesignTokens.space8))
         BasicTextField(
@@ -350,7 +352,7 @@ private fun ConsoleInput(session: RunSession) {
                 },
             enabled = enabled,
             singleLine = true,
-            textStyle = consoleStyle.copy(color = if (enabled) DesignTokens.text else DesignTokens.muted),
+            textStyle = consoleStyle.copy(color = if (enabled) DesignTokens.text else DesignTokens.mutedOnGlass),
             cursorBrush = SolidColor(if (enabled) DesignTokens.accent2 else DesignTokens.muted),
         )
     }
@@ -373,15 +375,15 @@ private fun MethodDetail(method: TestMethodNode) {
             fontWeight = FontWeight.SemiBold,
         )
         method.message?.let { message ->
-            Text(message, style = consoleStyle.copy(color = DesignTokens.neonPink), modifier = Modifier.padding(top = DesignTokens.space4))
+            Text(message, style = consoleStyle.copy(color = DesignTokens.neonPinkOnGlass), modifier = Modifier.padding(top = DesignTokens.space4))
         }
         method.stackTrace?.let { stackTrace ->
-            Text(stackTrace, style = consoleStyle.copy(color = DesignTokens.muted), modifier = Modifier.padding(top = DesignTokens.space4))
+            Text(stackTrace, style = consoleStyle.copy(color = DesignTokens.mutedOnGlass), modifier = Modifier.padding(top = DesignTokens.space4))
         }
         if (method.output.isNotEmpty()) {
             Text(
                 method.output.joinToString("\n"),
-                style = consoleStyle.copy(color = DesignTokens.muted),
+                style = consoleStyle.copy(color = DesignTokens.mutedOnGlass),
                 modifier = Modifier.padding(top = DesignTokens.space4),
             )
         }
@@ -401,10 +403,10 @@ private fun statusText(session: RunSession): String {
 }
 
 private fun statusColor(status: TestStatus): Color = when (status) {
-    TestStatus.PASSED -> DesignTokens.neonLime
-    TestStatus.FAILED -> DesignTokens.neonPink
-    TestStatus.RUNNING -> DesignTokens.accent2
-    TestStatus.SKIPPED -> DesignTokens.muted
+    TestStatus.PASSED -> DesignTokens.neonLimeOnGlass
+    TestStatus.FAILED -> DesignTokens.neonPinkOnGlass
+    TestStatus.RUNNING -> DesignTokens.accent2OnGlass
+    TestStatus.SKIPPED -> DesignTokens.mutedOnGlass
 }
 
 private fun statusGlyph(status: TestStatus): String = when (status) {

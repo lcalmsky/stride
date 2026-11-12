@@ -516,10 +516,10 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = liquidBack
 /**
  * A floating control capsule: its backdrop blurred through the liquid lens, the specular rim,
  * the soft shadow and the tint, so code under it reads as a soft impression rather than glyphs.
- * [forceSkia] keeps that material where the capsule floats over an opaque panel, not glass.
+ * On the native path the capsule is its own glass piece and this draws nothing.
  */
-fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier = composed {
-    if (LocalNativeGlass.current && !forceSkia) return@composed Modifier
+fun Modifier.capsuleGlass(shape: Shape): Modifier = composed {
+    if (LocalNativeGlass.current) return@composed Modifier
     slabShadow(shape)
         .capsuleFrost(shape)
         .glassSlabRims(shape)
@@ -1214,11 +1214,12 @@ fun Modifier.contentTint(): Modifier = composed {
 }
 
 /**
- * The opaque content panel of the native glass window: the editor's tint inside [shape],
- * minus the window-relative [holes] (a popup floating on system glass). The content is clipped
- * to the same region, so no code shows underneath a popup.
+ * Clips an editor or tool-window body to [shape] minus the window-relative [holes]. The native
+ * glass piece paints behind all Compose drawing, so code or console glyphs under a popup's own
+ * glass would still show through it; this clip removes them. Nothing is filled: the surface
+ * itself is the native glass piece.
  */
-fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geometry.Rect>): Modifier = composed {
+fun Modifier.contentClip(shape: Shape, holes: List<androidx.compose.ui.geometry.Rect>): Modifier = composed {
     val density = LocalDensity.current
     val origin = remember { floatArrayOf(0f, 0f) }
     onGloballyPositioned { coordinates ->
@@ -1230,14 +1231,11 @@ fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geomet
         val path = capsulePath(shape, size)
         if (holes.isNotEmpty()) {
             for (hole in holes) {
-                val left = hole.left * density.density - origin[0]
-                val top = hole.top * density.density - origin[1]
-                val right = hole.right * density.density - origin[0]
-                val bottom = hole.bottom * density.density - origin[1]
-                if (right > left && bottom > top) {
+                val local = holeRectInLocal(hole, density.density, Offset(origin[0], origin[1]))
+                if (local.right > local.left && local.bottom > local.top) {
                     path.addRoundRect(
                         RoundRect(
-                            rect = androidx.compose.ui.geometry.Rect(left, top, right, bottom),
+                            rect = local,
                             cornerRadius = CornerRadius(DesignTokens.radiusPopup.toPx()),
                         ),
                     )
@@ -1245,7 +1243,6 @@ fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geomet
             }
             path.fillType = PathFillType.EvenOdd
         }
-        drawPath(path, contentTintColor)
         clipPath(path) { this@drawWithContent.drawContent() }
     }
 }

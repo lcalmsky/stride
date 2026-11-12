@@ -75,12 +75,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.EdgeBandCache
 import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MirroredStripCache
 import stride.app.ui.theme.SidebarChrome
+import stride.app.glass.LocalNativeGlass
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.backgroundExtension
@@ -89,6 +91,7 @@ import stride.app.ui.theme.editorFieldLuminance
 import stride.app.ui.theme.neonBorder
 import stride.app.ui.theme.scrollEdgeBands
 import stride.core.vfs.VFile
+import stride.lang.ColorScheme
 import stride.lang.Commenter
 import stride.lang.FileTypeRegistry
 import stride.lang.LanguageFileType
@@ -617,7 +620,14 @@ class TextFileEditor(
     override fun Content(modifier: Modifier) {
         val currentSpans = spans
         val currentSearchSpans = searchSpans
-        val scheme = activeColorScheme()
+        val nativeGlass = LocalNativeGlass.current
+        val appearance = AppearanceState.appearance
+        val schemeAndGutter = remember(nativeGlass, appearance) {
+            if (nativeGlass) glassColorScheme(appearance) to glassGutterColor(appearance)
+            else activeColorScheme() to DesignTokens.muted
+        }
+        val scheme = schemeAndGutter.first
+        val gutterColor = schemeAndGutter.second
         val transformation = remember(currentSpans, currentSearchSpans, scheme) {
             HighlightingVisualTransformation(currentSpans, currentSearchSpans, scheme)
         }
@@ -642,7 +652,7 @@ class TextFileEditor(
             fontFamily = DesignTokens.codeFont,
             fontSize = DesignTokens.codeTextSize,
             lineHeight = DesignTokens.codeLineHeight,
-            color = defaultForeground(),
+            color = defaultForeground(scheme),
         )
         val currentValue = value
         val caretLine = lineIndexAt(currentValue.text, currentValue.selection.start)
@@ -815,7 +825,7 @@ class TextFileEditor(
                     Text(
                         gutterText,
                         modifier = Modifier.fillMaxWidth(),
-                        style = codeStyle.copy(color = DesignTokens.muted, textAlign = TextAlign.End),
+                        style = codeStyle.copy(color = gutterColor, textAlign = TextAlign.End),
                         // The edge bands paint the numbers into their blurred copy.
                         onTextLayout = { gutterLayout = it },
                     )
@@ -1134,8 +1144,8 @@ class TextFileEditor(
         }
     }
 
-    private fun defaultForeground(): Color {
-        val attributes: TextAttributes? = activeColorScheme().getAttributes(TextAttributesKey.DEFAULT_TEXT)
+    private fun defaultForeground(scheme: ColorScheme): Color {
+        val attributes: TextAttributes? = scheme.getAttributes(TextAttributesKey.DEFAULT_TEXT)
         return attributes?.foreground?.let { Color(it.toInt()) } ?: DesignTokens.text
     }
 

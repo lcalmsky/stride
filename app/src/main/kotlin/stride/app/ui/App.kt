@@ -141,7 +141,7 @@ import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.SidebarChrome
 import stride.app.ui.theme.capsuleGlass
-import stride.app.ui.theme.contentSurface
+import stride.app.ui.theme.contentClip
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
@@ -1053,7 +1053,8 @@ private fun EditorArea(
                                 end = DesignTokens.chromeInset,
                                 bottom = bottomInset,
                             )
-                            .contentSurface(surfaceShape, holes),
+                            .nativeGlass("editor-surface", surfaceShape, tint = DesignTokens.editorGlassTint)
+                            .contentClip(surfaceShape, holes),
                     ) {
                         selected.Content(Modifier.fillMaxSize())
                     }

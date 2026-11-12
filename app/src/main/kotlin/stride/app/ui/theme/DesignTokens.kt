@@ -9,6 +9,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import stride.app.glass.GlassRuntime
 
 /**
  * Every color, size and spacing the app shell uses. UI files read values from here only.
@@ -128,6 +129,50 @@ object DesignTokens {
      * 4.5:1 even when a white desktop shows through the glass.
      */
     val nativeGlassTint: Int get() = palette.nativeGlassTint
+
+    /** The editor and tool-window glass tint: denser than the chrome tint, same style. */
+    val editorGlassTint: Int get() = palette.editorGlassTint
+
+    /**
+     * Text drawn over the native editor and tool-window glass. On the Skia path these are the
+     * palette values; on the native path they move just far enough to clear 4.5:1 on
+     * [editorGlassFloor].
+     */
+    val mutedOnGlass: Color get() = glassText()?.muted ?: palette.muted
+    val accent2OnGlass: Color get() = glassText()?.accent2 ?: palette.accent2
+    val neonPinkOnGlass: Color get() = glassText()?.neonPink ?: palette.neonPink
+    val neonLimeOnGlass: Color get() = glassText()?.neonLime ?: palette.neonLime
+    val neonAmberOnGlass: Color get() = glassText()?.neonAmber ?: palette.neonAmber
+
+    /** The five glass text roles, derived once per appearance and native state. */
+    private class GlassTextColors(
+        val muted: Color,
+        val accent2: Color,
+        val neonPink: Color,
+        val neonLime: Color,
+        val neonAmber: Color,
+    )
+
+    private var glassTextAppearance: Appearance? = null
+    private var glassTextCache: GlassTextColors? = null
+
+    private fun glassText(): GlassTextColors? {
+        if (!GlassRuntime.active.value) return null
+        val appearance = AppearanceState.appearance
+        if (glassTextAppearance == appearance) glassTextCache?.let { return it }
+        val current = palette
+        val floor = editorGlassFloor(current)
+        return GlassTextColors(
+            muted = readableOn(current.muted, floor),
+            accent2 = readableOn(current.accent2, floor),
+            neonPink = readableOn(current.neonPink, floor),
+            neonLime = readableOn(current.neonLime, floor),
+            neonAmber = readableOn(current.neonAmber, floor),
+        ).also {
+            glassTextAppearance = appearance
+            glassTextCache = it
+        }
+    }
 
     val glassFill: Color get() = palette.glassFill
     val glassFillStrong: Color get() = palette.glassFillStrong

@@ -1,6 +1,7 @@
 package stride.app.editor
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -10,6 +11,9 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
+import stride.app.ui.theme.editorGlassFloor
+import stride.app.ui.theme.paletteOf
+import stride.app.ui.theme.readableOn
 import stride.lang.ColorScheme
 import stride.lang.TextAttributes
 import stride.lang.TokenSpan
@@ -17,6 +21,33 @@ import stride.lang.TokenSpan
 /** The syntax scheme of the effective appearance. */
 fun activeColorScheme(): ColorScheme =
     if (AppearanceState.appearance == Appearance.LIGHT) ColorScheme.LIGHT else ColorScheme.DARK
+
+/**
+ * The syntax scheme over the native editor glass. Code keeps 4.5:1 on the worst plate the glass
+ * can composite ([editorGlassFloor]): the tint over a white or a black desktop, under the
+ * selection, current line or a find match. Only tokens that fall short move, toward black or
+ * white by the smallest step that clears the ratio; the Skia path keeps [activeColorScheme].
+ */
+fun glassColorScheme(appearance: Appearance = AppearanceState.appearance): ColorScheme {
+    val base = if (appearance == Appearance.LIGHT) ColorScheme.LIGHT else ColorScheme.DARK
+    val floor = editorGlassFloor(paletteOf(appearance))
+    val attributes = base.attributes().mapValues { (_, values) ->
+        val background = values.background
+        val plate = background?.let { Color(it.toInt()) } ?: floor
+        val foreground = values.foreground?.let { readableOn(Color(it.toInt()), plate) }
+        TextAttributes(
+            foreground = foreground?.toArgb()?.toUInt()?.toLong(),
+            background = background,
+            bold = values.bold,
+            italic = values.italic,
+        )
+    }
+    return ColorScheme("${base.name} Glass", attributes)
+}
+
+/** Gutter line numbers over the native editor glass. */
+fun glassGutterColor(appearance: Appearance = AppearanceState.appearance): Color =
+    readableOn(paletteOf(appearance).muted, editorGlassFloor(paletteOf(appearance)))
 
 fun textAttributesToSpanStyle(attributes: TextAttributes): SpanStyle = SpanStyle(
     color = attributes.foreground?.let { Color(it.toInt()) } ?: Color.Unspecified,

@@ -35,7 +35,7 @@ import stride.app.keys.KeyContext
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
-import stride.app.ui.theme.contentSurface
+import stride.app.ui.theme.contentClip
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberNeonAlpha
@@ -93,7 +93,8 @@ fun ToolWindowPanel(
                             top = contentTop,
                             bottom = contentBottomInset,
                         )
-                        .contentSurface(surfaceShape, holes),
+                        .nativeGlass("tool-window-surface", surfaceShape, tint = DesignTokens.editorGlassTint)
+                        .contentClip(surfaceShape, holes),
                 ) {
                     window.content(Modifier.fillMaxSize())
                 }

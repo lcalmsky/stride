@@ -5,6 +5,8 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import java.nio.file.Files
 import java.nio.file.Path
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
+import stride.app.editor.TextFileEditor
 import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
@@ -25,6 +28,7 @@ import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.holeRectInLocal
 import stride.core.services.Application
+import stride.core.vfs.VFile
 
 /**
  * Renders the real [App] with the native glass composition path forced on. No native library is
@@ -65,6 +69,88 @@ class GlassCompositionTest {
                     assertEquals(300f, requireNotNull(piece).x, 0.5f)
                     assertEquals(96f, piece.y, 0.5f)
                     assertEquals(680f, piece.width, 0.5f)
+                } finally {
+                    state.dispose()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the editor and the tool window body are native glass pieces`() {
+        val state = AppState()
+        nativePath {
+            appearance(Appearance.LIGHT) {
+                try {
+                    val root = project("glass-editor-project")
+                    state.openFolder(root)
+                    state.session?.editors?.openFile(VFile(root.resolve("src/Main.kt")))
+                    state.toolWindows.activate("run")
+                    val rendered = render(state, initialQuery = "")
+                    System.err.println(
+                        "glass-composition editor pieces=" +
+                            rendered.pieces.joinToString { "${it.key}:${it.x},${it.y},${it.width},${it.height}:${it.style}:${it.tint}" },
+                    )
+                    val editor = rendered.pieces.firstOrNull { it.key == "editor-surface" }
+                    val toolWindow = rendered.pieces.firstOrNull { it.key == "tool-window-surface" }
+                    assertTrue(editor != null, "the editor reported no native glass piece")
+                    assertTrue(toolWindow != null, "the tool window body reported no native glass piece")
+                    for (piece in listOf(requireNotNull(editor), requireNotNull(toolWindow))) {
+                        assertEquals(GlassStyle.REGULAR, piece.style, "${piece.key} must use the regular material")
+                        assertEquals(DesignTokens.editorGlassTint, piece.tint, "${piece.key} must use the editor tint")
+                    }
+                    assertEquals(300f, editor.x, 0.5f, "the editor glass starts at the content column")
+                    // No Compose fill: the sidebar row background, the editor field and the tool
+                    // window body are the native material alone.
+                    for ((x, y, what) in listOf(
+                        Triple(200, 500, "tree row"),
+                        Triple(900, 400, "editor field"),
+                        Triple(900, 760, "tool window body"),
+                    )) {
+                        assertEquals(
+                            0,
+                            rendered.pixels[index(x, y)].ushr(24),
+                            "$what at ($x,$y) carries a Compose fill",
+                        )
+                    }
+                } finally {
+                    state.dispose()
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the editor clip removes code from under an open popup`() {
+        val state = AppState()
+        nativePath {
+            appearance(Appearance.LIGHT) {
+                try {
+                    val root = denseProject("clip-project")
+                    state.openFolder(root)
+                    val session = requireNotNull(state.session)
+                    val editor = session.editors.openFile(VFile(root.resolve("Dense.kt"))) as TextFileEditor
+                    editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+                    state.searchVisible = true
+                    val rendered = render(state, initialQuery = "")
+                    // Outside the popup the dense document paints glyphs.
+                    var glyphsOutside = 0
+                    for (y in 300 until 320) {
+                        for (x in 500 until 900) {
+                            if (rendered.pixels[index(x, y)].ushr(24) > 0) glyphsOutside++
+                        }
+                    }
+                    // Inside the popup's hint bar, where the clipped code would otherwise land,
+                    // the right half is empty: no code may show through the popup's glass.
+                    var glyphsInside = 0
+                    for (y in 186 until 200) {
+                        for (x in 800 until 950) {
+                            if (rendered.pixels[index(x, y)].ushr(24) > 0) glyphsInside++
+                        }
+                    }
+                    System.err.println("glass-composition clip outside=$glyphsOutside inside=$glyphsInside")
+                    assertTrue(glyphsOutside > 100, "the editor drew no code outside the popup ($glyphsOutside)")
+                    assertEquals(0, glyphsInside, "code shows through the popup's glass ($glyphsInside pixels)")
                 } finally {
                     state.dispose()
                 }
@@ -145,6 +231,14 @@ class GlassCompositionTest {
         val root = temp.resolve(name)
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/Main.kt"), "package demo\n\nfun main() {\n    println(\"hi\")\n}\n")
+        return root
+    }
+
+    /** Long lines so any leaked editor row shows glyph pixels across the popup's width. */
+    private fun denseProject(name: String): Path {
+        val root = temp.resolve(name)
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Dense.kt"), (1..120).joinToString("\n") { "#".repeat(300) })
         return root
     }
 

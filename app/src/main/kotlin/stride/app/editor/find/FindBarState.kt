@@ -8,7 +8,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import stride.app.editor.BackgroundSpan
 import stride.app.editor.TextChange
 import stride.app.editor.TextFileEditor
+import stride.app.glass.GlassRuntime
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.theme.GLASS_FIND_MATCH_ALPHA
 
 /** State of the in-editor find bar; matches are painted through [TextFileEditor.searchSpans]. */
 class FindBarState {
@@ -132,9 +134,11 @@ class FindBarState {
 
     private fun updateSpans(editor: TextFileEditor?) {
         if (editor == null) return
+        val glass = GlassRuntime.active.value
+        val alpha = if (glass) GLASS_FIND_MATCH_ALPHA else 0.55f
         editor.searchSpans = matches.mapIndexed { index, match ->
-            val color = if (index == currentIndex) DesignTokens.neonPinkGlow else DesignTokens.neonAmberGlow
-            BackgroundSpan(match.start, match.end, color)
+            val tint = if (index == currentIndex) DesignTokens.neonPink else DesignTokens.neonAmber
+            BackgroundSpan(match.start, match.end, tint.copy(alpha = alpha))
         }
     }
 

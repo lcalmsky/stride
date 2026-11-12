@@ -52,6 +52,8 @@ class Palette(
     val textOnBusyGlass: Color,
     val textSecondaryOnGlass: Color,
     val nativeGlassTint: Int,
+    /** Tint of the editor and tool-window glass pieces; denser than the chrome tint. */
+    val editorGlassTint: Int,
     val slabShadowColor: Int,
     val chromeTextShadowColor: Color,
     val scrollbarThumb: Color,
@@ -119,6 +121,7 @@ val DarkPalette = Palette(
     textOnBusyGlass = Color(0xFFC4CBDA),
     textSecondaryOnGlass = Color(0xFF919AAC),
     nativeGlassTint = Color(0xFF14151B).copy(alpha = 0.78f).toArgb(),
+    editorGlassTint = Color(0xFF14151B).copy(alpha = 0.92f).toArgb(),
     slabShadowColor = 0x8C000000.toInt(),
     chromeTextShadowColor = Color.Black.copy(alpha = 1f),
     scrollbarThumb = Color.White.copy(alpha = 0.14f),
@@ -173,6 +176,7 @@ val LightPalette = Palette(
     textOnBusyGlass = Color(0xFF4C5564),
     textSecondaryOnGlass = Color(0xFF4A5261),
     nativeGlassTint = Color(0xFFF5F6F9).copy(alpha = 0.80f).toArgb(),
+    editorGlassTint = Color(0xFFF5F6F9).copy(alpha = 0.92f).toArgb(),
     slabShadowColor = 0x33000000,
     chromeTextShadowColor = Color.White.copy(alpha = 1f),
     scrollbarThumb = Color.Black.copy(alpha = 0.16f),
@@ -182,3 +186,41 @@ val LightPalette = Palette(
 
 fun paletteOf(appearance: Appearance): Palette =
     if (appearance == Appearance.LIGHT) LightPalette else DarkPalette
+
+/** Find-match plate alpha on the native glass; the Skia path keeps its stronger glow. */
+const val GLASS_FIND_MATCH_ALPHA = 0.22f
+
+private fun glassBases(palette: Palette): List<Color> {
+    val tint = Color(palette.editorGlassTint)
+    return listOf(blendOver(tint, Color.White), blendOver(tint, Color.Black))
+}
+
+/** The editor tint over the desktop extreme that is worst for the palette's text polarity. */
+fun editorGlassBase(palette: Palette): Color =
+    if (relativeLuminance(palette.background) < 0.5) {
+        glassBases(palette).maxBy { relativeLuminance(it) }
+    } else {
+        glassBases(palette).minBy { relativeLuminance(it) }
+    }
+
+/**
+ * The worst plate editor code can sit on over the native glass: the editor tint over a white
+ * and a black desktop, plus the selection, current-line and find-match overlays. The dark
+ * palette takes the lightest plate, the light palette the darkest; text must clear 4.5 on it.
+ */
+fun editorGlassFloor(palette: Palette): Color {
+    val plates = ArrayList<Color>(12)
+    for (base in glassBases(palette)) {
+        plates += base
+        plates += blendOver(palette.selection, base)
+        plates += blendOver(palette.currentLine, base)
+        plates += blendOver(palette.currentLineGlow, base)
+        plates += blendOver(palette.neonPink.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
+        plates += blendOver(palette.neonAmber.copy(alpha = GLASS_FIND_MATCH_ALPHA), base)
+    }
+    return if (relativeLuminance(palette.background) < 0.5) {
+        plates.maxBy { relativeLuminance(it) }
+    } else {
+        plates.minBy { relativeLuminance(it) }
+    }
+}
