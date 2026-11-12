@@ -1285,12 +1285,14 @@ tint, darker than the chrome glass), `raised` #21232B (hover and key caps), `bor
 `surface` #FFFFFF (the reference light editor plane), `raised` #F0F2F6, `border` #D2D7E0,
 `text` #1D2330, `selectedText` #10151F, `muted` #576070, `subtle` #8A92A2. The accents are
 darkened so text and indicators keep their contrast on white: `accent` #5B3FD6, `accent2`
-#0A689E, `accentHover` #4A32B8, and the selection is the accent at 30% alpha. The neon
-family is darkened the same way: `neonPink` #BD2269, `neonLime` #3A7000, `neonAmber`
-#8A5A00. Every text role (including `muted` and the secondary-on-glass tokens) clears
-4.5:1 on the white surface, the light field and the worst light glass; the accent2
-selection bar clears 3:1, and the blended selection stays visibly distinct from white.
-`DesignTokensContrastTest` asserts both palettes.
+#085683, `accentHover` #4A32B8, and the selection is the accent at 30% alpha. The neon
+family is darkened the same way: `neonPink` #BD2269, `neonLime` #305C00, `neonAmber`
+#704900. Every text role (including `muted` and the secondary-on-glass tokens) clears
+4.5:1 on the white surface, the light field and the worst light glass; the accent2,
+`neonLime` and `neonAmber` labels also clear 4.5:1 over the near-white floor the native
+tint leaves over a dark desktop. The accent2 selection bar clears 3:1, and the blended
+selection stays visibly distinct from white. `DesignTokensContrastTest` asserts both
+palettes.
 
 Code highlighting takes the scheme of the effective appearance through
 `stride.app.editor.activeColorScheme()`; `ColorScheme.LIGHT` colours every token key
@@ -1345,10 +1347,10 @@ on its edge. Icons, labels and file glyphs are `muted`; only the selected row's 
 | token | dark | light |
 |---|---|---|
 | `neonPink` / `neonPinkGlow` | #FF2E97 / at 55% alpha | #BD2269 / at 55% alpha |
-| `neonLime` / `neonLimeGlow` | #B6FF3B / at 55% alpha | #3A7000 / at 55% alpha |
-| `neonAmber` / `neonAmberGlow` | #FFC83D / at 55% alpha | #8A5A00 / at 55% alpha |
+| `neonLime` / `neonLimeGlow` | #B6FF3B / at 55% alpha | #305C00 / at 55% alpha |
+| `neonAmber` / `neonAmberGlow` | #FFC83D / at 55% alpha | #704900 / at 55% alpha |
 | `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha | same rule |
-| `selectionBar` | `accent2` | `accent2` (#0A689E) |
+| `selectionBar` | `accent2` | `accent2` (#085683) |
 | `currentLineGlow` | `accent` at 10% alpha | `accent` at 10% alpha |
 | `glowRadius` / `glowRadiusLarge` / `focusGlowRadius` | 10 dp / 18 dp / 6 dp | same |
 | `selectionBarWidth` | 3 dp | same |

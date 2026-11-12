@@ -115,21 +115,23 @@ class DesignTokensContrastTest {
                 )
             }
         }
-        // The dark palette's accent labels are body text on glass and also clear 4.5 through its
-        // tint. The light accents are labels on opaque light surfaces (asserted in the light text
-        // roles test); over a black desktop the near-white tint floor would leave them near 3.4,
-        // so they are not part of this primary-text guarantee.
-        for ((name, color) in listOf(
-            "accent2" to DarkPalette.accent2,
-            "neonLime" to DarkPalette.neonLime,
-            "neonAmber" to DarkPalette.neonAmber,
-        )) {
-            for ((label, desktop) in desktops) {
-                val ratio = contrastRatio(color, blendOver(Color(DarkPalette.nativeGlassTint), desktop))
-                assertTrue(
-                    ratio >= DesignTokens.contrastText,
-                    "$name over $label desktop through the native tint = %.3f".format(ratio),
-                )
+        // Accent labels are body text on glass too, so each palette's accents must clear 4.5 over
+        // both desktop extremes. The light palette is darkened for the near-white floor its tint
+        // leaves over a dark desktop.
+        for ((appearance, palette) in listOf(Appearance.DARK to DarkPalette, Appearance.LIGHT to LightPalette)) {
+            val tint = Color(palette.nativeGlassTint)
+            for ((name, color) in listOf(
+                "accent2" to palette.accent2,
+                "neonLime" to palette.neonLime,
+                "neonAmber" to palette.neonAmber,
+            )) {
+                for ((label, desktop) in desktops) {
+                    val ratio = contrastRatio(color, blendOver(tint, desktop))
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance $name over $label desktop through the native tint = %.3f".format(ratio),
+                    )
+                }
             }
         }
     }

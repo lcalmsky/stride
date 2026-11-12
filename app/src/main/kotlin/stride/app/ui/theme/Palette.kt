@@ -128,8 +128,9 @@ val DarkPalette = Palette(
 
 /**
  * Neutral light surfaces: a white opaque editor panel, translucent grey-white chrome and dark
- * ink. The violet and cyan accents are darkened so text and indicators keep their contrast on
- * white, and the selection keeps the cyan bar with a restrained glow.
+ * ink. The violet and cyan accents are darkened so text and indicators keep 4.5:1 on white and
+ * on the near-white floor the native tint leaves over a dark desktop, and the selection keeps
+ * the cyan bar with a restrained glow.
  */
 val LightPalette = Palette(
     background = Color(0xFFF3F4F8),
@@ -143,7 +144,7 @@ val LightPalette = Palette(
     muted = Color(0xFF576070),
     subtle = Color(0xFF8A92A2),
     accent = Color(0xFF5B3FD6),
-    accent2 = Color(0xFF0A689E),
+    accent2 = Color(0xFF085683),
     accentHover = Color(0xFF4A32B8),
     onAccent = Color.White,
     currentLine = Color(0x0F000000),
@@ -151,8 +152,8 @@ val LightPalette = Palette(
     json = Color(0xFF9A5B00),
     xml = Color(0xFFB3261E),
     neonPink = Color(0xFFBD2269),
-    neonLime = Color(0xFF3A7000),
-    neonAmber = Color(0xFF8A5A00),
+    neonLime = Color(0xFF305C00),
+    neonAmber = Color(0xFF704900),
     glassFill = Color.Black.copy(alpha = 0.05f),
     glassFillStrong = Color.Black.copy(alpha = 0.08f),
     glassBorderTop = Color.Black.copy(alpha = 0.10f),
