@@ -270,7 +270,7 @@ class PopupGlassTest {
     }
 
     @Test
-    fun `the selected recent row carries the neon line on its capsule edge`() {
+    fun `the selected recent row carries one pill and no edge line`() {
         val root = Path.of("build/tmp/recent-glass-project")
         val files = listOf(
             VFile(root.resolve("Alpha.kt")),
@@ -282,17 +282,25 @@ class PopupGlassTest {
                 RecentFilesPopup(files = files, projectRoot = root, onChoose = {}, onClose = {})
             }
         }
-        // Panel left is (800-680)/2=60; rows are inset 6, the line sits 2 px wide from x=67.
-        // Header 96..144, rows 144..176 (calm), 176..208 (selected), 208..240.
-        val line = pixels[index(68, 192, 800)]
-        val calm = pixels[index(68, 160, 800)]
-        System.err.println("recent-line selected=${hex(line)} calm=${hex(calm)}")
-        val cyan = green(line) + blue(line) - 2 * red(line)
-        val calmCyan = green(calm) + blue(calm) - 2 * red(calm)
-        assertTrue(red(line) < green(line) && red(line) < blue(line), "the selected edge should be cyan: ${hex(line)}")
+        // Panel left is (800-680)/2=60 and rows are inset 6, so the pill starts at x=66. The old
+        // 2 dp line sat at x=67..69. Header 96..144, rows 144..176 (calm), 176..208 (selected).
+        val edge = pixels[index(68, 180, 800)]
+        val interior = pixels[index(400, 180, 800)]
+        val calm = pixels[index(400, 150, 800)]
+        val edgeLuma = relativeLuminance(Color(edge))
+        val interiorLuma = relativeLuminance(Color(interior))
+        System.err.println(
+            "recent-pill edge=${hex(edge)} interior=${hex(interior)} calm=${hex(calm)}",
+        )
         assertTrue(
-            cyan > calmCyan + 40,
-            "the selected row's left edge should carry the cyan line (selected ${hex(line)}, calm ${hex(calm)})",
+            abs(edgeLuma - interiorLuma) < 0.06,
+            "the pill's left edge %.3f must match its interior %.3f; a bar would differ"
+                .format(edgeLuma, interiorLuma),
+        )
+        assertTrue(
+            interiorLuma > relativeLuminance(Color(calm)) + 0.01,
+            "the selected row should carry a pill (interior %.4f vs calm %.4f)"
+                .format(interiorLuma, relativeLuminance(Color(calm))),
         )
     }
 

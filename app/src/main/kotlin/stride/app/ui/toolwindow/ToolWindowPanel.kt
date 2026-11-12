@@ -32,13 +32,12 @@ import stride.app.glass.GlassHoles
 import stride.app.glass.LocalNativeGlass
 import stride.app.glass.nativeGlass
 import stride.app.keys.KeyContext
-import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.contentClip
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.glassCapsule
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.rememberSelectionAlpha
 
 /**
  * Bottom panel: edge-to-edge content with one glass capsule group floating over it. The group
@@ -150,8 +149,7 @@ private fun ToolWindowTab(title: String, active: Boolean, onClick: () -> Unit) {
                 shape = RoundedCornerShape(percent = 50),
                 insetX = 2.dp,
                 insetY = 3.dp,
-                lineEdge = CapsuleEdge.BOTTOM,
-                lineAlpha = rememberNeonAlpha(active),
+                selectionAlpha = rememberSelectionAlpha(active),
             )
             .clickable(onClick = onClick)
             .padding(horizontal = DesignTokens.space12),

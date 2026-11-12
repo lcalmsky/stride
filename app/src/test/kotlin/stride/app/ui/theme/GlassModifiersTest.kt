@@ -292,37 +292,72 @@ class GlassModifiersTest {
     }
 
     @Test
-    fun `the neon selection line is 2 dp wide with a cyan halo at density 2`() {
-        val pixels = pixelArray(400, 60, density = 2f) {
-            Box(
-                Modifier
-                    .size(200.dp, 30.dp)
-                    .background(DesignTokens.surface)
-                    .glassCapsule(
-                        shape = RoundedCornerShape(DesignTokens.radiusCapsule),
-                        lineAlpha = 1f,
-                    ),
-            )
+    fun `the selection capsule is one pill with no edge line at density 2`() {
+        val pixels = pixelArray(400, 120, density = 2f) {
+            Box(Modifier.fillMaxSize().background(DesignTokens.surface)) {
+                Box(
+                    Modifier
+                        .size(200.dp, 30.dp)
+                        .glassCapsule(
+                            shape = RoundedCornerShape(DesignTokens.radiusCapsule),
+                            selectionAlpha = 1f,
+                        ),
+                )
+            }
         }
+        // The capsule is inset 6/2 dp; the old 2 dp line sat at 7..9 dp, i.e. device px 14..19.
         val y = 30
-        // The capsule is inset 6 dp; the 2 dp line spans 7..9 dp, i.e. device px 14..17.
-        var barPixels = 0
-        for (x in 10..22) {
-            val pixel = pixels[index(x, y, 400)]
-            if (red(pixel) < green(pixel) && red(pixel) < blue(pixel) && blue(pixel) > 180) barPixels += 1
-        }
-        val glow = pixels[index(20, y, 400)]
-        val fill = pixels[index(360, y, 400)]
-        val glowCyan = green(glow) + blue(glow) - 2 * red(glow)
-        val fillCyan = green(fill) + blue(fill) - 2 * red(fill)
+        val edge = pixels[index(16, y, 400)]
+        val interior = pixels[index(200, y, 400)]
+        val calm = pixels[index(200, 90, 400)]
+        val edgeLuma = relativeLuminance(Color(edge))
+        val interiorLuma = relativeLuminance(Color(interior))
         System.err.println(
-            "neon-bar bar=$barPixels glow=${hex(glow)} glowCyan=$glowCyan fill=${hex(fill)} fillCyan=$fillCyan",
+            "selection-pill edge=${hex(edge)} interior=${hex(interior)} calm=${hex(calm)}",
         )
-        assertTrue(barPixels >= 4, "the crisp line should be 2 dp = 4 device px wide, was $barPixels")
         assertTrue(
-            glowCyan > fillCyan + 40,
-            "the halo right of the line should be cyan-tinted (glow $glowCyan vs fill $fillCyan)",
+            abs(edgeLuma - interiorLuma) < 0.02,
+            "the pill's left edge %.3f must match its interior %.3f; a bar would differ".format(edgeLuma, interiorLuma),
         )
+        assertTrue(
+            interiorLuma > relativeLuminance(Color(calm)) + 0.005,
+            "the selected capsule should lift above the calm row (%.4f vs %.4f)"
+                .format(interiorLuma, relativeLuminance(Color(calm))),
+        )
+    }
+
+    @Test
+    fun `hover paints the selection pill lighter than the selected pill`() {
+        val selected = pixelArray(400, 120, density = 2f) {
+            Box(Modifier.fillMaxSize().background(DesignTokens.surface)) {
+                Box(
+                    Modifier
+                        .size(200.dp, 30.dp)
+                        .glassCapsule(
+                            shape = RoundedCornerShape(DesignTokens.radiusCapsule),
+                            selectionAlpha = 1f,
+                        ),
+                )
+            }
+        }
+        val hover = pixelArray(400, 120, density = 2f) {
+            Box(Modifier.fillMaxSize().background(DesignTokens.surface)) {
+                Box(
+                    Modifier
+                        .size(200.dp, 30.dp)
+                        .glassCapsule(
+                            shape = RoundedCornerShape(DesignTokens.radiusCapsule),
+                            fillAlpha = 1f,
+                        ),
+                )
+            }
+        }
+        val selectedLuma = relativeLuminance(Color(selected[index(200, 30, 400)]))
+        val hoverLuma = relativeLuminance(Color(hover[index(200, 30, 400)]))
+        val calmLuma = relativeLuminance(Color(selected[index(200, 90, 400)]))
+        System.err.println("selection-pill hover=%.4f selected=%.4f calm=%.4f".format(hoverLuma, selectedLuma, calmLuma))
+        assertTrue(hoverLuma > calmLuma + 0.002, "hover should still step up from the calm row")
+        assertTrue(hoverLuma < selectedLuma, "hover should be lighter than the selected pill")
     }
 
     @Test
@@ -390,7 +425,7 @@ class GlassModifiersTest {
                 Modifier
                     .offset(100.dp, 100.dp)
                     .size(200.dp, 30.dp)
-                    .glassLensCapsule(RoundedCornerShape(DesignTokens.radiusCapsule), lineAlpha = 1f),
+                    .glassLensCapsule(RoundedCornerShape(DesignTokens.radiusCapsule), selectionAlpha = 1f),
             )
         }
     }

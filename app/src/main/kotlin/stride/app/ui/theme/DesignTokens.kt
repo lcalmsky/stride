@@ -50,12 +50,10 @@ object DesignTokens {
     val neonPinkGlow: Color get() = palette.neonPinkGlow
     val neonLimeGlow: Color get() = palette.neonLimeGlow
     val neonAmberGlow: Color get() = palette.neonAmberGlow
-    val selectionBar: Color get() = palette.selectionBar
     val currentLineGlow: Color get() = palette.currentLineGlow
     val glowRadius = 10.dp
     val glowRadiusLarge = 18.dp
     val focusGlowRadius = 6.dp
-    val selectionBarWidth = 2.dp
     const val neonFadeMillis = 150
 
     val uiFont: FontFamily get() = UiFont.family
@@ -179,11 +177,14 @@ object DesignTokens {
     val glassBorderTop: Color get() = palette.glassBorderTop
     val glassBorderSide: Color get() = palette.glassBorderSide
     val glassBorderBottom: Color get() = palette.glassBorderBottom
-    val hoverFill: Color get() = palette.hoverFill
 
-    /** Interior lift and top rim of a selected capsule; the capsule keeps the backdrop out. */
+    /** Interior lift and top rim of a capsule; the capsule keeps the backdrop out. */
     val capsuleLift: Color get() = palette.capsuleLift
     val capsuleRim: Color get() = palette.capsuleRim
+
+    /** The selected capsule's single signal: the white lift under the accent's low-alpha tint. */
+    val selectionPillLift: Color get() = palette.selectionPillLift
+    val selectionPillTint: Color get() = palette.selectionPillTint
 
     val glassBlurRadius = 16.dp
     val glassBlurRadiusMax = 20.dp

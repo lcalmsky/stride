@@ -22,6 +22,7 @@ import androidx.compose.ui.test.runSkikoComposeUiTest
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.abs
@@ -238,7 +239,7 @@ class TreeEditorGlassTest {
         }
     }
 
-    /** The selected tab pill, with its cyan line, moves to the newly selected tab. */
+    /** The selected tab pill moves to the newly selected tab and is its only signal. */
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun `tab pill moves to the newly selected tab`() = runSkikoComposeUiTest(
@@ -268,15 +269,10 @@ class TreeEditorGlassTest {
             ).performClick()
             waitForIdle()
             val pixels = captureToImage().pixels()
-            val lineY = (DesignTokens.chromeInset + DesignTokens.capsuleHeight).value.toInt() - 5
-            val main = topText(pixels, "Main.kt", lineY)
-            val greeting = topText(pixels, "Greeting.kt", lineY)
-            System.err.println("tab-pill cyan main=%d greeting=%d".format(main, greeting))
-            assertTrue(main > 60, "the selected Main.kt tab should carry the cyan line ($main)")
-            assertTrue(
-                main > greeting + 40,
-                "the pill should sit under the newly selected tab (main $main, greeting $greeting)",
-            )
+            val main = topPill(pixels, "Main.kt")
+            val greeting = topPill(pixels, "Greeting.kt")
+            System.err.println("tab-pill luma main=%.4f greeting=%.4f".format(main, greeting))
+            assertTrue(main > greeting + 0.01, "the pill should sit under the newly selected tab ($main vs $greeting)")
         } finally {
             state.dispose()
         }
@@ -1041,23 +1037,24 @@ class TreeEditorGlassTest {
             sum / (toX - fromX)
         }
 
-    /** The cyan amount of the selected-tab line under [label]'s topmost node. */
+    /** Mean luminance of the tab pill band above [label]'s topmost node. */
     @OptIn(ExperimentalTestApi::class)
-    private fun ComposeUiTest.topText(pixels: IntArray, label: String, lineY: Int): Int {
+    private fun ComposeUiTest.topPill(pixels: IntArray, label: String): Double {
         val bounds = onAllNodesWithText(label, useUnmergedTree = true)
             .fetchSemanticsNodes()
             .minBy { it.boundsInRoot.top }
             .boundsInRoot
         val x = bounds.center.x.toInt()
-        var best = 0
-        for (y in lineY..lineY + 4) {
+        val y = (DesignTokens.chromeInset + 6.dp).value.toInt()
+        var total = 0.0
+        var count = 0
+        for (row in y..y + 3) {
             for (dx in -4..4) {
-                val pixel = pixels[index(x + dx, y)]
-                val cyan = ((pixel shr 8) and 0xFF) + (pixel and 0xFF) - 2 * ((pixel shr 16) and 0xFF)
-                best = maxOf(best, cyan)
+                total += relativeLuminance(Color(pixels[index(x + dx, row)]))
+                count++
             }
         }
-        return best
+        return total / count
     }
 
     private fun longProject(name: String, glyph: Char): Path {

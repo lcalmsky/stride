@@ -82,8 +82,9 @@ class ToolWindowGlassTest {
         val capsule = Color(pixels[index(35, 294, SCENE)])
         // The capsule's top specular rim and its flat interior: a flat fill would draw both the
         // same, the capsule lens does not.
+        // The group's top rim and the flat fill just under it, above the selected tab's pill.
         val rim = Color(pixels[index(10, 289, SCENE)])
-        val interior = Color(pixels[index(10, 301, SCENE)])
+        val interior = Color(pixels[index(10, 292, SCENE)])
         System.err.println(
             "tool-window switcher=%s rim=%s interior=%s".format(hex(capsule), hex(rim), hex(interior)),
         )
@@ -198,11 +199,12 @@ class ToolWindowGlassTest {
             System.err.println(
                 "glyph-glow selected=%s unselected=%s".format(selectedPixel, unselectedPixel),
             )
-            val selectedPinkness = selectedPixel.red - selectedPixel.green
-            val unselectedPinkness = unselectedPixel.red - unselectedPixel.green
+            // Just outside a selected glyph sits the selection pill, whose accent tint is violet
+            // (blue above red). A neonPink halo would push red above blue, which the pill never
+            // does, so this still checks that the glyph itself draws no glow.
             assertTrue(
-                selectedPinkness <= unselectedPinkness + 0.02f,
-                "selected glyph halo $selectedPixel should not be pinker than unselected $unselectedPixel",
+                selectedPixel.red <= selectedPixel.blue + 0.02f,
+                "selected glyph halo $selectedPixel should not carry a pink glow (unselected $unselectedPixel)",
             )
         } finally {
             runManager.dispose()

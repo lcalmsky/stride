@@ -51,12 +51,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.ui.CloseIcon
 import stride.app.glass.nativeGlass
-import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.labelScrim
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.rememberSelectionAlpha
 import stride.app.ui.theme.selectionRow
 
 private val consoleStyle = TextStyle(
@@ -131,7 +130,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             for (session in manager.sessions) {
                 val active = session === current
-                val lineAlpha = rememberNeonAlpha(active)
+                val pill = rememberSelectionAlpha(active)
                 Row(
                     Modifier
                         .fillMaxHeight()
@@ -139,8 +138,7 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
                             shape = RoundedCornerShape(percent = 50),
                             insetX = 2.dp,
                             insetY = 3.dp,
-                            lineEdge = CapsuleEdge.BOTTOM,
-                            lineAlpha = lineAlpha,
+                            selectionAlpha = pill,
                         )
                         .clickable { manager.select(session) }
                         .padding(start = DesignTokens.space8, end = DesignTokens.space4),

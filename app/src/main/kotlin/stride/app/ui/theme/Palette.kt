@@ -38,7 +38,6 @@ class Palette(
     val glassBorderTop: Color,
     val glassBorderSide: Color,
     val glassBorderBottom: Color,
-    val hoverFill: Color,
     val capsuleLift: Color,
     val capsuleRim: Color,
     val glassBase: Color,
@@ -59,15 +58,24 @@ class Palette(
     val scrollbarThumb: Color,
     val selectionAlpha: Float,
     val currentLineGlowAlpha: Float,
+    val selectionPillLiftAlpha: Float,
+    val selectionPillTintAlpha: Float,
 ) {
     val selection: Color get() = accent.copy(alpha = selectionAlpha)
+
+    /**
+     * The one selection signal: a white lift plus the accent at low alpha, so the pill reads
+     * light on light glass and keeps the accent's neon hue on dark glass. The rim comes from
+     * [capsuleRim].
+     */
+    val selectionPillLift: Color get() = Color.White.copy(alpha = selectionPillLiftAlpha)
+    val selectionPillTint: Color get() = accent.copy(alpha = selectionPillTintAlpha)
     val gutter: Color get() = surface.copy(alpha = 0.6f)
     val accentGlow: Color get() = accent.copy(alpha = 0.55f)
     val accent2Glow: Color get() = accent2.copy(alpha = 0.55f)
     val neonPinkGlow: Color get() = neonPink.copy(alpha = 0.55f)
     val neonLimeGlow: Color get() = neonLime.copy(alpha = 0.55f)
     val neonAmberGlow: Color get() = neonAmber.copy(alpha = 0.55f)
-    val selectionBar: Color get() = accent2
     val currentLineGlow: Color get() = accent.copy(alpha = currentLineGlowAlpha)
 
     /** Stable per palette, so a recomposition never hands the tree a new text style. */
@@ -107,7 +115,6 @@ val DarkPalette = Palette(
     glassBorderTop = Color.White.copy(alpha = 0.10f),
     glassBorderSide = Color.White.copy(alpha = 0.08f),
     glassBorderBottom = Color.White.copy(alpha = 0.06f),
-    hoverFill = Color.White.copy(alpha = 0.04f),
     capsuleLift = Color.White.copy(alpha = 0.07f),
     capsuleRim = Color.White.copy(alpha = 0.16f),
     glassBase = Color(0xFF14151B),
@@ -127,6 +134,8 @@ val DarkPalette = Palette(
     scrollbarThumb = Color.White.copy(alpha = 0.14f),
     selectionAlpha = 0.22f,
     currentLineGlowAlpha = 0.10f,
+    selectionPillLiftAlpha = 0.10f,
+    selectionPillTintAlpha = 0.22f,
 )
 
 /**
@@ -162,7 +171,6 @@ val LightPalette = Palette(
     glassBorderTop = Color.Black.copy(alpha = 0.10f),
     glassBorderSide = Color.Black.copy(alpha = 0.08f),
     glassBorderBottom = Color.Black.copy(alpha = 0.06f),
-    hoverFill = Color.Black.copy(alpha = 0.04f),
     capsuleLift = Color.White.copy(alpha = 0.55f),
     capsuleRim = Color.Black.copy(alpha = 0.14f),
     glassBase = Color(0xFFF6F7FA),
@@ -182,6 +190,8 @@ val LightPalette = Palette(
     scrollbarThumb = Color.Black.copy(alpha = 0.16f),
     selectionAlpha = 0.30f,
     currentLineGlowAlpha = 0.10f,
+    selectionPillLiftAlpha = 0.72f,
+    selectionPillTintAlpha = 0.15f,
 )
 
 fun paletteOf(appearance: Appearance): Palette =

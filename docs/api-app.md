@@ -1343,9 +1343,10 @@ transparent background, so it sits directly on the field. No UI library beyond
 ### Neon palette
 
 `DesignTokens` keeps the neon palette (violet `accent`, cyan `accent2`, pink, lime, amber) but
-uses it restrained: glow appears only on the selected or focused element, as the one neon line
-on its edge. Icons, labels and file glyphs are `muted`; only the selected row's icon may take
-`accent`. Nothing else glows, and ordinary glass has no outer glow.
+uses it restrained: a focused panel carries the one neon line on its edge, and a selected
+element is the soft selection pill. Icons, labels and file glyphs are `muted`; only the
+selected row's icon may take `accent`. Nothing else glows, and ordinary glass has no outer
+glow.
 
 | token | dark | light |
 |---|---|---|
@@ -1353,10 +1354,10 @@ on its edge. Icons, labels and file glyphs are `muted`; only the selected row's 
 | `neonLime` / `neonLimeGlow` | #B6FF3B / at 55% alpha | #305C00 / at 55% alpha |
 | `neonAmber` / `neonAmberGlow` | #FFC83D / at 55% alpha | #704900 / at 55% alpha |
 | `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha | same rule |
-| `selectionBar` | `accent2` | `accent2` (#085683) |
+| `selectionPillLift` | white 10% | white 72% |
+| `selectionPillTint` | `accent` 22% | `accent` 15% |
 | `currentLineGlow` | `accent` at 10% alpha | `accent` at 10% alpha |
 | `glowRadius` / `glowRadiusLarge` / `focusGlowRadius` | 10 dp / 18 dp / 6 dp | same |
-| `selectionBarWidth` | 3 dp | same |
 | `neonFadeMillis` | 150 | same |
 
 `selection` (dark: accent at 22%, light: accent at 30%) stays the editor's text-selection
@@ -1380,30 +1381,32 @@ fun Modifier.neonUnderline(color: Color, thickness: Dp = 2.dp,
                            radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f,
                            edge: NeonEdge = NeonEdge.BOTTOM): Modifier
 fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Modifier
-fun Modifier.neonSelectionBar(color: Color = DesignTokens.selectionBar, alpha: Float = 1f): Modifier
-@Composable fun rememberNeonAlpha(active: Boolean): Float
+@Composable fun rememberSelectionAlpha(active: Boolean): Float
 ```
 
 A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` draws nothing.
 
 ### Selection signal language
 
-A selected tree row, tab, tool-window tab or popup entry is a capsule inset 2–6 dp from its
-row: a neutral interior lift (`capsuleLift`, white 7% dark / white 55% light), a crisp
-1 px rim (`capsuleRim`, white 16% dark / black 14% light, fading down the sides) and one
-2 dp `accent2` line on its left edge
-(tabs use the bottom edge) with a soft 2.5 dp-blur glow at 30% alpha. Capsules never bend the
-backdrop, so tree guide lines and code behind them stay out of the selection. The selected
-label is `selectedText` (white dark / #10151F light) and its file icon takes `accent`.
-Hover is a faint neutral step (`hoverFill`, white 4% dark / black 4% light). A focused panel
+A selected tree row, tab, tool-window tab or popup entry is exactly one signal: a capsule
+inset 2–6 dp from its row with a white lift (`selectionPillLift`, white 10% dark / 72% light),
+the accent at low alpha (`selectionPillTint`, `accent` at 22% dark / 15% light) and a crisp
+1 px rim (`capsuleRim`, white 16% dark / black 14% light, fading down the sides). No underline
+sits under a selected tab and no bar sits on a selected row's edge. On light glass the pill is
+white-lifted and only faintly tinted, so it reads light rather than as a dark slab; on dark
+glass the accent keeps its neon hue. Capsules never bend the backdrop, so tree guide lines and
+code behind them stay out of the selection. The selected label is `selectedText` (white dark /
+#10151F light), or `text` on tabs, and its file icon takes `accent`.
+Hover is the same pill at `HOVER_PILL_ALPHA` (45%) of its strength, so it stays a lighter
+version of the selection. A focused panel
 draws a 1 dp `focusHalo` line on its top edge
 and nothing else glows; the tool window drops the halo because its content plane is
 edge-to-edge and the focused context is shown in the status capsule. Unselected rows and tabs
 stay quiet. The status capsule group renders the `accent2` `FocusChip` without a glow.
 
-The two helpers are `glassCapsule(shape, insetX, insetY, fillAlpha, lineEdge, lineAlpha)` and
-`selectionRow(selected, hovered)`, which fixes the popup capsule at 6/2 dp inset with a left
-line. The line and capsule alpha fade through `rememberNeonAlpha`.
+The two helpers are `glassCapsule(shape, insetX, insetY, fillAlpha, selectionAlpha)` and
+`selectionRow(selected, hovered)`, which fixes the popup capsule at 6/2 dp inset. The pill
+fades through `rememberSelectionAlpha`.
 
 Every popup footer uses `PopupHintBar(vararg hints)` (`stride.app.ui`): keycap glyphs followed
 by sentence-case words, separated by spacing only, over the 8% white hairline. The welcome
@@ -1415,11 +1418,11 @@ Files ⌘E and Find Action ⇧⌘A; without one it shows Open Folder ⌘O, the s
 
 ### Animation rules
 
-Motion is limited to state transitions: the 150 ms selection capsule and neon line fade, the
+Motion is limited to state transitions: the 150 ms selection pill fade, the
 200 ms tab-group selection pill slide/stretch (`animateDpAsState` on its left and width with
 `standardEasing`), and the popup open fade. Nothing loops; the run window's running glyph no
 longer pulses. When `stride.app.ui.LocalAnimationsEnabled` (a `staticCompositionLocalOf { true }`)
-is false, `rememberNeonAlpha` returns 0f/1f immediately and the pill uses `snap()`, so no
+is false, `rememberSelectionAlpha` returns 0f/1f immediately and the pill uses `snap()`, so no
 animation keeps the test clock busy. `SnapshotRenderer` and the UI tests provide `false`. The
 wordmark caret blink keeps its own `LocalWordmarkCaretBlink` switch. `standardEasing`
 (`CubicBezierEasing(0.2f, 0f, 0f, 1f)`) is the easing for the motion tokens
@@ -1427,7 +1430,8 @@ wordmark caret blink keeps its own `LocalWordmarkCaretBlink` switch. `standardEa
 
 ### Liquid glass, the field and the lens
 
-The surface is three layers: **L0 field → L1 glass → L2 the one neon line**. `App` wraps its
+The surface is three layers: **L0 field → L1 glass → L2 the accent** (the focus line and the
+selection pill). `App` wraps its
 root in `MeshBackground`; the sidebar uses `sidebarGlass` over the background extension, every
 floating control capsule uses `capsuleGlass`, transient surfaces use `backdropGlass`, and the
 editor body stays `contentTint`, one pre-blended opaque color that is the dark plane under the
@@ -1441,7 +1445,7 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `backgroundLift` / `background` / `fieldBottom` | #1A1B23 / #13141A / #0B0C10 | #FBFCFE / #F3F4F8 / #E9ECF2 |
 | `glassFill` / `glassFillStrong` | white 7% / 10% | black 5% / 8% |
 | `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 10% / 8% / 6% | black 10% / 8% / 6% |
-| `hoverFill` / `capsuleLift` / `capsuleRim` | white 4% / 7% / 16% | black 4% / white 55% / black 14% |
+| `capsuleLift` / `capsuleRim` | white 7% / 16% | white 55% / black 14% |
 | `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp (cached panel slices) | same |
 | `liquidGlassBlurRadius` | 8 dp (floating glass) | same |
 | `glassBase` / `glassBackdropMix` / `glassChromaGain` | #14151B / 0.52 / 0.80 | #F6F7FA / 0.52 / 0.80 |
@@ -1491,11 +1495,9 @@ fun Modifier.scrollEdgeBands(key: () -> Any, cache: EdgeBandCache, topBand: Dp, 
 class EdgeBandCache
 fun Modifier.sidebarGlass(shape: Shape): Modifier
 fun Modifier.glassCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
-                          fillAlpha: Float = 0f, lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
-                          lineAlpha: Float = 1f): Modifier
+                          fillAlpha: Float = 0f, selectionAlpha: Float = 0f): Modifier
 fun Modifier.glassLensCapsule(shape: Shape, insetX: Dp = 6.dp, insetY: Dp = 2.dp,
-                              lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
-                              lineAlpha: Float = 1f): Modifier
+                              selectionAlpha: Float = 1f): Modifier
 @Composable fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier
 fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier
 fun Modifier.slabShadow(shape: Shape): Modifier
@@ -1519,11 +1521,10 @@ val LocalEditorInsets: ProvidableCompositionLocal<EditorInsets>
 ```
 
 `MeshBackground` draws the field into a bitmap once per size and exposes it through
-`LocalMeshBitmap`. `glassCapsule` draws the lift and rim
-directly and never samples the backdrop; `glassLensCapsule` replaces it on the selected tree
-row and on the tab group's selection pill: the same capsule over a small 6 dp bezel lens of
-3.5 dp whose displacement fades to zero at the capsule ends, so the neon line stays crisp and
-nothing smears there.
+`LocalMeshBitmap`. `glassCapsule` draws the selection pill directly and never samples the
+backdrop; `glassLensCapsule` replaces it on the selected tree row and on the tab group's
+selection pill: the same pill over a small 6 dp bezel lens of 3.5 dp whose displacement fades
+to zero at the capsule ends, so the pill's edges stay crisp and nothing smears there.
 
 `slabShadow` bakes a soft black 55% rounded-rect shadow, blurred at `0.55 × slabShadow`, into
 one image per shape size; the interior of the shape is clipped out of the baked image, so a
@@ -1703,15 +1704,15 @@ content plane and checks that the switcher is one floating capsule over it.
 
 The tool-window switcher is a capsule group (`capsuleGlass`, radius half its height) offset
 `chromeGap` from the panel top and from the content inset; each tab is a `glassCapsule` inset
-2/3 dp with the neon line on its bottom edge, so only the active tab shows a capsule and a line.
-Inactive tab labels are `textSecondaryOnGlass`. `RunToolWindow`'s session tabs are a second
-capsule group inside the run content, with the same language.
+2/3 dp, so only the active tab shows the selection pill. Inactive tab labels are
+`textSecondaryOnGlass`. `RunToolWindow`'s session tabs are a second capsule group inside the run
+content, with the same language.
 
 Run window text sits on the content plane: the header status word (`accent2` while running,
 `neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
 panel. `text`, `muted`, `accent2` and `neonLime` clear 4.5:1 on the plane; `neonPink` sits on
 the black 45% `labelScrim` band (5.14:1). `MethodDetail` stays transparent. The selected method
-row is a `selectionRow` capsule with the accent2 line.
+row is a `selectionRow` pill.
 
 Status glyphs keep their shapes and colors (✓ ✕ ●) and draw no halo; the running pulse was
 removed.
@@ -1734,15 +1735,15 @@ the editor's own document mirrored from the strip right of its edge (`background
 tree keeps its `focusHalo` on the panel's top edge, fed by an `onFocusChanged` read of the panel
 subtree in `App` (`KeyContext` has no tree context, so `state.focus` is unchanged). The panel
 registers a passive pointer node, so presses on its empty area do not reach the code under it;
-its rows and theirs clickables still work. The selected tree row is a `glassLensCapsule` inset
-6/2 dp with the accent2 line on the left, a `hoverFill` step on hover and the small lens
-described above. Unselected rows draw nothing, so the line is the only bright mark. The tree
+its rows and theirs clickables still work. The selected tree row is a `glassLensCapsule` pill
+inset 6/2 dp, the same pill lighter on hover and the small lens described above. Unselected
+rows draw nothing. The tree
 header is `Project` in 13 sp medium; indent guides use `glassBorderSide`. File icons are `muted`,
 the selected row's icon `accent`. The panel's right edge carries an invisible `chromeGap`-wide
 drag handle clamped to 200–480 dp.
 
 The open tabs are one `capsuleGlass` group right of the sidebar: the selected tab is an inner
-`glassLensCapsule` pill with the accent2 line on its bottom edge, and the pill's left and width
+`glassLensCapsule` pill and nothing else, and the pill's left and width
 animate with `motionMediumMillis` and `standardEasing` when the selection changes
 (`snap()` when `LocalAnimationsEnabled` is false), so it slides and stretches between tabs. Tabs
 keep their icons, labels, close buttons and horizontal overflow scrolling, including the
@@ -1813,9 +1814,9 @@ re-breaks the backdrop. The `shadow` and `clip` that precede `backdropGlass` do 
 blur (ratios 0.0028 and 0.0008). Popup labels use `text` for primary and `textOnBusyGlass` for
 secondary runs; the panel is the liquid glass with radius 18 dp and a soft neutral shadow, with
 no neon border. A selected row
-is a `selectionRow` capsule inset 6/2 dp with the accent2 line on its left edge; hover is a
-`hoverFill` step. The Find in Path toggles and the Search Everywhere tab chips follow the same
-capsule-and-line language, and no popup draws an outer glow.
+is a `selectionRow` pill inset 6/2 dp; hover is the same pill lighter. The Find in Path toggles
+and the Search Everywhere tab chips follow the same one-pill language, and no popup draws an
+outer glow.
 
 The find bar is a floating `capsuleGlass` panel under the tab group with a 1 dp `neonUnderline`
 inset by half the capsule height. Its labels and placeholders are `textSecondaryOnGlass`, the
@@ -1908,8 +1909,9 @@ number of attempts) and the reason is logged once when the path is given up.
 
 - `MeshBackground` paints nothing, `contentTint()` paints nothing and `capsuleGlass` /
   `sidebarGlass` / `backdropGlass` draw no fill, frost, rim or shadow.
-- `glassLensCapsule` keeps only the lift, the crisp rim and the neon line; the selection and
-  hover language (`glassCapsule`, `neonUnderline`, `selectionRow`) is unchanged.
+- `glassLensCapsule` keeps only the selection pill (lift, accent tint and rim); the selection
+  and hover language (`glassCapsule`, `selectionRow`) is unchanged, and the find bar keeps its
+  `neonUnderline`.
 - The editor and the tool window body are their own native glass pieces
   (`editor-surface`, `tool-window-surface`) with `editorGlassTint` (#14151B at 92% dark,
   #F5F6F9 at 92% light) and `contentSurfaceRadius` corners. Nothing fills them in Compose, so
@@ -2123,12 +2125,13 @@ Maven Central alone does not carry it.
 | `TestNavigationTest` | source-to-test names in both directions, extension and directory ordering, no counterpart |
 | `BookmarksTest` | toggle add/remove, per-file lines, remove, line index and text |
 | `FileStructureTest` | nesting depth and line order, filtered and unfiltered rows |
-| `NeonModifiersTest` | underline glow direction and `rememberNeonAlpha` with animations on and off |
+| `NeonModifiersTest` | underline glow direction and `rememberSelectionAlpha` with animations on and off |
 | `UiFontTest` | the `uiFont` preference round-trip (stored, missing and unknown values) and the toggle action switching the family and status message |
-| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus and selection markers clearing 3.0, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), the rendered field staying neutral inside its luminance band, both palettes' glass code scheme, gutter, console labels and all 16 ANSI foregrounds clearing 4.5 on every stacked plate in `editorGlassPlates`, and on the native path ANSI 0 as a background keeping its original dark colour, as a foreground moving to the readable one, with inverse video swapping the original lists; the selection, current-line, find-match plates and the caret stay visible and their text stays at 4.5 |
-| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the 2 dp selection line and its cyan halo at density 2, the background extension mirroring and blurring the strip right of its edge while leaving the source untouched, and the blur-only fallback when the shader is unavailable |
+| `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus markers clearing 3.0, the selection pill reading at least 1.15 over the native tint on white and black desktops with the selected label at 4.5, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), the rendered field staying neutral inside its luminance band, both palettes' glass code scheme, gutter, console labels and all 16 ANSI foregrounds clearing 4.5 on every stacked plate in `editorGlassPlates`, and on the native path ANSI 0 as a background keeping its original dark colour, as a foreground moving to the readable one, with inverse video swapping the original lists; the selection, current-line, find-match plates and the caret stay visible and their text stays at 4.5 |
+| `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the selection capsule drawing one pill with no edge line at density 2 and hover drawing it lighter, the background extension mirroring and blurring the strip right of its edge while leaving the source untouched, and the blur-only fallback when the shader is unavailable |
 | `ToolWindowGlassTest` | on the Skia path only: the tool window content is the opaque content plane with one floating switcher capsule over it, the terminal and run console paint that plane, status glyphs draw no halo, run status colors clear 4.5 on the content plane, and the failed-status word clears it on its label band (the native path has no such plane; its body is the `tool-window-surface` glass piece) |
-| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected row carries the neon line on its capsule edge, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
+| `SearchSelectionPillTest` | the Search Everywhere popup on both drawing paths in both palettes: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and the pill reads at least 1.15 against the panel |
+| `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
 | `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup draws no Compose pixel inside its reported glass piece (the regression that produced the opaque box), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor, tool window and popups carry no Compose fill, the Go to Line popup draws its text outside the editor clip, and the editor clip removes code from under an open popup |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |

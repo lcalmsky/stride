@@ -72,12 +72,12 @@ fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Mo
 
 /** Selection fade. Instant 0f/1f when [LocalAnimationsEnabled] is false. */
 @Composable
-fun rememberNeonAlpha(active: Boolean): Float {
+fun rememberSelectionAlpha(active: Boolean): Float {
     if (!LocalAnimationsEnabled.current) return if (active) 1f else 0f
     val alpha by animateFloatAsState(
         targetValue = if (active) 1f else 0f,
         animationSpec = tween(DesignTokens.neonFadeMillis),
-        label = "neon-alpha",
+        label = "selection-alpha",
     )
     return alpha
 }

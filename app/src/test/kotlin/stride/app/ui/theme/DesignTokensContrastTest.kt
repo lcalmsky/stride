@@ -71,11 +71,36 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `focus and selection markers clear the UI contrast`() {
-        assertEquals(DesignTokens.accent2, DesignTokens.selectionBar)
-        for ((name, color) in listOf("accent2" to DesignTokens.accent2, "selectionBar" to DesignTokens.selectionBar)) {
-            val ratio = contrastRatio(color, worstStrongGlass)
-            assertTrue(ratio >= DesignTokens.contrastUi, "$name on worstStrongGlass = %.3f".format(ratio))
+    fun `focus markers clear the UI contrast`() {
+        val ratio = contrastRatio(DesignTokens.accent2, worstStrongGlass)
+        assertTrue(ratio >= DesignTokens.contrastUi, "accent2 on worstStrongGlass = %.3f".format(ratio))
+    }
+
+    @Test
+    fun `the selection pill is one light signal over any desktop in both palettes`() {
+        // The native material is the palette's tint over the desktop; the pill is the white lift
+        // and the accent tint over that. It must read as a pill (1.15) and keep the selected label
+        // at body contrast on it.
+        val desktops = mapOf("white" to Color.White, "black" to Color.Black)
+        for ((appearance, palette) in listOf(Appearance.DARK to DarkPalette, Appearance.LIGHT to LightPalette)) {
+            val tint = Color(palette.nativeGlassTint)
+            for ((label, desktop) in desktops) {
+                val base = blendOver(tint, desktop)
+                val pill = blendOver(palette.selectionPillTint, blendOver(palette.selectionPillLift, base))
+                val pillRatio = contrastRatio(pill, base)
+                System.err.println("selection-pill $appearance $label desktop ratio=%.3f".format(pillRatio))
+                assertTrue(
+                    pillRatio >= 1.15,
+                    "$appearance pill over the $label desktop = %.3f, below 1.15".format(pillRatio),
+                )
+                for ((name, color) in listOf("text" to palette.text, "selectedText" to palette.selectedText)) {
+                    val ratio = contrastRatio(color, pill)
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance $name on the pill over the $label desktop = %.3f".format(ratio),
+                    )
+                }
+            }
         }
     }
 
@@ -462,18 +487,27 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `light selection reads instantly and its bar clears the UI contrast`() {
+    fun `light selection reads instantly and stays light on light glass`() {
         val blended = blendOver(LightPalette.selection, LightPalette.surface)
         val selectionRatio = contrastRatio(blended, LightPalette.surface)
         assertTrue(selectionRatio >= 1.2, "blended selection on white = %.3f, too faint".format(selectionRatio))
-        val glow = blendOver(LightPalette.accent2Glow, LightPalette.surface)
-        assertTrue(contrastRatio(glow, LightPalette.surface) >= 1.1, "selection glow is invisible on light")
-        val worstGlass = blendOver(LightPalette.glassFillStrong, LightPalette.backgroundLift)
-        for ((name, color) in listOf("accent2" to LightPalette.accent2, "selectionBar" to LightPalette.selectionBar)) {
-            for ((surfaceName, surface) in listOf("white" to LightPalette.surface, "glass" to worstGlass)) {
-                val ratio = contrastRatio(color, surface)
-                assertTrue(ratio >= DesignTokens.contrastUi, "$name on light $surfaceName = %.3f".format(ratio))
-            }
+        // The pill lifts toward white and only tints with the accent; a dark slab would sit far
+        // below the near-white luminance band.
+        for ((surfaceName, surface) in listOf("white" to LightPalette.surface, "field" to LightPalette.background)) {
+            val pill = blendOver(
+                LightPalette.selectionPillTint,
+                blendOver(LightPalette.selectionPillLift, surface),
+            )
+            assertTrue(
+                relativeLuminance(pill) >= 0.6,
+                "the light pill on $surfaceName is too dark: %.4f".format(relativeLuminance(pill)),
+            )
+            assertTrue(
+                contrastRatio(pill, surface) >= 1.15,
+                "the light pill on $surfaceName = %.3f".format(contrastRatio(pill, surface)),
+            )
+            val ratio = contrastRatio(LightPalette.accent2, surface)
+            assertTrue(ratio >= DesignTokens.contrastUi, "accent2 on light $surfaceName = %.3f".format(ratio))
         }
     }
 

@@ -268,53 +268,39 @@ fun Modifier.labelScrim(active: Boolean): Modifier = drawBehind {
 }
 
 /**
- * A small capsule inset from its row or tab: a neutral interior lift, a crisp top rim and, when
- * [lineAlpha] is above zero, the neon line on [lineEdge]. Capsules never bend the backdrop, so
- * guide lines and text behind them stay out of the selection.
+ * A small capsule inset from its row or tab. A selected capsule is the selection pill: the white
+ * lift, the accent tint and the crisp top rim. Hover draws the same pill lighter. There is no
+ * edge line, so a selected item carries exactly one signal.
  */
 fun Modifier.glassCapsule(
     shape: Shape,
     insetX: Dp = 6.dp,
     insetY: Dp = 2.dp,
     fillAlpha: Float = 0f,
-    lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
-    lineAlpha: Float = 1f,
+    selectionAlpha: Float = 0f,
 ): Modifier = drawBehind {
-    if (fillAlpha <= 0f && lineAlpha <= 0f) return@drawBehind
+    // A selected item uses its own alpha; hover is the same pill at a lighter strength.
+    val pillAlpha = if (selectionAlpha > 0f) selectionAlpha else fillAlpha * HOVER_PILL_ALPHA
+    if (pillAlpha <= 0f) return@drawBehind
     val left = insetX.toPx()
     val top = insetY.toPx()
     val innerWidth = size.width - left * 2f
     val innerHeight = size.height - top * 2f
     if (innerWidth <= 0f || innerHeight <= 0f) return@drawBehind
-    val innerSize = Size(innerWidth, innerHeight)
-    val path = capsulePath(shape, innerSize).apply { translate(Offset(left, top)) }
-    clipPath(path) {
-        if (fillAlpha > 0f) {
-            drawRect(
-                DesignTokens.hoverFill.copy(alpha = DesignTokens.hoverFill.alpha * fillAlpha),
-                topLeft = Offset(left, top),
-                size = innerSize,
-            )
-        }
-        if (lineAlpha > 0f) {
-            drawRect(DesignTokens.capsuleLift, topLeft = Offset(left, top), size = innerSize)
-            drawCapsuleRim(shape, innerSize, left, top)
-            drawNeonLine(innerSize, left, top, lineEdge, lineAlpha)
-        }
-    }
+    drawSelectionPill(shape, Size(innerWidth, innerHeight), left, top, pillAlpha)
 }
 
 /**
  * The lens capsule on the selected tree row and the active tab: the backdrop bends inside a
- * [DesignTokens.capsuleBezel] rim, then the neutral lift, the crisp top rim and the neon line sit
- * on top. The displacement fades to zero at the left and right ends, so nothing smears there.
+ * [DesignTokens.capsuleBezel] rim, then the selection pill (lift, accent tint and top rim) sits on
+ * top and is the only signal. The displacement fades to zero at the left and right ends, so
+ * nothing smears there.
  */
 fun Modifier.glassLensCapsule(
     shape: Shape,
     insetX: Dp = 6.dp,
     insetY: Dp = 2.dp,
-    lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
-    lineAlpha: Float = 1f,
+    selectionAlpha: Float = 1f,
 ): Modifier = composed {
     val nativeGlass = LocalNativeGlass.current
     val cache = remember { BackdropFilterCache() }
@@ -326,16 +312,14 @@ fun Modifier.glassLensCapsule(
         val top = insetY.toPx()
         val innerWidth = size.width - left * 2f
         val innerHeight = size.height - top * 2f
-        if (innerWidth <= 0f || innerHeight <= 0f || lineAlpha <= 0f) {
+        if (innerWidth <= 0f || innerHeight <= 0f || selectionAlpha <= 0f) {
             drawContent()
             return@drawWithContent
         }
         val innerSize = Size(innerWidth, innerHeight)
         if (nativeGlass) {
-            // Nothing to bend over the native material; the highlight and the neon line stay.
-            drawRect(DesignTokens.capsuleLift, topLeft = Offset(left, top), size = innerSize)
-            drawCapsuleRim(shape, innerSize, left, top)
-            drawNeonLine(innerSize, left, top, lineEdge, lineAlpha)
+            // Nothing to bend over the native material; the selection pill stays.
+            drawSelectionPill(shape, innerSize, left, top, selectionAlpha)
             drawContent()
             return@drawWithContent
         }
@@ -372,26 +356,46 @@ fun Modifier.glassLensCapsule(
         } else {
             drawRect(DesignTokens.glassBase.copy(alpha = 1f - DesignTokens.glassBackdropMix), size = innerSize)
         }
-        drawRect(DesignTokens.capsuleLift, size = innerSize)
-        drawCapsuleRim(shape, innerSize, 0f, 0f)
-        drawNeonLine(innerSize, 0f, 0f, lineEdge, lineAlpha)
+        drawSelectionPill(shape, innerSize, 0f, 0f, selectionAlpha)
         native.restore()
         drawContent()
     }
 }
 
-enum class CapsuleEdge { LEFT, BOTTOM }
-
-/** A popup selection row: the capsule and neon line when selected, a faint step on hover. */
+/** A popup selection row: the pill when selected, the same pill lighter on hover. */
 @Composable
 fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier = glassCapsule(
     shape = androidx.compose.foundation.shape.RoundedCornerShape(DesignTokens.radiusCapsule),
     insetX = 6.dp,
     insetY = 2.dp,
     fillAlpha = if (hovered && !selected) 1f else 0f,
-    lineEdge = CapsuleEdge.LEFT,
-    lineAlpha = rememberNeonAlpha(selected),
+    selectionAlpha = rememberSelectionAlpha(selected),
 )
+
+/** How much of the selection pill's strength a hovered but unselected item keeps. */
+private const val HOVER_PILL_ALPHA = 0.45f
+
+/**
+ * The single signal of a selected item: the white lift under the accent tint, clipped to the
+ * capsule, plus the crisp top rim. The alpha scales the whole pill so the selection can fade.
+ */
+private fun DrawScope.drawSelectionPill(
+    shape: Shape,
+    innerSize: Size,
+    insetX: Float,
+    insetY: Float,
+    alpha: Float,
+) {
+    val offset = Offset(insetX, insetY)
+    val path = capsulePath(shape, innerSize).apply { translate(offset) }
+    clipPath(path) {
+        val lift = DesignTokens.selectionPillLift
+        val tint = DesignTokens.selectionPillTint
+        drawRect(lift.copy(alpha = lift.alpha * alpha), topLeft = offset, size = innerSize)
+        drawRect(tint.copy(alpha = tint.alpha * alpha), topLeft = offset, size = innerSize)
+    }
+    drawCapsuleRim(shape, innerSize, insetX, insetY, alpha)
+}
 
 private fun DrawScope.capsulePath(shape: Shape, size: Size): Path {
     val outline = shape.createOutline(size, layoutDirection, this)
@@ -1567,14 +1571,23 @@ private fun DrawScope.drawSlabRims(shape: Shape, cache: SlabRimCache) {
 }
 
 /** The crisp top rim of a capsule: lit at the top edge and fading down the sides. */
-private fun DrawScope.drawCapsuleRim(shape: Shape, innerSize: Size, insetX: Float, insetY: Float) {
+private fun DrawScope.drawCapsuleRim(
+    shape: Shape,
+    innerSize: Size,
+    insetX: Float,
+    insetY: Float,
+    alpha: Float = 1f,
+) {
     val outline = shape.createOutline(innerSize, layoutDirection, this)
     val shader = Shader.makeLinearGradient(
         0f,
         0f,
         0f,
         innerSize.height,
-        intArrayOf(DesignTokens.capsuleRim.toArgb(), DesignTokens.capsuleRim.copy(alpha = 0f).toArgb()),
+        intArrayOf(
+            DesignTokens.capsuleRim.copy(alpha = DesignTokens.capsuleRim.alpha * alpha).toArgb(),
+            DesignTokens.capsuleRim.copy(alpha = 0f).toArgb(),
+        ),
         floatArrayOf(0f, 0.7f),
     )
     val paint = Paint().apply {
@@ -1614,55 +1627,6 @@ private fun DrawScope.drawCapsuleRim(shape: Shape, innerSize: Size, insetX: Floa
     } finally {
         paint.close()
         shader.close()
-    }
-}
-
-/** A restrained neon line on the capsule edge: a soft glow and one crisp 2 dp line. */
-private fun DrawScope.drawNeonLine(
-    innerSize: Size,
-    insetX: Float,
-    insetY: Float,
-    edge: CapsuleEdge,
-    alpha: Float,
-) {
-    val color = DesignTokens.selectionBar
-    val width = DesignTokens.selectionBarWidth.toPx()
-    val glow = Paint().apply {
-        isAntiAlias = true
-        mode = org.jetbrains.skia.PaintMode.STROKE
-        strokeWidth = 7.dp.toPx()
-        this.color = color.copy(alpha = 0.32f * alpha).toArgb()
-        maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(org.jetbrains.skia.FilterBlurMode.NORMAL, 3.5.dp.toPx())
-    }
-    val crisp = Paint().apply {
-        isAntiAlias = true
-        mode = org.jetbrains.skia.PaintMode.STROKE
-        strokeWidth = width
-        this.color = color.copy(alpha = alpha).toArgb()
-    }
-    try {
-        drawIntoCanvas { canvas ->
-            val native = canvas.nativeCanvas
-            native.save()
-            native.translate(insetX, insetY)
-            if (edge == CapsuleEdge.LEFT) {
-                val x = width / 2f + 1.dp.toPx()
-                val top = 2.dp.toPx()
-                val bottom = innerSize.height - 2.dp.toPx()
-                native.drawLine(x, top, x, bottom, glow)
-                native.drawLine(x, top, x, bottom, crisp)
-            } else {
-                val y = innerSize.height - width / 2f - 1.dp.toPx()
-                val start = 6.dp.toPx()
-                val end = innerSize.width - 6.dp.toPx()
-                native.drawLine(start, y, end, y, glow)
-                native.drawLine(start, y, end, y, crisp)
-            }
-            native.restore()
-        }
-    } finally {
-        glow.close()
-        crisp.close()
     }
 }
 

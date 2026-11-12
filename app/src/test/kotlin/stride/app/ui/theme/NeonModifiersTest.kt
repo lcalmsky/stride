@@ -42,7 +42,7 @@ class NeonModifiersTest {
         var alpha = -1f
         setContent {
             CompositionLocalProvider(LocalAnimationsEnabled provides false) {
-                alpha = rememberNeonAlpha(true)
+                alpha = rememberSelectionAlpha(true)
             }
         }
         waitForIdle()
@@ -57,7 +57,7 @@ class NeonModifiersTest {
         mainClock.autoAdvance = false
         setContent {
             CompositionLocalProvider(LocalAnimationsEnabled provides true) {
-                alpha = rememberNeonAlpha(active)
+                alpha = rememberSelectionAlpha(active)
             }
         }
         mainClock.advanceTimeByFrame()

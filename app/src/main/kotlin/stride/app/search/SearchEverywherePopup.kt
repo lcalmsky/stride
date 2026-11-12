@@ -64,7 +64,6 @@ import stride.app.ui.FileTypeIcon
 import stride.app.ui.PopupHintBar
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.SearchIcon
-import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.glass.GlassHoles
 import stride.app.glass.LocalNativeGlass
@@ -72,7 +71,7 @@ import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.glassCapsule
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.rememberSelectionAlpha
 import stride.app.ui.theme.selectionRow
 import stride.app.ui.theme.popupShadow
 import stride.core.vfs.VFile
@@ -247,15 +246,14 @@ private fun TabRow(selected: SearchTab, onSelect: (SearchTab) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         for (tab in SearchTab.entries) {
-            val neon = rememberNeonAlpha(tab == selected)
+            val pill = rememberSelectionAlpha(tab == selected)
             Box(
                 Modifier
                     .glassCapsule(
                         shape = shape,
                         insetX = 0.dp,
                         insetY = 0.dp,
-                        lineEdge = CapsuleEdge.BOTTOM,
-                        lineAlpha = neon,
+                        selectionAlpha = pill,
                     )
                     .semantics { this.selected = tab == selected }
                     .clickable(onClick = { onSelect(tab) })

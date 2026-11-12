@@ -134,7 +134,6 @@ import stride.app.tree.TreeRow
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
-import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.EditorInsets
 import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
@@ -145,7 +144,7 @@ import stride.app.ui.theme.contentClip
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
-import stride.app.ui.theme.rememberNeonAlpha
+import stride.app.ui.theme.rememberSelectionAlpha
 import stride.app.ui.theme.sidebarGlass
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
@@ -929,14 +928,14 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
     val hovered by interaction.collectIsHoveredAsState()
     val selectedFile = session.editors.selected?.file
     val selected = selectedFile != null && samePath(selectedFile, row.file)
-    val neon = rememberNeonAlpha(selected)
+    val pill = rememberSelectionAlpha(selected)
     val capsuleShape = RoundedCornerShape(DesignTokens.radiusSmall)
     val capsule = if (selected) {
         Modifier.glassLensCapsule(
             shape = capsuleShape,
             insetX = 6.dp,
             insetY = 2.dp,
-            lineAlpha = neon,
+            selectionAlpha = pill,
         )
     } else {
         Modifier.glassCapsule(
@@ -944,7 +943,6 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
             insetX = 6.dp,
             insetY = 2.dp,
             fillAlpha = if (hovered) 1f else 0f,
-            lineAlpha = 0f,
         )
     }
     Row(
@@ -1094,7 +1092,7 @@ private fun EditorArea(
 
 /**
  * The open tabs as one glass capsule group. The selected tab is a glass pill that slides and
- * stretches to the newly selected tab; the pill's cyan line keeps the selection instant.
+ * stretches to the newly selected tab; the pill is the tab's only selection signal.
  */
 @Composable
 private fun TabGroup(
@@ -1151,8 +1149,7 @@ private fun TabGroup(
                         shape = pillShape,
                         insetX = 1.dp,
                         insetY = 1.dp,
-                        lineEdge = CapsuleEdge.BOTTOM,
-                        lineAlpha = 1f,
+                        selectionAlpha = 1f,
                     ),
             )
         }
@@ -1191,7 +1188,6 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
                         insetX = 2.dp,
                         insetY = 4.dp,
                         fillAlpha = 1f,
-                        lineAlpha = 0f,
                     )
                 } else {
                     Modifier
