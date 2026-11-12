@@ -111,26 +111,54 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
-tasks.test {
-    val runIntegration = providers.systemProperty("stride.runIntegration").orNull == "true"
+val runIntegration = providers.systemProperty("stride.runIntegration").orNull == "true"
+
+// Disabled builds (or ones without clang) must not pick up a stale library from an earlier
+// build, so the tests skip the native paths with a reason.
+val nativeLibraryForTests = if (nativeGlassEnabled && hasClang) {
+    nativeGlassLibrary.get().asFile.absolutePath
+} else {
+    "${nativeGlassLibrary.get().asFile.absolutePath}.disabled"
+}
+
+fun Test.strideTestDefaults() {
     dependsOn(buildNativeGlass)
     useJUnitPlatform {
         if (!runIntegration) excludeTags("slow")
     }
-    // The native glass smoke test needs a real AWT peer; it creates no visible window.
+    // The native tests need a real AWT peer; they create no visible window.
     systemProperty("java.awt.headless", "false")
-    systemProperty("stride.repoRoot", rootProject.projectDir.absolutePath)
+    systemProperty("stride.repoRoot", project.rootProject.projectDir.absolutePath)
     systemProperty("stride.runIntegration", runIntegration.toString())
-    // Disabled builds (or ones without clang) must not pick up a stale library from an earlier
-    // build, so the tests skip the native paths with a reason.
-    val nativeLibrary = if (nativeGlassEnabled && hasClang) {
-        nativeGlassLibrary.get().asFile.absolutePath
-    } else {
-        "${nativeGlassLibrary.get().asFile.absolutePath}.disabled"
-    }
-    systemProperty("stride.glass.library", nativeLibrary)
+    systemProperty("stride.glass.library", nativeLibraryForTests)
     // The appearance-order test forks a fresh JVM; it must see the same test runtime classes.
-    systemProperty("stride.test.classpath", sourceSets["test"].runtimeClasspath.asPath)
+    systemProperty("stride.test.classpath", project.sourceSets["test"].runtimeClasspath.asPath)
+}
+
+// The offscreen UI tests switch AWT to headless before it initialises, and AWT cannot be made
+// headful again afterwards. The native tests therefore run in their own JVM, so their outcome
+// does not depend on whether a UI test ran first.
+val nativeTest = tasks.register<Test>("nativeTest") {
+    description = "Runs the native glass tests in a fresh, non-headless JVM."
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/glass/Native*Test.class")
+    strideTestDefaults()
+}
+
+tasks.test {
+    strideTestDefaults()
+    exclude("**/glass/Native*Test.class")
+    // A `--tests` filter that only names native classes matches nothing here; the nativeTest
+    // finalizer below still runs them, so an empty selection is not an error.
+    filter.setFailOnNoMatchingTests(false)
+    // `./gradlew test` keeps running the native tests, just in the separate JVM above.
+    finalizedBy(nativeTest)
+}
+
+tasks.named("check") {
+    dependsOn(nativeTest)
 }
 
 compose.desktop {

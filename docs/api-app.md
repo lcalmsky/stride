@@ -1997,9 +1997,14 @@ The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-li
 `04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
 `11-run-window-light.png`, `12-editor-scrolled-light.png` and
 `13-search-over-code-light.png` render the same scenes on the light palette.
-`tasks.test` sets `java.awt.headless=false` because `NativeGlassSmokeTest` creates an AWT peer
-(it never calls `setVisible`, so no window is ordered front); the snapshot renderer itself is
-software-only and never opens a window. The snapshots always take the Skia glass path.
+`UiSnapshotTest` switches AWT to headless before it initialises, and AWT cannot become headful
+again in that JVM, so the native tests that need a real AWT peer run in the separate
+`nativeTest` task: a fresh JVM with `java.awt.headless=false`. `tasks.test` excludes the
+`stride.app.glass.Native*` classes and finalises with `nativeTest`, so `./gradlew test` still
+runs them; their outcome no longer depends on whether a UI test ran first.
+`NativeGlassSmokeTest` never calls `setVisible`, so no window is ordered front; the snapshot
+renderer itself is software-only and never opens a window. The snapshots always take the Skia
+glass path.
 `UiSnapshotTest` also switches `AppearanceState` inside one live scene and asserts that the
 editor text, caret and scroll offset are unchanged while the rendered pixels re-theme.
 
