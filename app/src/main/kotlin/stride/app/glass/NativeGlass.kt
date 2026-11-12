@@ -11,6 +11,8 @@ data class NativeGlassView(
     val width: Double,
     val height: Double,
     val cornerRadius: Double,
+    val style: Int,
+    val tint: Int?,
 )
 
 /**
@@ -28,6 +30,8 @@ data class NativeLayerState(
     val containerBelowContent: Boolean,
     val contentViewOpaque: Boolean,
     val containerOpaque: Boolean,
+    /** Layers whose original opaque flag and background a detach restored. */
+    val restoredLayers: Int,
 )
 
 /** The debug view of one attached window: what the native side really has. */
@@ -40,8 +44,10 @@ data class NativeGlassState(
 )
 
 /**
- * JNI bridge to `native/glass/stride_glass.mm`. Every entry point marshals onto the AppKit
- * main thread inside the library; callers may use any thread.
+ * JNI bridge to `native/glass/stride_glass.mm`. Every entry point marshals onto the AppKit main
+ * thread inside the library and touches the window map there; callers may use any thread. The
+ * appearance query is the exception: before AWT installs the application object it returns
+ * "unknown" without touching AppKit, so it can be called from any thread at any time.
  */
 internal object NativeGlass {
     private val log: Logger = Logger.getLogger("stride.app")
@@ -120,8 +126,9 @@ internal object NativeGlass {
         val count = values[3].toInt()
         val views = ArrayList<NativeGlassView>(count)
         for (index in 0 until count) {
-            val at = 4 + index * 5
-            if (at + 4 >= values.size) break
+            val at = 4 + index * 7
+            if (at + 6 >= values.size) break
+            val tint = values[at + 6].toLong()
             views += NativeGlassView(
                 key = keys.getOrElse(index) { "" },
                 x = values[at],
@@ -129,10 +136,12 @@ internal object NativeGlass {
                 width = values[at + 2],
                 height = values[at + 3],
                 cornerRadius = values[at + 4],
+                style = values[at + 5].toInt(),
+                tint = if (tint == 0L) null else tint.toInt(),
             )
         }
-        val layerAt = 4 + count * 5
-        val layer = if (values.size >= layerAt + 9) {
+        val layerAt = 4 + count * 7
+        val layer = if (values.size >= layerAt + 10) {
             NativeLayerState(
                 drawingLayer = values[layerAt] != 0.0,
                 className = runCatching { nativeLayerClass(handle) }.getOrDefault(""),
@@ -144,6 +153,7 @@ internal object NativeGlass {
                 containerBelowContent = values[layerAt + 6] != 0.0,
                 contentViewOpaque = values[layerAt + 7] != 0.0,
                 containerOpaque = values[layerAt + 8] != 0.0,
+                restoredLayers = values[layerAt + 9].toInt(),
             )
         } else {
             null
@@ -161,13 +171,28 @@ internal object NativeGlass {
     fun layerTree(handle: Long): String =
         if (!available || handle == 0L) "" else runCatching { nativeLayerTree(handle) }.getOrDefault("")
 
-    fun beginDrag(handle: Long) {
-        if (available && handle != 0L) runCatching { nativeBeginDrag(handle) }
+    /** Replaces the window's draggable rectangles; count of rectangles the native side accepted. */
+    fun dragRegions(handle: Long, rects: List<DragRect>): Int {
+        if (!available || handle == 0L) return 0
+        val count = rects.size
+        val xs = FloatArray(count) { rects[it].x }
+        val ys = FloatArray(count) { rects[it].y }
+        val widths = FloatArray(count) { rects[it].width }
+        val heights = FloatArray(count) { rects[it].height }
+        return runCatching {
+            nativeSetDragRects(handle, xs, ys, widths, heights)
+        }.getOrElse {
+            log.warning("native glass drag regions failed: ${it.message}")
+            0
+        }
     }
 
-    fun zoom(handle: Long) {
-        if (available && handle != 0L) runCatching { nativeZoom(handle) }
-    }
+    /** Whether a window-relative point (from the top-left) is inside a reported drag rectangle. */
+    fun hitTestDragRegion(handle: Long, x: Double, y: Double): Boolean =
+        available && handle != 0L && runCatching { nativeHitTestDragRegion(handle, x, y) }.getOrDefault(false)
+
+    /** Installed local mouse-down monitors; one per attached window while it is attached. */
+    fun dragMonitorCount(): Int = if (!available) 0 else runCatching { nativeDragMonitorCount() }.getOrDefault(0)
 
     private external fun nativeSupported(): Boolean
 
@@ -195,7 +220,15 @@ internal object NativeGlass {
 
     private external fun nativeLayerTree(handle: Long): String
 
-    private external fun nativeBeginDrag(handle: Long)
+    private external fun nativeSetDragRects(
+        handle: Long,
+        xs: FloatArray,
+        ys: FloatArray,
+        widths: FloatArray,
+        heights: FloatArray,
+    ): Int
 
-    private external fun nativeZoom(handle: Long)
+    private external fun nativeHitTestDragRegion(handle: Long, x: Double, y: Double): Boolean
+
+    private external fun nativeDragMonitorCount(): Int
 }

@@ -27,9 +27,6 @@ fun main(args: Array<String>) {
     log.info("LoadResult enabled=${result.enabled.map { it.id }}")
     log.info("LoadResult disabled=${result.disabled}")
     val initialPath = args.firstOrNull()
-    // Follow the system appearance: the native observer notifies on change, so no restart is
-    // needed; the palette swap is Compose state read by every surface.
-    SystemAppearance.start()
 
     application {
         val state = remember { AppState() }
@@ -41,6 +38,7 @@ fun main(args: Array<String>) {
             }
         }
         val close = {
+            SystemAppearance.stop()
             state.dispose()
             exitApplication()
         }
@@ -52,12 +50,9 @@ fun main(args: Array<String>) {
             onKeyEvent = { false },
             create = {
                 ComposeWindow().apply {
-                    // Read when the peer is created: the content view fills the window and the
-                    // title strip becomes transparent with the title hidden. The native traffic
-                    // lights stay, centred in the top capsule row.
-                    rootPane.putClientProperty("apple.awt.fullWindowContent", true)
-                    rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
-                    rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+                    // Only when the native path is eligible; a failed attach reverts this at
+                    // runtime so every fallback keeps the standard title bar.
+                    GlassRuntime.prepareTitleBar(this)
                     defaultCloseOperation = WindowConstants.DO_NOTHING_ON_CLOSE
                     setSize(1280, 820)
                     setLocationRelativeTo(null)
@@ -85,6 +80,11 @@ fun main(args: Array<String>) {
                 window.title = state.session?.let { "strIDE — ${it.displayName()}" } ?: "strIDE"
             },
         ) {
+            LaunchedEffect(Unit) {
+                // After AWT/Compose has installed NSApplicationAWT: querying the appearance
+                // before that would leave the app without its menu bar and delegate.
+                SystemAppearance.start()
+            }
             App(
                 state,
                 onOpenFolder = { chooseFolder()?.let(state::openFolder) },

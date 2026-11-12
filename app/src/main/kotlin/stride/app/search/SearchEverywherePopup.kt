@@ -67,8 +67,11 @@ import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.SearchIcon
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.GlassHoles
+import stride.app.glass.LocalNativeGlass
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberNeonAlpha
 import stride.app.ui.theme.selectionRow
@@ -100,6 +103,7 @@ fun SearchEverywherePopup(
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
+    val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
     val rows = remember(results, tab) { popupRows(results, grouped = tab == SearchTab.ALL) }
 
     LaunchedEffect(query, tab) {
@@ -126,7 +130,7 @@ fun SearchEverywherePopup(
     Box(
         modifier
             .fillMaxSize()
-            .background(DesignTokens.scrim.copy(alpha = DesignTokens.scrim.alpha * fade))
+            .scrimSurface(DesignTokens.scrim.alpha * fade, holes)
             .pointerInput(Unit) { detectTapGestures { onClose() } },
     ) {
         Column(

@@ -104,6 +104,7 @@ import stride.app.glass.GlassHoles
 import stride.app.glass.GlassRegistry
 import stride.app.glass.GlassRuntime
 import stride.app.glass.LocalNativeGlass
+import stride.app.glass.chromeLayout
 import stride.app.glass.nativeGlass
 import stride.app.glass.windowDragRegion
 import stride.app.keys.KeyContext
@@ -221,18 +222,17 @@ fun App(
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
             // On the native path the merged title row replaces the top chrome inset, and the
             // sidebar starts below that row instead of reaching the window edge.
-            val topInset = if (nativeGlass) 0.dp else DesignTokens.chromeInset
-            val topRowHeight = if (nativeGlass) DesignTokens.nativeTitleRowHeight else DesignTokens.capsuleHeight
-            // The sidebar reaches the window's top inset on the Skia path and starts below the
-            // merged title row on the native path, where the traffic lights own the top left.
-            val sidebarTop = if (nativeGlass) topInset + topRowHeight + DesignTokens.chromeGap else DesignTokens.chromeInset
+            val chrome = chromeLayout(nativeGlass)
+            val topInset = chrome.topInset
+            val topRowHeight = chrome.topRowHeight
+            val sidebarTop = chrome.sidebarTop
             // The floating sidebar spans the window with chromeInset above and below it.
             val sidebarHeight = (maxHeight - sidebarTop - DesignTokens.chromeInset).coerceAtLeast(0.dp)
             val treeVisible = session != null && state.projectTreeVisible
             // Content runs edge to edge; the text column starts right of the floating sidebar.
             val contentLeft = DesignTokens.chromeInset +
                 (if (treeVisible) treeWidth + DesignTokens.contentGap else 0.dp)
-            val topBand = topInset + topRowHeight + DesignTokens.chromeGap
+            val topBand = chrome.topBand
             val bottomBand = DesignTokens.chromeInset + DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap
             if (session == null) {
                 WelcomeScreen(onOpenFolder)
@@ -347,6 +347,7 @@ fun App(
                             },
                             topInset = topInset,
                             rowHeight = topRowHeight,
+                            dragInset = if (nativeGlass) DesignTokens.nativeTitleLightsInset else 0.dp,
                         )
                         BottomChromeRow(
                             session = session,
@@ -711,6 +712,7 @@ private fun TopChromeRow(
     leftInset: Dp,
     topInset: Dp = DesignTokens.chromeInset,
     rowHeight: Dp = DesignTokens.capsuleHeight,
+    dragInset: Dp = 0.dp,
 ) {
     Box(
         Modifier
@@ -718,8 +720,9 @@ private fun TopChromeRow(
             .padding(top = topInset, end = DesignTokens.chromeInset)
             .height(rowHeight),
     ) {
-        // The empty strip is the window drag handle on the native merged title row.
-        Box(Modifier.fillMaxSize().windowDragRegion())
+        // The empty strip is the window drag handle on the native merged title row. It starts
+        // right of the traffic lights so a press on them still reaches the system buttons.
+        Box(Modifier.fillMaxSize().padding(start = dragInset).windowDragRegion())
         Row(
             Modifier.fillMaxSize().padding(start = leftInset),
             verticalAlignment = Alignment.CenterVertically,

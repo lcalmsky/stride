@@ -1249,6 +1249,43 @@ fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geomet
     }
 }
 
+/**
+ * The modal scrim. On the native path the popup's own glass sits below the AWT content view, so
+ * a full-window scrim would darken the popup's material too; each [holes] rectangle is cut out.
+ * On the Skia path the popup is painted over the scrim, so the plain fill is unchanged.
+ */
+fun Modifier.scrimSurface(alpha: Float, holes: List<androidx.compose.ui.geometry.Rect>): Modifier = composed {
+    val color = DesignTokens.scrim.copy(alpha = alpha)
+    if (!LocalNativeGlass.current) return@composed background(color)
+    val density = LocalDensity.current
+    val origin = remember { floatArrayOf(0f, 0f) }
+    onGloballyPositioned { coordinates ->
+        val bounds = coordinates.boundsInWindow()
+        origin[0] = bounds.left
+        origin[1] = bounds.top
+    }
+    drawBehind {
+        val path = Path()
+        path.addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+        for (hole in holes) {
+            val left = hole.left * density.density - origin[0]
+            val top = hole.top * density.density - origin[1]
+            val right = hole.right * density.density - origin[0]
+            val bottom = hole.bottom * density.density - origin[1]
+            if (right > left && bottom > top) {
+                path.addRoundRect(
+                    RoundRect(
+                        rect = androidx.compose.ui.geometry.Rect(left, top, right, bottom),
+                        cornerRadius = CornerRadius(DesignTokens.radiusPopup.toPx()),
+                    ),
+                )
+            }
+        }
+        path.fillType = PathFillType.EvenOdd
+        drawPath(path, color)
+    }
+}
+
 /** The top, side and bottom hairlines of a glass slab. */
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier = drawBehind {
     clipToShape(shape) { drawGlassBorder() }

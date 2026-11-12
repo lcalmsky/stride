@@ -90,28 +90,47 @@ class DesignTokensContrastTest {
     }
 
     @Test
-    fun `native glass tint keeps primary text over any desktop`() {
-        // The system material is modelled as an overlay of the tint colour; a white desktop is
-        // the brightest backdrop that can come through it. Secondary labels carry chromeTextStyle,
-        // so they are asserted against their opaque shadow plate.
-        val tint = Color(DesignTokens.nativeGlassTint)
-        for ((name, color) in TEXT_TOKENS.filterKeys { it != "textSecondaryOnGlass" }) {
-            for ((label, desktop) in mapOf("white" to Color.White, "black" to Color.Black)) {
-                val surface = blendOver(tint, desktop)
-                val ratio = contrastRatio(color, surface)
+    fun `native glass tint keeps primary text over any desktop in both palettes`() {
+        // The system material is modelled as an overlay of the palette's tint colour; a white
+        // and a black desktop are the extremes that can come through it. Secondary labels carry
+        // chromeTextStyle, so they are asserted against their opaque shadow plate.
+        val desktops = mapOf("white" to Color.White, "black" to Color.Black)
+        for ((appearance, palette) in listOf(Appearance.DARK to DarkPalette, Appearance.LIGHT to LightPalette)) {
+            val tint = Color(palette.nativeGlassTint)
+            for ((name, color) in listOf("text" to palette.text, "selectedText" to palette.selectedText)) {
+                for ((label, desktop) in desktops) {
+                    val ratio = contrastRatio(color, blendOver(tint, desktop))
+                    assertTrue(
+                        ratio >= DesignTokens.contrastText,
+                        "$appearance $name over $label desktop through the native tint = %.3f".format(ratio),
+                    )
+                }
+            }
+            for ((label, desktop) in desktops) {
+                val plate = blendOver(palette.chromeTextShadow.color, blendOver(tint, desktop))
+                val ratio = contrastRatio(palette.textSecondaryOnGlass, plate)
+                assertTrue(
+                    ratio >= DesignTokens.contrastText,
+                    "$appearance textSecondaryOnGlass on its shadow over the $label desktop = %.3f".format(ratio),
+                )
+            }
+        }
+        // The dark palette's accent labels are body text on glass and also clear 4.5 through its
+        // tint. The light accents are labels on opaque light surfaces (asserted in the light text
+        // roles test); over a black desktop the near-white tint floor would leave them near 3.4,
+        // so they are not part of this primary-text guarantee.
+        for ((name, color) in listOf(
+            "accent2" to DarkPalette.accent2,
+            "neonLime" to DarkPalette.neonLime,
+            "neonAmber" to DarkPalette.neonAmber,
+        )) {
+            for ((label, desktop) in desktops) {
+                val ratio = contrastRatio(color, blendOver(Color(DarkPalette.nativeGlassTint), desktop))
                 assertTrue(
                     ratio >= DesignTokens.contrastText,
                     "$name over $label desktop through the native tint = %.3f".format(ratio),
                 )
             }
-        }
-        for ((label, desktop) in mapOf("white" to Color.White, "black" to Color.Black)) {
-            val plate = blendOver(DesignTokens.chromeTextShadow.color, blendOver(tint, desktop))
-            val ratio = contrastRatio(DesignTokens.textSecondaryOnGlass, plate)
-            assertTrue(
-                ratio >= DesignTokens.contrastText,
-                "textSecondaryOnGlass on its shadow over the $label desktop = %.3f".format(ratio),
-            )
         }
     }
 
@@ -290,11 +309,12 @@ class DesignTokensContrastTest {
 
     @Test
     fun `syntax colours clear 4_5 on the light editor and keep the dark palette readable`() {
-        // The dark keyword and comment sit at 4.3–4.1 from v1.3.0 and stay unchanged; the light
-        // scheme is held to 4.5 on the white editor surface.
+        // The dark keyword and comment sit at 4.3–4.1 from v1.3.0 and stay unchanged; that 4.0
+        // floor is a legacy exception to WCAG AA kept for pixel-identical dark snapshots. The
+        // light scheme is held to 4.5 on the white editor surface.
         val cases = listOf(
             SyntaxCase("light", ColorScheme.LIGHT, Color.White, DesignTokens.contrastText),
-            SyntaxCase("dark", ColorScheme.DARK, Color(0xFF0F1117), 4.0),
+            SyntaxCase("dark (legacy v1.3.0 exception)", ColorScheme.DARK, Color(0xFF0F1117), LEGACY_SYNTAX_FLOOR),
         )
         for (case in cases) {
             for ((key, attributes) in case.scheme.attributes()) {
@@ -318,11 +338,12 @@ class DesignTokensContrastTest {
 
     @Test
     fun `ansi palettes stay readable on their terminal background`() {
-        // Index 0 is the background itself on both palettes; the dark bright black (8) is the
-        // dim grey of v1.3.0 and stays as it is.
+        // Index 0 is the background itself on both palettes. The dark palette's 4.0 floor and the
+        // excluded bright black (8) are the legacy v1.3.0 exception: that dim grey stays as it is
+        // so the dark terminal keeps its pixel-identical colours.
         val cases = listOf(
             AnsiCase("light", Appearance.LIGHT, Color(0xFFF3F4F8), DesignTokens.contrastText, emptySet()),
-            AnsiCase("dark", Appearance.DARK, Color(0xFF13141A), 4.0, setOf(0, 8)),
+            AnsiCase("dark (legacy v1.3.0 exception)", Appearance.DARK, Color(0xFF13141A), LEGACY_ANSI_FLOOR, LEGACY_ANSI_SKIPS),
         )
         for (case in cases) {
             val palette = withAppearance(case.appearance) { TerminalPalette.ansi }
@@ -371,6 +392,13 @@ class DesignTokensContrastTest {
     }
 
     companion object {
+        /** Legacy exception: the dark syntax palette's v1.3.0 keyword/comment values. */
+        private const val LEGACY_SYNTAX_FLOOR = 4.0
+
+        /** Legacy exception: the dark ANSI palette's v1.3.0 values. */
+        private const val LEGACY_ANSI_FLOOR = 4.0
+        private val LEGACY_ANSI_SKIPS = setOf(0, 8)
+
         /**
          * Body text tokens. Excludes `subtle` and `accent` (below 4.5) and `neonPink` (large text or
          * graphics only). Decorative elements are never contrast assertions: `glassBorderTop`,

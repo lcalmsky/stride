@@ -1,5 +1,6 @@
 @file:OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
 
+import java.util.concurrent.TimeUnit
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 plugins {
@@ -21,10 +22,36 @@ val nativeGlassSource = rootProject.layout.projectDirectory.file("native/glass/s
 val nativeGlassDir = layout.buildDirectory.dir("native/glass")
 val nativeGlassLibrary = nativeGlassDir.map { it.file("libstrideglass.dylib") }
 val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
+val nativeGlassEnabled = providers.gradleProperty("stride.nativeGlass").orNull?.toBoolean() ?: true
+
+// Probed once at configuration: only the Command Line Tools provide a working clang++.
+fun clangAvailable(): Boolean = runCatching {
+    val process = ProcessBuilder("clang++", "--version").redirectErrorStream(true).start()
+    val finished = process.waitFor(5, TimeUnit.SECONDS)
+    if (!finished) process.destroyForcibly()
+    process.inputStream.close()
+    finished && process.exitValue() == 0
+}.getOrDefault(false)
+
+val hasClang = clangAvailable()
+var nativeSkipLogged = false
 
 val buildNativeGlass = tasks.register<Exec>("buildNativeGlass") {
     description = "Builds the native macOS glass JNI library."
-    onlyIf { isMacOs }
+    onlyIf {
+        val enabled = isMacOs && nativeGlassEnabled && hasClang
+        if (!enabled && !nativeSkipLogged) {
+            nativeSkipLogged = true
+            logger.lifecycle(
+                when {
+                    !isMacOs -> "native glass: skipped (not macOS)"
+                    !nativeGlassEnabled -> "native glass: skipped (-Pstride.nativeGlass=false)"
+                    else -> "native glass: skipped (clang++ not available); the app uses the Skia glass path"
+                },
+            )
+        }
+        enabled
+    }
     inputs.file(nativeGlassSource)
     outputs.file(nativeGlassLibrary)
     doFirst { nativeGlassDir.get().asFile.mkdirs() }
@@ -48,7 +75,7 @@ val buildNativeGlass = tasks.register<Exec>("buildNativeGlass") {
 val appResourcesDir = layout.buildDirectory.dir("native-resources")
 val prepareNativeGlassResources = tasks.register<Copy>("prepareNativeGlassResources") {
     description = "Copies the native glass library into the app resources directory."
-    onlyIf { isMacOs }
+    onlyIf { isMacOs && nativeGlassEnabled && hasClang }
     dependsOn(buildNativeGlass)
     // appResourcesRootDir merges `<root>/common` and `<root>/<os>` into the app resources.
     from(nativeGlassDir)
@@ -94,7 +121,16 @@ tasks.test {
     systemProperty("java.awt.headless", "false")
     systemProperty("stride.repoRoot", rootProject.projectDir.absolutePath)
     systemProperty("stride.runIntegration", runIntegration.toString())
-    systemProperty("stride.glass.library", nativeGlassLibrary.get().asFile.absolutePath)
+    // Disabled builds (or ones without clang) must not pick up a stale library from an earlier
+    // build, so the tests skip the native paths with a reason.
+    val nativeLibrary = if (nativeGlassEnabled && hasClang) {
+        nativeGlassLibrary.get().asFile.absolutePath
+    } else {
+        "${nativeGlassLibrary.get().asFile.absolutePath}.disabled"
+    }
+    systemProperty("stride.glass.library", nativeLibrary)
+    // The appearance-order test forks a fresh JVM; it must see the same test runtime classes.
+    systemProperty("stride.test.classpath", sourceSets["test"].runtimeClasspath.asPath)
 }
 
 compose.desktop {

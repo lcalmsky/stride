@@ -58,8 +58,11 @@ import stride.app.editor.find.FindOptions
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.GlassHoles
+import stride.app.glass.LocalNativeGlass
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 import stride.search.FileNameIndex
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +88,7 @@ fun FindInPathPopup(
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
+    val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
 
     LaunchedEffect(query, caseSensitive, regex, wholeWord) {
         if (query.isEmpty()) {
@@ -110,7 +114,7 @@ fun FindInPathPopup(
     Box(
         Modifier
             .fillMaxSize()
-            .background(DesignTokens.scrim.copy(alpha = DesignTokens.scrim.alpha * fade))
+            .scrimSurface(DesignTokens.scrim.alpha * fade, holes)
             .pointerInput(Unit) { detectTapGestures { onClose() } },
     ) {
         Column(

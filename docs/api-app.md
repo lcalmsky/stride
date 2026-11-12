@@ -1266,8 +1266,12 @@ appearance changes; no screen keeps a color or a cached bitmap of its own across
 the effective macOS appearance. On the native path the JNI library queries
 `NSApp.effectiveAppearance` and observes the distributed
 `AppleInterfaceThemeChangedNotification`; without the library the same value comes from
-`defaults read -g AppleInterfaceStyle` on a two-second background poll. `main` starts it
-once, and the window follows the system live without a restart.
+`defaults read -g AppleInterfaceStyle` on a two-second background poll (the read has a timeout
+so a hung `defaults` cannot stall the poller, and `stop()` interrupts the thread). The window
+content starts it once it is composed, i.e. after AWT installed `NSApplicationAWT`; the native
+query never creates an application object (`NativeAppearanceOrderTest` proves a fresh JVM that
+queries first still ends up with `NSApplicationAWT`). The window follows the system live
+without a restart.
 
 **Dark palette** (`DarkPalette`, v1.3.0 values, unchanged): a cool graphite with a very low
 blue-violet chroma: `background` #13141A with `backgroundLift` #1A1B23 at the top of the
@@ -1817,15 +1821,24 @@ system's own glass views. Everything above is still the fallback path, and it is
 in the offscreen tests.
 
 **Library.** `native/glass/stride_glass.mm` is a JNI library built by `:app:buildNativeGlass`
-with the JDK 21 toolchain's `jni.h`/`jawt.h` and clang (no Maven dependency). It resolves
+with the JDK 21 toolchain's `jni.h`/`jawt.h` and clang (no Maven dependency). The task runs only
+when `clang++ --version` succeeds; otherwise it logs one line and the app uses the Skia glass
+path. `-Pstride.nativeGlass=false` skips the native build on purpose. The library resolves
 `JAWT_GetAWT` from the running runtime's own `libjawt.dylib`, finds the window through the
 JAWT drawing surface (the surface's `windowLayer` chain leads to the `NSWindow` through its
 theme-frame delegate), and inserts one container view below the AWT content view. Every piece
 is an `NSGlassEffectView` in that container; `hitTest:` returns nil on both our classes so no
-pointer event is swallowed. The window is made non-opaque with a clear background. The
-library reports `supported`, `attach`, `sync`, `detach`, `state` (window opaque flag, window
-count, base view, piece frames and the transparency block), `layerClass`, `layerTree`, the
-appearance query/observer and the `beginDrag`/`zoom` actions.
+pointer event is swallowed (the method encoding is built from `@encode`, so its offsets follow
+the arm64/x86_64 ABI). The window is made non-opaque with a clear background only after every
+precondition passed, and the layer flags and backgrounds it changes are remembered. `detach`
+(and a failed attach) restores the window's opaque flag and background and every remembered
+layer, so a fallback never leaves a transparent window behind. The library reports
+`supported`, `attach`, `sync`, `detach`, `state` (window opaque flag, window count, base view,
+piece frames with their read-back style and tint, and the transparency block), `layerClass`,
+`layerTree`, `setDragRects`/`hitTestDragRegion`/`dragMonitorCount`, and the appearance
+query/observer/application-class query. The appearance query never asks for the shared
+application: it reads `NSApp` and returns "unknown" while it is nil, so calling it before AWT
+cannot create a plain `NSApplication` and steal the `NSApplicationAWT` install.
 
 The transparency block is what makes the glass show through: it finds the Skia drawing
 layer under the content view (an `AWTMetalLayer`/`CAMetalLayer`; AWT's own `MTLLayer` is
@@ -1833,10 +1846,13 @@ skipped), and reports whether that layer and every ancestor up to the window fra
 non-opaque with a clear background, the window background alpha, and whether the glass
 container sits below the content view. AWT's window backing layer stays opaque even when
 the Skia layer is transparent, so `attach` and every `sync` clear `opaque` and the
-background on that whole layer chain. `NativeGlassSmokeTest` asserts every value on a real
-Compose window peer that is never shown: the Skia layer is non-opaque with background
-alpha 0, all 4 ancestors are clear, the window background alpha is 0 and the container is
-below the content view. The `layerTree` output (classes, opaque flags, background alpha)
+background on that whole layer chain. Each changed layer's original `opaque` flag and
+background is remembered once; `detach` restores them together with the window's opaque flag
+and background colour, and a failed attach restores before returning. `NativeGlassSmokeTest`
+asserts every value on a real Compose window peer that is never shown: the Skia layer is
+non-opaque with background alpha 0, all 4 ancestors are clear, the window background alpha is
+0 and the container is below the content view; after detach it reports the window opaque again
+and the restored layer count. The `layerTree` output (classes, opaque flags, background alpha)
 is printed by the test as the evidence.
 
 `NativeGlass` looks for the dylib at `stride.glass.library`, then
@@ -1848,10 +1864,11 @@ macOS < 26 or an unfound window logs one line and keeps the Skia glass unchanged
 **Path switch.** `GlassRuntime.prepare(window)` runs before the window is shown and sets the
 Compose Skia layer's transparency, so the first frame is transparent where no content is
 painted. The Compose panel may build its SkiaLayer only when the peer is created, so
-`prepare` also installs a hierarchy listener that catches the layer at insertion time and
-sets transparency and clears every Swing ancestor before the redrawer is created.
-`GlassRuntime.attach(window)` runs when the window is shown. `GlassRuntime.active` is
-provided as `LocalNativeGlass`; every Skia glass pass checks it:
+`prepare` also installs a hierarchy listener that catches the layer at insertion time.
+`GlassRuntime.attach(window)` runs when the window is shown; if the Skia layer has not been
+inserted yet, or the window cannot be found, the next hierarchy event retries (up to a bounded
+number of attempts) and the reason is logged once when the path is given up.
+`GlassRuntime.active` is provided as `LocalNativeGlass`; every Skia glass pass checks it:
 
 - `MeshBackground` paints nothing, `contentTint()` paints nothing and `capsuleGlass` /
   `sidebarGlass` / `backdropGlass` draw no fill, frost, rim or shadow.
@@ -1862,9 +1879,20 @@ provided as `LocalNativeGlass`; every Skia glass pass checks it:
   the chrome rows, so the glass shows around them. The find bar starts above that surface.
 - A popup floats on system glass: `nativeGlass(..., hole = true)` reports its window rectangle
   to `GlassHoles`, and `contentSurface` punches that hole out of the opaque fill and clips the
-  content to the same region.
+  content to the same region. The modal scrim uses `scrimSurface(alpha, holes)`: on the native
+  path it cuts every reportable hole out of the scrim, so the popup's own material is not
+  darkened (on the Skia path the popup is painted over the scrim and the fill is unchanged).
 - `capsuleGlass(shape, forceSkia = true)` keeps the Skia material where a capsule floats over
   an opaque panel (the run window's tab strip).
+
+The merged title row and the title-bar client properties are one switch, decided by the pure
+`chromePlan(eligible, attached, failed)` in `stride.app.glass`: the properties are applied only
+when the native path is eligible (`NativeGlass.supported()`: library loaded and macOS 26), and
+the merged layout (`chromeLayout(mergedTitleRow = true)`) exists only after a successful
+attach. A failed attach reverts the properties at runtime (AWT applies the same client
+properties live through `nativeSetNSWindowStyleBits`) and `active` stays false, so every
+fallback branch — macOS < 26, no library, JAWT failure, layer not found — shows the standard
+title bar and the v1.3.0 `chromeInset` layout.
 
 **Pieces.** `Modifier.nativeGlass(key, shape, style, tint = nativeGlassTint, hole = false)`
 reports the element's window-relative bounds, its shape's corner radius, the style
@@ -1874,22 +1902,40 @@ reports the element's window-relative bounds, its shape's corner radius, the sty
 reported surfaces are the sidebar, the three top capsules, the bottom path/status capsules,
 the find bar, the tool-window switcher, the open-folder button and every popup.
 
-`nativeGlassTint` (#14151B at 78% dark, #F5F6F9 at 80% light) is the floor over the system
-material: body tokens keep 4.5:1 over a white and a black desktop, and
-`textSecondaryOnGlass` keeps it under its opaque `chromeTextStyle` shadow (black on dark,
-white on light). This is asserted in `DesignTokensContrastTest`. The system material itself
-(`NSGlassEffectView`) follows the macOS appearance automatically; switching the palette
-only changes the tint and the Compose labels.
+`Modifier.windowDragRegion(key)` reports the empty strip of the merged title row to the same
+registry. On flush the reported rows are cut by every glass piece on that band
+(`dragRectangles`, a pure subtraction), so a capsule keeps its own click, and the result is
+sent to `nativeSetDragRects`. The native side stores the rectangles in top-left points and
+tests them with `hitTestDragRegion`.
 
-**Title row.** The window is created with `create = { ComposeWindow() }` and the root pane
-client properties `apple.awt.fullWindowContent`, `apple.awt.transparentTitleBar` and
+`nativeGlassTint` (#14151B at 78% dark, #F5F6F9 at 80% light) is the floor over the system
+material: in both palettes the primary text and selected text keep 4.5:1 over a white and a
+black desktop, and `textSecondaryOnGlass` keeps it under its opaque `chromeTextStyle` shadow
+(black on dark, white on light). This is asserted in `DesignTokensContrastTest`; the dark
+palette's accent labels are included, while the light accents are opaque-surface roles. The
+smoke test also reads the style and the tint back from every material view, so a silently
+swallowed KVC write cannot pass unnoticed. The system material itself (`NSGlassEffectView`)
+follows the macOS appearance automatically; switching the palette only changes the tint and
+the Compose labels.
+
+**Title row.** The window is created with `create = { ComposeWindow() }`; when the native path
+is eligible `GlassRuntime.prepareTitleBar` sets the root pane client properties
+`apple.awt.fullWindowContent`, `apple.awt.transparentTitleBar` and
 `apple.awt.windowTitleVisible=false`, so the content view fills the window and only the native
 traffic lights remain. macOS centres them 14 pt below the window top; on the native path the
 top capsule row starts at the window top with `nativeTitleRowHeight` (28 dp), which puts its
 centre at the same 14 pt, and starts at `nativeTitleLightsInset` (72 dp) or the content column,
 whichever is further right. The window title string stays for Mission Control and the Window
-menu. The empty strip uses `windowDragRegion()`: a press drags the window through
-`performWindowDragWithEvent:` and a double press zooms it; capsules keep their own clicks.
+menu. The drag strip begins at `nativeTitleLightsInset`, so a press on the traffic lights still
+reaches the system buttons.
+
+The native side installs one local `NSEvent` mouse-down monitor per attached window. When the
+real event lands on a reported drag rectangle, the monitor calls
+`performWindowDragWithEvent:` with that real event on the main thread (no synthetic event, no
+screen/window coordinate mix-up, and the EDT never blocks). A double click applies the system
+`AppleActionOnDoubleClick` preference (maximize/zoom, minimize or none); only the left button
+matches the mask, so right and other buttons fall through. The monitor is removed on detach;
+`NativeGlassSmokeTest` asserts the rectangle hit test and the install/remove counts.
 
 ```kotlin
 // stride.app.glass
@@ -1902,21 +1948,27 @@ fun sameGlassPiece(first: GlassPiece, second: GlassPiece): Boolean
 fun diffGlassPieces(previous: List<GlassPiece>, next: List<GlassPiece>): GlassPieceDiff
 fun glassPiecesEqual(previous: List<GlassPiece>, next: List<GlassPiece>): Boolean
 fun effectiveCornerRadius(value: Float, width: Float, height: Float): Float
-class GlassRegistry(sync: (Long, List<GlassPiece>) -> Int = ...)
+data class DragRect(val x: Float, val y: Float, val width: Float, val height: Float)
+fun dragRectangles(regions: List<DragRect>, blockers: List<DragRect>): List<DragRect>
+class GlassRegistry(sync: (Long, List<GlassPiece>) -> Int = ...,
+                    dragSync: (Long, List<DragRect>) -> Int = ...)
+data class NativeGlassView(val key: String, val x: Double, val y: Double, val width: Double,
+                           val height: Double, val cornerRadius: Double, val style: Int,
+                           val tint: Int?)
 data class NativeGlassState(val opaque: Boolean, val windowCount: Int, val baseView: Boolean,
                             val views: List<NativeGlassView>, val layer: NativeLayerState?)
 data class NativeLayerState(val drawingLayer: Boolean, val className: String, val opaque: Boolean,
                             val backgroundAlpha: Double, val ancestorsClear: Boolean,
                             val ancestorCount: Int, val windowBackgroundAlpha: Double,
                             val containerBelowContent: Boolean, val contentViewOpaque: Boolean,
-                            val containerOpaque: Boolean)
-object GlassRuntime { val active: State<Boolean>; fun prepare(window: Window)
-                      fun attach(window: Window); fun detach(); fun beginDrag(); fun zoom() }
-object SystemAppearance { fun start() }
+                            val containerOpaque: Boolean, val restoredLayers: Int)
+object GlassRuntime { val active: State<Boolean>; fun prepareTitleBar(window: Window)
+                      fun prepare(window: Window); fun attach(window: Window); fun detach() }
+object SystemAppearance { fun start(); fun stop() }
 object GlassHoles
 fun Modifier.nativeGlass(key: String, shape: Shape, style: GlassStyle = GlassStyle.REGULAR,
                          tint: Int? = null, hole: Boolean = false): Modifier
-fun Modifier.windowDragRegion(): Modifier
+fun Modifier.windowDragRegion(key: String = "title-row"): Modifier
 // stride.app.ui.theme
 enum class Appearance { DARK, LIGHT }
 object AppearanceState { var appearance: Appearance; fun set(value: Appearance) }
@@ -1924,6 +1976,7 @@ val DarkPalette: Palette
 val LightPalette: Palette
 fun paletteOf(appearance: Appearance): Palette
 fun Modifier.contentSurface(shape: Shape, holes: List<Rect>): Modifier
+fun Modifier.scrimSurface(alpha: Float, holes: List<Rect>): Modifier
 fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier
 // stride.app.editor
 fun activeColorScheme(): ColorScheme

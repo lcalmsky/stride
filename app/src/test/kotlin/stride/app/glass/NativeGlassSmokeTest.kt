@@ -47,14 +47,16 @@ class NativeGlassSmokeTest {
                 GlassRuntime.prepare(window)
                 window.addNotify()
             }
-            val insets = window.insets
-            val contentHeight = (window.height - insets.top - insets.bottom).toDouble()
             GlassRuntime.attach(window)
+            // The merged title bar is applied at attach time here (this test window had no
+            // prepareTitleBar before the peer existed), which makes the content full-window.
+            val contentHeight = window.height.toDouble()
             val handle = GlassRuntime.attachedHandle
             assertTrue(handle != 0L, "attach returned no handle for the unshown window")
 
+            val tint = 0x9914151B.toInt()
             val pieces = listOf(
-                GlassPiece("a", 10f, 20f, 100f, 30f, 15f),
+                GlassPiece("a", 10f, 20f, 100f, 30f, 15f, tint = tint),
                 GlassPiece("b", 200f, 50f, 300f, 40f, 8f, style = GlassStyle.CLEAR),
             )
             assertEquals(2, NativeGlass.sync(handle, pieces))
@@ -68,6 +70,16 @@ class NativeGlassSmokeTest {
             assertEquals(listOf("a", "b"), state.views.map { it.key })
             assertFrame(state.views[0], x = 10.0, y = 20.0, width = 100.0, height = 30.0, container = contentHeight)
             assertFrame(state.views[1], x = 200.0, y = 50.0, width = 300.0, height = 40.0, container = contentHeight)
+            // The style and tint are read back from the material view: a silently swallowed KVC
+            // write would show up here instead of only on screen.
+            assertEquals(0, state.views[0].style, "regular style was not applied")
+            assertTint(tint, state.views[0].tint)
+            assertEquals(1, state.views[1].style, "clear style was not applied")
+            System.err.println(
+                "native-glass-smoke style/tint a=${state.views[0].style}/" +
+                    "${state.views[0].tint?.toUInt()?.toString(16)} b=${state.views[1].style}/" +
+                    "${state.views[1].tint?.toUInt()?.toString(16)}",
+            )
 
             System.err.println("native-glass-smoke layers:\n${NativeGlass.layerTree(handle)}")
             val layer = requireNotNull(state.layer) { "native state has no transparency block" }
@@ -90,11 +102,30 @@ class NativeGlassSmokeTest {
             assertTrue(layer.containerBelowContent, "the glass container must sit below the content view")
             assertFalse(layer.contentViewOpaque, "the content view must be non-opaque")
             assertFalse(layer.containerOpaque, "the glass container must be non-opaque")
+            assertEquals(0, layer.restoredLayers, "nothing is restored while the window is attached")
+
+            // Drag regions are top-left window points; the monitor is hit-tested through JNI.
+            val dragRects = listOf(DragRect(0f, 0f, 300f, 28f), DragRect(400f, 0f, 200f, 28f))
+            assertEquals(2, NativeGlass.dragRegions(handle, dragRects))
+            assertTrue(NativeGlass.hitTestDragRegion(handle, 10.0, 10.0), "a point in the first strip")
+            assertTrue(NativeGlass.hitTestDragRegion(handle, 450.0, 5.0), "a point in the second strip")
+            assertFalse(NativeGlass.hitTestDragRegion(handle, 350.0, 10.0), "the gap between strips")
+            assertFalse(NativeGlass.hitTestDragRegion(handle, 10.0, 100.0), "below the title row")
+            assertEquals(1, NativeGlass.dragMonitorCount(), "one local mouse monitor per attached window")
 
             NativeGlass.detach(handle)
+            assertEquals(0, NativeGlass.dragMonitorCount(), "detach left the mouse monitor installed")
             val after = requireNotNull(NativeGlass.state(handle))
             assertTrue(after.views.isEmpty(), "detach left ${after.views.size} glass views")
             assertFalse(after.baseView, "detach left the base glass view")
+            assertTrue(after.opaque, "detach must restore the window's opaque flag")
+            val restored = requireNotNull(after.layer) { "detach did not report the restored layer chain" }
+            assertTrue(restored.restoredLayers > 0, "detach restored no layer flags")
+            System.err.println(
+                "native-glass-smoke restored windowOpaque=${after.opaque} " +
+                    "layerOpaque=${restored.opaque} ancestorsClear=${restored.ancestorsClear} " +
+                    "restoredLayers=${restored.restoredLayers}",
+            )
         } finally {
             GlassRuntime.detach()
             // ComposeWindow.dispose asserts the AWT event dispatch thread.
@@ -108,6 +139,9 @@ class NativeGlassSmokeTest {
             NativeAppearance.available,
             "native library unavailable (${NativeGlass.failure}): appearance query skipped",
         )
+        // The appearance exists only after AWT installed its application object; the contract
+        // this test documents is that nothing creates one earlier.
+        java.awt.Toolkit.getDefaultToolkit()
         val current = NativeAppearance.current()
         assertTrue(
             current == Appearance.DARK || current == Appearance.LIGHT,
@@ -138,5 +172,18 @@ class NativeGlassSmokeTest {
         assertEquals(width, view.width, 1.0, "${view.key} width")
         assertEquals(height, view.height, 1.0, "${view.key} height")
         assertTrue(abs(view.cornerRadius - if (view.key == "a") 15.0 else 8.0) <= 0.51, "${view.key} corner radius")
+    }
+
+    private fun assertTint(expected: Int, actual: Int?) {
+        val value = requireNotNull(actual) { "the tint colour was not read back from the material view" }
+        for (shift in intArrayOf(24, 16, 8, 0)) {
+            val expectedChannel = (expected ushr shift) and 0xFF
+            val actualChannel = (value ushr shift) and 0xFF
+            assertTrue(
+                abs(expectedChannel - actualChannel) <= 2,
+                "tint channel ${shift / 8} expected $expectedChannel was $actualChannel " +
+                    "(${value.toUInt().toString(16)})",
+            )
+        }
     }
 }

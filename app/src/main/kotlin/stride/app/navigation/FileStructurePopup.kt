@@ -54,8 +54,11 @@ import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.GlassHoles
+import stride.app.glass.LocalNativeGlass
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 import stride.search.DeclarationKind
 
@@ -77,6 +80,7 @@ fun FileStructurePopup(
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
+    val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -86,7 +90,7 @@ fun FileStructurePopup(
     Box(
         Modifier
             .fillMaxSize()
-            .background(DesignTokens.scrim.copy(alpha = DesignTokens.scrim.alpha * fade))
+            .scrimSurface(DesignTokens.scrim.alpha * fade, holes)
             .pointerInput(Unit) { detectTapGestures { onClose() } },
     ) {
         Column(
