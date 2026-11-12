@@ -50,6 +50,9 @@ class NativeGlassSmokeTest {
             GlassRuntime.attach(window)
             // The merged title bar is applied at attach time here (this test window had no
             // prepareTitleBar before the peer existed), which makes the content full-window.
+            // Attach is asynchronous now, so AWT applies the style bits shortly after it returns;
+            // wait for the content view to grow before measuring the piece frames.
+            waitForMergedTitleBar(window)
             val contentHeight = window.height.toDouble()
             val handle = GlassRuntime.attachedHandle
             assertTrue(handle != 0L, "attach returned no handle for the unshown window")
@@ -151,6 +154,16 @@ class NativeGlassSmokeTest {
         System.err.println("native-appearance current=$current observer=$registered")
         assertTrue(registered, "the distributed theme notification observer did not register")
         NativeAppearance.stop()
+    }
+
+    private fun waitForMergedTitleBar(window: ComposeWindow) {
+        val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+        while (System.nanoTime() < deadline) {
+            var merged = false
+            SwingUtilities.invokeAndWait { merged = window.insets.top == 0 }
+            if (merged) return
+            Thread.sleep(10)
+        }
     }
 
     private fun assertFrame(

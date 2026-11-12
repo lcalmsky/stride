@@ -13,10 +13,16 @@
 #include <dlfcn.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -68,24 +74,98 @@ struct DetachedState {
 };
 
 std::map<long, WindowState> gWindows;
-long gNextHandle = 1;
 DetachedState gDetached;
 
 const double kWindowCornerRadius = 26.0;
+const int kAnswerTimeoutMillis = 1000;
 
 JavaVM *gVm = nullptr;
 jobject gAppearanceCallback = nullptr;
 id gAppearanceObserver = nil;
 
+/**
+ * The AppKit thread runs AWT's own nested run loop in this mode while it waits for the event
+ * dispatch thread (`+[ThreadUtilities javaRunLoopMode]` in the runtime). GCD's main queue is not
+ * serviced in that mode, so a Java thread waiting for the main queue deadlocks against it.
+ */
+static NSString *const kAwtRunLoopMode = @"AWTRunLoopMode";
+
+/** Modes the AppKit thread may be running in; AWT's nested mode is the one that matters here. */
+NSArray<NSString *> *AppKitRunLoopModes() {
+    static NSArray<NSString *> *modes = nil;
+    static std::once_flag once;
+    std::call_once(once, [] {
+      modes = @[
+          NSDefaultRunLoopMode,
+          NSModalPanelRunLoopMode,
+          NSEventTrackingRunLoopMode,
+          kAwtRunLoopMode,
+      ];
+    });
+    return modes;
+}
+
+/**
+ * Hands [fn] to the AppKit run loop without waiting. CFRunLoopPerformBlock delivers the blocks
+ * in the order they were added, so attach → sync → detach keep their order, and it reaches the
+ * AWT nested run loop where the main dispatch queue does not.
+ */
 template <typename Fn>
-void RunOnMain(Fn fn) {
-    if ([NSThread isMainThread]) {
-        fn();
-        return;
-    }
-    dispatch_sync(dispatch_get_main_queue(), ^{
+void OnAppKitRunLoop(Fn fn) {
+    CFRunLoopRef loop = CFRunLoopGetMain();
+    CFRunLoopPerformBlock(loop, (__bridge CFTypeRef)AppKitRunLoopModes(), ^{
       fn();
     });
+    CFRunLoopWakeUp(loop);
+}
+
+/** Signalled by a run-loop block so a Java caller can wait with a bound instead of forever. */
+struct Completion {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool done = false;
+
+    void Finish() {
+        std::lock_guard<std::mutex> lock(mutex);
+        done = true;
+        condition.notify_all();
+    }
+
+    bool Wait() {
+        std::unique_lock<std::mutex> lock(mutex);
+        return condition.wait_for(lock, std::chrono::milliseconds(kAnswerTimeoutMillis), [this] {
+            return done;
+        });
+    }
+};
+
+/**
+ * The synchronous form, only for queries whose answer the caller really needs (state reads,
+ * the appearance query). The caller waits at most kAnswerTimeoutMillis: if the AppKit thread is
+ * itself waiting for this thread, the query returns false and the caller falls back instead of
+ * joining the deadlock.
+ */
+template <typename Fn>
+bool AskAppKitRunLoop(const char *what, Fn fn) {
+    if ([NSThread isMainThread]) {
+        fn();
+        return true;
+    }
+    auto completion = std::make_shared<Completion>();
+    auto work = std::make_shared<Fn>(fn);
+    OnAppKitRunLoop([completion, work] {
+      (*work)();
+      completion->Finish();
+    });
+    if (!completion->Wait()) {
+        fprintf(
+            stderr,
+            "stride-glass: %s did not reach the AppKit run loop within %d ms\n",
+            what,
+            kAnswerTimeoutMillis);
+        return false;
+    }
+    return true;
 }
 
 NSView *PassThroughHitTest(id self, SEL _cmd, NSPoint point) {
@@ -490,27 +570,26 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 
 extern "C" JNIEXPORT jint JNICALL
 Java_stride_app_glass_NativeAppearance_nativeAppearance(JNIEnv *, jobject) {
-    // Before AWT there is no application object and no main run loop to dispatch onto: report
-    // unknown without touching AppKit.
+    // Before AWT there is no application object: report unknown without touching AppKit.
     if (!NSApp) return 0;
-    jint value = 0;
-    RunOnMain([&] {
-      value = CurrentAppearanceValue();
+    auto value = std::make_shared<std::atomic<jint>>(0);
+    AskAppKitRunLoop("appearance query", [value] {
+      value->store(CurrentAppearanceValue());
     });
-    return value;
+    return value->load();
 }
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_stride_app_glass_NativeAppearance_nativeAppClassName(JNIEnv *env, jobject) {
     if (!NSApp) return env->NewStringUTF("");
-    std::string name;
-    RunOnMain([&] {
+    auto name = std::make_shared<std::string>();
+    AskAppKitRunLoop("application class query", [name] {
       if (NSApp) {
           const char *utf8 = NSStringFromClass([NSApp class]).UTF8String;
-          if (utf8) name = utf8;
+          if (utf8) *name = utf8;
       }
     });
-    jstring result = env->NewStringUTF(name.c_str());
+    jstring result = env->NewStringUTF(name->c_str());
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;
@@ -525,8 +604,10 @@ Java_stride_app_glass_NativeAppearance_nativeStartObserver(JNIEnv *env, jobject,
         env->ExceptionClear();
         return JNI_FALSE;
     }
-    bool started = false;
-    RunOnMain([&] {
+    if (!callback) return JNI_FALSE;
+    // Registration is a mutation: enqueue it and report that it was accepted. The observer
+    // signal itself runs on the AppKit queue and attaches to the VM when it fires.
+    OnAppKitRunLoop([callback] {
       if (gAppearanceObserver) {
           [[NSDistributedNotificationCenter defaultCenter] removeObserver:gAppearanceObserver];
           gAppearanceObserver = nil;
@@ -538,7 +619,6 @@ Java_stride_app_glass_NativeAppearance_nativeStartObserver(JNIEnv *env, jobject,
           }
           gAppearanceCallback = nullptr;
       }
-      if (!callback) return;
       gAppearanceCallback = callback;
       gAppearanceObserver = [[NSDistributedNotificationCenter defaultCenter]
           addObserverForName:@"AppleInterfaceThemeChangedNotification"
@@ -547,15 +627,13 @@ Java_stride_app_glass_NativeAppearance_nativeStartObserver(JNIEnv *env, jobject,
                   usingBlock:^(NSNotification *) {
                     NotifyAppearance();
                   }];
-      started = gAppearanceObserver != nil;
     });
-    if (!started && callback && env) env->DeleteGlobalRef(callback);
-    return started ? JNI_TRUE : JNI_FALSE;
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_stride_app_glass_NativeAppearance_nativeStopObserver(JNIEnv *, jobject) {
-    RunOnMain([&] {
+    OnAppKitRunLoop([] {
       if (gAppearanceObserver) {
           [[NSDistributedNotificationCenter defaultCenter] removeObserver:gAppearanceObserver];
           gAppearanceObserver = nil;
@@ -572,24 +650,36 @@ Java_stride_app_glass_NativeAppearance_nativeStopObserver(JNIEnv *, jobject) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_stride_app_glass_NativeGlass_nativeSupported(JNIEnv *, jobject) {
-    bool supported = false;
-    RunOnMain([&] {
-      if (@available(macOS 26.0, *)) {
-          supported = GlassViewClass() != Nil;
-      }
-    });
-    return supported ? JNI_TRUE : JNI_FALSE;
+    // Only the OS version and a class lookup are needed, and both are thread-safe: this runs on
+    // the event dispatch thread and must never wait for the AppKit thread. Cached for the same
+    // reason (the answer cannot change in a process).
+    static std::atomic<int> cached{-1};
+    int value = cached.load();
+    if (value < 0) {
+        bool supported = false;
+        if (@available(macOS 26.0, *)) {
+            supported = NSClassFromString(@"NSGlassEffectView") != nil;
+        }
+        value = supported ? 1 : 0;
+        cached.store(value);
+    }
+    return value != 0 ? JNI_TRUE : JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jlong JNICALL
-Java_stride_app_glass_NativeGlass_nativeAttach(JNIEnv *env, jobject, jobject component, jstring javaHome) {
-    if (!component) return 0;
+/**
+ * The window lookup (JAWT) stays on the calling thread because JAWT requires its lock there;
+ * everything that touches AppKit is enqueued. [handle] comes from Java, so no answer is needed
+ * from the AppKit thread.
+ */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_stride_app_glass_NativeGlass_nativeAttach(JNIEnv *env, jobject, jlong handle, jobject component,
+                                                jstring javaHome) {
+    if (!component || handle == 0) return JNI_FALSE;
     JAWTGetAWTProc getAWT = ResolveJAWT(env, javaHome);
     NSWindow *window = WindowForComponent(env, component, getAWT);
-    if (!window) return 0;
+    if (!window) return JNI_FALSE;
 
-    long handle = 0;
-    RunOnMain([&] {
+    OnAppKitRunLoop([handle, window] {
       if (GlassViewClass() == Nil) return;
       NSView *contentView = window.contentView;
       NSView *parent = contentView ? contentView.superview : nil;
@@ -620,16 +710,15 @@ Java_stride_app_glass_NativeGlass_nativeAttach(JNIEnv *env, jobject, jobject com
       [window setOpaque:NO];
       [window setBackgroundColor:[NSColor clearColor]];
       MakeDrawingChainTransparent(state);
-      handle = gNextHandle++;
       InstallDragMonitor(handle, state);
       gWindows[handle] = state;
     });
-    return handle;
+    return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_stride_app_glass_NativeGlass_nativeDetach(JNIEnv *, jobject, jlong handle) {
-    RunOnMain([&] {
+    OnAppKitRunLoop([handle] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
       WindowState &state = found->second;
@@ -729,8 +818,10 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
         return 0;
     }
 
-    jint applied = 0;
-    RunOnMain([&] {
+    // Mutations never wait for the AppKit thread; the returned count means "accepted", which is
+    // the number of pieces handed to the run loop.
+    auto pending = std::make_shared<std::vector<PieceSpec>>(std::move(specs));
+    OnAppKitRunLoop([handle, pending] {
       auto located = gWindows.find(handle);
       if (located == gWindows.end()) return;
       WindowState &state = located->second;
@@ -740,7 +831,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
       [CATransaction begin];
       [CATransaction setDisableActions:YES];
       std::map<std::string, bool> seen;
-      for (const PieceSpec &spec : specs) {
+      for (const PieceSpec &spec : *pending) {
           seen[spec.key] = true;
           NSView *view = state.pieces[spec.key];
           bool created = false;
@@ -766,7 +857,6 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
           }
           view.autoresizingMask = NSViewNotSizable;
           view.frame = FrameFor(state.container, spec);
-          applied++;
       }
       for (auto it = state.pieces.begin(); it != state.pieces.end();) {
           if (seen.count(it->first) == 0) {
@@ -778,7 +868,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
       }
       [CATransaction commit];
     });
-    return applied;
+    return (jint)pending->size();
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -820,48 +910,49 @@ Java_stride_app_glass_NativeGlass_nativeSetDragRects(JNIEnv *env, jobject, jlong
         env->ExceptionClear();
         return 0;
     }
-    jint applied = 0;
-    RunOnMain([&] {
+    auto pending = std::make_shared<std::vector<NSRect>>(std::move(rects));
+    OnAppKitRunLoop([handle, pending] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
-      found->second.dragRects = rects;
-      applied = (jint)rects.size();
+      found->second.dragRects = *pending;
     });
-    return applied;
+    return (jint)pending->size();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_stride_app_glass_NativeGlass_nativeHitTestDragRegion(JNIEnv *, jobject, jlong handle, jdouble x,
                                                           jdouble y) {
-    bool hit = false;
-    RunOnMain([&] {
+    auto hit = std::make_shared<std::atomic<bool>>(false);
+    AskAppKitRunLoop("drag hit test", [hit, handle, x, y] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
-      hit = DragRectsContain(found->second.dragRects, (CGFloat)x, (CGFloat)y);
+      hit->store(DragRectsContain(found->second.dragRects, (CGFloat)x, (CGFloat)y));
     });
-    return hit ? JNI_TRUE : JNI_FALSE;
+    return hit->load() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_stride_app_glass_NativeGlass_nativeDragMonitorCount(JNIEnv *, jobject) {
-    jint count = 0;
-    RunOnMain([&] {
+    auto count = std::make_shared<std::atomic<jint>>(0);
+    AskAppKitRunLoop("drag monitor count", [count] {
+      jint value = 0;
       for (auto &entry : gWindows) {
-          if (entry.second.dragMonitor) count++;
+          if (entry.second.dragMonitor) value++;
       }
+      count->store(value);
     });
-    return count;
+    return count->load();
 }
 
 extern "C" JNIEXPORT jdoubleArray JNICALL
 Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle) {
-    std::vector<double> values;
-    RunOnMain([&] {
+    auto values = std::make_shared<std::vector<double>>();
+    bool answered = AskAppKitRunLoop("native state query", [values, handle] {
       auto found = gWindows.find(handle);
       NSInteger windowCount = (NSInteger)[[NSApp windows] count];
       if (found == gWindows.end()) {
           if (gDetached.handle == handle) {
-              values = {
+              *values = {
                   gDetached.windowOpaque ? 1.0 : 0.0,
                   (double)windowCount,
                   0.0,
@@ -879,25 +970,25 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
               };
               return;
           }
-          values = {0.0, (double)windowCount, 0.0, 0.0};
+          *values = {0.0, (double)windowCount, 0.0, 0.0};
           return;
       }
       WindowState &state = found->second;
       SyncContainer(state);
-      values.push_back([state.window isOpaque] ? 1.0 : 0.0);
-      values.push_back((double)windowCount);
-      values.push_back(state.base ? 1.0 : 0.0);
+      values->push_back([state.window isOpaque] ? 1.0 : 0.0);
+      values->push_back((double)windowCount);
+      values->push_back(state.base ? 1.0 : 0.0);
       std::map<std::string, NSView *> sorted(state.pieces.begin(), state.pieces.end());
-      values.push_back((double)sorted.size());
+      values->push_back((double)sorted.size());
       for (auto &entry : sorted) {
           NSRect frame = entry.second.frame;
-          values.push_back(frame.origin.x);
-          values.push_back(frame.origin.y);
-          values.push_back(frame.size.width);
-          values.push_back(frame.size.height);
-          values.push_back(entry.second.layer ? entry.second.layer.cornerRadius : 0.0);
-          values.push_back((double)ViewStyle(entry.second));
-          values.push_back((double)(uint32_t)ViewTint(entry.second));
+          values->push_back(frame.origin.x);
+          values->push_back(frame.origin.y);
+          values->push_back(frame.size.width);
+          values->push_back(frame.size.height);
+          values->push_back(entry.second.layer ? entry.second.layer.cornerRadius : 0.0);
+          values->push_back((double)ViewStyle(entry.second));
+          values->push_back((double)(uint32_t)ViewTint(entry.second));
       }
       // The transparency chain of the Compose drawing layer: the value block is fixed-size so
       // the Java side can read it after the pieces.
@@ -905,25 +996,26 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
       int ancestorCount = 0;
       bool ancestorsClear = drawing ? AncestorsAreTransparent(drawing, &ancestorCount) : false;
       NSColor *windowBackground = state.window.backgroundColor;
-      values.push_back(drawing ? 1.0 : 0.0);
-      values.push_back(drawing && drawing.isOpaque ? 1.0 : 0.0);
-      values.push_back(drawing && drawing.backgroundColor
+      values->push_back(drawing ? 1.0 : 0.0);
+      values->push_back(drawing && drawing.isOpaque ? 1.0 : 0.0);
+      values->push_back(drawing && drawing.backgroundColor
                                ? (double)CGColorGetAlpha(drawing.backgroundColor)
                                : 0.0);
-      values.push_back(ancestorsClear ? 1.0 : 0.0);
-      values.push_back((double)ancestorCount);
-      values.push_back(windowBackground ? (double)windowBackground.alphaComponent : 0.0);
-      values.push_back(ContainerIsBelowContent(state) ? 1.0 : 0.0);
-      values.push_back(state.contentView.isOpaque ? 1.0 : 0.0);
-      values.push_back(state.container && state.container.isOpaque ? 1.0 : 0.0);
-      values.push_back(0.0);  // restored layers, only reported after detach
+      values->push_back(ancestorsClear ? 1.0 : 0.0);
+      values->push_back((double)ancestorCount);
+      values->push_back(windowBackground ? (double)windowBackground.alphaComponent : 0.0);
+      values->push_back(ContainerIsBelowContent(state) ? 1.0 : 0.0);
+      values->push_back(state.contentView.isOpaque ? 1.0 : 0.0);
+      values->push_back(state.container && state.container.isOpaque ? 1.0 : 0.0);
+      values->push_back(0.0);  // restored layers, only reported after detach
     });
-    jdoubleArray result = env->NewDoubleArray((jsize)values.size());
+    if (!answered) return nullptr;
+    jdoubleArray result = env->NewDoubleArray((jsize)values->size());
     if (!result) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return nullptr;
     }
-    if (!values.empty()) env->SetDoubleArrayRegion(result, 0, (jsize)values.size(), values.data());
+    if (!values->empty()) env->SetDoubleArrayRegion(result, 0, (jsize)values->size(), values->data());
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;
@@ -933,25 +1025,25 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
 
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_stride_app_glass_NativeGlass_nativeStateKeys(JNIEnv *env, jobject, jlong handle) {
-    std::vector<std::string> keys;
-    RunOnMain([&] {
+    auto keys = std::make_shared<std::vector<std::string>>();
+    AskAppKitRunLoop("native state keys query", [keys, handle] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
       std::map<std::string, NSView *> sorted(found->second.pieces.begin(), found->second.pieces.end());
-      for (auto &entry : sorted) keys.push_back(entry.first);
+      for (auto &entry : sorted) keys->push_back(entry.first);
     });
     jclass stringClass = env->FindClass("java/lang/String");
     if (!stringClass) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return nullptr;
     }
-    jobjectArray result = env->NewObjectArray((jsize)keys.size(), stringClass, nullptr);
+    jobjectArray result = env->NewObjectArray((jsize)keys->size(), stringClass, nullptr);
     if (!result) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return nullptr;
     }
-    for (jsize index = 0; index < (jsize)keys.size(); index++) {
-        jstring value = env->NewStringUTF(keys[index].c_str());
+    for (jsize index = 0; index < (jsize)keys->size(); index++) {
+        jstring value = env->NewStringUTF((*keys)[index].c_str());
         if (!value) {
             if (env->ExceptionCheck()) env->ExceptionClear();
             return result;
@@ -968,16 +1060,16 @@ Java_stride_app_glass_NativeGlass_nativeStateKeys(JNIEnv *env, jobject, jlong ha
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_stride_app_glass_NativeGlass_nativeLayerClass(JNIEnv *env, jobject, jlong handle) {
-    std::string name;
-    RunOnMain([&] {
+    auto name = std::make_shared<std::string>();
+    AskAppKitRunLoop("layer class query", [name, handle] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
       CALayer *drawing = FindDrawingLayerInView(found->second.contentView, 0);
       if (!drawing) return;
       const char *utf8 = NSStringFromClass([drawing class]).UTF8String;
-      if (utf8) name = utf8;
+      if (utf8) *name = utf8;
     });
-    jstring result = env->NewStringUTF(name.c_str());
+    jstring result = env->NewStringUTF(name->c_str());
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;
@@ -987,25 +1079,61 @@ Java_stride_app_glass_NativeGlass_nativeLayerClass(JNIEnv *env, jobject, jlong h
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_stride_app_glass_NativeGlass_nativeLayerTree(JNIEnv *env, jobject, jlong handle) {
-    std::string out;
-    RunOnMain([&] {
+    auto out = std::make_shared<std::string>();
+    AskAppKitRunLoop("layer tree query", [out, handle] {
       auto found = gWindows.find(handle);
       if (found == gWindows.end()) return;
       NSView *content = found->second.contentView;
       if (content.layer) {
-          DescribeLayer(content.layer, 0, out);
+          DescribeLayer(content.layer, 0, *out);
           return;
       }
       for (NSView *view in content.subviews) {
           const char *name = NSStringFromClass([view class]).UTF8String;
-          out += std::string(name ? name : "?") + "\n";
-          if (view.layer) DescribeLayer(view.layer, 1, out);
+          *out += std::string(name ? name : "?") + "\n";
+          if (view.layer) DescribeLayer(view.layer, 1, *out);
       }
     });
-    jstring result = env->NewStringUTF(out.c_str());
+    jstring result = env->NewStringUTF(out->c_str());
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
         return nullptr;
     }
     return result;
+}
+
+// Test hooks. They reproduce the AWT wait shape: the AppKit thread sits in a nested run loop in
+// AWT's mode (as doAWTRunLoopImpl does while AWT waits for the event thread), so any bridge
+// entry that waits for the GCD main queue hangs. The test holds the loop until it releases it;
+// the hold does not need a GCD hop to end.
+static std::atomic<bool> gTestHoldActive{false};
+static std::atomic<bool> gTestRelease{false};
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_stride_app_glass_NativeGlass_nativeTestHoldMainThread(JNIEnv *, jobject) {
+    gTestRelease.store(false);
+    gTestHoldActive.store(false);
+    OnAppKitRunLoop([] {
+      gTestHoldActive.store(true);
+      while (!gTestRelease.load()) {
+          @autoreleasepool {
+              // AWT's own wait loops in this mode; the main dispatch queue is not serviced here.
+              [[NSRunLoop currentRunLoop] runMode:kAwtRunLoopMode
+                                       beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.005]];
+          }
+      }
+      gTestHoldActive.store(false);
+    });
+    for (int attempt = 0; attempt < 400 && !gTestHoldActive.load(); attempt++) {
+        usleep(5 * 1000);
+    }
+    return gTestHoldActive.load() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_stride_app_glass_NativeGlass_nativeTestReleaseMainThread(JNIEnv *, jobject) {
+    gTestRelease.store(true);
+    for (int attempt = 0; attempt < 400 && gTestHoldActive.load(); attempt++) {
+        usleep(5 * 1000);
+    }
 }

@@ -93,8 +93,8 @@ object GlassRuntime {
             retry(window, "Compose layer not found")
             return
         }
-        val attached = NativeGlass.attach(window)
-        if (attached == 0L) {
+        val attached = NativeGlass.nextHandle()
+        if (!NativeGlass.attach(attached, window)) {
             retry(window, "window not found")
             return
         }

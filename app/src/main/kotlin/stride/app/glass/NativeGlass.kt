@@ -2,6 +2,7 @@ package stride.app.glass
 
 import java.awt.Component
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Logger
 
 data class NativeGlassView(
@@ -44,14 +45,21 @@ data class NativeGlassState(
 )
 
 /**
- * JNI bridge to `native/glass/stride_glass.mm`. Every entry point marshals onto the AppKit main
- * thread inside the library and touches the window map there; callers may use any thread. The
- * appearance query is the exception: before AWT installs the application object it returns
- * "unknown" without touching AppKit, so it can be called from any thread at any time.
+ * JNI bridge to `native/glass/stride_glass.mm`.
+ *
+ * Threading: the AppKit thread may be inside an accessibility or menu call that waits for the
+ * AWT event dispatch thread, so no Java thread may ever block on the AppKit thread in a way that
+ * only the GCD main queue would service (that is the v1.4.0 launch deadlock). Nothing here does.
+ * [supported] reads only the OS version and a class, cached and lock-free. Mutations (attach,
+ * sync, drag regions, detach, the appearance observer) are enqueued on the AppKit run loop and
+ * return immediately, in the order they were called. Queries that must answer synchronously
+ * (state reads, the appearance query) wait on that same run loop with a bound, then fall back.
+ * The window lookup in [attach] stays on the calling thread because JAWT requires its lock there.
  */
 internal object NativeGlass {
     private val log: Logger = Logger.getLogger("stride.app")
     private val loadFailure: String? = load()
+    private val handles = AtomicLong(0)
 
     val available: Boolean get() = loadFailure == null
 
@@ -86,19 +94,26 @@ internal object NativeGlass {
 
     fun supported(): Boolean = available && runCatching { nativeSupported() }.getOrDefault(false)
 
-    /** Returns 0 when the window cannot be found or the material view is unavailable. */
-    fun attach(component: Component): Long =
-        if (!available) 0L else runCatching {
-            nativeAttach(component, System.getProperty("java.home") ?: "")
+    /** A new native window handle; handles are generated here, never returned from the main thread. */
+    internal fun nextHandle(): Long = handles.incrementAndGet()
+
+    /**
+     * Enqueues the attach and returns immediately. False means the AWT window was not found, so
+     * the caller can retry; the view insertion itself happens on the AppKit run loop.
+     */
+    internal fun attach(handle: Long, component: Component): Boolean =
+        available && runCatching {
+            nativeAttach(handle, component, System.getProperty("java.home") ?: "")
         }.getOrElse {
             log.warning("native glass attach failed: ${it.message}")
-            0L
+            false
         }
 
     fun detach(handle: Long) {
         if (available) runCatching { nativeDetach(handle) }
     }
 
+    /** Enqueues one sync; the return value is the number of pieces accepted for that run. */
     fun sync(handle: Long, pieces: List<GlassPiece>): Int {
         if (!available) return 0
         val count = pieces.size
@@ -171,7 +186,7 @@ internal object NativeGlass {
     fun layerTree(handle: Long): String =
         if (!available || handle == 0L) "" else runCatching { nativeLayerTree(handle) }.getOrDefault("")
 
-    /** Replaces the window's draggable rectangles; count of rectangles the native side accepted. */
+    /** Enqueues the window's draggable rectangles; count of rectangles accepted for that run. */
     fun dragRegions(handle: Long, rects: List<DragRect>): Int {
         if (!available || handle == 0L) return 0
         val count = rects.size
@@ -194,9 +209,17 @@ internal object NativeGlass {
     /** Installed local mouse-down monitors; one per attached window while it is attached. */
     fun dragMonitorCount(): Int = if (!available) 0 else runCatching { nativeDragMonitorCount() }.getOrDefault(0)
 
+    /** Test-only: holds the AppKit thread in AWT's nested run-loop mode until released. */
+    internal fun testHoldMainThread(): Boolean =
+        available && runCatching { nativeTestHoldMainThread() }.getOrDefault(false)
+
+    internal fun testReleaseMainThread() {
+        if (available) runCatching { nativeTestReleaseMainThread() }
+    }
+
     private external fun nativeSupported(): Boolean
 
-    private external fun nativeAttach(component: Component, javaHome: String): Long
+    private external fun nativeAttach(handle: Long, component: Component, javaHome: String): Boolean
 
     private external fun nativeDetach(handle: Long)
 
@@ -231,4 +254,8 @@ internal object NativeGlass {
     private external fun nativeHitTestDragRegion(handle: Long, x: Double, y: Double): Boolean
 
     private external fun nativeDragMonitorCount(): Int
+
+    private external fun nativeTestHoldMainThread(): Boolean
+
+    private external fun nativeTestReleaseMainThread()
 }

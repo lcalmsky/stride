@@ -1842,6 +1842,32 @@ query/observer/application-class query. The appearance query never asks for the 
 application: it reads `NSApp` and returns "unknown" while it is nil, so calling it before AWT
 cannot create a plain `NSApplication` and steal the `NSApplicationAWT` install.
 
+**Threading.** The AppKit thread may be answering an accessibility or menu request that
+synchronously calls into Java and waits for the AWT event dispatch thread in a nested run loop.
+That loop runs in `AWTRunLoopMode` (`+[ThreadUtilities javaRunLoopMode]` in the runtime), and
+the GCD main queue is not serviced in it. No bridge entry may therefore make a Java thread wait
+for the main queue — that was the 1.4.0 launch deadlock (EDT in `nativeSupported`, AppKit in
+`accessibilityFocusedUIElement`). Every entry follows these rules:
+
+- `supported` needs only the OS version and the `NSGlassEffectView` class, both thread-safe. It
+  never touches the AppKit thread and caches the answer for the process.
+- Mutations (`attach`, `sync`, `setDragRects`, `detach`, the appearance observer install and
+  remove) are scheduled with `CFRunLoopPerformBlock` for the default, modal-panel,
+  event-tracking and `AWTRunLoopMode` modes and return immediately. Blocks run in the order
+  they were added, so a sync follows its attach and a detach follows the last sync.
+- Window handles are generated in Java and passed into `attach`, so it needs no answer from the
+  AppKit thread. Only the JAWT window lookup stays on the calling thread: JAWT requires its
+  lock there, and that lookup never waits for the AppKit thread.
+- Queries that must answer synchronously (`state`, `stateKeys`, `layerClass`, `layerTree`,
+  `hitTestDragRegion`, `dragMonitorCount`, the appearance and application-class queries) wait
+  on the same run loop for at most one second. On timeout they log one line and return the
+  fallback instead of joining the deadlock.
+
+`NativeGlassDeadlockTest` reproduces the shape: a test hook holds the AppKit thread in the
+`AWTRunLoopMode` nested loop (as AWT does while it waits for the EDT), then every entry is
+called from the event dispatch thread and must return within two seconds. The pre-fix
+`dispatch_sync` version of `nativeSupported` times out there.
+
 The transparency block is what makes the glass show through: it finds the Skia drawing
 layer under the content view (an `AWTMetalLayer`/`CAMetalLayer`; AWT's own `MTLLayer` is
 skipped), and reports whether that layer and every ancestor up to the window frame are
