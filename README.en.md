@@ -125,12 +125,16 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 <td width="44%" valign="top"><img src="docs/images/editor.png" alt="Cyan selection on the project tree and the active tab" width="480"></td>
 <td valign="top">
 
-- **Background** a neutral graphite base with a soft top-to-bottom luminance falloff sits behind the window content. Color is reserved for emphasis
+- **System glass** on macOS 26 or later the chrome is drawn by the system's own glass views behind the window content, so the desktop and other windows show through the sidebar, capsules, find bar, and popups. The editor and console are opaque rounded surfaces floating over it
+- **Title bar** the title bar is hidden and the traffic lights sit in the top capsule row. Drag the empty part of that row to move the window, and double-clicking it follows the system title-bar setting
+- **Light and dark** the window follows the system appearance live. The palette, syntax colours, and terminal colours each have a light and a dark set, so a change needs no restart
+- **Older macOS** on macOS versions before 26, or when the native library is missing, the previous in-window glass and the standard title bar are used
+- **Background** on the path without native glass, a neutral graphite base with a soft top-to-bottom luminance falloff sits behind the window content. Color is reserved for emphasis
 - **Glass only on the control layer** glass is used only for the sidebar, the top and bottom capsules, the find bar, popups, and the tool window switcher; the code fills the window edge to edge. No bar or slab crosses the window
-- **Floating glass sidebar** a rounded glass panel inset 10 dp from the top, left, and bottom edges. The real code right next to it is mirrored and blurred into a soft colour field under the panel, so the sidebar carries the tone of the code beside it. Outside the panel the pixels are the editor field
-- **Capsules instead of bars** the top row is split into a project name capsule, a tab capsule group, and a Search capsule; the bottom row into a file path capsule and a status capsule group. The selected tab is a glass pill that slides across the group, and a 2 dp cyan underline marks the selection instantly. The status group carries `Ln`·`Col`, the file type, `UTF-8`, and the read-only badge. Each capsule frosts the code under it so labels stay legible, and the code between capsules stays visible and clickable
+- **Floating glass sidebar** a rounded glass panel inset 10 dp from the top, left, and bottom edges. On the fallback path the real code right next to it is mirrored and blurred into a soft colour field under the panel, so the sidebar carries the tone of the code beside it, and outside the panel the pixels are the editor field. On the native path the panel itself shows the desktop through
+- **Capsules instead of bars** the top row is split into a project name capsule, a tab capsule group, and a Search capsule; the bottom row into a file path capsule and a status capsule group. The selected tab is a glass pill that slides across the group, and a 2 dp cyan underline marks the selection instantly. The status group carries `Ln`·`Col`, the file type, `UTF-8`, and the read-only badge. Each capsule frosts what is behind it so labels stay legible, and the gaps between capsules stay visible and clickable
 - **Scroll edge effect** scrolled code softens under the top and bottom capsule rows and fades out toward the window edge. Instead of a bar covering and cutting it, the blur eases out gradually
-- **Thin popups** Search Everywhere, recent files, and the context actions popup float as thin glass over the code, showing it behind and bending it at the rim. A strong text shadow keeps labels legible, and they fall back to blur plus hairlines when the shader is unavailable
+- **Thin popups** on the fallback path, Search Everywhere, recent files, and the context actions popup float as thin glass over the code, showing it behind and bending it at the rim. A strong text shadow keeps labels legible, and they fall back to blur plus hairlines when the shader is unavailable. On the native path popups use the system glass too
 - **Welcome screen** without a project, the wordmark is the content, with an `Open Folder…` glass capsule and keycap hints below it
 - **Selection signal** a selected tree row floats as a capsule with a small lens and shows a 2 dp cyan bar, a bleeding glow, and white text. A focused tree panel draws a thin line around its border
 - **Large files** documents of 1,000 lines or more scroll through a constant-cost layer, and the capsules use a cached frost fill; the layer is released once the document shrinks below 800 lines
@@ -142,6 +146,8 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 </table>
 
 <p align="center"><img src="docs/images/glass.png" alt="The Search Everywhere glass popup over code" width="720"></p>
+
+<p align="center"><img src="docs/images/editor-light.png" alt="The project tree and Kotlin editor in the light appearance" width="720"></p>
 
 <br>
 
@@ -242,6 +248,7 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 | Requirement | Notes |
 |---|---|
 | macOS Apple Silicon (arm64) | The release app is arm64 only. The bundled runtime means no JDK installation is needed |
+| macOS 26 or later (optional) | Needed for the system glass; below that the app draws its own glass in the window |
 | JDK 21 | Needed only to build from source |
 | Gatekeeper | When you download and unzip the app yourself, the first launch may show a warning. Right-click the app in Finder and choose `Open` |
 
@@ -255,6 +262,8 @@ Every module declares extension points and registers extensions through a `META-
 
 The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 
+On the native path a JNI library places system glass views behind the window content and Compose only reports the pieces above them. When the library is missing or macOS is older than 26, the same piece reports are drawn with Skia materials instead.
+
 <br>
 
 ## Development
@@ -266,6 +275,7 @@ The editor keeps its scroll viewport and chrome insets separate: content runs to
 ```
 
 - The tests number about 580 and take roughly two minutes. `UiSnapshotTest` writes screen PNGs to `app/build/ui-snapshots/`
+- `:app:buildNativeGlass` runs only when `clang++` (Xcode Command Line Tools) is available; otherwise it logs one line and the app uses the Skia glass path. Pass `-Pstride.nativeGlass=false` to skip the native build
 - Release with `scripts/release.sh X.Y.Z -m "<summary of changed features>"`. `scripts/release-selftest.sh` checks that script
 - Repository rules are in [CLAUDE.md](CLAUDE.md)
 

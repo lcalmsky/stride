@@ -35,7 +35,7 @@
 | `app/.../editor/find/FindBar.kt` | `find.png` |
 | `app/.../run/` 의 Run 창과 거터 표시 | `run.png` |
 | `app/.../terminal/` 의 터미널 화면과 팔레트 | `terminal.png` |
-| `app/.../ui/theme/` 의 색·네온·글래스 | 모두 |
+| `app/.../ui/theme/` 의 색·네온·글래스 | 모두, `editor-light.png` |
 | 어느 그림에 영향이 있는지 판단이 서지 않을 때 | 모두 |
 
 ## 기능이 바뀌면 반드시 릴리즈한다
