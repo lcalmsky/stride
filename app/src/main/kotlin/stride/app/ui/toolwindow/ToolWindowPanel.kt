@@ -28,10 +28,14 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import stride.app.glass.GlassHoles
+import stride.app.glass.LocalNativeGlass
+import stride.app.glass.nativeGlass
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
+import stride.app.ui.theme.contentSurface
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberNeonAlpha
@@ -64,9 +68,13 @@ fun ToolWindowPanel(
     }
 
     val switcherShape = RoundedCornerShape(percent = 50)
+    val nativeGlass = LocalNativeGlass.current
+    val holes = if (nativeGlass) GlassHoles.snapshot() else emptyList()
+    val surfaceShape = RoundedCornerShape(DesignTokens.contentSurfaceRadius)
+    val contentTop = DesignTokens.chromeGap + DesignTokens.capsuleHeight + DesignTokens.chromeGap
     Box(
         modifier
-            .contentTint()
+            .then(if (nativeGlass) Modifier else Modifier.contentTint())
             .focusRequester(focusRequester)
             .onFocusChanged { focusState ->
                 hasFocus = focusState.hasFocus
@@ -75,15 +83,31 @@ fun ToolWindowPanel(
             .focusable(),
     ) {
         active?.let { window ->
-            window.content(
-                Modifier
-                    .fillMaxSize()
-                    .padding(
-                        start = contentInset,
-                        top = DesignTokens.chromeGap + DesignTokens.capsuleHeight + DesignTokens.chromeGap,
-                        bottom = contentBottomInset,
-                    ),
-            )
+            if (nativeGlass) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = contentInset,
+                            end = DesignTokens.chromeInset,
+                            top = contentTop,
+                            bottom = contentBottomInset,
+                        )
+                        .contentSurface(surfaceShape, holes),
+                ) {
+                    window.content(Modifier.fillMaxSize())
+                }
+            } else {
+                window.content(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(
+                            start = contentInset,
+                            top = contentTop,
+                            bottom = contentBottomInset,
+                        ),
+                )
+            }
         }
         Row(
             Modifier
@@ -91,6 +115,7 @@ fun ToolWindowPanel(
                 .offset(x = contentInset, y = DesignTokens.chromeGap)
                 .height(DesignTokens.capsuleHeight)
                 .capsuleGlass(switcherShape)
+                .nativeGlass("tool-switcher", switcherShape, tint = DesignTokens.nativeGlassTint)
                 .panelPressBlocker()
                 .padding(horizontal = DesignTokens.space4),
             verticalAlignment = Alignment.CenterVertically,

@@ -58,6 +58,7 @@ import stride.app.editor.find.FindOptions
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
 import stride.search.FileNameIndex
@@ -120,6 +121,7 @@ fun FindInPathPopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-find-in-path", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .onPreviewKeyEvent { event ->

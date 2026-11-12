@@ -121,7 +121,8 @@ private fun RunTabs(manager: RunManager, current: RunSession) {
     Row(
         Modifier
             .height(DesignTokens.capsuleHeight)
-            .capsuleGlass(RoundedCornerShape(percent = 50))
+            // The tab strip floats over the opaque run panel, so it keeps the Skia material.
+            .capsuleGlass(RoundedCornerShape(percent = 50), forceSkia = true)
             .padding(horizontal = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {

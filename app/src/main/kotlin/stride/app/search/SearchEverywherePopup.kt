@@ -67,6 +67,7 @@ import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.SearchIcon
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberNeonAlpha
@@ -136,6 +137,7 @@ fun SearchEverywherePopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-search", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .onPreviewKeyEvent { event ->

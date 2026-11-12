@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
 import stride.core.vfs.VFile
@@ -90,6 +91,7 @@ fun RecentFilesPopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-recent", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .focusRequester(focusRequester)
                 .focusable()

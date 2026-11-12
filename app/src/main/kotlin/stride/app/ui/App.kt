@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
@@ -96,9 +97,15 @@ import stride.app.editor.RenamePopup
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyRename
 import stride.app.editor.find.FindBar
+import stride.app.editor.find.FindBarState
 import stride.app.editor.find.findBarHeight
 import stride.app.editor.insertCompletion
-import stride.app.editor.find.FindBarState
+import stride.app.glass.GlassHoles
+import stride.app.glass.GlassRegistry
+import stride.app.glass.GlassRuntime
+import stride.app.glass.LocalNativeGlass
+import stride.app.glass.nativeGlass
+import stride.app.glass.windowDragRegion
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
@@ -132,6 +139,7 @@ import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MeshBackground
 import stride.app.ui.theme.SidebarChrome
 import stride.app.ui.theme.capsuleGlass
+import stride.app.ui.theme.contentSurface
 import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
@@ -190,16 +198,33 @@ fun App(
         val editor = selectedEditor as? TextFileEditor ?: return@LaunchedEffect
         editor.bookmarkLines = session.bookmarks.linesOf(editor.file.path.toAbsolutePath().normalize())
     }
-    MeshBackground(Modifier.fillMaxSize()) {
+    val nativeGlass = GlassRuntime.active.value
+    CompositionLocalProvider(LocalNativeGlass provides nativeGlass) {
+        LaunchedEffect(nativeGlass) {
+            if (!nativeGlass) return@LaunchedEffect
+            // One native sync per changed frame; the elements themselves only report bounds.
+            snapshotFlow { GlassRegistry.shared.revision }.collect {
+                withFrameNanos { }
+                GlassRegistry.shared.flush()
+            }
+        }
+        MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)
+            // On the native path the merged title row replaces the top chrome inset, and the
+            // sidebar starts below that row instead of reaching the window edge.
+            val topInset = if (nativeGlass) 0.dp else DesignTokens.chromeInset
+            val topRowHeight = if (nativeGlass) DesignTokens.nativeTitleRowHeight else DesignTokens.capsuleHeight
+            // The sidebar reaches the window's top inset on the Skia path and starts below the
+            // merged title row on the native path, where the traffic lights own the top left.
+            val sidebarTop = if (nativeGlass) topInset + topRowHeight + DesignTokens.chromeGap else DesignTokens.chromeInset
             // The floating sidebar spans the window with chromeInset above and below it.
-            val sidebarHeight = (maxHeight - DesignTokens.chromeInset * 2).coerceAtLeast(0.dp)
+            val sidebarHeight = (maxHeight - sidebarTop - DesignTokens.chromeInset).coerceAtLeast(0.dp)
             val treeVisible = session != null && state.projectTreeVisible
             // Content runs edge to edge; the text column starts right of the floating sidebar.
             val contentLeft = DesignTokens.chromeInset +
                 (if (treeVisible) treeWidth + DesignTokens.contentGap else 0.dp)
-            val topBand = DesignTokens.chromeInset + DesignTokens.capsuleHeight + DesignTokens.chromeGap
+            val topBand = topInset + topRowHeight + DesignTokens.chromeGap
             val bottomBand = DesignTokens.chromeInset + DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap
             if (session == null) {
                 WelcomeScreen(onOpenFolder)
@@ -210,7 +235,7 @@ fun App(
                         SidebarChrome(
                             left = DesignTokens.chromeInset,
                             width = treeWidth,
-                            top = DesignTokens.chromeInset,
+                            top = sidebarTop,
                             bottom = DesignTokens.chromeInset,
                         )
                     } else {
@@ -274,12 +299,12 @@ fun App(
                                 )
                             }
                         }
-                        ContentEdgeFade(topBand = topBand, bottomBand = bottomBand)
+                        if (!nativeGlass) ContentEdgeFade(topBand = topBand, bottomBand = bottomBand)
                         if (treeVisible) {
                             ProjectTreePanel(
                                 session,
                                 Modifier
-                                    .offset(x = DesignTokens.chromeInset, y = DesignTokens.chromeInset)
+                                    .offset(x = DesignTokens.chromeInset, y = sidebarTop)
                                     .width(treeWidth)
                                     // The panel floats chromeInset in from the bottom edge too, so
                                     // its rounded bottom corners stay inside the window.
@@ -297,7 +322,7 @@ fun App(
                                 modifier = Modifier
                                     .offset(
                                         x = DesignTokens.chromeInset + treeWidth - DesignTokens.space4,
-                                        y = DesignTokens.chromeInset,
+                                        y = sidebarTop,
                                     )
                                     .width(DesignTokens.chromeGap)
                                     .height(sidebarHeight),
@@ -307,7 +332,13 @@ fun App(
                             projectName = session.displayName(),
                             manager = session.editors,
                             onSearch = { state.openSearch(SearchTab.ALL) },
-                            leftInset = contentLeft,
+                            leftInset = if (nativeGlass) {
+                                maxOf(contentLeft, DesignTokens.nativeTitleLightsInset)
+                            } else {
+                                contentLeft
+                            },
+                            topInset = topInset,
+                            rowHeight = topRowHeight,
                         )
                         BottomChromeRow(
                             session = session,
@@ -592,6 +623,7 @@ fun App(
             }
         }
     }
+    }
 }
 
 /** Parses the selected file off the UI thread and shows the File Structure popup over it. */
@@ -669,26 +701,30 @@ private fun TopChromeRow(
     manager: FileEditorManager?,
     onSearch: () -> Unit,
     leftInset: Dp,
+    topInset: Dp = DesignTokens.chromeInset,
+    rowHeight: Dp = DesignTokens.capsuleHeight,
 ) {
-    Row(
+    Box(
         Modifier
             .fillMaxWidth()
-            .padding(
-                top = DesignTokens.chromeInset,
-                start = leftInset,
-                end = DesignTokens.chromeInset,
-            )
-            .height(DesignTokens.capsuleHeight),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
+            .padding(top = topInset, end = DesignTokens.chromeInset)
+            .height(rowHeight),
     ) {
-        ProjectCapsule(projectName)
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            if (manager != null && manager.openFiles.isNotEmpty()) {
-                TabGroup(manager, Modifier.align(Alignment.CenterStart))
+        // The empty strip is the window drag handle on the native merged title row.
+        Box(Modifier.fillMaxSize().windowDragRegion())
+        Row(
+            Modifier.fillMaxSize().padding(start = leftInset),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
+        ) {
+            ProjectCapsule(projectName, rowHeight)
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                if (manager != null && manager.openFiles.isNotEmpty()) {
+                    TabGroup(manager, rowHeight, Modifier.align(Alignment.CenterStart))
+                }
             }
+            SearchCapsule(onSearch, rowHeight)
         }
-        SearchCapsule(onSearch)
     }
 }
 
@@ -700,12 +736,13 @@ private fun Modifier.editorPressBlocker(): Modifier = pointerInput(Unit) {
 }
 
 @Composable
-private fun ProjectCapsule(name: String) {
+private fun ProjectCapsule(name: String, height: Dp = DesignTokens.capsuleHeight) {
     val shape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
-            .height(DesignTokens.capsuleHeight)
+            .height(height)
             .capsuleGlass(shape)
+            .nativeGlass("top-project", shape, tint = DesignTokens.nativeGlassTint)
             .editorPressBlocker()
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
@@ -737,14 +774,15 @@ private fun LogoMark(modifier: Modifier) {
 }
 
 @Composable
-private fun SearchCapsule(onClick: () -> Unit) {
+private fun SearchCapsule(onClick: () -> Unit, height: Dp = DesignTokens.capsuleHeight) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val shape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
-            .height(DesignTokens.capsuleHeight)
+            .height(height)
             .capsuleGlass(shape)
+            .nativeGlass("top-search", shape, tint = DesignTokens.nativeGlassTint)
             .then(
                 if (hovered) {
                     Modifier.border(1.dp, DesignTokens.accent2.copy(alpha = 0.6f), shape)
@@ -830,6 +868,7 @@ private fun ProjectTreePanel(
         Column(
             modifier
                 .sidebarGlass(shape)
+                .nativeGlass("sidebar", shape, tint = DesignTokens.nativeGlassTint)
                 .editorPressBlocker()
                 .focusHalo(focused)
                 .focusRequester(focusRequester)
@@ -970,10 +1009,19 @@ private fun EditorArea(
     // insets. The editor has no focus halo: its area reaches the window edge, where the line
     // would read as a bar across the whole title row.
     Box(modifier) {
+        val nativeGlass = LocalNativeGlass.current
         val barHeight = if (findBar.visible) findBarHeight(findBar) else 0.dp
         val topInset = if (findBar.visible) topBand + DesignTokens.chromeGap + barHeight else topBand
+        // The native surface starts below the find bar so the bar itself floats on glass.
+        val surfaceTop = topBand + if (findBar.visible) barHeight + DesignTokens.chromeGap else 0.dp
+        val surfaceShape = RoundedCornerShape(DesignTokens.contentSurfaceRadius)
+        val holes = if (nativeGlass) GlassHoles.snapshot() else emptyList()
         CompositionLocalProvider(
-            LocalEditorInsets provides EditorInsets(top = topInset, bottom = bottomInset, left = leftInset),
+            LocalEditorInsets provides if (nativeGlass) {
+                EditorInsets()
+            } else {
+                EditorInsets(top = topInset, bottom = bottomInset, left = leftInset)
+            },
         ) {
             val selected = session.editors.selected
             if (selected == null) {
@@ -984,7 +1032,23 @@ private fun EditorArea(
                     selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
                     selected.onJump = { onJump(selected) }
                 }
-                selected.Content(Modifier.fillMaxSize())
+                if (nativeGlass) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(
+                                top = surfaceTop,
+                                start = leftInset,
+                                end = DesignTokens.chromeInset,
+                                bottom = bottomInset,
+                            )
+                            .contentSurface(surfaceShape, holes),
+                    ) {
+                        selected.Content(Modifier.fillMaxSize())
+                    }
+                } else {
+                    selected.Content(Modifier.fillMaxSize())
+                }
             }
         }
         if (findBar.visible) {
@@ -1008,7 +1072,11 @@ private fun EditorArea(
  * stretches to the newly selected tab; the pill's cyan line keeps the selection instant.
  */
 @Composable
-private fun TabGroup(manager: FileEditorManager, modifier: Modifier = Modifier) {
+private fun TabGroup(
+    manager: FileEditorManager,
+    height: Dp = DesignTokens.capsuleHeight,
+    modifier: Modifier = Modifier,
+) {
     val scrollState = rememberScrollState()
     val groupShape = RoundedCornerShape(percent = 50)
     val pillShape = RoundedCornerShape(percent = 50)
@@ -1042,8 +1110,9 @@ private fun TabGroup(manager: FileEditorManager, modifier: Modifier = Modifier) 
     val pillWidth by animateDpAsState(targetWidth, morph, label = "tab-pill-width")
     Box(
         modifier
-            .height(DesignTokens.capsuleHeight)
+            .height(height)
             .capsuleGlass(groupShape)
+            .nativeGlass("top-tabs", groupShape, tint = DesignTokens.nativeGlassTint)
             .editorPressBlocker()
             .padding(horizontal = DesignTokens.space4),
     ) {
@@ -1052,7 +1121,7 @@ private fun TabGroup(manager: FileEditorManager, modifier: Modifier = Modifier) 
                 Modifier
                     .offset(x = pillLeft, y = 3.dp)
                     .width(pillWidth)
-                    .height(DesignTokens.capsuleHeight - 6.dp)
+                    .height((height - 6.dp).coerceAtLeast(1.dp))
                     .glassLensCapsule(
                         shape = pillShape,
                         insetX = 1.dp,
@@ -1189,6 +1258,7 @@ private fun PathCapsule(path: String, modifier: Modifier = Modifier) {
         modifier
             .height(DesignTokens.statusCapsuleHeight)
             .capsuleGlass(shape)
+            .nativeGlass("bottom-path", shape, tint = DesignTokens.nativeGlassTint)
             .editorPressBlocker()
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
@@ -1219,6 +1289,7 @@ private fun StatusCapsule(
         Modifier
             .height(DesignTokens.statusCapsuleHeight)
             .capsuleGlass(shape)
+            .nativeGlass("bottom-status", shape, tint = DesignTokens.nativeGlassTint)
             .editorPressBlocker()
             .padding(horizontal = DesignTokens.space12),
         verticalAlignment = Alignment.CenterVertically,
@@ -1411,6 +1482,7 @@ private fun OpenFolderButton(onClick: () -> Unit) {
         Modifier
             .height(DesignTokens.capsuleHeight + DesignTokens.space8)
             .capsuleGlass(shape)
+            .nativeGlass("welcome-open", shape, tint = DesignTokens.nativeGlassTint)
             .background(
                 DesignTokens.accent.copy(alpha = if (hovered) 0.30f else 0.18f),
                 shape,
@@ -1438,23 +1510,27 @@ private fun ShortcutList(hasProject: Boolean) {
     val macOs = remember { KeyRouter.isMacOs() }
     val keymap = remember(macOs) { Keymap.forPlatform(macOs) }
     val shortcuts = remember(keymap, hasProject) { welcomeHints(keymap, hasProject, macOs) }
-    Column(
-        Modifier.width(300.dp),
-        verticalArrangement = Arrangement.spacedBy(DesignTokens.space8),
-    ) {
-        for (shortcut in shortcuts) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    shortcut.label,
-                    color = DesignTokens.muted,
-                    fontSize = DesignTokens.smallTextSize,
-                    fontFamily = DesignTokens.uiFont,
-                )
-                KeyCap(shortcut.keys)
+    // The hint list sits on the window glass when a project has no file open; the opaque
+    // shadow plate is what keeps the muted labels readable there.
+    CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+        Column(
+            Modifier.width(300.dp),
+            verticalArrangement = Arrangement.spacedBy(DesignTokens.space8),
+        ) {
+            for (shortcut in shortcuts) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        shortcut.label,
+                        color = DesignTokens.muted,
+                        fontSize = DesignTokens.smallTextSize,
+                        fontFamily = DesignTokens.uiFont,
+                    )
+                    KeyCap(shortcut.keys)
+                }
             }
         }
     }

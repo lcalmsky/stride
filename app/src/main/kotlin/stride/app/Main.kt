@@ -2,21 +2,23 @@ package stride.app
 
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberWindowState
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
+import java.nio.file.Paths
+import java.util.logging.Level
+import java.util.logging.Logger
+import javax.swing.WindowConstants
+import stride.app.glass.GlassRuntime
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
 import stride.app.ui.chooseFolder
-import stride.app.ui.loadWindowIcon
 import stride.core.services.Application
-import java.nio.file.Paths
-import java.util.logging.Level
-import java.util.logging.Logger
 
 fun main(args: Array<String>) {
     val result = Application.init()
@@ -34,22 +36,49 @@ fun main(args: Array<String>) {
                     .onFailure { log.log(Level.WARNING, "Failed to open $initialPath", it) }
             }
         }
-        val windowState = rememberWindowState(
-            width = 1280.dp,
-            height = 820.dp,
-            position = WindowPosition(Alignment.Center),
-        )
-        val windowIcon = remember { loadWindowIcon() }
+        val close = {
+            state.dispose()
+            exitApplication()
+        }
         Window(
-            onCloseRequest = {
-                state.dispose()
-                exitApplication()
-            },
-            title = state.session?.let { "strIDE — ${it.displayName()}" } ?: "strIDE",
-            icon = windowIcon,
-            state = windowState,
+            visible = true,
             onPreviewKeyEvent = { event ->
                 handleWindowKeyEvent(event, router, state, ::chooseFolder)
+            },
+            onKeyEvent = { false },
+            create = {
+                ComposeWindow().apply {
+                    // Read when the peer is created: the content view fills the window and the
+                    // title strip becomes transparent with the title hidden. The native traffic
+                    // lights stay, centred in the top capsule row.
+                    rootPane.putClientProperty("apple.awt.fullWindowContent", true)
+                    rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
+                    rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+                    defaultCloseOperation = WindowConstants.DO_NOTHING_ON_CLOSE
+                    setSize(1280, 820)
+                    setLocationRelativeTo(null)
+                    val window = this
+                    addWindowListener(
+                        object : WindowAdapter() {
+                            override fun windowClosing(event: WindowEvent) = close()
+                        },
+                    )
+                    addComponentListener(
+                        object : ComponentAdapter() {
+                            override fun componentShown(event: ComponentEvent) = GlassRuntime.attach(window)
+                            override fun componentHidden(event: ComponentEvent) = GlassRuntime.detach()
+                        },
+                    )
+                }
+            },
+            dispose = { it.dispose() },
+            update = { window ->
+                // Runs before the first show: the Compose Skia layer must be transparent from
+                // the first frame or the native glass below it never shows.
+                GlassRuntime.prepare(window)
+                // The title is hidden in the title bar but stays for Mission Control and the
+                // Window menu.
+                window.title = state.session?.let { "strIDE — ${it.displayName()}" } ?: "strIDE"
             },
         ) {
             App(

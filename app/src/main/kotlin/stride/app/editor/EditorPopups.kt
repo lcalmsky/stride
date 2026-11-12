@@ -58,6 +58,7 @@ import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
 
@@ -133,6 +134,7 @@ fun CompletionPopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-completion", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .onPreviewKeyEvent { event ->
@@ -293,6 +295,7 @@ fun RenamePopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-rename", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .onPreviewKeyEvent { event ->

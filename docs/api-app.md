@@ -1419,6 +1419,9 @@ gradients and no blobs), drawn once per size into a bitmap.
 | `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
 | `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 |
 | `textSecondaryOnGlass` | `#919AAC` (muted→text at t=0.08; 4.51:1 on the worst strong glass) |
+| `nativeGlassTint` | #14151B at 78% (tint of every native glass piece) |
+| `nativeTitleRowHeight` / `nativeTitleLightsInset` | 28 dp / 72 dp (merged title row) |
+| `contentSurfaceRadius` | 12 dp (opaque editor and tool-window panels) |
 | `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 |
 
 `scrollbarStyle` uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
@@ -1764,6 +1767,91 @@ inset by half the capsule height. Its labels and placeholders are `textSecondary
 match counter turns `neonAmber` on a pattern error and the query field gains a `neonPink`
 border instead of pink text, and the row buttons use a `glassFill` fill.
 
+### Native macOS glass and the merged title row
+
+On macOS 26 and later, `stride.app.glass.GlassRuntime` replaces the Skia glass material with the
+system's own glass views. Everything above is still the fallback path, and it is the only path
+in the offscreen tests.
+
+**Library.** `native/glass/stride_glass.mm` is a JNI library built by `:app:buildNativeGlass`
+with the JDK 21 toolchain's `jni.h`/`jawt.h` and clang (no Maven dependency). It resolves
+`JAWT_GetAWT` from the running runtime's own `libjawt.dylib`, finds the window through the
+JAWT drawing surface (the surface's `windowLayer` chain leads to the `NSWindow` through its
+theme-frame delegate), and inserts one container view below the AWT content view. Every piece
+is an `NSGlassEffectView` in that container; `hitTest:` returns nil on both our classes so no
+pointer event is swallowed. The window is made non-opaque with a clear background. The
+library reports `supported`, `attach`, `sync`, `detach`, `state` (window opaque flag, window
+count, base view, piece frames) and the `beginDrag`/`zoom` actions.
+
+`NativeGlass` looks for the dylib at `stride.glass.library`, then
+`compose.application.resources.dir/libstrideglass.dylib`, then `../Resources` under the runtime.
+`appResourcesRootDir` copies it to `strIDE.app/Contents/app/resources/libstrideglass.dylib`
+(ad-hoc signed with the bundle), and `:app:run` passes the build path. A missing library,
+macOS < 26 or an unfound window logs one line and keeps the Skia glass unchanged.
+
+**Path switch.** `GlassRuntime.prepare(window)` runs before the window is shown and sets the
+Compose Skia layer's transparency, so the first frame is transparent where no content is
+painted. `GlassRuntime.attach(window)` runs when the window is shown. `GlassRuntime.active` is
+provided as `LocalNativeGlass`; every Skia glass pass checks it:
+
+- `MeshBackground` paints nothing, `contentTint()` paints nothing and `capsuleGlass` /
+  `sidebarGlass` / `backdropGlass` draw no fill, frost, rim or shadow.
+- `glassLensCapsule` keeps only the lift, the crisp rim and the neon line; the selection and
+  hover language (`glassCapsule`, `neonUnderline`, `selectionRow`) is unchanged.
+- The editor and the tool window content become one opaque rounded `contentSurface`
+  (`contentSurfaceRadius`, the editor's `contentTint` colour) inset from the window and from
+  the chrome rows, so the glass shows around them. The find bar starts above that surface.
+- A popup floats on system glass: `nativeGlass(..., hole = true)` reports its window rectangle
+  to `GlassHoles`, and `contentSurface` punches that hole out of the opaque fill and clips the
+  content to the same region.
+- `capsuleGlass(shape, forceSkia = true)` keeps the Skia material where a capsule floats over
+  an opaque panel (the run window's tab strip).
+
+**Pieces.** `Modifier.nativeGlass(key, shape, style, tint = nativeGlassTint, hole = false)`
+reports the element's window-relative bounds, its shape's corner radius, the style
+(`regular`/`clear`) and the tint to `GlassRegistry`. The registry diffs by key
+(`sameGlassPiece`, `diffGlassPieces`) and `App` flushes at most once per changed frame through
+`snapshotFlow { revision }` + `withFrameNanos`; unchanged frames never cross the bridge. The
+reported surfaces are the sidebar, the three top capsules, the bottom path/status capsules,
+the find bar, the tool-window switcher, the open-folder button and every popup.
+
+`nativeGlassTint` (#14151B at 78%) is the dark floor over the system material: body tokens
+keep 4.5:1 over a white and a black desktop, and `textSecondaryOnGlass` keeps it under its
+opaque `chromeTextStyle` shadow. This is asserted in `DesignTokensContrastTest`.
+
+**Title row.** The window is created with `create = { ComposeWindow() }` and the root pane
+client properties `apple.awt.fullWindowContent`, `apple.awt.transparentTitleBar` and
+`apple.awt.windowTitleVisible=false`, so the content view fills the window and only the native
+traffic lights remain. macOS centres them 14 pt below the window top; on the native path the
+top capsule row starts at the window top with `nativeTitleRowHeight` (28 dp), which puts its
+centre at the same 14 pt, and starts at `nativeTitleLightsInset` (72 dp) or the content column,
+whichever is further right. The window title string stays for Mission Control and the Window
+menu. The empty strip uses `windowDragRegion()`: a press drags the window through
+`performWindowDragWithEvent:` and a double press zooms it; capsules keep their own clicks.
+
+```kotlin
+// stride.app.glass
+val LocalNativeGlass: ProvidableCompositionLocal<Boolean>
+data class GlassPiece(val key: String, val x: Float, val y: Float, val width: Float,
+                      val height: Float, val cornerRadius: Float,
+                      val style: GlassStyle = GlassStyle.REGULAR, val tint: Int? = null)
+enum class GlassStyle { REGULAR, CLEAR }
+fun sameGlassPiece(first: GlassPiece, second: GlassPiece): Boolean
+fun diffGlassPieces(previous: List<GlassPiece>, next: List<GlassPiece>): GlassPieceDiff
+fun glassPiecesEqual(previous: List<GlassPiece>, next: List<GlassPiece>): Boolean
+fun effectiveCornerRadius(value: Float, width: Float, height: Float): Float
+class GlassRegistry(sync: (Long, List<GlassPiece>) -> Int = ...)
+object GlassRuntime { val active: State<Boolean>; fun prepare(window: Window)
+                      fun attach(window: Window); fun detach(); fun beginDrag(); fun zoom() }
+object GlassHoles
+fun Modifier.nativeGlass(key: String, shape: Shape, style: GlassStyle = GlassStyle.REGULAR,
+                         tint: Int? = null, hole: Boolean = false): Modifier
+fun Modifier.windowDragRegion(): Modifier
+// stride.app.ui.theme
+fun Modifier.contentSurface(shape: Shape, holes: List<Rect>): Modifier
+fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier
+```
+
 ## Offscreen snapshots
 
 `stride.app.ui.UiSnapshotTest` renders the real `App` through `ImageComposeScene` at
@@ -1773,8 +1861,9 @@ border instead of pink text, and the row buttons use a `glassFill` fill.
 `05-search-empty-results.png`, `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
 `12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`).
-`tasks.test` sets `java.awt.headless=true`, so the renderer never opens a window or touches
-the display.
+`tasks.test` sets `java.awt.headless=false` because `NativeGlassSmokeTest` creates an AWT peer
+(it never calls `setVisible`, so no window is ordered front); the snapshot renderer itself is
+software-only and never opens a window. The snapshots always take the Skia glass path.
 
 ## Running
 

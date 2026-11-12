@@ -15,12 +15,14 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposeCanvas
@@ -33,7 +35,9 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -58,6 +62,7 @@ import org.jetbrains.skia.SamplingMode
 import org.jetbrains.skia.Shader
 import org.jetbrains.skia.Surface
 import stride.app.editor.LocalEditorScrollState
+import stride.app.glass.LocalNativeGlass
 
 /** [Modifier.blur]'s radius-to-sigma factor, matching Compose's `BlurSigmaScale`. */
 private const val BLUR_SIGMA_SCALE = 0.57735f
@@ -128,6 +133,11 @@ internal object GlassCacheStats {
  */
 @Composable
 fun MeshBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    // The native glass is the window background; an opaque field here would hide it.
+    if (LocalNativeGlass.current) {
+        Box(modifier) { content() }
+        return
+    }
     val holder = remember { MeshBitmapHolder() }
     DisposableEffect(holder) {
         onDispose {
@@ -286,6 +296,7 @@ fun Modifier.glassLensCapsule(
     lineEdge: CapsuleEdge = CapsuleEdge.LEFT,
     lineAlpha: Float = 1f,
 ): Modifier = composed {
+    val nativeGlass = LocalNativeGlass.current
     val cache = remember { BackdropFilterCache() }
     DisposableEffect(cache) {
         onDispose { cache.dispose() }
@@ -300,6 +311,14 @@ fun Modifier.glassLensCapsule(
             return@drawWithContent
         }
         val innerSize = Size(innerWidth, innerHeight)
+        if (nativeGlass) {
+            // Nothing to bend over the native material; the highlight and the neon line stay.
+            drawRect(DesignTokens.capsuleLift, topLeft = Offset(left, top), size = innerSize)
+            drawCapsuleRim(shape, innerSize, left, top)
+            drawNeonLine(innerSize, left, top, lineEdge, lineAlpha)
+            drawContent()
+            return@drawWithContent
+        }
         val outline = shape.createOutline(innerSize, layoutDirection, this)
         val radius = when (outline) {
             is Outline.Rounded -> outline.roundRect.topLeftCornerRadius.x
@@ -474,16 +493,20 @@ fun Modifier.backdropGlass(shape: Shape = RectangleShape): Modifier = liquidBack
 /**
  * A floating control capsule: its backdrop blurred through the liquid lens, the specular rim,
  * the soft shadow and the tint, so code under it reads as a soft impression rather than glyphs.
+ * [forceSkia] keeps that material where the capsule floats over an opaque panel, not glass.
  */
-fun Modifier.capsuleGlass(shape: Shape): Modifier = slabShadow(shape)
-    .capsuleFrost(shape)
-    .glassSlabRims(shape)
-    .drawBehind {
-        clipPath(capsulePath(shape, size)) {
-            drawRect(DesignTokens.capsuleFill)
-            drawRect(DesignTokens.capsuleLift)
+fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier = composed {
+    if (LocalNativeGlass.current && !forceSkia) return@composed Modifier
+    slabShadow(shape)
+        .capsuleFrost(shape)
+        .glassSlabRims(shape)
+        .drawBehind {
+            clipPath(capsulePath(shape, size)) {
+                drawRect(DesignTokens.capsuleFill)
+                drawRect(DesignTokens.capsuleLift)
+            }
         }
-    }
+}
 
 /**
  * The capsule's own backdrop pass. A layered editor viewport cannot be sampled, so in that mode
@@ -545,13 +568,16 @@ private fun Modifier.capsuleFrost(shape: Shape): Modifier = composed {
  * The floating sidebar: a translucent tint over the background extension, so the mirrored,
  * blurred content shows through it with the same specular rim and shadow as the capsules.
  */
-fun Modifier.sidebarGlass(shape: Shape): Modifier = slabShadow(shape)
-    .glassSlabRims(shape)
-    .drawBehind {
-        clipPath(capsulePath(shape, size)) {
-            drawRect(DesignTokens.sidebarFill)
+fun Modifier.sidebarGlass(shape: Shape): Modifier = composed {
+    if (LocalNativeGlass.current) return@composed Modifier
+    slabShadow(shape)
+        .glassSlabRims(shape)
+        .drawBehind {
+            clipPath(capsulePath(shape, size)) {
+                drawRect(DesignTokens.sidebarFill)
+            }
         }
-    }
+}
 
 
 private fun Modifier.liquidBackdrop(
@@ -563,6 +589,7 @@ private fun Modifier.liquidBackdrop(
     downscale: Int,
     border: Boolean = false,
 ): Modifier = composed {
+    if (LocalNativeGlass.current) return@composed Modifier
     val cache = remember { BackdropFilterCache() }
     DisposableEffect(cache) {
         onDispose { cache.dispose() }
@@ -1154,7 +1181,47 @@ private fun buildEdgeStrip(
  * An opaque near-[DesignTokens.surface] fill for content areas that must stay readable. It is
  * painted as one opaque color so it takes the opaque draw path.
  */
-fun Modifier.contentTint(): Modifier = background(contentTintColor)
+fun Modifier.contentTint(): Modifier = composed {
+    if (LocalNativeGlass.current) return@composed Modifier
+    background(contentTintColor)
+}
+
+/**
+ * The opaque content panel of the native glass window: the editor's tint inside [shape],
+ * minus the window-relative [holes] (a popup floating on system glass). The content is clipped
+ * to the same region, so no code shows underneath a popup.
+ */
+fun Modifier.contentSurface(shape: Shape, holes: List<androidx.compose.ui.geometry.Rect>): Modifier = composed {
+    val density = LocalDensity.current
+    val origin = remember { floatArrayOf(0f, 0f) }
+    onGloballyPositioned { coordinates ->
+        val bounds = coordinates.boundsInWindow()
+        origin[0] = bounds.left
+        origin[1] = bounds.top
+    }
+    drawWithContent {
+        val path = capsulePath(shape, size)
+        if (holes.isNotEmpty()) {
+            for (hole in holes) {
+                val left = hole.left * density.density - origin[0]
+                val top = hole.top * density.density - origin[1]
+                val right = hole.right * density.density - origin[0]
+                val bottom = hole.bottom * density.density - origin[1]
+                if (right > left && bottom > top) {
+                    path.addRoundRect(
+                        RoundRect(
+                            rect = androidx.compose.ui.geometry.Rect(left, top, right, bottom),
+                            cornerRadius = CornerRadius(DesignTokens.radiusPopup.toPx()),
+                        ),
+                    )
+                }
+            }
+            path.fillType = PathFillType.EvenOdd
+        }
+        drawPath(path, contentTintColor)
+        clipPath(path) { this@drawWithContent.drawContent() }
+    }
+}
 
 /** The top, side and bottom hairlines of a glass slab. */
 fun Modifier.glassBorder(shape: Shape = RectangleShape): Modifier = drawBehind {

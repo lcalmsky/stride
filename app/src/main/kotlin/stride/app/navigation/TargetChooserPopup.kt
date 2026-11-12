@@ -50,6 +50,7 @@ import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.selectionRow
 
@@ -91,6 +92,7 @@ fun <T> TargetChooserPopup(
                 .shadow(24.dp, shape, clip = false)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-chooser-$title", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .then(contentFade)
                 .focusRequester(focusRequester)
                 .focusable()

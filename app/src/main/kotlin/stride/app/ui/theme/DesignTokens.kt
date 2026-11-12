@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -80,6 +81,17 @@ object DesignTokens {
     val capsuleHeight = 34.dp
     val statusCapsuleHeight = 32.dp
     val contentGap = 10.dp
+
+    /**
+     * The merged title row of the native glass path. macOS centres the traffic lights 14 pt
+     * below the window top, so the row starts at 0 with this height and the lights share its
+     * centre; [nativeTitleLightsInset] is the row start right of the lights.
+     */
+    val nativeTitleRowHeight = 28.dp
+    val nativeTitleLightsInset = 72.dp
+
+    /** Opaque content panels (editor, tool window) floating inside the glass window. */
+    val contentSurfaceRadius = 12.dp
     val sidebarRadius = 20.dp
     val treeHeaderHeight = 32.dp
     val treeRowHeight = 24.dp
@@ -105,6 +117,12 @@ object DesignTokens {
         unhoverColor = Color.White.copy(alpha = 0.14f),
         hoverColor = accent2,
     )
+
+    /**
+     * Tint over the system material on the native path: the dark floor that keeps text at
+     * 4.5:1 even when a white desktop shows through the glass.
+     */
+    val nativeGlassTint: Int = Color(0xFF14151B).copy(alpha = 0.78f).toArgb()
 
     val glassFill = Color.White.copy(alpha = 0.07f)
     val glassFillStrong = Color.White.copy(alpha = 0.10f)

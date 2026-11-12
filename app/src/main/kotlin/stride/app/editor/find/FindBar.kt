@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import stride.app.editor.TextFileEditor
+import stride.app.glass.nativeGlass
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
@@ -87,6 +88,7 @@ fun FindBar(
             .fillMaxWidth()
             // The floating panel carries its own fill, rim and shadow inside its rounded shape.
             .capsuleGlass(shape)
+            .nativeGlass("find-bar", shape, tint = DesignTokens.nativeGlassTint)
             .neonUnderline(
                 DesignTokens.accent2,
                 thickness = 1.dp,

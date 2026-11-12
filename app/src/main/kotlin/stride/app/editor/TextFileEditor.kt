@@ -81,6 +81,7 @@ import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MirroredStripCache
 import stride.app.ui.theme.SidebarChrome
+import stride.app.glass.nativeGlass
 import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.backgroundExtension
 import stride.app.ui.theme.contentTint
@@ -1037,6 +1038,7 @@ class TextFileEditor(
                 .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
                 .clip(shape)
                 .backdropGlass(shape)
+                .nativeGlass("popup-goto-line", shape, tint = DesignTokens.nativeGlassTint, hole = true)
                 .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8)
                 // The popup floats over the text field; a passive node keeps a press in its
                 // padding from moving the caret underneath.

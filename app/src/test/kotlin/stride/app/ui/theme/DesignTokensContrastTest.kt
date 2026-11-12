@@ -82,6 +82,32 @@ class DesignTokensContrastTest {
     }
 
     @Test
+    fun `native glass tint keeps primary text over any desktop`() {
+        // The system material is modelled as an overlay of the tint colour; a white desktop is
+        // the brightest backdrop that can come through it. Secondary labels carry chromeTextStyle,
+        // so they are asserted against their opaque shadow plate.
+        val tint = Color(DesignTokens.nativeGlassTint)
+        for ((name, color) in TEXT_TOKENS.filterKeys { it != "textSecondaryOnGlass" }) {
+            for ((label, desktop) in mapOf("white" to Color.White, "black" to Color.Black)) {
+                val surface = blendOver(tint, desktop)
+                val ratio = contrastRatio(color, surface)
+                assertTrue(
+                    ratio >= DesignTokens.contrastText,
+                    "$name over $label desktop through the native tint = %.3f".format(ratio),
+                )
+            }
+        }
+        for ((label, desktop) in mapOf("white" to Color.White, "black" to Color.Black)) {
+            val plate = blendOver(DesignTokens.chromeTextShadow.color, blendOver(tint, desktop))
+            val ratio = contrastRatio(DesignTokens.textSecondaryOnGlass, plate)
+            assertTrue(
+                ratio >= DesignTokens.contrastText,
+                "textSecondaryOnGlass on its shadow over the $label desktop = %.3f".format(ratio),
+            )
+        }
+    }
+
+    @Test
     fun `text secondary on glass is the first muted to text step that clears 4_5`() {
         val found = firstStepClearing(worstStrongGlass)
         assertEquals(found.color, DesignTokens.textSecondaryOnGlass, "t=${found.t} hex=#%06X".format(found.color.value.toLong() and 0xFFFFFF))
