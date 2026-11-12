@@ -33,7 +33,9 @@ import stride.search.FileNameIndex
 
 /**
  * The Search Everywhere popup on both drawing paths: one selection pill per selected item and no
- * underline under the selected tab or bar on the selected row's left edge.
+ * underline under the selected tab or bar on the selected row's left edge. The offscreen native
+ * render has no system material, so the native leg checks only that structure; the pill and label
+ * contrast rest on the token model in `DesignTokensContrastTest`.
  */
 @ExtendWith(FixedUiFontExtension::class)
 class SearchSelectionPillTest {
@@ -46,7 +48,7 @@ class SearchSelectionPillTest {
     }
 
     @Test
-    fun `the selected tab and row carry one pill on the Skia and native paths`() {
+    fun `the selected tab and row carry one pill on the Skia path and its structure on the native path`() {
         val root = temp.resolve("selection-pill-project")
         Files.createDirectories(root.resolve("src"))
         Files.writeString(root.resolve("src/AlphaOne.kt"), "package demo\n\nclass AlphaOne\n")
@@ -60,7 +62,9 @@ class SearchSelectionPillTest {
                     val label = "${if (native) "native" else "skia"} $appearance"
                     assertTabHasNoUnderline(label, pixels)
                     assertRowHasNoEdgeBar(label, pixels)
-                    assertPillReadsAgainstThePanel(label, pixels)
+                    // No panel exists behind the native material, so its contrast is the token
+                    // model's job; here it would only measure the raw desktop.
+                    if (!native) assertPillReadsAgainstThePanel(label, pixels)
                 }
             }
         } finally {
@@ -102,11 +106,13 @@ class SearchSelectionPillTest {
     }
 
     private fun assertRowHasNoEdgeBar(label: String, pixels: IntArray) {
-        // Rows are inset 6/2 dp; the old bar sat at 7..9 dp, i.e. 1..3 px inside the pill.
-        val edge = bandMean(pixels, popupLeft + 9, popupLeft + 13, ROW_TOP + 3, ROW_TOP + 7)
-        val interior = bandMean(pixels, 300, 400, ROW_TOP + 3, ROW_TOP + 7)
-        val edgeSpread = bandSpread(pixels, popupLeft + 9, popupLeft + 13, ROW_TOP + 3, ROW_TOP + 7)
-        val interiorSpread = bandSpread(pixels, 300, 400, ROW_TOP + 3, ROW_TOP + 7)
+        // Rows are inset 6/2 dp; the old 2 dp bar sat at 7..9 dp. The band is on the row's
+        // vertical centre (ROW_TOP+14..+18), where the pill's straight side shows any bar that
+        // the 8 dp rounded corner would clip at the top of the row.
+        val edge = bandMean(pixels, popupLeft + 7, popupLeft + 9, ROW_TOP + 14, ROW_TOP + 18)
+        val interior = bandMean(pixels, 300, 400, ROW_TOP + 14, ROW_TOP + 18)
+        val edgeSpread = bandSpread(pixels, popupLeft + 7, popupLeft + 9, ROW_TOP + 14, ROW_TOP + 18)
+        val interiorSpread = bandSpread(pixels, 300, 400, ROW_TOP + 14, ROW_TOP + 18)
         System.err.println(
             "selection-pill $label row edge=%.4f interior=%.4f spread=%.4f/%.4f"
                 .format(edge, interior, edgeSpread, interiorSpread),

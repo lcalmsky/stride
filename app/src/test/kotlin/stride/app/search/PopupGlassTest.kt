@@ -283,9 +283,10 @@ class PopupGlassTest {
             }
         }
         // Panel left is (800-680)/2=60 and rows are inset 6, so the pill starts at x=66. The old
-        // 2 dp line sat at x=67..69. Header 96..144, rows 144..176 (calm), 176..208 (selected).
-        val edge = pixels[index(68, 180, 800)]
-        val interior = pixels[index(400, 180, 800)]
+        // 2 dp line sat at x=67..69 on every row. Header 96..144, rows 144..176 (calm),
+        // 176..208 (selected); y=192 is the pill's straight side, below the 8 dp rounded corner.
+        val edge = pixels[index(68, 192, 800)]
+        val interior = pixels[index(400, 192, 800)]
         val calm = pixels[index(400, 150, 800)]
         val edgeLuma = relativeLuminance(Color(edge))
         val interiorLuma = relativeLuminance(Color(interior))

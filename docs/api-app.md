@@ -654,8 +654,8 @@ visible, active and `focused` → `hide`; visible, active and not `focused` → 
 
 `ToolWindowPanel` is edge-to-edge content with one floating capsule group over it: the group
 sits `chromeGap` below the panel top and `contentInset` from its left edge, each tab is a
-capsule with a 2 dp `accent2` line on its bottom edge (active in `text`, inactive in
-`textSecondaryOnGlass`), and the content plane starts below the group and `contentInset` from the
+capsule inset 2/3 dp and only the active tab shows the selection pill (active label in `text`,
+inactive in `textSecondaryOnGlass`), and the content plane starts below the group and `contentInset` from the
 left, with `contentBottomInset` reserved for the status capsules. The panel root is focusable and
 requests focus whenever `focusRequests` changes, reporting its context through `onFocusContext`.
 
@@ -1293,9 +1293,9 @@ family is darkened the same way: `neonPink` #BD2269, `neonLime` #305C00, `neonAm
 #704900. Every text role (including `muted` and the secondary-on-glass tokens) clears
 4.5:1 on the white surface, the light field and the worst light glass; the accent2,
 `neonLime` and `neonAmber` labels also clear 4.5:1 over the near-white floor the native
-tint leaves over a dark desktop. The accent2 selection bar clears 3:1, and the blended
-selection stays visibly distinct from white. `DesignTokensContrastTest` asserts both
-palettes.
+tint leaves over a dark desktop. The selection pill clears 1.15:1 against its panel, and the
+blended editor selection stays visibly distinct from white. `DesignTokensContrastTest` asserts
+both palettes.
 
 Code highlighting takes the scheme of the effective appearance through
 `stride.app.editor.activeColorScheme()`; `ColorScheme.LIGHT` colours every token key
@@ -1362,8 +1362,7 @@ glow.
 
 `selection` (dark: accent at 22%, light: accent at 30%) stays the editor's text-selection
 color and is also the terminal's selection fill. On light the blended fill is clearly
-darker than white and the accent2 bar/underline still reads, so selection stays obvious
-with the same restrained glow.
+darker than white, so the editor and terminal selection stays obvious on its own.
 
 ### Neon modifiers
 
@@ -1398,7 +1397,8 @@ glass the accent keeps its neon hue. Capsules never bend the backdrop, so tree g
 code behind them stay out of the selection. The selected label is `selectedText` (white dark /
 #10151F light), or `text` on tabs, and its file icon takes `accent`.
 Hover is the same pill at `HOVER_PILL_ALPHA` (45%) of its strength, so it stays a lighter
-version of the selection. A focused panel
+version of the selection; `selectionPillAlpha` keeps the stronger of the two, so a hovered row
+that gains or loses selection never blinks down to nothing while the fade runs. A focused panel
 draws a 1 dp `focusHalo` line on its top edge
 and nothing else glows; the tool window drops the halo because its content plane is
 edge-to-edge and the focused context is shown in the status capsule. Unselected rows and tabs
@@ -2130,7 +2130,8 @@ Maven Central alone does not carry it.
 | `DesignTokensContrastTest` | the WCAG helpers against the WCAG examples and the 0.04045 luminance threshold, every body text token clearing 4.5 on the worst strong glass, `neonPink` clearing only large-text contrast, focus markers clearing 3.0, the selection pill reading at least 1.15 over the native tint on white and black desktops with the selected label at 4.5, `textSecondaryOnGlass` as the first muted→text step that clears 4.5, popup text on its shadow plate clearing 4.5, the unshadowed thin-glass floors (text 3.92, white 4.79, secondary 1.69), the rendered field staying neutral inside its luminance band, both palettes' glass code scheme, gutter, console labels and all 16 ANSI foregrounds clearing 4.5 on every stacked plate in `editorGlassPlates`, and on the native path ANSI 0 as a background keeping its original dark colour, as a foreground moving to the readable one, with inverse video swapping the original lists; the selection, current-line, find-match plates and the caret stay visible and their text stays at 4.5 |
 | `GlassModifiersTest` | the neutral glass fill over the field, the brighter top border, the backdrop blur of the sibling behind, deterministic rendering, one blur per panel size and position, the opaque content tint, the opaque cached slice, the backdrop blur staying aligned past the bezel, the SkSL compiling, the top specular rim, the lens bending the bezel backdrop, the thin popup glass showing a scrimmed checkerboard at about 3.8:1, the selection capsule bending in the middle but not at its ends, the rounded clip staying inside the glass, the selection capsule drawing one pill with no edge line at density 2 and hover drawing it lighter, the background extension mirroring and blurring the strip right of its edge while leaving the source untouched, and the blur-only fallback when the shader is unavailable |
 | `ToolWindowGlassTest` | on the Skia path only: the tool window content is the opaque content plane with one floating switcher capsule over it, the terminal and run console paint that plane, status glyphs draw no halo, run status colors clear 4.5 on the content plane, and the failed-status word clears it on its label band (the native path has no such plane; its body is the `tool-window-surface` glass piece) |
-| `SearchSelectionPillTest` | the Search Everywhere popup on both drawing paths in both palettes: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and the pill reads at least 1.15 against the panel |
+| `SearchSelectionPillTest` | the Search Everywhere popup on the Skia path in both palettes and on the native path for structure only: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and on Skia the pill reads at least 1.15 against the panel (the offscreen native render has no panel, so its contrast rests on the token model) |
+| `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
 | `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup draws no Compose pixel inside its reported glass piece (the regression that produced the opaque box), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor, tool window and popups carry no Compose fill, the Go to Line popup draws its text outside the editor clip, and the editor clip removes code from under an open popup |

@@ -87,7 +87,7 @@ class Palette(
     val chromeTextStyle: TextStyle = TextStyle(shadow = chromeTextShadow)
 }
 
-/** The graphite palette of v1.3.0; kept pixel-identical so the dark snapshots do not move. */
+/** The graphite palette: dark glass with the neon accents. */
 val DarkPalette = Palette(
     background = Color(0xFF13141A),
     backgroundLift = Color(0xFF1A1B23),
@@ -141,8 +141,8 @@ val DarkPalette = Palette(
 /**
  * Neutral light surfaces: a white opaque editor panel, translucent grey-white chrome and dark
  * ink. The violet and cyan accents are darkened so text and indicators keep 4.5:1 on white and
- * on the near-white floor the native tint leaves over a dark desktop, and the selection keeps
- * the cyan bar with a restrained glow.
+ * on the near-white floor the native tint leaves over a dark desktop, and the selection pill
+ * stays white-lifted with a faint accent tint.
  */
 val LightPalette = Palette(
     background = Color(0xFFF3F4F8),

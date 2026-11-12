@@ -279,8 +279,7 @@ fun Modifier.glassCapsule(
     fillAlpha: Float = 0f,
     selectionAlpha: Float = 0f,
 ): Modifier = drawBehind {
-    // A selected item uses its own alpha; hover is the same pill at a lighter strength.
-    val pillAlpha = if (selectionAlpha > 0f) selectionAlpha else fillAlpha * HOVER_PILL_ALPHA
+    val pillAlpha = selectionPillAlpha(selectionAlpha, fillAlpha)
     if (pillAlpha <= 0f) return@drawBehind
     val left = insetX.toPx()
     val top = insetY.toPx()
@@ -368,12 +367,19 @@ fun Modifier.selectionRow(selected: Boolean, hovered: Boolean): Modifier = glass
     shape = androidx.compose.foundation.shape.RoundedCornerShape(DesignTokens.radiusCapsule),
     insetX = 6.dp,
     insetY = 2.dp,
-    fillAlpha = if (hovered && !selected) 1f else 0f,
+    fillAlpha = if (hovered) 1f else 0f,
     selectionAlpha = rememberSelectionAlpha(selected),
 )
 
-/** How much of the selection pill's strength a hovered but unselected item keeps. */
-private const val HOVER_PILL_ALPHA = 0.45f
+/** How much of the selection pill's strength a hovered item keeps. */
+internal const val HOVER_PILL_ALPHA = 0.45f
+
+/**
+ * The strength of the pill: the stronger of the selection fade and the hover step. A hovered row
+ * that gains or loses selection therefore never drops below the hover pill while the fade runs.
+ */
+internal fun selectionPillAlpha(selectionAlpha: Float, fillAlpha: Float): Float =
+    maxOf(selectionAlpha, fillAlpha * HOVER_PILL_ALPHA)
 
 /**
  * The single signal of a selected item: the white lift under the accent tint, clipped to the

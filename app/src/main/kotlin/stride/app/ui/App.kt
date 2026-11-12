@@ -145,6 +145,7 @@ import stride.app.ui.theme.focusHalo
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.glassLensCapsule
 import stride.app.ui.theme.rememberSelectionAlpha
+import stride.app.ui.theme.selectionPillAlpha
 import stride.app.ui.theme.sidebarGlass
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
@@ -935,7 +936,8 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
             shape = capsuleShape,
             insetX = 6.dp,
             insetY = 2.dp,
-            selectionAlpha = pill,
+            // Keep the hover step while the selection fades in, so a click does not blink.
+            selectionAlpha = selectionPillAlpha(pill, if (hovered) 1f else 0f),
         )
     } else {
         Modifier.glassCapsule(

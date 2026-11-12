@@ -196,15 +196,19 @@ class ToolWindowGlassTest {
             val image = onRoot().captureToImage().toPixelMap()
             val selectedPixel = image[sampleX(selected), sampleY(selected)]
             val unselectedPixel = image[sampleX(unselected), sampleY(unselected)]
+            // The selected row's pill is a flat fill away from its rim and labels: any glow around
+            // the glyph, whatever its hue, would tint this pixel away from that reference.
+            val pillPixel = image[PILL_SAMPLE_X, selected.center.y.toInt()]
             System.err.println(
-                "glyph-glow selected=%s unselected=%s".format(selectedPixel, unselectedPixel),
+                "glyph-glow selected=%s pill=%s unselected=%s".format(
+                    selectedPixel,
+                    pillPixel,
+                    unselectedPixel,
+                ),
             )
-            // Just outside a selected glyph sits the selection pill, whose accent tint is violet
-            // (blue above red). A neonPink halo would push red above blue, which the pill never
-            // does, so this still checks that the glyph itself draws no glow.
             assertTrue(
-                selectedPixel.red <= selectedPixel.blue + 0.02f,
-                "selected glyph halo $selectedPixel should not carry a pink glow (unselected $unselectedPixel)",
+                channelDistance(selectedPixel.toArgb(), pillPixel.toArgb()) <= 3,
+                "selected glyph halo $selectedPixel should be the plain pill $pillPixel",
             )
         } finally {
             runManager.dispose()
@@ -311,5 +315,8 @@ class ToolWindowGlassTest {
 
     private companion object {
         const val SCENE = 400
+
+        /** Inside the selected row's pill, right of every label in the method row. */
+        const val PILL_SAMPLE_X = 350
     }
 }
