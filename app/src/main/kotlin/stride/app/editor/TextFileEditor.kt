@@ -89,7 +89,6 @@ import stride.app.ui.theme.editorFieldLuminance
 import stride.app.ui.theme.neonBorder
 import stride.app.ui.theme.scrollEdgeBands
 import stride.core.vfs.VFile
-import stride.lang.ColorScheme
 import stride.lang.Commenter
 import stride.lang.FileTypeRegistry
 import stride.lang.LanguageFileType
@@ -618,8 +617,9 @@ class TextFileEditor(
     override fun Content(modifier: Modifier) {
         val currentSpans = spans
         val currentSearchSpans = searchSpans
-        val transformation = remember(currentSpans, currentSearchSpans) {
-            HighlightingVisualTransformation(currentSpans, currentSearchSpans)
+        val scheme = activeColorScheme()
+        val transformation = remember(currentSpans, currentSearchSpans, scheme) {
+            HighlightingVisualTransformation(currentSpans, currentSearchSpans, scheme)
         }
         val vertical = verticalScroll
         val horizontal = horizontalScroll
@@ -1135,7 +1135,7 @@ class TextFileEditor(
     }
 
     private fun defaultForeground(): Color {
-        val attributes: TextAttributes? = ColorScheme.DARK.getAttributes(TextAttributesKey.DEFAULT_TEXT)
+        val attributes: TextAttributes? = activeColorScheme().getAttributes(TextAttributesKey.DEFAULT_TEXT)
         return attributes?.foreground?.let { Color(it.toInt()) } ?: DesignTokens.text
     }
 

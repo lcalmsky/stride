@@ -46,6 +46,10 @@ long gNextHandle = 1;
 
 const double kWindowCornerRadius = 26.0;
 
+JavaVM *gVm = nullptr;
+jobject gAppearanceCallback = nullptr;
+id gAppearanceObserver = nil;
+
 template <typename Fn>
 void RunOnMain(Fn fn) {
     if ([NSThread isMainThread]) {
@@ -171,6 +175,134 @@ JAWTGetAWTProc ResolveJAWT(JNIEnv *env, jstring javaHome) {
     return getAWT;
 }
 
+/** 0 = unknown, 1 = light, 2 = dark. */
+jint CurrentAppearanceValue() {
+    // NSApp is nil until something asks for the shared application; AWT creates it with the
+    // first window, but the appearance may be queried before that.
+    NSApplication *app = [NSApplication sharedApplication];
+    NSAppearance *appearance = app.effectiveAppearance;
+    if (!appearance) return 0;
+    NSAppearanceName match =
+        [appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+    if ([match isEqualToString:NSAppearanceNameDarkAqua]) return 2;
+    if ([match isEqualToString:NSAppearanceNameAqua]) return 1;
+    if (!appearance) return 0;
+    return [appearance.name isEqualToString:NSAppearanceNameDarkAqua] ? 2 : 1;
+}
+
+void NotifyAppearance() {
+    if (!gVm || !gAppearanceCallback) return;
+    JNIEnv *env = nullptr;
+    bool attached = false;
+    if (gVm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_8) != JNI_OK) {
+        if (gVm->AttachCurrentThread(reinterpret_cast<void **>(&env), nullptr) != JNI_OK) return;
+        attached = true;
+    }
+    jclass cls = env->GetObjectClass(gAppearanceCallback);
+    if (cls) {
+        jmethodID run = env->GetMethodID(cls, "run", "()V");
+        if (run) env->CallVoidMethod(gAppearanceCallback, run);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+    }
+    if (attached) gVm->DetachCurrentThread();
+}
+
+/**
+ * The Skiko drawing layer: a CAMetalLayer under the content view. AWT's own Metal layer
+ * (`MTLLayer`) is skipped: it paints the Swing backing store, while Skiko adds its layer below.
+ */
+CALayer *FindDrawingLayer(CALayer *layer, int depth) {
+    if (!layer || depth > 12) return nil;
+    for (CALayer *sub in layer.sublayers) {
+        if (CALayer *found = FindDrawingLayer(sub, depth + 1)) return found;
+    }
+    NSString *name = NSStringFromClass([layer class]);
+    Class metal = NSClassFromString(@"CAMetalLayer");
+    if (metal && [layer isKindOfClass:metal] && ![name isEqualToString:@"MTLLayer"]) return layer;
+    if ([name containsString:@"Skia"]) return layer;
+    return nil;
+}
+
+void DescribeLayer(CALayer *layer, int depth, std::string &out) {
+    if (!layer || depth > 10) return;
+    NSString *name = NSStringFromClass([layer class]);
+    CGColorRef background = layer.backgroundColor;
+    char line[512];
+    snprintf(
+        line,
+        sizeof(line),
+        "%*s%s opaque=%d background=%.2f\n",
+        depth * 2,
+        "",
+        name.UTF8String ? name.UTF8String : "?",
+        layer.isOpaque ? 1 : 0,
+        background ? CGColorGetAlpha(background) : 0.0);
+    out += line;
+    for (CALayer *sub in layer.sublayers) DescribeLayer(sub, depth + 1, out);
+}
+
+CALayer *FindDrawingLayerInView(NSView *view, int depth) {
+    if (!view || depth > 12) return nil;
+    if (CALayer *found = FindDrawingLayer(view.layer, 0)) return found;
+    for (NSView *sub in view.subviews) {
+        if (CALayer *found = FindDrawingLayerInView(sub, depth + 1)) return found;
+    }
+    return nil;
+}
+
+bool IsTransparentLayer(CALayer *layer) {
+    if (!layer) return false;
+    if (layer.isOpaque) return false;
+    CGColorRef background = layer.backgroundColor;
+    if (background && CGColorGetAlpha(background) > 0.001) return false;
+    return true;
+}
+
+/** Every layer above [layer] up to the window frame must be non-opaque and unpainted. */
+bool AncestorsAreTransparent(CALayer *layer, int *count) {
+    bool clear = true;
+    *count = 0;
+    for (CALayer *current = layer.superlayer; current; current = current.superlayer) {
+        (*count)++;
+        if (current.isOpaque) clear = false;
+        CGColorRef background = current.backgroundColor;
+        if (background && CGColorGetAlpha(background) > 0.001) clear = false;
+        id delegate = current.delegate;
+        if ([delegate isKindOfClass:[NSView class]] && [(NSView *)delegate isOpaque]) clear = false;
+    }
+    id host = layer.delegate;
+    if ([host isKindOfClass:[NSView class]] && [(NSView *)host isOpaque]) clear = false;
+    return clear;
+}
+
+/**
+ * AWT's window backing layer (MTLLayer) stays opaque even when the Skia layer is transparent,
+ * which would hide the glass below. Clear the whole chain from the Skia layer up; the pixels
+ * Skia draws already carry their own alpha.
+ */
+void MakeDrawingChainTransparent(WindowState &state) {
+    if (!state.contentView) return;
+    CALayer *drawing = FindDrawingLayerInView(state.contentView, 0);
+    if (!drawing) return;
+    drawing.opaque = NO;
+    drawing.backgroundColor = nil;
+    for (CALayer *current = drawing.superlayer; current; current = current.superlayer) {
+        current.opaque = NO;
+        current.backgroundColor = nil;
+    }
+}
+
+bool ContainerIsBelowContent(WindowState &state) {
+    if (!state.container || !state.contentView) return false;
+    NSView *parent = state.container.superview;
+    if (!parent || parent != state.contentView.superview) return false;
+    NSArray *siblings = parent.subviews;
+    NSUInteger containerIndex = [siblings indexOfObjectIdenticalTo:state.container];
+    NSUInteger contentIndex = [siblings indexOfObjectIdenticalTo:state.contentView];
+    return containerIndex != NSNotFound && contentIndex != NSNotFound && containerIndex < contentIndex;
+}
+
 WindowState *StateFor(long handle) {
     auto found = gWindows.find(handle);
     return found == gWindows.end() ? nullptr : &found->second;
@@ -191,6 +323,68 @@ NSRect FrameFor(NSView *container, const PieceSpec &spec) {
 }
 
 }  // namespace
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
+    gVm = vm;
+    return JNI_VERSION_1_8;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_stride_app_glass_NativeAppearance_nativeAppearance(JNIEnv *, jobject) {
+    jint value = 0;
+    RunOnMain([&] {
+      value = CurrentAppearanceValue();
+    });
+    return value;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_stride_app_glass_NativeAppearance_nativeStartObserver(JNIEnv *env, jobject, jobject runnable) {
+    jobject callback = runnable ? env->NewGlobalRef(runnable) : nullptr;
+    bool started = false;
+    RunOnMain([&] {
+      if (gAppearanceObserver) {
+          [[NSDistributedNotificationCenter defaultCenter] removeObserver:gAppearanceObserver];
+          gAppearanceObserver = nil;
+      }
+      if (gAppearanceCallback && gVm) {
+          JNIEnv *mainEnv = nullptr;
+          if (gVm->GetEnv(reinterpret_cast<void **>(&mainEnv), JNI_VERSION_1_8) == JNI_OK) {
+              mainEnv->DeleteGlobalRef(gAppearanceCallback);
+          }
+          gAppearanceCallback = nullptr;
+      }
+      if (!callback) return;
+      gAppearanceCallback = callback;
+      gAppearanceObserver = [[NSDistributedNotificationCenter defaultCenter]
+          addObserverForName:@"AppleInterfaceThemeChangedNotification"
+                      object:nil
+                       queue:[NSOperationQueue mainQueue]
+                  usingBlock:^(NSNotification *) {
+                    NotifyAppearance();
+                  }];
+      started = gAppearanceObserver != nil;
+    });
+    if (!started && callback && env) env->DeleteGlobalRef(callback);
+    return started ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_stride_app_glass_NativeAppearance_nativeStopObserver(JNIEnv *, jobject) {
+    RunOnMain([&] {
+      if (gAppearanceObserver) {
+          [[NSDistributedNotificationCenter defaultCenter] removeObserver:gAppearanceObserver];
+          gAppearanceObserver = nil;
+      }
+      if (gAppearanceCallback && gVm) {
+          JNIEnv *mainEnv = nullptr;
+          if (gVm->GetEnv(reinterpret_cast<void **>(&mainEnv), JNI_VERSION_1_8) == JNI_OK) {
+              mainEnv->DeleteGlobalRef(gAppearanceCallback);
+          }
+          gAppearanceCallback = nullptr;
+      }
+    });
+}
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_stride_app_glass_NativeGlass_nativeSupported(JNIEnv *, jobject) {
@@ -236,6 +430,7 @@ Java_stride_app_glass_NativeGlass_nativeAttach(JNIEnv *env, jobject, jobject com
       }
       state.container = container;
       state.base = base;
+      MakeDrawingChainTransparent(state);
       handle = gNextHandle++;
       gWindows[handle] = state;
     });
@@ -311,6 +506,7 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
       WindowState &state = located->second;
       if (!state.container) return;
       SyncContainer(state);
+      MakeDrawingChainTransparent(state);
       [CATransaction begin];
       [CATransaction setDisableActions:YES];
       std::map<std::string, bool> seen;
@@ -380,6 +576,23 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
           values.push_back(frame.size.height);
           values.push_back(entry.second.layer ? entry.second.layer.cornerRadius : 0.0);
       }
+      // The transparency chain of the Compose drawing layer: the value block is fixed-size so
+      // the Java side can read it after the pieces.
+      CALayer *drawing = FindDrawingLayerInView(state.contentView, 0);
+      int ancestorCount = 0;
+      bool ancestorsClear = drawing ? AncestorsAreTransparent(drawing, &ancestorCount) : false;
+      NSColor *windowBackground = state.window.backgroundColor;
+      values.push_back(drawing ? 1.0 : 0.0);
+      values.push_back(drawing && drawing.isOpaque ? 1.0 : 0.0);
+      values.push_back(drawing && drawing.backgroundColor
+                               ? (double)CGColorGetAlpha(drawing.backgroundColor)
+                               : 0.0);
+      values.push_back(ancestorsClear ? 1.0 : 0.0);
+      values.push_back((double)ancestorCount);
+      values.push_back(windowBackground ? (double)windowBackground.alphaComponent : 0.0);
+      values.push_back(ContainerIsBelowContent(state) ? 1.0 : 0.0);
+      values.push_back(state.contentView.isOpaque ? 1.0 : 0.0);
+      values.push_back(state.container && state.container.isOpaque ? 1.0 : 0.0);
     });
     jdoubleArray result = env->NewDoubleArray((jsize)values.size());
     if (result && !values.empty()) env->SetDoubleArrayRegion(result, 0, (jsize)values.size(), values.data());
@@ -403,6 +616,39 @@ Java_stride_app_glass_NativeGlass_nativeStateKeys(JNIEnv *env, jobject, jlong ha
         env->DeleteLocalRef(value);
     }
     return result;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_stride_app_glass_NativeGlass_nativeLayerClass(JNIEnv *env, jobject, jlong handle) {
+    std::string name;
+    RunOnMain([&] {
+      auto found = gWindows.find(handle);
+      if (found == gWindows.end()) return;
+      CALayer *drawing = FindDrawingLayerInView(found->second.contentView, 0);
+      if (!drawing) return;
+      const char *utf8 = NSStringFromClass([drawing class]).UTF8String;
+      if (utf8) name = utf8;
+    });
+    return env->NewStringUTF(name.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_stride_app_glass_NativeGlass_nativeLayerTree(JNIEnv *env, jobject, jlong handle) {
+    std::string out;
+    RunOnMain([&] {
+      auto found = gWindows.find(handle);
+      if (found == gWindows.end()) return;
+      NSView *content = found->second.contentView;
+      if (content.layer) {
+          DescribeLayer(content.layer, 0, out);
+          return;
+      }
+      for (NSView *view in content.subviews) {
+          out += std::string(NSStringFromClass([view class]).UTF8String ?: "?") + "\n";
+          if (view.layer) DescribeLayer(view.layer, 1, out);
+      }
+    });
+    return env->NewStringUTF(out.c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL

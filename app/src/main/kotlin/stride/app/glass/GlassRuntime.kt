@@ -7,6 +7,7 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.Container
 import java.awt.Window
+import java.awt.event.HierarchyEvent
 import java.util.logging.Logger
 import javax.swing.JComponent
 import org.jetbrains.skiko.SkiaLayer
@@ -35,9 +36,13 @@ object GlassRuntime {
     private val log: Logger = Logger.getLogger("stride.app")
     private var handle = 0L
     private var prepared = false
+    private var transparentLayer: SkiaLayer? = null
 
     /** Compose observes this to switch the Skia glass pass off. */
     val active = mutableStateOf(false)
+
+    /** The native handle of the attached window; tests read it to query the native state. */
+    internal val attachedHandle: Long get() = handle
 
     fun prepare(window: Window) {
         if (prepared) return
@@ -47,15 +52,23 @@ object GlassRuntime {
             log.info("native glass: off ($reason), Skia glass unchanged")
             return
         }
-        val transparent = enableComposeTransparency(window)
-        if (!transparent) {
-            log.info("native glass: off (Compose layer not found), Skia glass unchanged")
-            return
+        // The Compose panel builds its SkiaLayer when the window's peer is created, which is
+        // after this call. The layer must be transparent before its redrawer is created, so a
+        // hierarchy listener catches it at insertion time instead of after the first frame.
+        applyComposeTransparency(window, window)
+        window.addHierarchyListener { event ->
+            if (event.changeFlags and HierarchyEvent.HIERARCHY_CHANGED.toLong() == 0L) return@addHierarchyListener
+            val container = event.component as? Container ?: window
+            applyComposeTransparency(container, window)
         }
     }
 
     fun attach(window: Window) {
         if (handle != 0L || !NativeGlass.supported()) return
+        if (transparentLayer == null) {
+            log.info("native glass: off (Compose layer not found), Skia glass unchanged")
+            return
+        }
         val attached = NativeGlass.attach(window)
         if (attached == 0L) {
             log.info("native glass: off (window not found), Skia glass unchanged")
@@ -75,6 +88,12 @@ object GlassRuntime {
         active.value = false
     }
 
+    internal fun resetForTests() {
+        detach()
+        transparentLayer = null
+        prepared = false
+    }
+
     fun beginDrag() {
         NativeGlass.beginDrag(handle)
     }
@@ -83,9 +102,9 @@ object GlassRuntime {
         NativeGlass.zoom(handle)
     }
 
-    private fun enableComposeTransparency(window: Window): Boolean {
-        val layer = findSkiaLayer(window) ?: return false
-        layer.transparency = true
+    private fun applyComposeTransparency(container: Container, window: Window): Boolean {
+        val layer = findSkiaLayer(container) ?: return false
+        if (!layer.transparency) layer.transparency = true
         // The transparent layer must not sit on an opaque Swing parent that paints its
         // background over it.
         var parent: Component? = layer
@@ -97,10 +116,12 @@ object GlassRuntime {
             }
             parent = component.parent
         }
+        transparentLayer = layer
         return true
     }
 
     private fun findSkiaLayer(container: Container): SkiaLayer? {
+        if (container is SkiaLayer) return container
         for (child in container.components) {
             if (child is SkiaLayer) return child
             if (child is Container) findSkiaLayer(child)?.let { return it }

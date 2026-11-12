@@ -131,6 +131,7 @@ import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
 import stride.app.tree.TreeRow
 import stride.app.ui.LocalAnimationsEnabled
+import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.CapsuleEdge
 import stride.app.ui.theme.EditorInsets
@@ -172,6 +173,13 @@ fun App(
     chooseFolder: () -> Path? = { null },
 ) {
     val session = state.session
+    val appearance = AppearanceState.appearance
+    LaunchedEffect(appearance) {
+        // Match highlights carry palette colours, so a live theme switch repaints them too.
+        if (state.findBar.visible) {
+            state.findBar.refresh(session?.editors?.selected as? TextFileEditor)
+        }
+    }
     var treeWidth by remember { mutableStateOf(DesignTokens.treeDefaultWidth) }
     var treeFocused by remember { mutableStateOf(false) }
     val gotoLineEditor = session?.editors?.selected as? TextFileEditor

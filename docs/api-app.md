@@ -1258,13 +1258,45 @@ sessions live only in the project.
 ## Look
 
 `stride.app.ui.theme.DesignTokens` is the single source of colors, type and spacing; UI
-files declare no colors of their own. The base palette is a cool graphite with a very low
+files declare no colors of their own. Every color is a getter into the palette of the
+effective `AppearanceState`, so the whole window re-themes in place when the system
+appearance changes; no screen keeps a color or a cached bitmap of its own across the swap.
+
+`Appearance` is `DARK` or `LIGHT`, and `stride.app.glass.SystemAppearance` feeds it from
+the effective macOS appearance. On the native path the JNI library queries
+`NSApp.effectiveAppearance` and observes the distributed
+`AppleInterfaceThemeChangedNotification`; without the library the same value comes from
+`defaults read -g AppleInterfaceStyle` on a two-second background poll. `main` starts it
+once, and the window follows the system live without a restart.
+
+**Dark palette** (`DarkPalette`, v1.3.0 values, unchanged): a cool graphite with a very low
 blue-violet chroma: `background` #13141A with `backgroundLift` #1A1B23 at the top of the
 field and `fieldBottom` #0B0C10 at the bottom, `surface` #0F1015 (the editor and console
 tint, darker than the chrome glass), `raised` #21232B (hover and key caps), `border`
 #2F313A, `text` #E6E8F0, `selectedText` (white), `muted` #8A93A6, `subtle` #5A6274,
-`accent` (#7C5CFF), `accent2` (#00D1FF) and a selection of the accent at 22% alpha. The
-dark theme is the only theme.
+`accent` (#7C5CFF), `accent2` (#00D1FF) and a selection of the accent at 22% alpha.
+
+**Light palette** (`LightPalette`): neutral light surfaces with dark ink — `background`
+#F3F4F8 with `backgroundLift` #FBFCFE and `fieldBottom` #E9ECF2, the opaque editor
+`surface` #FFFFFF (the reference light editor plane), `raised` #F0F2F6, `border` #D2D7E0,
+`text` #1D2330, `selectedText` #10151F, `muted` #576070, `subtle` #8A92A2. The accents are
+darkened so text and indicators keep their contrast on white: `accent` #5B3FD6, `accent2`
+#0A689E, `accentHover` #4A32B8, and the selection is the accent at 30% alpha. The neon
+family is darkened the same way: `neonPink` #BD2269, `neonLime` #3A7000, `neonAmber`
+#8A5A00. Every text role (including `muted` and the secondary-on-glass tokens) clears
+4.5:1 on the white surface, the light field and the worst light glass; the accent2
+selection bar clears 3:1, and the blended selection stays visibly distinct from white.
+`DesignTokensContrastTest` asserts both palettes.
+
+Code highlighting takes the scheme of the effective appearance through
+`stride.app.editor.activeColorScheme()`; `ColorScheme.LIGHT` colours every token key
+(keyword, string, character, number, comments, identifiers, operators, braces, brackets,
+parentheses, comma, dot, semicolon, bad character) at 4.5:1 or better on the white editor
+surface. The gutter numbers, current-line glow, selection fill, caret and find-match
+backgrounds are palette tokens, and `App` re-asserts the find-match spans when the
+appearance changes. `TerminalPalette` exposes `foreground`, `background`, `cursor` and the
+16 ANSI colors as appearance-aware getters; the light ANSI palette is a darkened set in
+which every index clears 4.5:1 on the light terminal plane.
 
 Chrome text uses the bundled Pretendard (SIL OFL 1.1) at 13 sp; `DesignTokens.uiFont` reads
 `UiFont.family`, so the whole UI follows a runtime choice between Pretendard and the system
@@ -1294,9 +1326,10 @@ right edge and the editor/tool window split. Every capsule blocks presses from r
 editor under it, while the content between capsules stays clickable.
 
 Chevrons, folder/file icons, the magnifier and the close × are drawn with `Canvas`. The empty
-states load `logo/stride-wordmark-dark.svg` through `loadSvgPainter` and fall back to the PNG
-icon. The wordmark SVG has a transparent background, so it sits directly on the field. No UI
-library beyond `compose.desktop.currentOs` is used.
+states load `logo/stride-wordmark-dark.svg` (or `logo/stride-wordmark-light.svg` on the light
+palette) through `loadSvgPainter` and fall back to the PNG icon. The wordmark SVG has a
+transparent background, so it sits directly on the field. No UI library beyond
+`compose.desktop.currentOs` is used.
 
 ### Neon palette
 
@@ -1305,20 +1338,22 @@ uses it restrained: glow appears only on the selected or focused element, as the
 on its edge. Icons, labels and file glyphs are `muted`; only the selected row's icon may take
 `accent`. Nothing else glows, and ordinary glass has no outer glow.
 
-| token | value |
-|---|---|
-| `neonPink` / `neonPinkGlow` | #FF2E97 / #FF2E97 at 55% alpha |
-| `neonLime` / `neonLimeGlow` | #B6FF3B / #B6FF3B at 55% alpha |
-| `neonAmber` / `neonAmberGlow` | #FFC83D / #FFC83D at 55% alpha |
-| `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha |
-| `selectionBar` | `accent2` |
-| `currentLineGlow` | `accent` at 10% alpha |
-| `glowRadius` / `glowRadiusLarge` / `focusGlowRadius` | 10 dp / 18 dp / 6 dp |
-| `selectionBarWidth` | 3 dp |
-| `neonFadeMillis` | 150 |
+| token | dark | light |
+|---|---|---|
+| `neonPink` / `neonPinkGlow` | #FF2E97 / at 55% alpha | #BD2269 / at 55% alpha |
+| `neonLime` / `neonLimeGlow` | #B6FF3B / at 55% alpha | #3A7000 / at 55% alpha |
+| `neonAmber` / `neonAmberGlow` | #FFC83D / at 55% alpha | #8A5A00 / at 55% alpha |
+| `accentGlow` / `accent2Glow` | `accent` / `accent2` at 55% alpha | same rule |
+| `selectionBar` | `accent2` | `accent2` (#0A689E) |
+| `currentLineGlow` | `accent` at 10% alpha | `accent` at 10% alpha |
+| `glowRadius` / `glowRadiusLarge` / `focusGlowRadius` | 10 dp / 18 dp / 6 dp | same |
+| `selectionBarWidth` | 3 dp | same |
+| `neonFadeMillis` | 150 | same |
 
-`selection` (the accent at 22%) stays the editor's text-selection color and is now also the
-terminal's selection fill.
+`selection` (dark: accent at 22%, light: accent at 30%) stays the editor's text-selection
+color and is also the terminal's selection fill. On light the blended fill is clearly
+darker than white and the accent2 bar/underline still reads, so selection stays obvious
+with the same restrained glow.
 
 ### Neon modifiers
 
@@ -1345,12 +1380,14 @@ A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` dra
 ### Selection signal language
 
 A selected tree row, tab, tool-window tab or popup entry is a capsule inset 2–6 dp from its
-row: a neutral interior lift (`capsuleLift`, white 7%), a crisp top-lit 1 px rim
-(`capsuleRim`, white 16%, fading down the sides) and one 2 dp `accent2` line on its left edge
+row: a neutral interior lift (`capsuleLift`, white 7% dark / white 55% light), a crisp
+1 px rim (`capsuleRim`, white 16% dark / black 14% light, fading down the sides) and one
+2 dp `accent2` line on its left edge
 (tabs use the bottom edge) with a soft 2.5 dp-blur glow at 30% alpha. Capsules never bend the
 backdrop, so tree guide lines and code behind them stay out of the selection. The selected
-label is `selectedText` (white) and its file icon takes `accent`. Hover is a faint neutral
-step (`hoverFill`, white 4%). A focused panel draws a 1 dp `focusHalo` line on its top edge
+label is `selectedText` (white dark / #10151F light) and its file icon takes `accent`.
+Hover is a faint neutral step (`hoverFill`, white 4% dark / black 4% light). A focused panel
+draws a 1 dp `focusHalo` line on its top edge
 and nothing else glows; the tool window drops the halo because its content plane is
 edge-to-edge and the focused context is shown in the status capsule. Unselected rows and tabs
 stay quiet. The status capsule group renders the `accent2` `FocusChip` without a glow.
@@ -1390,42 +1427,44 @@ floating chrome.
 The field is a cool graphite fill with a gentle top-to-bottom luminance falloff (no hue
 gradients and no blobs), drawn once per size into a bitmap.
 
-| token | value |
-|---|---|
-| `backgroundLift` / `background` / `fieldBottom` | #1A1B23 / #13141A / #0B0C10 |
-| `glassFill` / `glassFillStrong` | white 7% / 10% |
-| `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 10% / 8% / 6% |
-| `hoverFill` / `capsuleLift` / `capsuleRim` | white 4% / 7% / 16% |
-| `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp (cached panel slices) |
-| `liquidGlassBlurRadius` | 8 dp (floating glass) |
-| `glassBase` / `glassBackdropMix` / `glassChromaGain` | #14151B / 0.52 / 0.80 |
-| `glassBezel` / `glassLensStrength` / `glassAberration` | 18 dp / 17 dp / 0.5 dp |
-| `glassSpecular` | 0.42 |
-| `scrim` | black 30% under a popup and at the scroll edge |
-| `capsuleBezel` / `capsuleLensStrength` / `capsuleEndTaper` | 6 dp / 3.5 dp / 10 dp |
-| `chromeInset` / `chromeGap` / `contentGap` | 10 dp / 8 dp / 10 dp |
-| `capsuleHeight` / `statusCapsuleHeight` / `sidebarRadius` | 34 dp / 32 dp / 20 dp |
-| `sidebarFill` / `capsuleFill` | #14151B at 30% / 58% alpha |
-| `capsuleFrostBlur` / `scrollEdgeBlur` / `scrollEdgeTail` | 20 dp (capsule backdrop) / 14 dp (edge band) / 24 dp (ease-out past each band) |
-| `backgroundExtensionBlur` | 56 dp (mirrored strip, cached) |
-| `slabShadow` | 16 dp |
-| `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% |
-| `slabInnerRimInset` / `slabInnerRim` | 2 dp / white 6% |
-| `chromeLabelScrim` / `chromeLabelScrimInset` | black 45% / 2 dp |
-| `textOnBusyGlass` | `#C4CBDA` (tab labels over code and secondary popup runs) |
-| `chromeTextShadow` / `chromeTextStyle` | black 100%, 2 px blur / the style carrying it |
-| `contentTintAlpha` | 0.92 |
-| `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 |
-| `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 |
-| `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 |
-| `textSecondaryOnGlass` | `#919AAC` (muted→text at t=0.08; 4.51:1 on the worst strong glass) |
-| `nativeGlassTint` | #14151B at 78% (tint of every native glass piece) |
-| `nativeTitleRowHeight` / `nativeTitleLightsInset` | 28 dp / 72 dp (merged title row) |
-| `contentSurfaceRadius` | 12 dp (opaque editor and tool-window panels) |
-| `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 |
+| token | dark | light |
+|---|---|---|
+| `backgroundLift` / `background` / `fieldBottom` | #1A1B23 / #13141A / #0B0C10 | #FBFCFE / #F3F4F8 / #E9ECF2 |
+| `glassFill` / `glassFillStrong` | white 7% / 10% | black 5% / 8% |
+| `glassBorderTop` / `glassBorderSide` / `glassBorderBottom` | white 10% / 8% / 6% | black 10% / 8% / 6% |
+| `hoverFill` / `capsuleLift` / `capsuleRim` | white 4% / 7% / 16% | black 4% / white 55% / black 14% |
+| `glassBlurRadius` / `glassBlurRadiusMax` | 16 dp / 20 dp (cached panel slices) | same |
+| `liquidGlassBlurRadius` | 8 dp (floating glass) | same |
+| `glassBase` / `glassBackdropMix` / `glassChromaGain` | #14151B / 0.52 / 0.80 | #F6F7FA / 0.52 / 0.80 |
+| `glassBezel` / `glassLensStrength` / `glassAberration` | 18 dp / 17 dp / 0.5 dp | same |
+| `glassSpecular` | 0.42 | same |
+| `scrim` | black 30% under a popup and at the scroll edge | black 20% |
+| `capsuleBezel` / `capsuleLensStrength` / `capsuleEndTaper` | 6 dp / 3.5 dp / 10 dp | same |
+| `chromeInset` / `chromeGap` / `contentGap` | 10 dp / 8 dp / 10 dp | same |
+| `capsuleHeight` / `statusCapsuleHeight` / `sidebarRadius` | 34 dp / 32 dp / 20 dp | same |
+| `sidebarFill` / `capsuleFill` | #14151B at 30% / 58% alpha | #F2F4F8 at 62% / white at 62% |
+| `capsuleFrostBlur` / `scrollEdgeBlur` / `scrollEdgeTail` | 20 dp (capsule backdrop) / 14 dp (edge band) / 24 dp (ease-out past each band) | same |
+| `backgroundExtensionBlur` | 56 dp (mirrored strip, cached) | same |
+| `slabShadow` / `slabShadowColor` | 16 dp / black 55% | 16 dp / black 20% |
+| `slabRimTop` / `slabRimBottom` / `slabRimLeft` | white 22% / 6% / 12% | black 10% / 4% / 6% |
+| `slabInnerRimInset` / `slabInnerRim` | 2 dp / white 6% | 2 dp / black 3% |
+| `chromeLabelScrim` / `chromeLabelScrimInset` | black 45% / 2 dp | white 72% / 2 dp |
+| `textOnBusyGlass` | `#C4CBDA` (tab labels over code and secondary popup runs) | `#4C5564` |
+| `chromeTextShadow` / `chromeTextStyle` | black 100%, 2 px blur / the style carrying it | white 100% |
+| `contentTintAlpha` | 0.92 | 0.92 |
+| `glowCoreSigma` / `glowCoreAlpha` | 3 dp / 0.9 | same |
+| `glowHaloSigma` / `glowHaloAlpha` | 10 dp / 0.5 | same |
+| `glowBloomSigma` / `glowBloomAlpha` | 24 dp / 0.25 | same |
+| `textSecondaryOnGlass` | `#919AAC` (muted→text at t=0.08; 4.51:1 on the worst strong glass) | `#4A5261` |
+| `nativeGlassTint` | #14151B at 78% (tint of every native glass piece) | #F5F6F9 at 80% |
+| `nativeTitleRowHeight` / `nativeTitleLightsInset` | 28 dp / 72 dp (merged title row) | same |
+| `contentSurfaceRadius` | 12 dp (opaque editor and tool-window panels) | same |
+| `contrastText` / `contrastLarge` / `contrastUi` | 4.5 / 3.0 / 3.0 | 4.5 / 3.0 / 3.0 |
 
-`scrollbarStyle` uses white 14% for `unhoverColor`, `accent2` for `hoverColor` and
-`motionShortMillis` for the hover duration.
+`scrollbarStyle` uses white 14% (dark) / black 16% (light) for `unhoverColor`, `accent2`
+for `hoverColor` and `motionShortMillis` for the hover duration. Caches keyed by panel,
+slab or document geometry also carry the appearance in their key, so a live switch never
+keeps a baked image of the old palette.
 
 `stride.app.ui.theme.Glass.kt` draws L0, L1 and the lens. It and `Neon.kt` are the only UI
 files that import `org.jetbrains.skia.*` (`TerminalView` keeps its pre-existing cursor glow).
@@ -1578,8 +1617,10 @@ and on the layered frost fill (5.6:1), and the search capsule's shortcut hint cl
 glass (5.5:1). The backdrop path was measured on `ImageComposeScene`: **real**, not the bitmap
 fallback.
 
-Text on glass uses `textSecondaryOnGlass`; `muted` (4.13:1) and `subtle` (2.09:1) are below
-body contrast on the worst strong glass, so neither may carry information text there.
+Text on glass uses `textSecondaryOnGlass`; on the dark palette `muted` (4.13:1) and `subtle`
+(2.09:1) are below body contrast on the worst strong glass, so neither may carry information
+text there. The light palette's `muted` clears 5.1:1 on its worst strong glass, so both
+palettes run their information text through the same tokens.
 `accent` is never text. `neonPink` reaches 3.70:1 on `glassFillStrong` and 4.09:1 on
 `glassFill`, so it is limited to large text and graphics.
 
@@ -1667,8 +1708,10 @@ removed.
 
 The terminal no longer paints `TerminalPalette.background` as a full-canvas rect. Default cells
 are left unpainted so the panel tint shows through, while cells with an explicit non-default
-background are still filled. `TerminalPalette`, the cursor and the selection drawing are
-unchanged.
+background are still filled. `TerminalPalette` is appearance-aware: the light palette swaps
+in a darkened 16-colour ANSI set whose every index clears 4.5:1 on the light terminal plane,
+and the foreground, background and cursor follow the palette. The cursor and the selection
+drawing are unchanged.
 
 ### Applied surfaces: tree, tabs and editor
 
@@ -1781,7 +1824,20 @@ theme-frame delegate), and inserts one container view below the AWT content view
 is an `NSGlassEffectView` in that container; `hitTest:` returns nil on both our classes so no
 pointer event is swallowed. The window is made non-opaque with a clear background. The
 library reports `supported`, `attach`, `sync`, `detach`, `state` (window opaque flag, window
-count, base view, piece frames) and the `beginDrag`/`zoom` actions.
+count, base view, piece frames and the transparency block), `layerClass`, `layerTree`, the
+appearance query/observer and the `beginDrag`/`zoom` actions.
+
+The transparency block is what makes the glass show through: it finds the Skia drawing
+layer under the content view (an `AWTMetalLayer`/`CAMetalLayer`; AWT's own `MTLLayer` is
+skipped), and reports whether that layer and every ancestor up to the window frame are
+non-opaque with a clear background, the window background alpha, and whether the glass
+container sits below the content view. AWT's window backing layer stays opaque even when
+the Skia layer is transparent, so `attach` and every `sync` clear `opaque` and the
+background on that whole layer chain. `NativeGlassSmokeTest` asserts every value on a real
+Compose window peer that is never shown: the Skia layer is non-opaque with background
+alpha 0, all 4 ancestors are clear, the window background alpha is 0 and the container is
+below the content view. The `layerTree` output (classes, opaque flags, background alpha)
+is printed by the test as the evidence.
 
 `NativeGlass` looks for the dylib at `stride.glass.library`, then
 `compose.application.resources.dir/libstrideglass.dylib`, then `../Resources` under the runtime.
@@ -1791,7 +1847,10 @@ macOS < 26 or an unfound window logs one line and keeps the Skia glass unchanged
 
 **Path switch.** `GlassRuntime.prepare(window)` runs before the window is shown and sets the
 Compose Skia layer's transparency, so the first frame is transparent where no content is
-painted. `GlassRuntime.attach(window)` runs when the window is shown. `GlassRuntime.active` is
+painted. The Compose panel may build its SkiaLayer only when the peer is created, so
+`prepare` also installs a hierarchy listener that catches the layer at insertion time and
+sets transparency and clears every Swing ancestor before the redrawer is created.
+`GlassRuntime.attach(window)` runs when the window is shown. `GlassRuntime.active` is
 provided as `LocalNativeGlass`; every Skia glass pass checks it:
 
 - `MeshBackground` paints nothing, `contentTint()` paints nothing and `capsuleGlass` /
@@ -1815,9 +1874,12 @@ reports the element's window-relative bounds, its shape's corner radius, the sty
 reported surfaces are the sidebar, the three top capsules, the bottom path/status capsules,
 the find bar, the tool-window switcher, the open-folder button and every popup.
 
-`nativeGlassTint` (#14151B at 78%) is the dark floor over the system material: body tokens
-keep 4.5:1 over a white and a black desktop, and `textSecondaryOnGlass` keeps it under its
-opaque `chromeTextStyle` shadow. This is asserted in `DesignTokensContrastTest`.
+`nativeGlassTint` (#14151B at 78% dark, #F5F6F9 at 80% light) is the floor over the system
+material: body tokens keep 4.5:1 over a white and a black desktop, and
+`textSecondaryOnGlass` keeps it under its opaque `chromeTextStyle` shadow (black on dark,
+white on light). This is asserted in `DesignTokensContrastTest`. The system material itself
+(`NSGlassEffectView`) follows the macOS appearance automatically; switching the palette
+only changes the tint and the Compose labels.
 
 **Title row.** The window is created with `create = { ComposeWindow() }` and the root pane
 client properties `apple.awt.fullWindowContent`, `apple.awt.transparentTitleBar` and
@@ -1841,15 +1903,30 @@ fun diffGlassPieces(previous: List<GlassPiece>, next: List<GlassPiece>): GlassPi
 fun glassPiecesEqual(previous: List<GlassPiece>, next: List<GlassPiece>): Boolean
 fun effectiveCornerRadius(value: Float, width: Float, height: Float): Float
 class GlassRegistry(sync: (Long, List<GlassPiece>) -> Int = ...)
+data class NativeGlassState(val opaque: Boolean, val windowCount: Int, val baseView: Boolean,
+                            val views: List<NativeGlassView>, val layer: NativeLayerState?)
+data class NativeLayerState(val drawingLayer: Boolean, val className: String, val opaque: Boolean,
+                            val backgroundAlpha: Double, val ancestorsClear: Boolean,
+                            val ancestorCount: Int, val windowBackgroundAlpha: Double,
+                            val containerBelowContent: Boolean, val contentViewOpaque: Boolean,
+                            val containerOpaque: Boolean)
 object GlassRuntime { val active: State<Boolean>; fun prepare(window: Window)
                       fun attach(window: Window); fun detach(); fun beginDrag(); fun zoom() }
+object SystemAppearance { fun start() }
 object GlassHoles
 fun Modifier.nativeGlass(key: String, shape: Shape, style: GlassStyle = GlassStyle.REGULAR,
                          tint: Int? = null, hole: Boolean = false): Modifier
 fun Modifier.windowDragRegion(): Modifier
 // stride.app.ui.theme
+enum class Appearance { DARK, LIGHT }
+object AppearanceState { var appearance: Appearance; fun set(value: Appearance) }
+val DarkPalette: Palette
+val LightPalette: Palette
+fun paletteOf(appearance: Appearance): Palette
 fun Modifier.contentSurface(shape: Shape, holes: List<Rect>): Modifier
 fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier
+// stride.app.editor
+fun activeColorScheme(): ColorScheme
 ```
 
 ## Offscreen snapshots
@@ -1861,9 +1938,15 @@ fun Modifier.capsuleGlass(shape: Shape, forceSkia: Boolean = false): Modifier
 `05-search-empty-results.png`, `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
 `12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`).
+The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-light.png`,
+`04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
+`11-run-window-light.png`, `12-editor-scrolled-light.png` and
+`13-search-over-code-light.png` render the same scenes on the light palette.
 `tasks.test` sets `java.awt.headless=false` because `NativeGlassSmokeTest` creates an AWT peer
 (it never calls `setVisible`, so no window is ordered front); the snapshot renderer itself is
 software-only and never opens a window. The snapshots always take the Skia glass path.
+`UiSnapshotTest` also switches `AppearanceState` inside one live scene and asserts that the
+editor text, caret and scroll offset are unchanged while the rendered pixels re-theme.
 
 ## Running
 

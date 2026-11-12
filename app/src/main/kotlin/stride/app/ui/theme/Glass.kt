@@ -85,13 +85,20 @@ private val CACHE_GRID = 4.dp
 private fun quantize(value: Float, grid: Float): Float =
     if (grid <= 0f) value else (value / grid).roundToInt() * grid
 
-private val contentTintColor = blendOver(
-    DesignTokens.surface.copy(alpha = DesignTokens.contentTintAlpha),
-    DesignTokens.background,
-)
+private var tintPalette: Palette? = null
+private var tintColor = Color.Unspecified
+private val contentTintColor: Color
+    get() {
+        val palette = DesignTokens.palette
+        if (tintPalette !== palette) {
+            tintPalette = palette
+            tintColor = blendOver(palette.surface.copy(alpha = DesignTokens.contentTintAlpha), palette.background)
+        }
+        return tintColor
+    }
 
 /** The empty editor field's luminance; a mirrored colour field never turns brighter than it. */
-val editorFieldLuminance: Double = relativeLuminance(contentTintColor)
+val editorFieldLuminance: Double get() = relativeLuminance(contentTintColor)
 
 /**
  * Holds the cached field bitmap and the raster image drawn from it. Draw-phase data, not
@@ -102,6 +109,7 @@ class MeshBitmapHolder {
     var bitmap: ImageBitmap? = null
     var width: Int = 0
     var height: Int = 0
+    var appearance: Appearance? = null
     var version: Int = 0
     var image: Image? = null
 }
@@ -149,13 +157,17 @@ fun MeshBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.
         modifier.drawWithCache {
             val width = size.width.roundToInt().coerceAtLeast(1)
             val height = size.height.roundToInt().coerceAtLeast(1)
-            if (holder.bitmap == null || holder.width != width || holder.height != height) {
+            val appearance = AppearanceState.appearance
+            if (holder.bitmap == null || holder.width != width || holder.height != height ||
+                holder.appearance != appearance
+            ) {
                 holder.image?.close()
                 val bitmap = buildFieldBitmap(width, height)
                 holder.bitmap = bitmap
                 holder.image = Image.makeFromBitmap(bitmap.asSkiaBitmap())
                 holder.width = width
                 holder.height = height
+                holder.appearance = appearance
                 holder.version += 1
             }
             onDrawBehind {
@@ -227,7 +239,14 @@ fun Modifier.slabShadow(shape: Shape): Modifier = composed {
             is Outline.Rectangle -> 0f
             is Outline.Generic -> 0f
         }
-        cache.update(size.width, size.height, radius, DesignTokens.slabShadow.toPx(), CACHE_GRID.toPx())
+        cache.update(
+            size.width,
+            size.height,
+            radius,
+            DesignTokens.slabShadow.toPx(),
+            CACHE_GRID.toPx(),
+            DesignTokens.slabShadowColor,
+        )
         cache.draw(drawContext.canvas.nativeCanvas, size.width, size.height)
     }
 }
@@ -393,6 +412,7 @@ private class BackdropFilterCache {
     var endTaper: Float = -1f
     var backdropMix: Float = -1f
     var downscale: Int = -1
+    var appearance: Appearance? = null
     var filter: ImageFilter? = null
     var fallback: ImageFilter? = null
     var path: org.jetbrains.skia.Path? = null
@@ -427,7 +447,8 @@ private class BackdropFilterCache {
         val radiusKey = radius.roundToInt()
         val unchanged = this.width == widthKey && this.height == heightKey && this.radius == radiusKey &&
             this.density == density && this.bezel == bezel && this.strength == strength &&
-            this.endTaper == endTaper && this.backdropMix == backdropMix && this.downscale == downscale
+            this.endTaper == endTaper && this.backdropMix == backdropMix && this.downscale == downscale &&
+            this.appearance == AppearanceState.appearance
         if (unchanged) return filter
         filter?.close()
         fallback?.close()
@@ -459,6 +480,7 @@ private class BackdropFilterCache {
         this.endTaper = endTaper
         this.backdropMix = backdropMix
         this.downscale = downscale
+        this.appearance = AppearanceState.appearance
         fallback = if (filter == null) backdropImageFilter(sigma) else null
         path = org.jetbrains.skia.Path().apply {
             if (radius > 0f) {
@@ -794,6 +816,7 @@ private data class StripKey(
     val sourceWidth: Int,
     val sigma: Float,
     val luminanceCap: Double,
+    val appearance: Appearance,
 )
 
 /**
@@ -822,6 +845,7 @@ private fun MirroredStripCache.imageFor(
         sourceWidth = sourceWidth.roundToInt(),
         sigma = sigma,
         luminanceCap = luminanceCap,
+        appearance = AppearanceState.appearance,
     )
     if (next == this.key) return image
     // Close the previous snapshot before drawing into the shared surfaces: otherwise Skia copies
@@ -1058,6 +1082,7 @@ private data class EdgeBandKey(
     val bottomBand: Int,
     val tail: Int,
     val sigma: Int,
+    val appearance: Appearance,
 )
 
 private fun EdgeBandCache.imageFor(
@@ -1082,6 +1107,7 @@ private fun EdgeBandCache.imageFor(
         bottomBand = bottomBand.roundToInt(),
         tail = tail.roundToInt(),
         sigma = sigma.roundToInt(),
+        appearance = AppearanceState.appearance,
     )
     if (next == this.key) {
         val cachedTop = top
@@ -1243,9 +1269,23 @@ private fun DrawScope.drawGlassBorder() {
     }
 }
 
-private data class SlabRimKey(val width: Int, val height: Int, val radius: Int, val stroke: Float, val innerInset: Int)
+private data class SlabRimKey(
+    val width: Int,
+    val height: Int,
+    val radius: Int,
+    val stroke: Float,
+    val innerInset: Int,
+    val appearance: Appearance,
+)
 
-private data class SlabShadowKey(val width: Int, val height: Int, val radius: Int, val elevation: Float, val margin: Int)
+private data class SlabShadowKey(
+    val width: Int,
+    val height: Int,
+    val radius: Int,
+    val elevation: Float,
+    val margin: Int,
+    val color: Int,
+)
 
 /** One baked soft shadow image per slab size; see [slabShadow]. */
 private class SlabShadowCache {
@@ -1261,11 +1301,18 @@ private class SlabShadowCache {
         key = null
     }
 
-    fun update(width: Float, height: Float, radius: Float, elevation: Float, grid: Float) {
+    fun update(width: Float, height: Float, radius: Float, elevation: Float, grid: Float, color: Int) {
         val margin = (elevation * 2f).roundToInt().coerceAtLeast(4)
         val bakedW = quantize(width, grid).coerceAtLeast(1f)
         val bakedH = quantize(height, grid).coerceAtLeast(1f)
-        val next = SlabShadowKey(bakedW.roundToInt(), bakedH.roundToInt(), radius.roundToInt(), elevation, margin)
+        val next = SlabShadowKey(
+            bakedW.roundToInt(),
+            bakedH.roundToInt(),
+            radius.roundToInt(),
+            elevation,
+            margin,
+            color,
+        )
         if (next == key) return
         dispose()
         key = next
@@ -1286,7 +1333,7 @@ private class SlabShadowCache {
         }
         val paint = Paint().apply {
             isAntiAlias = true
-            color = SHADOW_COLOR
+            this.color = color
             maskFilter = org.jetbrains.skia.MaskFilter.makeBlur(
                 org.jetbrains.skia.FilterBlurMode.NORMAL,
                 elevation * 0.55f,
@@ -1327,9 +1374,6 @@ private class SlabShadowCache {
         }
     }
 
-    private companion object {
-        const val SHADOW_COLOR = 0x8C000000.toInt()
-    }
 }
 
 /** The three rim paths and their gradient paints, rebuilt only when the slab size changes. */
@@ -1372,6 +1416,7 @@ private class SlabRimCache {
             radius.roundToInt(),
             stroke,
             innerInset.roundToInt(),
+            AppearanceState.appearance,
         )
         if (next == key) return
         dispose()

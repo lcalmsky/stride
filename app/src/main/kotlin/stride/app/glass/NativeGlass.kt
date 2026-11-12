@@ -13,12 +13,30 @@ data class NativeGlassView(
     val cornerRadius: Double,
 )
 
+/**
+ * The transparency chain under the content view. [drawingLayer] is the Skiko layer (a
+ * CAMetalLayer on the Metal path); [ancestorsClear] checks every layer above it.
+ */
+data class NativeLayerState(
+    val drawingLayer: Boolean,
+    val className: String,
+    val opaque: Boolean,
+    val backgroundAlpha: Double,
+    val ancestorsClear: Boolean,
+    val ancestorCount: Int,
+    val windowBackgroundAlpha: Double,
+    val containerBelowContent: Boolean,
+    val contentViewOpaque: Boolean,
+    val containerOpaque: Boolean,
+)
+
 /** The debug view of one attached window: what the native side really has. */
 data class NativeGlassState(
     val opaque: Boolean,
     val windowCount: Int,
     val baseView: Boolean,
     val views: List<NativeGlassView>,
+    val layer: NativeLayerState?,
 )
 
 /**
@@ -113,13 +131,35 @@ internal object NativeGlass {
                 cornerRadius = values[at + 4],
             )
         }
+        val layerAt = 4 + count * 5
+        val layer = if (values.size >= layerAt + 9) {
+            NativeLayerState(
+                drawingLayer = values[layerAt] != 0.0,
+                className = runCatching { nativeLayerClass(handle) }.getOrDefault(""),
+                opaque = values[layerAt + 1] != 0.0,
+                backgroundAlpha = values[layerAt + 2],
+                ancestorsClear = values[layerAt + 3] != 0.0,
+                ancestorCount = values[layerAt + 4].toInt(),
+                windowBackgroundAlpha = values[layerAt + 5],
+                containerBelowContent = values[layerAt + 6] != 0.0,
+                contentViewOpaque = values[layerAt + 7] != 0.0,
+                containerOpaque = values[layerAt + 8] != 0.0,
+            )
+        } else {
+            null
+        }
         return NativeGlassState(
             opaque = values[0] != 0.0,
             windowCount = values[1].toInt(),
             baseView = values[2] != 0.0,
             views = views,
+            layer = layer,
         )
     }
+
+    /** The CALayer tree under the content view, for diagnosing the transparency chain. */
+    fun layerTree(handle: Long): String =
+        if (!available || handle == 0L) "" else runCatching { nativeLayerTree(handle) }.getOrDefault("")
 
     fun beginDrag(handle: Long) {
         if (available && handle != 0L) runCatching { nativeBeginDrag(handle) }
@@ -150,6 +190,10 @@ internal object NativeGlass {
     private external fun nativeState(handle: Long): DoubleArray
 
     private external fun nativeStateKeys(handle: Long): Array<String>
+
+    private external fun nativeLayerClass(handle: Long): String
+
+    private external fun nativeLayerTree(handle: Long): String
 
     private external fun nativeBeginDrag(handle: Long)
 

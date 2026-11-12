@@ -14,6 +14,7 @@ import java.util.logging.Level
 import java.util.logging.Logger
 import javax.swing.WindowConstants
 import stride.app.glass.GlassRuntime
+import stride.app.glass.SystemAppearance
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
@@ -26,6 +27,9 @@ fun main(args: Array<String>) {
     log.info("LoadResult enabled=${result.enabled.map { it.id }}")
     log.info("LoadResult disabled=${result.disabled}")
     val initialPath = args.firstOrNull()
+    // Follow the system appearance: the native observer notifies on change, so no restart is
+    // needed; the palette swap is Compose state read by every surface.
+    SystemAppearance.start()
 
     application {
         val state = remember { AppState() }

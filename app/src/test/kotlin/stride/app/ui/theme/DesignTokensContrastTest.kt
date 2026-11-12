@@ -8,12 +8,20 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.unit.Density
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import stride.app.terminal.TerminalPalette
+import stride.lang.ColorScheme
 
 class DesignTokensContrastTest {
+    @AfterEach
+    fun restoreDark() {
+        AppearanceState.set(Appearance.DARK)
+    }
+
     @Test
     fun `contrast helpers match the WCAG examples`() {
         assertEquals(21.0, contrastRatio(Color.White, Color.Black), 0.001)
@@ -110,8 +118,8 @@ class DesignTokensContrastTest {
     @Test
     fun `text secondary on glass is the first muted to text step that clears 4_5`() {
         val found = firstStepClearing(worstStrongGlass)
-        assertEquals(found.color, DesignTokens.textSecondaryOnGlass, "t=${found.t} hex=#%06X".format(found.color.value.toLong() and 0xFFFFFF))
-        val ratio = contrastRatio(DesignTokens.textSecondaryOnGlass, worstStrongGlass)
+        assertEquals(found.color, DarkPalette.textSecondaryOnGlass, "t=${found.t} hex=#%06X".format(found.color.value.toLong() and 0xFFFFFF))
+        val ratio = contrastRatio(DarkPalette.textSecondaryOnGlass, worstStrongGlass)
         assertTrue(ratio >= DesignTokens.contrastText, "textSecondaryOnGlass = %.3f".format(ratio))
     }
 
@@ -226,15 +234,128 @@ class DesignTokensContrastTest {
         assertTrue(brightest - darkest >= 0.002, "the falloff is too flat: %.6f".format(brightest - darkest))
     }
 
+    @Test
+    fun `light text roles clear 4_5 on every light surface`() {
+        val roles = linkedMapOf(
+            "text" to LightPalette.text,
+            "selectedText" to LightPalette.selectedText,
+            "muted" to LightPalette.muted,
+            "textSecondaryOnGlass" to LightPalette.textSecondaryOnGlass,
+            "textOnBusyGlass" to LightPalette.textOnBusyGlass,
+            "accent" to LightPalette.accent,
+            "accent2" to LightPalette.accent2,
+            "neonPink" to LightPalette.neonPink,
+            "neonLime" to LightPalette.neonLime,
+            "neonAmber" to LightPalette.neonAmber,
+        )
+        val surfaces = linkedMapOf(
+            "editor surface" to LightPalette.surface,
+            "field" to LightPalette.background,
+            "worst strong glass" to blendOver(LightPalette.glassFillStrong, LightPalette.backgroundLift),
+            "glass floor" to LightPalette.glassBase,
+        )
+        for ((name, color) in roles) {
+            for ((surfaceName, surface) in surfaces) {
+                val ratio = contrastRatio(color, surface)
+                assertTrue(
+                    ratio >= DesignTokens.contrastText,
+                    "$name on the light $surfaceName = %.3f < %.1f".format(ratio, DesignTokens.contrastText),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `light selection reads instantly and its bar clears the UI contrast`() {
+        val blended = blendOver(LightPalette.selection, LightPalette.surface)
+        val selectionRatio = contrastRatio(blended, LightPalette.surface)
+        assertTrue(selectionRatio >= 1.2, "blended selection on white = %.3f, too faint".format(selectionRatio))
+        val glow = blendOver(LightPalette.accent2Glow, LightPalette.surface)
+        assertTrue(contrastRatio(glow, LightPalette.surface) >= 1.1, "selection glow is invisible on light")
+        val worstGlass = blendOver(LightPalette.glassFillStrong, LightPalette.backgroundLift)
+        for ((name, color) in listOf("accent2" to LightPalette.accent2, "selectionBar" to LightPalette.selectionBar)) {
+            for ((surfaceName, surface) in listOf("white" to LightPalette.surface, "glass" to worstGlass)) {
+                val ratio = contrastRatio(color, surface)
+                assertTrue(ratio >= DesignTokens.contrastUi, "$name on light $surfaceName = %.3f".format(ratio))
+            }
+        }
+    }
+
+    private data class SyntaxCase(
+        val name: String,
+        val scheme: ColorScheme,
+        val surface: Color,
+        val floor: Double,
+    )
+
+    @Test
+    fun `syntax colours clear 4_5 on the light editor and keep the dark palette readable`() {
+        // The dark keyword and comment sit at 4.3–4.1 from v1.3.0 and stay unchanged; the light
+        // scheme is held to 4.5 on the white editor surface.
+        val cases = listOf(
+            SyntaxCase("light", ColorScheme.LIGHT, Color.White, DesignTokens.contrastText),
+            SyntaxCase("dark", ColorScheme.DARK, Color(0xFF0F1117), 4.0),
+        )
+        for (case in cases) {
+            for ((key, attributes) in case.scheme.attributes()) {
+                val foreground = attributes.foreground ?: continue
+                val ratio = contrastRatio(Color(foreground.toInt()), case.surface)
+                assertTrue(
+                    ratio >= case.floor,
+                    "${case.name} $key = %.3f < %.1f on the editor surface".format(ratio, case.floor),
+                )
+            }
+        }
+    }
+
+    private data class AnsiCase(
+        val name: String,
+        val appearance: Appearance,
+        val background: Color,
+        val floor: Double,
+        val skip: Set<Int>,
+    )
+
+    @Test
+    fun `ansi palettes stay readable on their terminal background`() {
+        // Index 0 is the background itself on both palettes; the dark bright black (8) is the
+        // dim grey of v1.3.0 and stays as it is.
+        val cases = listOf(
+            AnsiCase("light", Appearance.LIGHT, Color(0xFFF3F4F8), DesignTokens.contrastText, emptySet()),
+            AnsiCase("dark", Appearance.DARK, Color(0xFF13141A), 4.0, setOf(0, 8)),
+        )
+        for (case in cases) {
+            val palette = withAppearance(case.appearance) { TerminalPalette.ansi }
+            palette.forEachIndexed { index, color ->
+                if (index in case.skip) return@forEachIndexed
+                val ratio = contrastRatio(color, case.background)
+                assertTrue(
+                    ratio >= case.floor,
+                    "${case.name} ANSI $index = %.3f < %.1f".format(ratio, case.floor),
+                )
+            }
+        }
+    }
+
+    private fun <T> withAppearance(appearance: Appearance, block: () -> T): T {
+        val previous = AppearanceState.appearance
+        AppearanceState.set(appearance)
+        try {
+            return block()
+        } finally {
+            AppearanceState.set(previous)
+        }
+    }
+
     private data class Step(val t: Double, val color: Color)
 
     private fun firstStepClearing(background: Color): Step {
         for (index in 0..100) {
             val t = index / 100.0
             val lerped = Color(
-                (DesignTokens.muted.red + (DesignTokens.text.red - DesignTokens.muted.red) * t).toFloat(),
-                (DesignTokens.muted.green + (DesignTokens.text.green - DesignTokens.muted.green) * t).toFloat(),
-                (DesignTokens.muted.blue + (DesignTokens.text.blue - DesignTokens.muted.blue) * t).toFloat(),
+                (DarkPalette.muted.red + (DarkPalette.text.red - DarkPalette.muted.red) * t).toFloat(),
+                (DarkPalette.muted.green + (DarkPalette.text.green - DarkPalette.muted.green) * t).toFloat(),
+                (DarkPalette.muted.blue + (DarkPalette.text.blue - DarkPalette.muted.blue) * t).toFloat(),
                 alpha = 1f,
             )
             val rounded = Color(
@@ -256,17 +377,17 @@ class DesignTokensContrastTest {
          * `glassBorderSide`, `glassBorderBottom` and every `*Glow` are decoration under WCAG 1.4.11.
          */
         private val TEXT_TOKENS = linkedMapOf(
-            "text" to DesignTokens.text,
-            "textSecondaryOnGlass" to DesignTokens.textSecondaryOnGlass,
-            "accent2" to DesignTokens.accent2,
-            "neonLime" to DesignTokens.neonLime,
-            "neonAmber" to DesignTokens.neonAmber,
+            "text" to DarkPalette.text,
+            "textSecondaryOnGlass" to DarkPalette.textSecondaryOnGlass,
+            "accent2" to DarkPalette.accent2,
+            "neonLime" to DarkPalette.neonLime,
+            "neonAmber" to DarkPalette.neonAmber,
         )
 
         /** The brightest plausible backdrop: the centre of the neutral field. */
-        private val worstMesh: Color = DesignTokens.backgroundLift
+        private val worstMesh: Color = DarkPalette.backgroundLift
 
-        private val worstStrongGlass: Color = blendOver(DesignTokens.glassFillStrong, worstMesh)
-        private val worstPanelGlass: Color = blendOver(DesignTokens.glassFill, worstMesh)
+        private val worstStrongGlass: Color = blendOver(DarkPalette.glassFillStrong, worstMesh)
+        private val worstPanelGlass: Color = blendOver(DarkPalette.glassFill, worstMesh)
     }
 }

@@ -8,9 +8,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
+import stride.app.ui.theme.Appearance
+import stride.app.ui.theme.AppearanceState
 import stride.lang.ColorScheme
 import stride.lang.TextAttributes
 import stride.lang.TokenSpan
+
+/** The syntax scheme of the effective appearance. */
+fun activeColorScheme(): ColorScheme =
+    if (AppearanceState.appearance == Appearance.LIGHT) ColorScheme.LIGHT else ColorScheme.DARK
 
 fun textAttributesToSpanStyle(attributes: TextAttributes): SpanStyle = SpanStyle(
     color = attributes.foreground?.let { Color(it.toInt()) } ?: Color.Unspecified,
@@ -20,7 +26,7 @@ fun textAttributesToSpanStyle(attributes: TextAttributes): SpanStyle = SpanStyle
 )
 
 /** Maps highlighter spans to text styles, falling back along each key's chain through [scheme]. */
-fun spanStyles(spans: List<TokenSpan>, scheme: ColorScheme = ColorScheme.DARK): List<AnnotatedString.Range<SpanStyle>> =
+fun spanStyles(spans: List<TokenSpan>, scheme: ColorScheme = activeColorScheme()): List<AnnotatedString.Range<SpanStyle>> =
     spans.mapNotNull { span ->
         val attributes = scheme.getAttributes(span.key) ?: return@mapNotNull null
         AnnotatedString.Range(textAttributesToSpanStyle(attributes), span.start, span.end)
@@ -36,7 +42,7 @@ data class BackgroundSpan(val start: Int, val end: Int, val color: Color)
 class HighlightingVisualTransformation(
     private val spans: List<TokenSpan>,
     private val backgroundSpans: List<BackgroundSpan> = emptyList(),
-    private val scheme: ColorScheme = ColorScheme.DARK,
+    private val scheme: ColorScheme = activeColorScheme(),
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val builder = AnnotatedString.Builder(text)
@@ -56,7 +62,8 @@ class HighlightingVisualTransformation(
     override fun equals(other: Any?): Boolean =
         other is HighlightingVisualTransformation &&
             other.spans == spans &&
-            other.backgroundSpans == backgroundSpans
+            other.backgroundSpans == backgroundSpans &&
+            other.scheme === scheme
 
-    override fun hashCode(): Int = 31 * spans.hashCode() + backgroundSpans.hashCode()
+    override fun hashCode(): Int = 31 * (31 * spans.hashCode() + backgroundSpans.hashCode()) + scheme.hashCode()
 }
