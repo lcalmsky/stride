@@ -140,6 +140,45 @@ class FindToolWindowStateTest {
         assertEquals("$FIND_WINDOW_MAX_HITS+ results (truncated)", tab.header)
     }
 
+    @Test
+    fun `a cancelled scan does not write into the tab that replaced it`() {
+        val state = state()
+        val first = indexed("A.kt", "alpha\n")
+        val second = indexed("B.kt", "alpha alpha\n")
+        var replaced = false
+
+        val original = state.addTab(
+            kind = FindTabKind.OCCURRENCES,
+            query = "alpha",
+            options = FindOptions(),
+            title = "first",
+            files = listOf(first, second),
+            textOf = { path ->
+                // Replace the tab from inside its own scan: the running job is cancelled then.
+                if (!replaced && path.fileName.toString() == "A.kt") {
+                    replaced = true
+                    state.addTab(
+                        kind = FindTabKind.OCCURRENCES,
+                        query = "alpha",
+                        options = FindOptions(),
+                        title = "replaced",
+                        files = listOf(second),
+                    )
+                }
+                null
+            },
+        )
+
+        assertTrue(replaced)
+        val tab = state.tabs.single()
+        assertEquals("replaced", tab.title)
+        assertSame(tab, state.selectedTab)
+        assertEquals(2, tab.hits.size)
+        assertTrue(tab.hits.all { it.relativePath == "B.kt" })
+        assertTrue(original.hits.isEmpty())
+        assertTrue(original.searching)
+    }
+
     private fun indexed(name: String, content: String): IndexedFile {
         val path = temp.resolve(name)
         Files.writeString(path, content)

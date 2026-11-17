@@ -3,6 +3,7 @@ package stride.app
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +16,8 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -23,9 +26,10 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
-import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterEach
@@ -44,6 +48,8 @@ import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
+import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowRow
 import stride.core.services.Application
 import stride.core.vfs.VFile
 
@@ -203,6 +209,34 @@ class ListToolWindowUiTest {
         } finally {
             state.dispose()
         }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `moving the selection does not scroll a visible row to the top`() = runComposeUiTest {
+        val rows = List(200) { index -> ListWindowRow(AnnotatedString("row $index")) }
+        var opened = -1
+        setContent {
+            Box(Modifier.size(400.dp)) {
+                ListToolWindow(
+                    rows = rows,
+                    focusRequests = 1,
+                    onOpen = { opened = it },
+                    onEscape = {},
+                )
+            }
+        }
+        waitForIdle()
+
+        repeat(3) { onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        waitForIdle()
+        onNodeWithText("row 0").assertIsDisplayed()
+        onRoot().performKeyInput { pressKey(Key.Enter) }
+        waitUntil(timeoutMillis = 5_000) { opened == 3 }
+
+        repeat(60) { onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        waitForIdle()
+        onNodeWithText("row 63").assertIsDisplayed()
     }
 
     private fun bookmark(root: Path, name: String, line: Int, lineText: String): Bookmark =

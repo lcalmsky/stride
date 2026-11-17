@@ -4,8 +4,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -55,7 +58,7 @@ class FindToolWindowState(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val items = mutableStateListOf<FindTab>()
-    private val jobs = HashMap<Long, Job>()
+    private val jobs = ConcurrentHashMap<Long, Job>()
     private var nextId = 1L
 
     val tabs: List<FindTab> get() = items
@@ -136,7 +139,9 @@ class FindToolWindowState(
         tab.hits = emptyList()
         tab.searching = true
         tab.truncated = false
-        jobs[tab.id] = scope.launch {
+        // Lazy start so the job is in [jobs] before it can run: a cancelled or replaced tab
+        // must not have its scan write back into the tab it no longer owns.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val hits = FindInPathScanner.scan(
                 files = files,
                 query = tab.query,
@@ -145,10 +150,17 @@ class FindToolWindowState(
                 textOf = textOf,
                 shouldStop = { !isActive },
             )
-            tab.hits = hits
-            tab.truncated = hits.size >= FIND_WINDOW_MAX_HITS
-            tab.searching = false
+            if (isActive) {
+                Snapshot.withMutableSnapshot {
+                    tab.hits = hits
+                    tab.truncated = hits.size >= FIND_WINDOW_MAX_HITS
+                    tab.searching = false
+                }
+            }
+            coroutineContext[Job]?.let { jobs.remove(tab.id, it) }
         }
+        jobs[tab.id] = job
+        job.start()
     }
 
     companion object {

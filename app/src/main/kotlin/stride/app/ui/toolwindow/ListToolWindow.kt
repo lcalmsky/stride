@@ -93,7 +93,18 @@ fun ListToolWindow(
         pendingSelection = false
     }
     LaunchedEffect(index, rows.size) {
-        if (rows.isNotEmpty()) listState.scrollToItem(index.coerceIn(0, rows.lastIndex))
+        if (rows.isEmpty()) return@LaunchedEffect
+        val target = index.coerceIn(0, rows.lastIndex)
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty() || visible.any { it.index == target }) return@LaunchedEffect
+        if (target < visible.first().index) {
+            listState.scrollToItem(target)
+        } else {
+            // Shift the list by the visible count so the row lands where the last visible row
+            // was, instead of jumping to the top of the viewport.
+            val shift = visible.last().index - visible.first().index
+            listState.scrollToItem((target - shift).coerceAtLeast(0))
+        }
     }
 
     Column(

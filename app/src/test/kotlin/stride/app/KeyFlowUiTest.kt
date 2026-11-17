@@ -602,6 +602,36 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `command enter with an empty find in path query adds no tab`() = runComposeUiTest {
+        val root = temp.resolve("empty-find-in-path-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("A.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.F) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.findInPathVisible }
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.Enter) } }
+            waitForIdle()
+
+            assertTrue(state.findInPathVisible)
+            assertTrue(state.findToolWindow.tabs.isEmpty())
+            assertFalse(state.toolWindows.visible)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `terminal tool window takes focus and keeps global shortcuts`() = runComposeUiTest {
         val root = temp.resolve("terminal-project")
         Files.createDirectories(root)

@@ -143,7 +143,9 @@ fun FindInPathPopup(
                             }
                             Key.Enter, Key.NumPadEnter -> {
                                 if (event.isMetaPressed) {
-                                    onOpenInFindWindow(query, FindOptions(caseSensitive, regex, wholeWord))
+                                    if (query.isNotEmpty()) {
+                                        onOpenInFindWindow(query, FindOptions(caseSensitive, regex, wholeWord))
+                                    }
                                 } else {
                                     hits.getOrNull(selectedIndex)?.let(onChoose)
                                 }
