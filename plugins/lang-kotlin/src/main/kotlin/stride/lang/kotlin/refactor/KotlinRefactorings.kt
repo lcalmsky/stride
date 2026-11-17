@@ -7,5 +7,8 @@ import stride.lang.RefactoringStep
 
 /** Introduce Variable, Extract Method and Inline for Kotlin; the rules are in `docs/api-app.md` 「Refactorings」. */
 class KotlinRefactorings : RefactoringProvider {
-    override fun prepare(kind: RefactoringKind, context: RefactoringContext): RefactoringStep? = null
+    override fun prepare(kind: RefactoringKind, context: RefactoringContext): RefactoringStep? = when (kind) {
+        RefactoringKind.INTRODUCE_VARIABLE -> KotlinIntroduceVariable.prepare(context)
+        RefactoringKind.EXTRACT_METHOD, RefactoringKind.INLINE -> null
+    }
 }

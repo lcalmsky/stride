@@ -1,0 +1,697 @@
+package stride.lang.kotlin.refactor
+
+import stride.lang.kotlin.KotlinTokenTypes
+
+internal enum class CallKind { PARENTHESES, INDEX, LAMBDA }
+
+/** One call site: the opening bracket and its partner. */
+internal class KtCall(val open: KtToken, val close: KtToken?, val kind: CallKind) {
+    val openOffset: Int get() = open.start
+
+    val closeOffset: Int get() = close?.start ?: open.start
+
+    val range: KtRange get() = KtRange(open.start, close?.end ?: open.end)
+
+    /** A call with arguments; a lambda call has no argument list. */
+    val isInvocation: Boolean get() = kind != CallKind.LAMBDA
+}
+
+internal enum class EffectKind { CALL, ASSIGNMENT, INCREMENT }
+
+/** A side effect and the offset at which it takes effect. */
+internal class KtEffect(val kind: EffectKind, val offset: Int, val range: KtRange)
+
+private val ASSIGNMENT_OPERATORS = setOf("=", "+=", "-=", "*=", "/=", "%=")
+
+private val CONTROL_KEYWORD_PARENS = setOf("catch")
+
+internal fun computeCalls(code: KotlinCode): List<KtCall> {
+    val excluded = HashSet<Int>()
+    for (function in code.functions) excluded.add(function.parameterListOpen.index)
+    for (token in code.code) {
+        if (token.type != KotlinTokenTypes.KEYWORD) continue
+        when (token.text) {
+            "catch", "get", "set", "constructor" -> {
+                if (token.text != "catch" && isDotBeforeToken(code, token.index)) continue
+                val next = code.code.getOrNull(token.index + 1) ?: continue
+                if (next.text == "(") excluded.add(next.index)
+            }
+            "class" -> {
+                var index = token.index + 1
+                val name = code.code.getOrNull(index)?.takeIf { isNameToken(it) } ?: continue
+                index = name.index + 1
+                if (code.code.getOrNull(index)?.text == "<") {
+                    val close = angleClose(code, index)
+                    if (close > 0) index = close + 1
+                }
+                val next = code.code.getOrNull(index) ?: continue
+                if (next.text == "(") excluded.add(next.index)
+            }
+        }
+    }
+
+    val calls = ArrayList<KtCall>()
+    for (token in code.code) {
+        when (token.text) {
+            "(" -> {
+                if (token.index in excluded) continue
+                if (insideNonExpression(code, token.start)) continue
+                val previous = code.code.getOrNull(token.index - 1) ?: continue
+                val call = when {
+                    previous.text == ">" || previous.text == ")" || previous.text == "]" -> true
+                    isNameToken(previous) -> true
+                    else -> false
+                }
+                if (call) calls.add(KtCall(token, code.matching(token.index), CallKind.PARENTHESES))
+            }
+            "[" -> {
+                val previous = code.code.getOrNull(token.index - 1) ?: continue
+                val call = isNameToken(previous) || previous.text == ")" || previous.text == "]"
+                if (call) calls.add(KtCall(token, code.matching(token.index), CallKind.INDEX))
+            }
+            "{" -> {
+                val block = code.blocks.firstOrNull { it.open.index == token.index } ?: continue
+                if (block.kind != BlockKind.LAMBDA) continue
+                val previous = code.code.getOrNull(token.index - 1) ?: continue
+                if (isNameToken(previous) || previous.text == ")") {
+                    calls.add(KtCall(token, block.close, CallKind.LAMBDA))
+                }
+            }
+        }
+    }
+    return calls
+}
+
+private fun isDotBeforeToken(code: KotlinCode, index: Int): Boolean {
+    val before = code.code.getOrNull(index - 1) ?: return false
+    return before.type == KotlinTokenTypes.DOT ||
+        (before.text == "?" && code.code.getOrNull(index - 2)?.type == KotlinTokenTypes.DOT)
+}
+
+private fun insideNonExpression(code: KotlinCode, offset: Int): Boolean =
+    code.nonExpressionRanges.any { it.contains(offset) }
+
+internal fun computeEffects(code: KotlinCode): List<KtEffect> {
+    val effects = ArrayList<KtEffect>()
+    for (call in code.calls) effects.add(KtEffect(EffectKind.CALL, call.closeOffset, call.range))
+    for (token in code.code) {
+        if (token.type != KotlinTokenTypes.OPERATION_SIGN) continue
+        when {
+            token.text == "++" || token.text == "--" ->
+                effects.add(KtEffect(EffectKind.INCREMENT, token.start, token.range))
+            token.text in ASSIGNMENT_OPERATORS -> {
+                if (token.text == "=" && code.isDeclarationEquals(token.index)) continue
+                if (insideNonExpression(code, token.start)) continue
+                if (isNamedArgumentEquals(code, token.index)) continue
+                val statement = code.statementAt(token.start)
+                val offset = statement?.end ?: token.end
+                effects.add(KtEffect(EffectKind.ASSIGNMENT, offset, token.range))
+            }
+        }
+    }
+    return effects
+}
+
+/**
+ * True when the `=` at [index] initializes something (a val/var, a parameter default, an
+ * expression body) rather than assigning to an existing variable.
+ */
+private fun KotlinCode.isDeclarationEquals(index: Int): Boolean {
+    var current = index - 1
+    var guard = 0
+    while (current >= 0 && guard++ < 500) {
+        val token = code[current]
+        val next = code.getOrNull(current + 1)
+        if (next != null && splitsAfter(token, next)) return false
+        when {
+            token.text == "}" || token.text == "{" || token.text == ";" || token.text == "=" ||
+                token.text in ASSIGNMENT_OPERATORS || token.text == "->" -> return false
+            isCloser(token) -> {
+                val open = matchingIndex(current)
+                if (open < 0) return false
+                current = open - 1
+                continue
+            }
+            token.type == KotlinTokenTypes.KEYWORD && token.text in setOf(
+                "val", "var", "fun", "class", "object", "interface", "when", "for", "catch",
+                "constructor",
+            ) -> return true
+            token.text == "(" || token.text == "," -> return true
+        }
+        current--
+    }
+    return false
+}
+
+private fun isNamedArgumentEquals(code: KotlinCode, equalsIndex: Int): Boolean {
+    val previous = code.code.getOrNull(equalsIndex - 1) ?: return false
+    if (!isNameToken(previous)) return false
+    val before = code.code.getOrNull(equalsIndex - 2) ?: return false
+    return before.text == "(" || before.text == "," || before.text == ":"
+}
+
+internal fun KotlinCode.callsIn(range: KtRange): List<KtCall> =
+    calls.filter { it.open.start >= range.start && (it.close?.end ?: it.open.end) <= range.end }
+
+internal fun KotlinCode.effectsIn(range: KtRange): List<KtEffect> =
+    effects.filter { it.offset >= range.start && it.offset < range.end }
+
+/** Calls and `++`/`--` in [range]'s statement that take effect before [offset]. */
+internal fun KotlinCode.effectsBefore(range: KtRange): List<KtEffect> {
+    val statement = statementAt(range.start) ?: return emptyList()
+    return effects.filter {
+        (it.kind == EffectKind.CALL || it.kind == EffectKind.INCREMENT) &&
+            it.offset >= statement.start && it.offset < range.start
+    }
+}
+
+internal enum class ExpressionProblem {
+    BOUNDARY,
+    BRACKETS,
+    STATEMENT,
+    SEMICOLON,
+    ASSIGNMENT,
+    DECLARATION,
+    OPERATOR_EDGE,
+    MEMBER,
+    CALL_CONTINUATION,
+    TYPE_POSITION,
+    ANNOTATION,
+    CONTROL,
+}
+
+/** The first reason [range] fails the R3 expression rules, `null` when it passes them. */
+internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
+    if (range.isEmpty) return ExpressionProblem.BOUNDARY
+    if (isInsideOpaqueText(range.start)) return ExpressionProblem.BOUNDARY
+    val first = tokenStartingAt(range.start) ?: return ExpressionProblem.BOUNDARY
+    tokenEndingAt(range.end) ?: return ExpressionProblem.BOUNDARY
+    val atoms = expressionAtoms(range) ?: return ExpressionProblem.BOUNDARY
+
+    val statement = statementAt(range.start) ?: return ExpressionProblem.STATEMENT
+    if (range.end > statement.end) return ExpressionProblem.STATEMENT
+    for (token in code) {
+        if (token.start < range.start || token.end > range.end) continue
+        if (token.index in templateTokens) continue
+        if (statementAt(token.start) !== statement) return ExpressionProblem.STATEMENT
+    }
+
+    for (token in code) {
+        if (token.start < range.start || token.end > range.end) continue
+        when (token.text) {
+            "(", "[", "{" -> {
+                val close = matchingIndex(token.index)
+                if (close < 0 || code[close].start >= range.end) return ExpressionProblem.BRACKETS
+            }
+            ")", "]", "}" -> {
+                val open = matchingIndex(token.index)
+                if (open < 0 || code[open].start < range.start) return ExpressionProblem.BRACKETS
+            }
+        }
+    }
+
+    var depth = 0
+    for (atom in atoms) {
+        when (atom.text) {
+            "(", "[", "{" -> depth++
+            ")", "]", "}" -> depth--
+            else -> if (depth <= 0) {
+                if (atom.text == ";") return ExpressionProblem.SEMICOLON
+                if (atom.text == "=" || atom.text == ":") return ExpressionProblem.ASSIGNMENT
+                if (atom.token.type == KotlinTokenTypes.KEYWORD &&
+                    atom.text in setOf("val", "var", "fun", "class", "object", "interface", "typealias")
+                ) {
+                    return ExpressionProblem.DECLARATION
+                }
+            }
+        }
+    }
+
+    if (first.type == KotlinTokenTypes.OPERATION_SIGN && first.text !in PREFIX_OPERATORS) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    if (first.type == KotlinTokenTypes.DOT || first.type == KotlinTokenTypes.COMMA ||
+        first.type == KotlinTokenTypes.SEMICOLON
+    ) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    val last = atoms.lastOrNull() ?: return ExpressionProblem.BOUNDARY
+    if (last.token.type == KotlinTokenTypes.OPERATION_SIGN && last.text !in POSTFIX_OPERATORS) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    if (last.token.type == KotlinTokenTypes.DOT || last.token.type == KotlinTokenTypes.COMMA) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+
+    val before = tokenBefore(range.start)
+    if (before != null) {
+        if (before.type == KotlinTokenTypes.DOT || before.text == "::") return ExpressionProblem.MEMBER
+        if (before.text == "?" && tokenBefore(before.start)?.type == KotlinTokenTypes.DOT) {
+            return ExpressionProblem.MEMBER
+        }
+    }
+    val after = tokenAfter(range.end)
+    if (after != null) {
+        if (after.text == "(" || after.text == "[" || after.text == "=" ||
+            after.text in setOf("+=", "-=", "*=", "/=", "%=", "++", "--")
+        ) {
+            return ExpressionProblem.CALL_CONTINUATION
+        }
+        if (after.text == "{") {
+            val block = blocks.firstOrNull { it.open.index == after.index }
+            if (block?.kind == BlockKind.LAMBDA) return ExpressionProblem.CALL_CONTINUATION
+        }
+        if (after.text == "<" && isGenericCallAt(this, after.index)) return ExpressionProblem.CALL_CONTINUATION
+    }
+
+    if (before != null) {
+        if (before.text == ":" || before.text == "as" || before.text == "is") {
+            return ExpressionProblem.TYPE_POSITION
+        }
+        if (before.text == "?" && tokenBefore(before.start)?.text == "as") return ExpressionProblem.TYPE_POSITION
+        if (before.text == "is" && tokenBefore(before.start)?.text == "!") return ExpressionProblem.TYPE_POSITION
+    }
+    if (isInsideTypeArguments(this, range.start)) return ExpressionProblem.TYPE_POSITION
+
+    if (nonExpressionRanges.any { it.start < range.end && range.start < it.end }) {
+        return ExpressionProblem.ANNOTATION
+    }
+
+    for (atom in atoms) {
+        if (atom.token.type != KotlinTokenTypes.KEYWORD) continue
+        if (atom.text == "return" && isLabelReturnInsideLambda(atom.token, range)) continue
+        if (atom.text in setOf("return", "break", "continue", "throw")) return ExpressionProblem.CONTROL
+    }
+    return null
+}
+
+private fun KotlinCode.isLabelReturnInsideLambda(token: KtToken, range: KtRange): Boolean {
+    val next = tokenAfter(token.end) ?: return false
+    if (next.text != "@") return false
+    return blocks.any {
+        it.kind == BlockKind.LAMBDA && it.open.start >= range.start &&
+            (it.close?.end ?: it.open.end) <= range.end && it.contains(token.start)
+    }
+}
+
+private fun isGenericCallAt(code: KotlinCode, openIndex: Int): Boolean {
+    val close = angleClose(code, openIndex)
+    if (close < 0) return false
+    return code.code.getOrNull(close + 1)?.text == "("
+}
+
+private fun isInsideTypeArguments(code: KotlinCode, offset: Int): Boolean {
+    for (index in code.code.indices) {
+        val token = code.code[index]
+        if (token.text != "<") continue
+        val previous = code.code.getOrNull(index - 1) ?: continue
+        val generic = isNameToken(previous) || previous.text == ">" || previous.text == "]" || previous.text == ")"
+        if (!generic) continue
+        val close = angleClose(code, index)
+        if (close < 0) continue
+        if (token.start < offset && offset < code.code[close].start) return true
+    }
+    return false
+}
+
+internal fun KotlinCode.tokenStartingAt(offset: Int): KtToken? =
+    tokens.firstOrNull { it.start == offset && (it.isCode || it.isStringBody) }
+
+internal fun KotlinCode.tokenEndingAt(offset: Int): KtToken? =
+    tokens.lastOrNull { it.end == offset && (it.isCode || it.isStringBody) }
+
+internal fun KotlinCode.tokenBefore(offset: Int): KtToken? =
+    tokens.lastOrNull { it.end <= offset && (it.isCode || it.isStringBody) }
+
+internal fun KotlinCode.tokenAfter(offset: Int): KtToken? =
+    tokens.firstOrNull { it.start >= offset && (it.isCode || it.isStringBody) }
+
+internal fun KotlinCode.isInsideOpaqueText(offset: Int): Boolean {
+    for (token in tokens) {
+        if (offset <= token.start || offset >= token.end) continue
+        if (token.isComment) return true
+        if (token.isStringBody) {
+            val codeStartsHere = code.any { it.start == offset }
+            if (!codeStartsHere) return true
+        }
+    }
+    return false
+}
+
+private enum class AtomKind { NAME, LITERAL, OPERATOR, KEYWORD, OTHER }
+
+private class ExprAtom(val token: KtToken, val text: String, val kind: AtomKind)
+
+/**
+ * The expressions tokens of [range]: string literals collapse into one atom and template code is
+ * left out (it is judged on its own). `null` when a code token straddles the range boundary.
+ */
+private fun KotlinCode.expressionAtoms(range: KtRange): List<ExprAtom>? {
+    val atoms = ArrayList<ExprAtom>()
+    var index = 0
+    while (index < tokens.size) {
+        val token = tokens[index]
+        if (token.end <= range.start || token.start >= range.end) {
+            index++
+            continue
+        }
+        if (token.start < range.start || token.end > range.end) {
+            if (token.isStringBody || token.isComment) {
+                index++
+                continue
+            }
+            return null
+        }
+        when {
+            token.isComment -> index++
+            token.isStringBody -> {
+                if (!token.text.startsWith("\"")) {
+                    index++
+                    continue
+                }
+                var end = token.end
+                var pieceIndex = index
+                while (tokens[pieceIndex].text.endsWith("\${")) {
+                    var next = pieceIndex + 1
+                    while (next < tokens.size && !(tokens[next].isStringBody && tokens[next].start >= end)) next++
+                    if (next >= tokens.size) break
+                    pieceIndex = next
+                    end = tokens[next].end
+                    if (tokens[next].text.endsWith("\${")) continue
+                    break
+                }
+                atoms.add(ExprAtom(token, "\"\"", AtomKind.LITERAL))
+                index = pieceIndex + 1
+            }
+            token.index in templateTokens -> index++
+            else -> {
+                val kind = when {
+                    isNameToken(token) -> AtomKind.NAME
+                    token.type == KotlinTokenTypes.NUMBER || token.type == KotlinTokenTypes.CHARACTER ->
+                        AtomKind.LITERAL
+                    token.type == KotlinTokenTypes.OPERATION_SIGN -> AtomKind.OPERATOR
+                    token.type == KotlinTokenTypes.KEYWORD -> AtomKind.KEYWORD
+                    else -> AtomKind.OTHER
+                }
+                atoms.add(ExprAtom(token, token.text, kind))
+                index++
+            }
+        }
+    }
+    return atoms
+}
+
+private val PREFIX_OPERATORS = setOf("!", "-", "+", "~")
+
+private val POSTFIX_OPERATORS = setOf("!!", "++", "--")
+
+private val STABLE_OPERATORS = setOf(
+    "+", "-", "*", "<", ">", "<=", ">=", "==", "!=", "===", "!==", "&&", "||", "!", "?:", "..",
+)
+
+/** R2 stability: only literals, `this`, booleans, `null`, stable locals and the listed operators. */
+internal fun KotlinCode.isStable(range: KtRange): Boolean {
+    if (!templatesStable(range)) return false
+    val atoms = expressionAtoms(range) ?: return false
+    val parser = StableParser(this, atoms)
+    return parser.parse()
+}
+
+private class StableParser(private val code: KotlinCode, private val atoms: List<ExprAtom>) {
+    private var index = 0
+
+    fun parse(): Boolean {
+        if (atoms.isEmpty()) return false
+        if (!expression()) return false
+        return index == atoms.size
+    }
+
+    private fun expression(): Boolean {
+        if (!primary()) return false
+        while (index < atoms.size) {
+            val atom = atoms[index]
+            if (atom.kind == AtomKind.OPERATOR && atom.text in STABLE_OPERATORS) {
+                index++
+                if (!primary()) return false
+            } else {
+                break
+            }
+        }
+        return true
+    }
+
+    private fun primary(): Boolean {
+        if (index >= atoms.size) return false
+        val atom = atoms[index]
+        if (atom.text == "(") {
+            index++
+            if (!expression()) return false
+            if (index >= atoms.size || atoms[index].text != ")") return false
+            index++
+            return true
+        }
+        if (atom.kind == AtomKind.LITERAL) {
+            index++
+            return true
+        }
+        if (atom.kind == AtomKind.KEYWORD && atom.text in setOf("this", "null", "true", "false")) {
+            index++
+            return true
+        }
+        if (atom.kind == AtomKind.OPERATOR && atom.text in setOf("!", "-", "+")) {
+            index++
+            return primary()
+        }
+        if (atom.kind == AtomKind.NAME) {
+            val reference = code.references.firstOrNull { it.token.index == atom.token.index }
+            if (reference == null || !isStableLocal(reference.resolved)) return false
+            index++
+            return true
+        }
+        return false
+    }
+}
+
+private fun isStableLocal(local: KtLocal?): Boolean {
+    if (local == null) return false
+    return when (local.kind) {
+        LocalKind.VAL, LocalKind.PARAMETER, LocalKind.LAMBDA_PARAMETER, LocalKind.FOR,
+        LocalKind.CATCH, LocalKind.WHEN_SUBJECT,
+        -> true
+        else -> false
+    }
+}
+
+/** R2 read-only: no calls, no `!!` and no indexing; vars and members may be read. */
+internal fun KotlinCode.isReadOnly(range: KtRange): Boolean {
+    if (callsIn(range).isNotEmpty()) return false
+    for (token in code) {
+        if (token.start < range.start || token.end > range.end) continue
+        if (token.index in templateTokens) continue
+        when (token.text) {
+            "!!", "[", "++", "--", "=", "+=", "-=", "*=", "/=", "%=" -> return false
+        }
+        if (token.type == KotlinTokenTypes.KEYWORD &&
+            token.text in setOf("return", "break", "continue", "throw")
+        ) {
+            return false
+        }
+    }
+    for (block in blocks) {
+        if (block.kind == BlockKind.LAMBDA && block.open.start >= range.start &&
+            (block.close?.end ?: block.open.end) <= range.end
+        ) {
+            return false
+        }
+    }
+    for (template in templateExpressionRanges) {
+        if (template.start > range.start && template.end < range.end && !isReadOnly(template)) return false
+    }
+    return true
+}
+
+/** R5 atomic substitution: one name, literal, `this`, postfix chain, or one parenthesized group. */
+internal fun KotlinCode.isAtomic(range: KtRange): Boolean {
+    val first = tokenStartingAt(range.start) ?: return false
+    if (first.isStringBody) {
+        val atoms = expressionAtoms(range) ?: return false
+        return atoms.size == 1 && atoms[0].kind == AtomKind.LITERAL
+    }
+    if (first.text == "(") {
+        val close = matching(first.index) ?: return false
+        return close.end == range.end
+    }
+    if (!isChainPrimary(first)) return false
+    var index = first.index + 1
+    val lastIndex = code.indexOfLast { it.end <= range.end && it.start >= range.start }
+    if (lastIndex < first.index) return false
+    while (index <= lastIndex) {
+        val token = code[index]
+        when {
+            token.text == "." -> {
+                val name = code.getOrNull(index + 1) ?: return false
+                if (!isNameToken(name)) return false
+                index += 2
+            }
+            token.text == "?" && code.getOrNull(index + 1)?.text == "." -> {
+                val name = code.getOrNull(index + 2) ?: return false
+                if (!isNameToken(name)) return false
+                index += 3
+            }
+            token.text == "(" -> {
+                val close = matchingIndex(index)
+                if (close < 0) return false
+                index = close + 1
+            }
+            token.text == "[" -> {
+                val close = matchingIndex(index)
+                if (close < 0) return false
+                index = close + 1
+            }
+            token.text == "!!" -> index++
+            else -> return false
+        }
+    }
+    return index > lastIndex && code[lastIndex].end == range.end
+}
+
+private fun isChainPrimary(token: KtToken): Boolean =
+    isNameToken(token) || token.type == KotlinTokenTypes.NUMBER || token.type == KotlinTokenTypes.CHARACTER ||
+        (token.type == KotlinTokenTypes.KEYWORD && token.text == "this")
+
+/** True when every template in [range] is stable: `$name` reads a val or parameter and `${…}` is stable. */
+internal fun KotlinCode.templatesStable(range: KtRange): Boolean {
+    for (token in code) {
+        if (token.index !in simpleTemplateTokens) continue
+        if (token.start < range.start || token.end > range.end) continue
+        val reference = references.firstOrNull { it.token.index == token.index } ?: return false
+        if (!isStableLocal(reference.resolved)) return false
+    }
+    for (template in templateExpressionRanges) {
+        if (template.start > range.start && template.end < range.end && !isStable(template)) return false
+    }
+    return true
+}
+
+/** R2 conditional position, with the three places that are not conditional. */
+internal fun KotlinCode.isConditional(range: KtRange): Boolean {
+    val statement = statementAt(range.start) ?: return true
+    if (statement.startTokenIndex < 0) return false
+    if (insideFirstIfCondition(statement, range.start)) return false
+    if (insideWhenSubject(statement, range.start)) return false
+    if (insideForIterable(statement, range.start)) return false
+
+    var index = statement.startTokenIndex
+    while (index <= statement.endTokenIndex && code[index].end <= range.start) {
+        val token = code[index]
+        if (isOpener(token)) {
+            val close = matchingIndex(index)
+            if (close >= 0 && code[close].end <= range.start) {
+                index = close + 1
+                continue
+            }
+        }
+        when {
+            token.text in setOf("&&", "||", "?:", "else", "->") -> return true
+            token.text == "?" && code.getOrNull(index + 1)?.type == KotlinTokenTypes.DOT -> return true
+            token.text == "{" && blocks.firstOrNull { it.open.index == index }?.kind == BlockKind.WHEN_BODY -> return true
+            token.type == KotlinTokenTypes.KEYWORD &&
+                token.text in setOf("if", "while", "for", "do", "try", "catch", "finally") -> return true
+        }
+        index++
+    }
+    return false
+}
+
+private fun KotlinCode.insideFirstIfCondition(statement: KtStatement, offset: Int): Boolean {
+    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+        val token = code[index]
+        if (token.type != KotlinTokenTypes.KEYWORD || token.text != "if") continue
+        val open = code.getOrNull(index + 1) ?: return false
+        if (open.text != "(") return false
+        val close = matching(open.index) ?: return false
+        return offset > open.start && offset < close.end
+    }
+    return false
+}
+
+private fun KotlinCode.insideWhenSubject(statement: KtStatement, offset: Int): Boolean {
+    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+        val token = code[index]
+        if (token.type != KotlinTokenTypes.KEYWORD || token.text != "when") continue
+        val open = code.getOrNull(index + 1) ?: continue
+        if (open.text != "(") continue
+        val close = matching(open.index) ?: continue
+        if (offset > open.start && offset < close.end) return true
+    }
+    return false
+}
+
+private fun KotlinCode.insideForIterable(statement: KtStatement, offset: Int): Boolean {
+    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+        val token = code[index]
+        if (token.type != KotlinTokenTypes.KEYWORD || token.text != "for") continue
+        val open = code.getOrNull(index + 1) ?: continue
+        if (open.text != "(") continue
+        val close = matching(open.index) ?: continue
+        if (offset <= open.start || offset >= close.end) continue
+        var inIndex = -1
+        var i = open.index + 1
+        while (i < close.index) {
+            if (code[i].text == "in") {
+                inIndex = i
+                break
+            }
+            if (isOpener(code[i])) {
+                val group = matchingIndex(i)
+                if (group in (i + 1) until close.index) {
+                    i = group + 1
+                    continue
+                }
+            }
+            i++
+        }
+        if (inIndex >= 0 && offset > code[inIndex].end) return true
+    }
+    return false
+}
+
+/** True when two ranges hold the same code tokens, comments and whitespace ignored. */
+internal fun KotlinCode.sameTokens(left: KtRange, right: KtRange): Boolean {
+    val leftTokens = tokens.filter {
+        !it.isComment && it.start >= left.start && it.end <= left.end && (it.isCode || it.isStringBody)
+    }
+    val rightTokens = tokens.filter {
+        !it.isComment && it.start >= right.start && it.end <= right.end && (it.isCode || it.isStringBody)
+    }
+    if (leftTokens.size != rightTokens.size) return false
+    for (index in leftTokens.indices) {
+        if (leftTokens[index].text != rightTokens[index].text) return false
+    }
+    return true
+}
+
+internal fun isValidKotlinIdentifier(name: String): Boolean =
+    name.isNotEmpty() && (name[0] == '_' || name[0].isLetter()) &&
+        name.all { it == '_' || it.isLetterOrDigit() } &&
+        name.all { it.code < 128 }
+
+internal fun isHardKeyword(name: String): Boolean = name in KotlinCode.HARD_KEYWORDS
+
+/**
+ * The function body, initializer or outermost lambda whose name check applies at [offset].
+ * `null` when the offset is not inside a statement block.
+ */
+internal fun KotlinCode.nameScope(offset: Int): KtRange? {
+    val chain = blockChain(offset).filter { it.isStatementBlock }
+    if (chain.isEmpty()) return null
+    val functionIndex = chain.indexOfLast { it.kind == BlockKind.FUNCTION_BODY || it.kind == BlockKind.INITIALIZER }
+    val lambdaIndex = chain.indexOfFirst { it.kind == BlockKind.LAMBDA }
+    val block = when {
+        lambdaIndex >= 0 && lambdaIndex > functionIndex -> chain[lambdaIndex]
+        functionIndex >= 0 -> chain[functionIndex]
+        lambdaIndex >= 0 -> chain[lambdaIndex]
+        else -> chain.last()
+    }
+    return KtRange(block.start, block.end)
+}

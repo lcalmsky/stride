@@ -417,6 +417,35 @@ declaration's own modifiers.
 messages and the text it writes are the app's contract and live in `docs/api-app.md`
 「Refactorings」 R2 to R5.
 
+Introduce Variable runs on `KotlinCode`, an internal model built once per document. It reads token
+ranges only; the same instance answers every later question and never lexes the text again.
+`KotlinIntroduceVariable` is R3 on this model, and Extract Method and Inline read the same model.
+
+```kotlin
+internal class KotlinCode(text: String)
+val tokens: List<KtToken>              // code, comments and string pieces; KtToken.isCode
+val code: List<KtToken>                // code tokens only, non-overlapping
+val bracketsMatch: Boolean             // false refuses every refactoring
+fun tokenAt(offset: Int): KtToken?; fun matching(index: Int): KtToken?
+enum class BlockKind { FUNCTION_BODY, INITIALIZER, CONTROL_BODY, WHEN_BODY, CLASS_BODY, LAMBDA }
+val blocks: List<KtBlock>; fun blockAt(offset: Int): KtBlock?; fun blockChain(offset: Int): List<KtBlock>
+val statements: List<KtStatement>; fun statementAt(offset: Int): KtStatement?
+val functions: List<KtFunction>        // name, modifiers, annotations, type parameters, receiver,
+                                        // parameters, return type, body, container, declaration starts
+val locals: List<KtLocal>; val references: List<KtReference>   // KtReference.resolved
+val calls: List<KtCall>; val effects: List<KtEffect>
+fun KotlinCode.callsIn(range) / effectsIn(range) / effectsBefore(range)
+fun KotlinCode.checkExpression(range): ExpressionProblem?
+fun KotlinCode.isStable(range) / isReadOnly(range) / isAtomic(range) / isConditional(range)
+fun KotlinCode.sameTokens(left, right): Boolean
+fun KotlinCode.nameScope(offset): KtRange?; fun KotlinCode.isNameUsedIn(scope, name): Boolean
+enum class LocalKind { VAL, VAR, PARAMETER, LAMBDA_PARAMETER, FOR, CATCH, WHEN_SUBJECT, LOCAL_FUN, LOCAL_CLASS }
+```
+
+An unknown shape is not guessed: a missing bracket pair, an expression outside a statement or an
+unresolvable split keeps the judgment conservative, so the refactoring refuses instead of writing
+text whose meaning it cannot prove.
+
 ### Kotlin import optimizer
 
 `KotlinImportOptimizer` rewrites the import block with the same decisions as the quick fix
@@ -556,5 +585,7 @@ plugin id is `stride.core`.
 | `:plugins:lang-kotlin` | `KotlinImportOptimizerTest` | unused and duplicate removal, the java/javax/kotlin/alias group order, blank-line collapse, a comment inside the block keeping the order and the blank line after it, star and KDoc-link cases, an already optimized file and a file with no imports reporting no edits |
 | `:plugins:lang-kotlin` | `KotlinProblemProviderTest` | brackets in templates, raw strings, characters, strings, comments and nested comments ignored, unexpected and unclosed messages and ranges, unused import warnings and the alias, star, operator and template exceptions |
 | `:plugins:lang-kotlin` | `KotlinValVarIntentionTest` | `val`/`var` toggle, `const val` and `lateinit var` skipped, keywords in comments ignored |
+| `:plugins:lang-kotlin` | `KotlinCodeModelTest` | block kinds and loop bodies, statement splitting and continuation lines, locals and resolution with shadowing, template references, named arguments, calls and effect offsets, expression rules, stability, read-only and atomic checks, conditional positions, effects before an expression, unbalanced brackets |
+| `:plugins:lang-kotlin` | `KotlinIntroduceVariableTest` | R3 selections, trimming, string and template selections, missing statement block and expression body refusals, shared lines, conditional and effect refusals, occurrence choosers and their highlights, candidate order, suggested and unique names, name checks, multi-line text and CRLF |
 | `:plugins:lang-json` | `JsonLexerTest` | token kinds, invalid characters, resume at every line start |
 | `:plugins:lang-json` | `JsonProblemProviderTest` | valid input, an unclosed brace, an unexpected bracket, brackets inside a string, a commented file reporting nothing |
