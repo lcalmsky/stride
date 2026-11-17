@@ -34,6 +34,7 @@ import stride.app.navigation.NavigationLocation
 import stride.app.problems.CompilerMessage
 import stride.app.problems.ProblemSource
 import stride.app.problems.ProblemsModel
+import stride.app.refactor.openRefactorThis
 import stride.app.search.FindTabKind
 import stride.app.run.FakeProcess
 import stride.app.run.GradleCommand
@@ -1022,6 +1023,36 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(35)
+    fun `refactor this snapshot`() {
+        val root = refactoringProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = openEditor(session, root.resolve("src/main/kotlin/api/OrderService.kt"))
+            val text = editor.value.text
+            val use = text.indexOf("discount", text.indexOf("return"))
+            check(use > 0) { "the discount use did not move into the return statement" }
+            editor.updateValue(TextFieldValue(text, TextRange(use, use + "discount".length)))
+
+            assertTrue(openRefactorThis(state))
+            val request = requireNotNull(state.refactorThis) { "Refactor This opened no popup" }
+            assertEquals(
+                listOf("Rename…", "Introduce Variable…", "Extract Method…", "Inline…"),
+                request.rows.map { it.text },
+            )
+            assertEquals(listOf("⇧F6", "⌥⌘V", "⌥⌘M", "⌥⌘N"), request.rows.map { it.hint })
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+            renderApp("24-refactor-this.png", state, renderMillis = 800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("24-refactor-this.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
@@ -1093,6 +1124,36 @@ class UiSnapshotTest {
                     return 0;
                 }
             }
+            """.trimIndent() + "\n",
+        )
+        return root
+    }
+
+    private fun refactoringProject(): Path {
+        val root = temp.resolve("api-server")
+        Files.createDirectories(root.resolve("src/main/kotlin/api"))
+        Files.writeString(root.resolve("build.gradle.kts"), "plugins {\n    kotlin(\"jvm\")\n}\n")
+        Files.writeString(
+            root.resolve("src/main/kotlin/api/OrderService.kt"),
+            """
+            package api
+
+            class OrderService(private val orders: List<Order>) {
+                fun total(): Double {
+                    val discount: Double = 0.1
+                    val subtotal = orders.sumOf { it.price }
+                    return subtotal * (1 - discount)
+                }
+
+                fun cheapest(): Order = orders.minBy { it.price }
+
+                fun describe(): String {
+                    val amount = total()
+                    return "total: ${'$'}amount"
+                }
+            }
+
+            class Order(val price: Double)
             """.trimIndent() + "\n",
         )
         return root
@@ -1231,6 +1292,7 @@ class UiSnapshotTest {
             "21-recent-locations.png",
             "22-navigation-bar.png",
             "23-type-hierarchy.png",
+            "24-refactor-this.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",
