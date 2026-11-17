@@ -111,6 +111,7 @@ internal object CallHierarchyNodes {
                     parsed.packageName,
                     parsed.imports,
                     parsed.outline.classesAt(site.start).map { it.name },
+                    lineOf(text, site.start),
                 )
                 if (!graph.mayCall(target, site, context)) continue
                 val member = parsed.outline.memberAt(site.start)
@@ -148,6 +149,7 @@ internal object CallHierarchyNodes {
             parsed.packageName,
             parsed.imports,
             outline.classesAt(nameOffset).map { it.name },
+            lineOf(text, nameOffset),
         )
         val grouped = LinkedHashMap<String, Declaration>()
         for (site in CallSites.inRange(target.file.name, text, member.start, member.end)) {

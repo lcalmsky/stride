@@ -32,6 +32,7 @@ internal class HierarchyCaret(val editor: TextFileEditor) {
         packageName = packageName,
         imports = imports,
         enclosingClasses = outline.classesAt(position).map { it.name },
+        line = lineOf(text, position),
     )
 
     /** The declaration whose name holds the caret, if any. */

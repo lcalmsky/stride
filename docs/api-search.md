@@ -177,7 +177,7 @@ class DeclarationIndex {
 }
 
 data class NameContext(val file: VFile?, val packageName: String?, val imports: List<SourceImport>,
-                       val enclosingClasses: List<String> = emptyList())
+                       val enclosingClasses: List<String> = emptyList(), val line: Int? = null)
 data class SupertypeRef(val written: String, val resolved: List<Declaration>)
 
 class TypeGraph(declarations: List<Declaration>, importsOf: (VFile) -> List<SourceImport>) {
@@ -237,6 +237,10 @@ object TypeReferences {
   that name. A private member of a supertype is never inherited, so the supertype part of the
   unqualified/`this` path, the `super` path and `superMembers` leave it out; `implementations`
   returns nothing for a private target.
+- `NameContext.line` is the 0-based line the query is written on: a simple class name that two
+  classes in the file share resolves to the one declared nearest at or before that line
+  (`classInContext`, and the innermost enclosing class in `resolveType`), and a null line to the
+  first one in the file.
 - `TypeGraph.classOf` picks, among the classes of the member's file with its simple container name,
   the one declared nearest before the member, so two nested classes with the same simple name in
   one file stay apart (`membersByClass` uses the same result).

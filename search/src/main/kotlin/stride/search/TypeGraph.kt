@@ -6,12 +6,18 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Where a name is written, so it can be resolved the way the compiler would without one: the file,
  * its package and imports, and the simple names of the classes around the position, innermost first.
+ *
+ * [line] is the 0-based line the query is written on when the caller knows the position. A class
+ * simple name declared more than once in the file then means the one declared nearest at or before
+ * that line, so two nested classes sharing the name stay apart. Null means the first such class in
+ * the file.
  */
 data class NameContext(
     val file: VFile?,
     val packageName: String?,
     val imports: List<SourceImport>,
     val enclosingClasses: List<String> = emptyList(),
+    val line: Int? = null,
 )
 
 /** A supertype as written and the project classes it resolves to; an empty [resolved] means outside project sources. */
@@ -91,10 +97,7 @@ class TypeGraph(
             }
             val innermost = context.enclosingClasses.firstOrNull()
             if (innermost != null) {
-                val container = classesInFile(filePath)
-                    .filter { it.name == innermost }
-                    .minByOrNull { it.line }
-                    ?.container
+                val container = classInContext(innermost, context)?.container
                 val siblings = classesInFile(filePath).filter {
                     it.container == container && it.name == name && it.name != innermost
                 }
@@ -117,9 +120,15 @@ class TypeGraph(
         return sort(starred.distinct())
     }
 
-    /** The context a declaration's own text is written in: its file, package, imports and container. */
+    /** The context a declaration's own text is written in: its file, package, imports, container and line. */
     fun contextOf(declaration: Declaration): NameContext =
-        NameContext(declaration.file, declaration.packageName, importsOf(declaration.file), listOfNotNull(declaration.container))
+        NameContext(
+            declaration.file,
+            declaration.packageName,
+            importsOf(declaration.file),
+            listOfNotNull(declaration.container),
+            declaration.line,
+        )
 
     /**
      * The class a member is declared in: of the CLASS declarations of the same file named
@@ -374,9 +383,15 @@ class TypeGraph(
 
     private fun membersOf(type: Declaration): List<Declaration> = membersByClass[key(type)].orEmpty()
 
+    /**
+     * The class named [name] in [NameContext.file]: with [NameContext.line], the one declared
+     * nearest at or before it, otherwise the first one in the file.
+     */
     private fun classInContext(name: String, context: NameContext): Declaration? {
         val path = context.file?.path?.toString() ?: return null
-        return classesInFile(path).filter { it.name == name }.minByOrNull { it.line }
+        val named = classesInFile(path).filter { it.name == name }
+        val line = context.line
+        return if (line == null) named.minByOrNull { it.line } else named.filter { it.line <= line }.maxByOrNull { it.line }
     }
 
     private fun topLevelFunctions(name: String, context: NameContext): List<Declaration> {

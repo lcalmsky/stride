@@ -45,7 +45,8 @@ class TypeGraphTest {
         packageName: String? = "demo",
         imports: List<SourceImport> = emptyList(),
         enclosing: List<String> = emptyList(),
-    ) = NameContext(VFile(root.resolve(path)), packageName, imports, enclosing)
+        line: Int? = null,
+    ) = NameContext(VFile(root.resolve(path)), packageName, imports, enclosing, line)
 
     @Test
     fun `an explicit import wins over a class in the same package`() {
@@ -344,6 +345,38 @@ class TypeGraphTest {
         assertEquals(bInC, typeGraph.classOf(two))
         assertEquals(listOf(two), typeGraph.membersNamed("two", bInC, includeSupertypes = false))
         assertTrue(typeGraph.membersNamed("two", bInA, includeSupertypes = false).isEmpty())
+    }
+
+    @Test
+    fun `the context line tells nested classes with the same name apart`() {
+        val outerA = declaration("A", path = "src/Both.kt", line = 0)
+        val bInA = declaration("B", path = "src/Both.kt", line = 0, container = "A")
+        val one = declaration("one", path = "src/Both.kt", kind = DeclarationKind.SYMBOL, container = "B", line = 1)
+        val outerC = declaration("C", path = "src/Both.kt", line = 3)
+        val bInC = declaration("B", path = "src/Both.kt", line = 3, container = "C")
+        val two = declaration("two", path = "src/Both.kt", kind = DeclarationKind.SYMBOL, container = "B", line = 4)
+        val typeGraph = graph(listOf(outerA, bInA, one, outerC, bInC, two))
+
+        assertTrue(
+            typeGraph.resolveCallee(
+                CallSite("one", 0, 3),
+                context(path = "src/Both.kt", enclosing = listOf("B"), line = 4),
+            ).isEmpty(),
+            "a call inside C.B does not reach A.B.one",
+        )
+        assertEquals(
+            listOf(one),
+            typeGraph.resolveCallee(
+                CallSite("one", 0, 3),
+                context(path = "src/Both.kt", enclosing = listOf("B"), line = 1),
+            ),
+            "a call inside A.B reaches A.B.one",
+        )
+        assertEquals(
+            listOf(one),
+            typeGraph.resolveCallee(CallSite("one", 0, 3), context(path = "src/Both.kt", enclosing = listOf("B"))),
+            "without a line the first class of that name is used",
+        )
     }
 
     @Test
