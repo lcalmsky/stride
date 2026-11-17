@@ -14,6 +14,7 @@ import stride.search.OutlineMember
 import stride.search.SourceImport
 import stride.search.TypeGraph
 import stride.search.classesAt
+import stride.search.extensionReceiverAt
 import stride.search.memberAt
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -112,6 +113,7 @@ internal object CallHierarchyNodes {
                     parsed.imports,
                     parsed.outline.classesAt(site.start).map { it.name },
                     lineOf(text, site.start),
+                    parsed.outline.extensionReceiverAt(site.start),
                 )
                 if (!graph.mayCall(target, site, context)) continue
                 val member = parsed.outline.memberAt(site.start)
@@ -150,6 +152,7 @@ internal object CallHierarchyNodes {
             parsed.imports,
             outline.classesAt(nameOffset).map { it.name },
             lineOf(text, nameOffset),
+            outline.extensionReceiverAt(nameOffset),
         )
         val grouped = LinkedHashMap<String, Declaration>()
         for (site in CallSites.inRange(target.file.name, text, member.start, member.end)) {

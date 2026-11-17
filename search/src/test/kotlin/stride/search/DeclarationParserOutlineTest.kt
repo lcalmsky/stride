@@ -1,6 +1,7 @@
 package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -197,6 +198,50 @@ class DeclarationParserOutlineTest {
             }
         """.trimIndent()
         assertEquals(listOf("build"), DeclarationParser.outline("Sample.kt", text).map { it.name })
+    }
+
+    @Test
+    fun `extension receivers are recorded as written`() {
+        val text = """
+            fun Config.reload() {}
+            fun <T> Box<T>.open(): T = TODO()
+            fun a.b.Config.reloadFrom() {}
+            fun Config?.orEmpty() {}
+            val Config.size: Int get() = 1
+            fun reloadPlain() {}
+            fun (Int) -> Unit.applyEach() {}
+        """.trimIndent()
+        val members = DeclarationParser.outline("Sample.kt", text)
+        assertEquals("Config", members.single { it.name == "reload" }.receiverType)
+        assertEquals("Box", members.single { it.name == "open" }.receiverType)
+        assertEquals("a.b.Config", members.single { it.name == "reloadFrom" }.receiverType)
+        assertEquals("Config", members.single { it.name == "orEmpty" }.receiverType)
+        assertEquals("Config", members.single { it.name == "size" }.receiverType)
+        assertNull(members.single { it.name == "reloadPlain" }.receiverType)
+        assertNull(members.single { it.name == "applyEach" }.receiverType)
+    }
+
+    @Test
+    fun `java members have no extension receiver`() {
+        val members = DeclarationParser.outline("Sample.java", "public class Sample { public void run() {} }")
+        assertNull(members.single { it.name == "run" }.receiverType)
+    }
+
+    @Test
+    fun `extensionReceiverAt takes the innermost extension around the offset`() {
+        val text = """
+            fun Config.reload() {
+                fun local() {
+                    load()
+                }
+            }
+            fun plain() {
+                load()
+            }
+        """.trimIndent()
+        val members = DeclarationParser.outline("Sample.kt", text)
+        assertEquals("Config", members.extensionReceiverAt(text.indexOf("load()")))
+        assertNull(members.extensionReceiverAt(text.lastIndexOf("load()")))
     }
 
     @Test

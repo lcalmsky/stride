@@ -2188,10 +2188,13 @@ Decision H6: Call Hierarchy matches calls by name and visibility.
   `<n> declarations share this name` when more than one project declaration is named so.
 - Only-unique-name matching was rejected: most calls go through a receiver (`service.process()`),
   so it would hide real callers without saying so; a candidate row shows its call line, which costs
-  a glance, unlike an asserted problem. Calls through an unrelated receiver class are still left
-  out by `mayCall`.
+  a glance, unlike an asserted problem. An unqualified call inside an extension function or
+  property is judged as a member of its receiver's type, and an unqualified call inside a lambda
+  that resolves to nothing in its own scope stays a candidate (the subject's type of `with` and
+  `apply` is not read). Calls through an unrelated receiver class are still left out by `mayCall`.
 - Differences: no scope filter, no `Base on this method`, no usage preview pane; the root cannot
-  switch between callers and callees, both are children of it.
+  switch between callers and callees, both are children of it. A supertype of an object expression
+  (an anonymous class) is not read as an implicit receiver.
 
 ### Messages
 

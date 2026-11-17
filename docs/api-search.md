@@ -160,9 +160,11 @@ enum class OutlineKind { CLASS, FUNCTION, PROPERTY, INITIALIZER, CONSTRUCTOR }
 data class OutlineMember(
     val name: String, val kind: OutlineKind, val container: String?, val line: Int,
     val start: Int, val nameStart: Int, val nameEnd: Int, val end: Int, val isOverride: Boolean = false,
+    val receiverType: String? = null,
 )
 fun List<OutlineMember>.memberAt(offset: Int): OutlineMember?
 fun List<OutlineMember>.classesAt(offset: Int): List<OutlineMember>
+fun List<OutlineMember>.extensionReceiverAt(offset: Int): String?
 
 object DeclarationParser {
     fun parse(fileName: String, text: String): List<ParsedDeclaration>
@@ -177,7 +179,8 @@ class DeclarationIndex {
 }
 
 data class NameContext(val file: VFile?, val packageName: String?, val imports: List<SourceImport>,
-                       val enclosingClasses: List<String> = emptyList(), val line: Int? = null)
+                       val enclosingClasses: List<String> = emptyList(), val line: Int? = null,
+                       val extensionReceiver: String? = null)
 data class SupertypeRef(val written: String, val resolved: List<Declaration>)
 
 class TypeGraph(declarations: List<Declaration>, importsOf: (VFile) -> List<SourceImport>) {
@@ -195,7 +198,8 @@ class TypeGraph(declarations: List<Declaration>, importsOf: (VFile) -> List<Sour
 }
 
 data class CallSite(val name: String, val start: Int, val end: Int,
-                    val receiver: String? = null, val isReference: Boolean = false)
+                    val receiver: String? = null, val isReference: Boolean = false,
+                    val inLambda: Boolean = false)
 object CallSites {
     fun find(fileName: String, text: String, name: String): List<CallSite>
     fun inRange(fileName: String, text: String, start: Int, end: Int): List<CallSite>
@@ -225,18 +229,30 @@ object TypeReferences {
 - `imports` stops at the first declaration; Java `import static` is skipped.
 - `outline` lists members at every class level but no local declaration; `memberAt` picks the
   innermost member holding an offset, `classesAt` the classes, innermost first.
+- `OutlineMember.receiverType` is the receiver written on a Kotlin extension function or property,
+  dots kept and type arguments and a trailing `?` dropped (`fun <T> Box<T>.open()` gives `Box`);
+  `null` for a plain member, a Java member and a function type receiver (`(Int) -> Unit.f()`).
+  `extensionReceiverAt` gives the receiver of the innermost extension member holding an offset, so
+  a call inside a local function of an extension function takes the outer receiver.
+- `NameContext.extensionReceiver` is that receiver type at the query position: its members are
+  implicit receivers the call does not name.
 - `TypeGraph.resolveType` order: dotted name, nested or sibling class in the file, explicit import
   (an import that names no project class ends the search: the name is outside the project), same
   package, star import. Empty means outside project sources. KDoc in `TypeGraph.kt` is the full
   contract of every query.
 - `TypeGraph.resolveCallee` receiver rules: no receiver and `this` share one path (members of the
-  enclosing classes and their supertypes, then visible top-level functions, then a visible class);
-  `super` walks the supertypes of the innermost enclosing class breadth first and takes the members
-  of the first class on each path that has one; any other receiver limits the result to the class
+  class `NameContext.extensionReceiver` resolves to and its supertypes, then members of the
+  enclosing classes and their supertypes, then visible top-level functions, then a visible class,
+  then, for a call inside a lambda, every member and visible top-level function of that name since
+  the lambda's subject may provide it); `super` walks the supertypes of the innermost enclosing
+  class breadth first and takes the members of the first class on each path that has one; any other receiver limits the result to the class
   it resolves to, and an unresolved receiver gives every visible member or top-level function of
   that name. A private member of a supertype is never inherited, so the supertype part of the
   unqualified/`this` path, the `super` path and `superMembers` leave it out; `implementations`
   returns nothing for a private target.
+- `TypeGraph.mayCall` accepts a member an unqualified or `this` call reaches when the extension
+  receiver resolves to the member's class or a subtype, and, inside a lambda, when `resolveCallee`
+  lists the member; a call outside both keeps the enclosing-class rule.
 - `NameContext.line` is the 0-based line the query is written on: a simple class name that two
   classes in the file share resolves to the one declared nearest at or before that line
   (`classInContext`, and the innermost enclosing class in `resolveType`), and a null line to the
@@ -250,6 +266,10 @@ object TypeReferences {
   class header opens the class body, a Kotlin property accessor `get()`/`set()` after modifiers and
   annotations only is a declaration, and a Java method or constructor head is a declaration even
   when `outline` missed it.
+- `CallSite.inLambda` marks a Kotlin call inside a lambda literal, counted from the file start: the
+  `{` of a call's trailing lambda, the `{` after a call's `)`, and a `{` after `(`, `,` or `=`. A
+  declared body, a control block, a `when` branch, an accessor and a class header are not lambdas;
+  Java calls are never inside one.
 - `TypeReferences.declaredType` returns `Explicit` only for a written type and `ConstructorCall`
   only for an initializer that is a single upper-case call; everything else is `Unknown` with the
   reason the status bar shows.

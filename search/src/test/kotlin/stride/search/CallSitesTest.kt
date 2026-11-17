@@ -1,6 +1,7 @@
 package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -206,6 +207,43 @@ class CallSitesTest {
             }
         """.trimIndent()
         assertTrue(CallSites.find("Sample.java", javaText, "static").isEmpty())
+    }
+
+    @Test
+    fun `a call inside a lambda literal is marked`() {
+        fun lambdas(text: String) = CallSites.find("Sample.kt", text, "load")
+
+        for (text in listOf(
+            "with(config) { load() }",
+            "config.apply { load() }",
+            "run { load() }",
+            "foo(1, { load() })",
+            "val f = { load() }",
+            "with(c) { if (x) { load() } }",
+            "fun f() = run { load() }",
+        )) {
+            assertTrue(lambdas(text).single().inLambda, "expected a lambda: $text")
+        }
+
+        for (text in listOf(
+            "fun f() { load() }",
+            "fun f(): Int { return load() }",
+            "if (x) { load() }",
+            "class A : Base() { fun f() { load() } }",
+            "init { load() }",
+            "try { load() } finally { }",
+            "when (x) { 1 -> { load() } }",
+            "object : Base() { fun f() { load() } }",
+        )) {
+            assertFalse(lambdas(text).single().inLambda, "expected no lambda: $text")
+        }
+
+        val java = "class S { void f() { items.forEach(r -> { load(); }); } }"
+        assertFalse(CallSites.find("Sample.java", java, "load").single().inLambda)
+
+        val ranged = "with(c) {\n    load()\n}"
+        val start = ranged.indexOf("{\n") + 2
+        assertTrue(CallSites.inRange("Sample.kt", ranged, start, ranged.length).single().inLambda)
     }
 
     @Test

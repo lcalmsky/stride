@@ -46,7 +46,8 @@ class TypeGraphTest {
         imports: List<SourceImport> = emptyList(),
         enclosing: List<String> = emptyList(),
         line: Int? = null,
-    ) = NameContext(VFile(root.resolve(path)), packageName, imports, enclosing, line)
+        extensionReceiver: String? = null,
+    ) = NameContext(VFile(root.resolve(path)), packageName, imports, enclosing, line, extensionReceiver)
 
     @Test
     fun `an explicit import wins over a class in the same package`() {
@@ -456,6 +457,69 @@ class TypeGraphTest {
                 context(),
             ).not(),
             "a receiver resolved to an unrelated class cannot call the member",
+        )
+    }
+
+    @Test
+    fun `an extension receiver reaches the members of its type`() {
+        val config = declaration("Config", path = "src/Config.kt", line = 0)
+        val load = declaration("load", path = "src/Config.kt", kind = DeclarationKind.SYMBOL, container = "Config", line = 1)
+        val typeGraph = graph(listOf(config, load))
+        val extension = context(path = "src/Use.kt", extensionReceiver = "Config")
+
+        assertTrue(typeGraph.mayCall(load, CallSite("load", 0, 4), extension))
+        assertEquals(listOf(load), typeGraph.resolveCallee(CallSite("load", 0, 4), extension))
+        assertTrue(
+            typeGraph.resolveCallee(CallSite("load", 0, 4), context(path = "src/Use.kt")).isEmpty(),
+            "outside an extension and a lambda an unqualified call reaches no member",
+        )
+    }
+
+    @Test
+    fun `an extension on a subtype reaches the member of the supertype`() {
+        val config = declaration("Config", path = "src/Config.kt", line = 0)
+        val load = declaration("load", path = "src/Config.kt", kind = DeclarationKind.SYMBOL, container = "Config", line = 1)
+        val sub = declaration("SubConfig", path = "src/SubConfig.kt", line = 0, supertypes = listOf("Config"))
+        val typeGraph = graph(listOf(config, load, sub))
+
+        assertTrue(
+            typeGraph.mayCall(load, CallSite("load", 0, 4), context(path = "src/Use.kt", extensionReceiver = "SubConfig")),
+        )
+    }
+
+    @Test
+    fun `a lambda call leaves the members of the name as candidates`() {
+        val config = declaration("Config", path = "src/Config.kt", line = 0)
+        val load = declaration("load", path = "src/Config.kt", kind = DeclarationKind.SYMBOL, container = "Config", line = 1)
+        val runner = declaration("Runner", path = "src/Runner.kt", line = 0)
+        val typeGraph = graph(listOf(config, load, runner))
+        val inRunner = context(path = "src/Runner.kt", enclosing = listOf("Runner"), line = 2)
+        val site = CallSite("load", 0, 4, inLambda = true)
+
+        assertTrue(typeGraph.mayCall(load, site, inRunner))
+        assertTrue(typeGraph.resolveCallee(site, inRunner).contains(load))
+
+        val holder = declaration("Holder", path = "src/Holder.kt", line = 0)
+        val ownLoad = declaration("load", path = "src/Holder.kt", kind = DeclarationKind.SYMBOL, container = "Holder", line = 1)
+        val holderGraph = graph(listOf(config, load, holder, ownLoad))
+        val inHolder = context(path = "src/Holder.kt", enclosing = listOf("Holder"), line = 2)
+        assertFalse(holderGraph.mayCall(load, site, inHolder), "a class with its own member keeps the call to itself")
+        assertEquals(listOf(ownLoad), holderGraph.resolveCallee(site, inHolder))
+    }
+
+    @Test
+    fun `an enclosing member wins over an extension receiver without the name`() {
+        val config = declaration("Config", path = "src/Config.kt", line = 0)
+        val holder = declaration("Holder", path = "src/Holder.kt", line = 0)
+        val ownLoad = declaration("load", path = "src/Holder.kt", kind = DeclarationKind.SYMBOL, container = "Holder", line = 1)
+        val typeGraph = graph(listOf(config, holder, ownLoad))
+
+        assertEquals(
+            listOf(ownLoad),
+            typeGraph.resolveCallee(
+                CallSite("load", 0, 4),
+                context(path = "src/Holder.kt", enclosing = listOf("Holder"), extensionReceiver = "Config"),
+            ),
         )
     }
 }

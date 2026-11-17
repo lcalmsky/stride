@@ -4,7 +4,8 @@ package stride.search
  * One call of a name in a file's text. [start] until [end] is the name. [receiver] is `null` for an
  * unqualified call, else the expression before the `.`: `this`, `super`, a simple name, or `"?"` for
  * anything longer (a call result, an index, a chain). [isReference] marks a `::name` callable
- * reference, whose [receiver] is the name before `::` or `null`.
+ * reference, whose [receiver] is the name before `::` or `null`. [inLambda] marks a call inside a
+ * Kotlin lambda literal `{ }` (at any depth), whose receiver can be an implicit one.
  */
 data class CallSite(
     val name: String,
@@ -12,6 +13,7 @@ data class CallSite(
     val end: Int,
     val receiver: String? = null,
     val isReference: Boolean = false,
+    val inLambda: Boolean = false,
 )
 
 /**
@@ -23,6 +25,11 @@ data class CallSite(
  * `new` and the names of declarations themselves (`fun name(`, `class Name(`, a property accessor
  * `get()`/`set()` after modifiers only, a Java method or constructor header even when the outline
  * misses it, `constructor(`) are not calls. No types are resolved here.
+ *
+ * In Kotlin a call inside a lambda literal `{ }` is marked [CallSite.inLambda], counted from the
+ * file start: a call's trailing lambda (`run {`), the `{` after a call's `)`, or a `{` in argument
+ * or initializer position (`(`, `,`, `=`). A declaration body, a control block, a `when` branch and
+ * a class header are not lambdas, and Java calls are never inside one.
  */
 object CallSites {
     /** The calls of [name] in [text], in text order. */
@@ -36,6 +43,7 @@ object CallSites {
             extension == DeclarationParser.KOTLIN_SCRIPT_EXTENSION
         if (!kotlin && extension != DeclarationParser.JAVA_EXTENSION) return emptyList()
         val sanitized = sanitizeSource(text)
+        val lambdaDepth = if (kotlin) lambdaDepths(sanitized) else null
         val declarationNames = if (kotlin) {
             emptySet()
         } else {
@@ -50,19 +58,153 @@ object CallSites {
             val written = match.value
             val name = DeclarationParser.unquote(written)
             if (name.isEmpty() || name in KEYWORDS) continue
+            val inLambda = lambdaDepth != null && lambdaDepth[siteStart] > 0
             val preceding = sanitized.getOrNull(siteStart - 1)
             if (preceding == '@') continue
             if (preceding == ':' && sanitized.getOrNull(siteStart - 2) == ':') {
                 val receiver = receiverBefore(siteStart - 3, sanitized)
-                calls.add(CallSite(name, siteStart, siteEnd, receiver.takeUnless { it == "?" }, isReference = true))
+                calls.add(
+                    CallSite(
+                        name,
+                        siteStart,
+                        siteEnd,
+                        receiver.takeUnless { it == "?" },
+                        isReference = true,
+                        inLambda = inLambda,
+                    ),
+                )
                 continue
             }
             if (!isCallAt(sanitized, siteStart, siteEnd, kotlin)) continue
             if (siteStart in declarationNames || isDeclarationName(sanitized, siteStart, name, kotlin)) continue
             if (isAfterNew(sanitized, siteStart)) continue
-            calls.add(CallSite(name, siteStart, siteEnd, receiverFor(siteStart - 1, sanitized)))
+            calls.add(CallSite(name, siteStart, siteEnd, receiverFor(siteStart - 1, sanitized), inLambda = inLambda))
         }
         return calls
+    }
+
+    /** The lambda nesting depth just before each offset of [text], counted from the file start. */
+    private fun lambdaDepths(text: String): IntArray {
+        val depth = IntArray(text.length + 1)
+        val opened = ArrayDeque<Boolean>()
+        var current = 0
+        for (index in text.indices) {
+            depth[index] = current
+            when (text[index]) {
+                '{' -> {
+                    val lambda = opensLambda(text, index)
+                    opened.addLast(lambda)
+                    if (lambda) current++
+                }
+                '}' -> if (opened.isNotEmpty() && opened.removeLast()) current--
+            }
+        }
+        depth[text.length] = current
+        return depth
+    }
+
+    /** `true` when the `{` at [open] opens a lambda literal rather than a declared body or block. */
+    private fun opensLambda(text: String, open: Int): Boolean {
+        var previous = open - 1
+        while (previous >= 0 && text[previous].isWhitespace()) previous--
+        if (previous < 0) return false
+        when (text[previous]) {
+            '(', ',', '=' -> return true
+            ')' -> {
+                val paren = matchingOpenParen(text, previous) ?: return false
+                val name = callNameBefore(text, paren) ?: return false
+                if (isAccessorBefore(text, name.first, name.second)) return false
+                if (!isCallName(text, name.first, name.second)) return false
+                // A class or object header's supertype call ends in the body `{`, not a lambda.
+                return !isClassHeader(text, open)
+            }
+        }
+        if (!isIdentifierChar(text[previous]) && text[previous] != '`') return false
+        val end = previous + 1
+        var begin = previous
+        if (text[begin] == '`') {
+            var back = begin
+            while (back > 0 && text[back - 1] != '`') back--
+            begin = back - 1
+            if (begin < 0) return false
+        } else {
+            while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
+        }
+        var before = begin - 1
+        while (before >= 0 && (text[before] == ' ' || text[before] == '\t')) before--
+        if (before >= 0 && text[before] == ':') return false
+        return isCallName(text, begin, end)
+    }
+
+    /** `true` when the name at `[start, end)` reads as a call by the rules [inRange] applies. */
+    private fun isCallName(text: String, start: Int, end: Int): Boolean {
+        if (start > 0 && isIdentifierChar(text[start - 1])) return false
+        val name = DeclarationParser.unquote(text.substring(start, end))
+        if (name.isEmpty() || name in KEYWORDS) return false
+        if (start > 0 && text[start - 1] == '@') return false
+        if (isAfterNew(text, start)) return false
+        if (isDeclarationName(text, start, name, kotlin = true)) return false
+        return isCallAt(text, start, end, kotlin = true)
+    }
+
+    /** `true` for the head of a property accessor `get(...)` / `set(...)` written after a type. */
+    private fun isAccessorBefore(text: String, start: Int, end: Int): Boolean {
+        val name = DeclarationParser.unquote(text.substring(start, end))
+        if (name != "get" && name != "set") return false
+        return text.substring(0, start).let { it.lastIndexOf(':') > it.lastIndexOf('\n') }
+    }
+
+    private fun matchingOpenParen(text: String, close: Int): Int? {
+        var depth = 0
+        var index = close
+        while (index >= 0) {
+            when (text[index]) {
+                ')' -> depth++
+                '(' -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+            index--
+        }
+        return null
+    }
+
+    /** The name token written before the `(` at [paren], skipping type arguments, or `null`. */
+    private fun callNameBefore(text: String, paren: Int): Pair<Int, Int>? {
+        var index = paren - 1
+        while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+        if (index >= 0 && text[index] == '>') {
+            var depth = 0
+            var open = index
+            while (open >= 0) {
+                when (text[open]) {
+                    '>' -> depth++
+                    '<' -> {
+                        depth--
+                        if (depth == 0) break
+                    }
+                }
+                open--
+            }
+            if (open < 0) return null
+            index = open - 1
+            while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+        }
+        if (index < 0) return null
+        val end = index + 1
+        var begin = index
+        if (text[begin] == '`') {
+            var close = begin
+            while (close > 0 && text[close - 1] != '`') close--
+            begin = close - 1
+            if (begin < 0) return null
+        } else if (isIdentifierChar(text[begin])) {
+            while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
+        } else {
+            return null
+        }
+        return begin to end
     }
 
     private fun isCallAt(text: String, start: Int, end: Int, kotlin: Boolean): Boolean {
@@ -86,20 +228,36 @@ object CallSites {
     /** `true` when [offset] is on the first or a continued line of a Kotlin class header. */
     private fun isClassHeader(text: String, offset: Int): Boolean {
         var start = lineStartOf(text, offset)
-        while (start > 0) {
+        var guard = 0
+        while (guard++ < HEADER_LOOKBACK) {
+            val raw = text.substring(start, lineEndOf(text, start))
+            val indent = raw.indexOfFirst { !it.isWhitespace() }.let { if (it < 0) raw.length else it }
+            val line = raw.trim()
+            val header = CLASS_HEADER.find(line)
+            if (header != null) {
+                val headerEnd = start + indent + header.range.last + 1
+                val between = text.substring(headerEnd.coerceAtMost(offset), offset)
+                return between.none { it == '{' || it == '}' }
+            }
+            if (start == 0) return false
             val previousEnd = start - 1
             val previousStart = lineStartOf(text, previousEnd)
             val previous = text.substring(previousStart, previousEnd).trim()
-            if (!previous.endsWith(",") && !previous.endsWith(":") && !previous.endsWith("where") &&
-                !ANNOTATION_LINE.matches(previous)
-            ) {
-                break
-            }
+            if (!continuesHeader(previous) && !continuesAbove(line)) return false
             start = previousStart
         }
-        val header = text.substring(start, lineEndOf(text, start)).trim()
-        return CLASS_HEADER.containsMatchIn(header)
+        return false
     }
+
+    /** `true` when [line] carries a class header on to the line below. */
+    private fun continuesHeader(line: String): Boolean =
+        line.endsWith(",") || line.endsWith(":") || line.endsWith("(") || line.endsWith("where") ||
+            line.endsWith("by") || ANNOTATION_LINE.matches(line)
+
+    /** `true` when [line] starts as the continuation of a class header above it. */
+    private fun continuesAbove(line: String): Boolean =
+        line.isEmpty() || line.startsWith(":") || line.startsWith(",") || line.startsWith("where") ||
+            line.startsWith(")") || line.startsWith("{") || line.startsWith("by")
 
     private fun lineStartOf(text: String, offset: Int): Int =
         (text.lastIndexOf('\n', offset - 1) + 1).coerceAtLeast(0)
@@ -255,6 +413,8 @@ object CallSites {
     )
 
     private val ANNOTATION_LINE = Regex("""^(?:@[\w$.]+(?:\([^()]*\))?\s*)+$""")
+
+    private const val HEADER_LOOKBACK = 100
 
     private val CONSTRUCTOR_HEAD = Regex(
         """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected)\s+)+$"""

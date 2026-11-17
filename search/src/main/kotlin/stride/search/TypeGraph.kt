@@ -11,6 +11,10 @@ import java.util.concurrent.ConcurrentHashMap
  * simple name declared more than once in the file then means the one declared nearest at or before
  * that line, so two nested classes sharing the name stay apart. Null means the first such class in
  * the file.
+ *
+ * [extensionReceiver] is the receiver type of the extension function or property holding the query,
+ * as written there; null outside an extension. Its members are receivers the compiler sees but the
+ * call does not name.
  */
 data class NameContext(
     val file: VFile?,
@@ -18,6 +22,7 @@ data class NameContext(
     val imports: List<SourceImport>,
     val enclosingClasses: List<String> = emptyList(),
     val line: Int? = null,
+    val extensionReceiver: String? = null,
 )
 
 /** A supertype as written and the project classes it resolves to; an empty [resolved] means outside project sources. */
@@ -228,20 +233,26 @@ class TypeGraph(
 
     /**
      * The project declarations a call of [name] written at [context] can reach. Unqualified or
-     * through `this`: members named [name] of [NameContext.enclosingClasses] and their supertypes,
-     * else visible top-level functions (same package, explicit import, star import), else a visible
-     * class (a constructor call). Through `super`: walking the supertypes of the innermost enclosing
-     * class breadth first, the members named [name] of the first class on each path that has one,
-     * and never that class's own members. A private member of a supertype is not inherited and is
-     * left out of both paths. Any other
-     * receiver: when [resolveType] resolves it to a class the result is limited to members of that
-     * class and its supertypes; otherwise every non-private SYMBOL named [name] with a container,
-     * plus visible top-level ones (extension functions). These two receiver paths also drop a
-     * private declaration written outside [NameContext.file].
+     * through `this`: members named [name] of the class [NameContext.extensionReceiver] resolves to
+     * and its supertypes, else members of [NameContext.enclosingClasses] and their supertypes, else
+     * visible top-level functions (same package, explicit import, star import), else a visible class
+     * (a constructor call), else for a call inside a lambda every member and visible top-level
+     * function of that name the file may see, since a lambda's subject is an implicit receiver too.
+     * Through
+     * `super`: walking the supertypes of the innermost enclosing class breadth first, the members
+     * named [name] of the first class on each path that has one, and never that class's own
+     * members. A private member of a supertype is not inherited and is left out of both paths. Any
+     * other receiver: when [resolveType] resolves it to a class the result is limited to members of
+     * that class and its supertypes; otherwise every non-private SYMBOL named [name] with a
+     * container, plus visible top-level ones (extension functions). These receiver paths also drop
+     * a private declaration written outside [NameContext.file].
      */
     fun resolveCallee(site: CallSite, context: NameContext): List<Declaration> {
         val receiver = site.receiver
         if (receiver == null || receiver == "this") {
+            val extension = extensionReceiverCallees(site, context)
+            if (extension.isNotEmpty()) return extension
+
             val members = LinkedHashSet<Declaration>()
             for (enclosing in context.enclosingClasses) {
                 val type = classInContext(enclosing, context) ?: continue
@@ -252,10 +263,11 @@ class TypeGraph(
             val functions = topLevelFunctions(site.name, context)
             if (functions.isNotEmpty()) return sort(functions)
 
-            return sort(
-                resolveType(site.name, context)
-                    .filter { it.kind == DeclarationKind.CLASS && (!it.isPrivate || sameFile(it, context)) }
-            )
+            val classes = resolveType(site.name, context)
+                .filter { it.kind == DeclarationKind.CLASS && (!it.isPrivate || sameFile(it, context)) }
+            if (classes.isNotEmpty()) return sort(classes)
+
+            return if (site.inLambda) unknownReceiverCallees(site, context) else emptyList()
         }
         if (receiver == "super") {
             val innermost = context.enclosingClasses.firstOrNull() ?: return emptyList()
@@ -287,6 +299,24 @@ class TypeGraph(
             for (owner in owners) result.addAll(membersNamed(site.name, owner, includeSupertypes = true))
             return sort(result.filter { !it.isPrivate || sameFile(it, context) })
         }
+        return unknownReceiverCallees(site, context)
+    }
+
+    /** The members named [site] of the class [NameContext.extensionReceiver] resolves to. */
+    private fun extensionReceiverCallees(site: CallSite, context: NameContext): List<Declaration> {
+        val written = context.extensionReceiver ?: return emptyList()
+        val result = LinkedHashSet<Declaration>()
+        for (owner in resolveType(written, context)) {
+            result.addAll(membersNamed(site.name, owner, includeSupertypes = true))
+        }
+        return sort(result.filter { !it.isPrivate || sameFile(it, context) })
+    }
+
+    /**
+     * Every declaration a call may name when its receiver is unknown: members of that name of any
+     * class, non-private or private in the same file, plus visible top-level functions.
+     */
+    private fun unknownReceiverCallees(site: CallSite, context: NameContext): List<Declaration> {
         val result = LinkedHashSet<Declaration>()
         for (declaration in memberSymbolsByName[site.name].orEmpty()) {
             if (declaration.isPrivate && !sameFile(declaration, context)) continue
@@ -302,8 +332,12 @@ class TypeGraph(
      * - a private [target] only from its own file
      * - a top-level [target] only from its package, an explicit import of it or a star import of
      *   its package
-     * - a member [target], unqualified or through `this` / `super`: only from inside its class, a
-     *   class nested in it, or one of its [allSubtypes]
+     * - a member [target], unqualified or through `this`: from inside its class, a class nested in
+     *   it, or one of its [allSubtypes]; elsewhere when [NameContext.extensionReceiver] resolves to
+     *   [target]'s class or a subtype, or when the call is inside a lambda and [resolveCallee]
+     *   reaches [target] through an unknown implicit receiver
+     * - a member [target] through `super`: only from inside its class, a class nested in it, or one
+     *   of its [allSubtypes]
      * - a member [target] through a receiver that [resolveType] resolves to a class: only when that
      *   class is [target]'s class or one of its subtypes; any other receiver may
      */
@@ -312,18 +346,33 @@ class TypeGraph(
         if (target.container == null) return topLevelVisible(target, context)
         val type = classOf(target) ?: return true
         val receiver = site.receiver
-        if (receiver == null || receiver == "this" || receiver == "super") {
-            val subtypes = allSubtypes(type).map { key(it) }.toSet()
-            for (enclosing in context.enclosingClasses) {
-                val candidate = classInContext(enclosing, context) ?: continue
-                if (key(candidate) == key(type) || key(candidate) in subtypes) return true
-            }
-            return false
+        if (receiver == null || receiver == "this") {
+            if (enclosedInFamily(type, context)) return true
+            if (extensionReceiverReaches(type, context)) return true
+            return site.inLambda && resolveCallee(site, context).any { key(it) == key(target) }
         }
+        if (receiver == "super") return enclosedInFamily(type, context)
         val owners = resolveType(receiver, context)
         if (owners.isEmpty()) return true
         val subtypes = allSubtypes(type).map { key(it) }.toSet()
         return owners.any { key(it) == key(type) || key(it) in subtypes }
+    }
+
+    /** Whether one of [NameContext.enclosingClasses] is [type] or one of its subtypes. */
+    private fun enclosedInFamily(type: Declaration, context: NameContext): Boolean {
+        val subtypes = allSubtypes(type).map { key(it) }.toSet()
+        for (enclosing in context.enclosingClasses) {
+            val candidate = classInContext(enclosing, context) ?: continue
+            if (key(candidate) == key(type) || key(candidate) in subtypes) return true
+        }
+        return false
+    }
+
+    /** Whether [NameContext.extensionReceiver] is [type] or one of its subtypes. */
+    private fun extensionReceiverReaches(type: Declaration, context: NameContext): Boolean {
+        val written = context.extensionReceiver ?: return false
+        val subtypes = allSubtypes(type).map { key(it) }.toSet()
+        return resolveType(written, context).any { key(it) == key(type) || key(it) in subtypes }
     }
 
     private fun resolveSupertypes(type: Declaration): List<SupertypeRef> {

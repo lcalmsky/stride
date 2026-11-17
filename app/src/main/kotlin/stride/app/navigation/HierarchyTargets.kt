@@ -15,6 +15,7 @@ import stride.search.OutlineMember
 import stride.search.SourceImport
 import stride.search.TypeGraph
 import stride.search.classesAt
+import stride.search.extensionReceiverAt
 import java.nio.file.Path
 
 /** The current editor text with the parses the hierarchy actions resolve names against. */
@@ -33,6 +34,7 @@ internal class HierarchyCaret(val editor: TextFileEditor) {
         imports = imports,
         enclosingClasses = outline.classesAt(position).map { it.name },
         line = lineOf(text, position),
+        extensionReceiver = outline.extensionReceiverAt(position),
     )
 
     /** The declaration whose name holds the caret, if any. */

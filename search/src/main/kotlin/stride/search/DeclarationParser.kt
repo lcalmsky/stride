@@ -46,6 +46,7 @@ data class OutlineMember(
     val nameEnd: Int,
     val end: Int,
     val isOverride: Boolean = false,
+    val receiverType: String? = null,
 )
 
 /** The innermost member whose `[start, end)` holds [offset], or `null`. */
@@ -55,6 +56,15 @@ fun List<OutlineMember>.memberAt(offset: Int): OutlineMember? =
 /** The classes whose `[start, end)` holds [offset], innermost first. */
 fun List<OutlineMember>.classesAt(offset: Int): List<OutlineMember> =
     filter { it.kind == OutlineKind.CLASS && offset >= it.start && offset < it.end }.sortedBy { it.end - it.start }
+
+/**
+ * The receiver type of the innermost member holding [offset] that is an extension, as written, or
+ * `null`. A call inside a local function of an extension function takes the outer receiver.
+ */
+fun List<OutlineMember>.extensionReceiverAt(offset: Int): String? =
+    filter { it.receiverType != null && offset >= it.start && offset < it.end }
+        .minByOrNull { it.end - it.start }
+        ?.receiverType
 
 /**
  * Regex-based declaration scanner for Kotlin and Java sources. The scan is line oriented and
@@ -559,6 +569,9 @@ private const val KOTLIN_MODIFIERS =
     "public|private|protected|internal|open|abstract|final|sealed|data|enum|annotation|value|inner|inline|" +
         "companion|expect|actual|external|fun"
 
+private fun isReceiverChar(c: Char): Boolean =
+    c.isLetterOrDigit() || c == '_' || c == '$' || c == '.' || c == '<' || c == '>' || c == '?' || c == '`'
+
 private const val KOTLIN_PROPERTY_MODIFIERS =
     "public|private|protected|internal|open|abstract|final|override|lateinit|const|inline|" +
         "noinline|crossinline|suspend|tailrec|operator|infix|external|actual|expect|vararg"
@@ -589,7 +602,8 @@ private val KOTLIN_FUN = Regex("""\bfun\s+(?:<[^>]*>\s*)?.*?(`[^`]+`|[A-Za-z_]\w
 
 private val KOTLIN_PROPERTY = Regex(
     """(?:^|[\s;])(?:@\w+(?:\([^)]*\))?\s+)*""" +
-        """(?:(?:$KOTLIN_PROPERTY_MODIFIERS)\s+)*(?:val|var)\s+(?:<[^>]*>\s+)?(`[^`]+`|[A-Za-z_]\w*)"""
+        """(?:(?:$KOTLIN_PROPERTY_MODIFIERS)\s+)*(?:val|var)\s+(?:<[^>]*>\s+)?""" +
+        """(?:[\w${'$'}]+(?:\.[\w${'$'}]+)*(?:<[^>]*>)?\??\.\s*)?(`[^`]+`|[A-Za-z_]\w*)"""
 )
 
 private val JAVA_TYPE = Regex(
@@ -1221,6 +1235,7 @@ private class OutlineDraft(
     val nameStart: Int,
     val nameEnd: Int,
     val isOverride: Boolean,
+    val receiverType: String? = null,
 ) {
     var bodyOpen: Int? = null
     var bodyClose: Int? = null
@@ -1333,6 +1348,7 @@ private class OutlineScanner(private val fileName: String, private val text: Str
                     it.nameEnd,
                     it.end,
                     it.isOverride,
+                    it.receiverType,
                 )
             }
             .sortedBy { it.start }
@@ -1392,7 +1408,42 @@ private class OutlineScanner(private val fileName: String, private val text: Str
             nameStart,
             nameStart + tokenLength,
             isOverride,
+            if (kotlin) receiverType(lineText, relativeStart) else null,
         )
+    }
+
+    /** The receiver type written before the `.` at the name starting at [nameStart], or `null`. */
+    private fun receiverType(lineText: String, nameStart: Int): String? {
+        var dot = nameStart - 1
+        while (dot >= 0 && (lineText[dot] == ' ' || lineText[dot] == '\t')) dot--
+        if (dot < 0 || lineText[dot] != '.') return null
+        var begin = dot - 1
+        while (begin >= 0 && lineText[begin].isWhitespace()) begin--
+        val end = begin + 1
+        while (begin >= 0 && isReceiverChar(lineText[begin])) begin--
+        if (end <= begin + 1) return null
+        var before = begin
+        while (before >= 0 && lineText[before].isWhitespace()) before--
+        // A function type receiver, `(Int) -> Unit.f()`, is not a receiver class.
+        if (before >= 1 && lineText[before] == '>' && lineText[before - 1] == '-') return null
+        return cleanReceiver(lineText.substring(begin + 1, end))
+    }
+
+    /** [written] without type arguments and a trailing `?`, or `null` when it is not a plain name. */
+    private fun cleanReceiver(written: String): String? {
+        val builder = StringBuilder(written.length)
+        var depth = 0
+        for (c in written) {
+            when {
+                c == '<' -> depth++
+                c == '>' -> if (depth > 0) depth--
+                depth == 0 -> builder.append(c)
+            }
+        }
+        val cleaned = builder.toString().trim().trimEnd('?').trim()
+        if (cleaned.isEmpty()) return null
+        if (cleaned.any { !it.isLetterOrDigit() && it != '_' && it != '$' && it != '.' }) return null
+        return cleaned
     }
 
     /** The name token of [declaration] on [lineText] as (offset, length), from the parsed column. */

@@ -227,6 +227,49 @@ class CallHierarchyNodesTest {
     }
 
     @Test
+    fun `an extension function receiver links callers and callees`() {
+        val fixture = fixture(
+            mapOf(
+                "Config.kt" to """
+                    package demo
+
+                    class Config {
+                        fun load() {}
+                    }
+                """.trimIndent() + "\n",
+                "Use.kt" to """
+                    package demo
+
+                    fun Config.reload() {
+                        load()
+                    }
+                """.trimIndent() + "\n",
+            ),
+        )
+        val load = fixture.declarations.single { it.name == "load" }
+        val callersTree = CallHierarchyNodes.tree(
+            fixture.graph,
+            fixture.declarations,
+            listOf(load),
+            fixture.files,
+            fixture.textOf,
+        )
+        val callers = load(load(callersTree.roots.single())[0])
+        assertEquals(listOf("reload"), callers.map { it.text }, "the extension function in the other file")
+        assertEquals("Use.kt:3", callers.single().detail)
+
+        val reload = fixture.declarations.single { it.name == "reload" }
+        val calleesTree = CallHierarchyNodes.tree(
+            fixture.graph,
+            fixture.declarations,
+            listOf(reload),
+            fixture.files,
+            fixture.textOf,
+        )
+        assertEquals(listOf("Config.load"), load(load(calleesTree.roots.single())[1]).map { it.text })
+    }
+
+    @Test
     fun `expanding deeper reuses the file texts`() {
         val fixture = fixture(
             mapOf(
