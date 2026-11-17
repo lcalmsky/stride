@@ -4,6 +4,7 @@ import androidx.compose.ui.text.TextRange
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import stride.lang.TextEdit
 
 class EditActionsTest {
     @Test
@@ -562,5 +563,274 @@ class EditActionsTest {
         assertEquals(TextRange(0, 4), EditActions.wholeLine("one\ntwo", 1))
         assertEquals(TextRange(4, 7), EditActions.wholeLine("one\ntwo", 5))
         assertEquals(TextRange(0, 3), EditActions.wholeLine("one", 1))
+    }
+
+    @Test
+    fun `move statement up swaps two function blocks with their documentation`() {
+        val text = "/** a */\nfun a() {\n    one()\n}\n/** b */\n@Ann\nfun b() {\n    two()\n}"
+        val caret = text.indexOf("fun b")
+        assertEquals(
+            EditResult("/** b */\n@Ann\nfun b() {\n    two()\n}\n/** a */\nfun a() {\n    one()\n}", TextRange(14)),
+            EditActions.moveStatement(text, TextRange(caret), up = true),
+        )
+    }
+
+    @Test
+    fun `move statement down swaps two function blocks`() {
+        val text = "fun a() {\n    one()\n}\nfun b() {\n    two()\n}"
+        assertEquals(
+            EditResult("fun b() {\n    two()\n}\nfun a() {\n    one()\n}", TextRange(22)),
+            EditActions.moveStatement(text, TextRange(0), up = false),
+        )
+    }
+
+    @Test
+    fun `move statement does not cross the header of its block`() {
+        val text = "fun f() {\n    val a = 1\n    val b = 2\n}"
+        val caret = text.indexOf("val a")
+        assertEquals(EditResult(text, TextRange(caret)), EditActions.moveStatement(text, TextRange(caret), up = true))
+    }
+
+    @Test
+    fun `move statement swaps plain statement lines`() {
+        val text = "val a = 1\nval b = 2"
+        assertEquals(
+            EditResult("val b = 2\nval a = 1", TextRange(2)),
+            EditActions.moveStatement(text, TextRange(12), up = true),
+        )
+        assertEquals(
+            EditResult("val b = 2\nval a = 1", TextRange(12)),
+            EditActions.moveStatement(text, TextRange(2), up = false),
+        )
+    }
+
+    @Test
+    fun `move statement passes a blank line`() {
+        assertEquals(
+            EditResult("one\ntwo\n", TextRange(4)),
+            EditActions.moveStatement("one\n\ntwo", TextRange(5), up = true),
+        )
+    }
+
+    @Test
+    fun `move statement keeps the selection with the unit`() {
+        assertEquals(
+            EditResult("two\none\nthree", TextRange(0, 8)),
+            EditActions.moveStatement("one\ntwo\nthree", TextRange(4, 8), up = true),
+        )
+    }
+
+    @Test
+    fun `complete statement closes open brackets before the line comment`() {
+        assertEquals(
+            EditResult("foo(bar(1)) // note\n", TextRange(20)),
+            EditActions.completeStatement("foo(bar(1 // note", TextRange(16), semicolons = false),
+        )
+        assertEquals(
+            EditResult("foo(bar(1))\n", TextRange(12)),
+            EditActions.completeStatement("foo(bar(1", TextRange(9), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement opens the block of an if line`() {
+        assertEquals(
+            EditResult("if (x > 0) {\n    \n}", TextRange(17)),
+            EditActions.completeStatement("if (x > 0", TextRange(8), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement leaves an expression body alone`() {
+        assertEquals(
+            EditResult("fun f() = 1\n", TextRange(12)),
+            EditActions.completeStatement("fun f() = 1", TextRange(11), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement appends a semicolon in Java`() {
+        assertEquals(
+            EditResult("foo();\n", TextRange(7)),
+            EditActions.completeStatement("foo()", TextRange(5), semicolons = true),
+        )
+    }
+
+    @Test
+    fun `complete statement adds the closing brace when the block is not matched`() {
+        assertEquals(
+            EditResult("fun f() {\n    \n}", TextRange(14)),
+            EditActions.completeStatement("fun f() {", TextRange(9), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement starts inside an already matched block`() {
+        assertEquals(
+            EditResult("fun f() {\n    \n}", TextRange(14)),
+            EditActions.completeStatement("fun f() {\n}", TextRange(9), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement keeps the CRLF endings of the file`() {
+        assertEquals(
+            EditResult("foo()\r\n\r\nbar", TextRange(7)),
+            EditActions.completeStatement("foo()\r\nbar", TextRange(5), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement does nothing on a blank line`() {
+        val text = "one\n\ntwo"
+        assertEquals(EditResult(text, TextRange(4)), EditActions.completeStatement(text, TextRange(4), semicolons = true))
+    }
+
+    @Test
+    fun `unwrap removes an if and keeps its body`() {
+        val text = "if (a) {\n    foo()\n}"
+        assertEquals(EditResult("foo()", TextRange(0)), EditActions.unwrap(text, TextRange(text.indexOf("foo"))))
+    }
+
+    @Test
+    fun `unwrap keeps the body of an else and drops the if`() {
+        val text = "if (a) {\n    one()\n} else {\n    two()\n}"
+        assertEquals(EditResult("two()", TextRange(0)), EditActions.unwrap(text, TextRange(text.indexOf("two"))))
+    }
+
+    @Test
+    fun `unwrap of a middle else if keeps only that body`() {
+        val text = "if (a) {\n    one()\n} else if (b) {\n    two()\n} else {\n    three()\n}"
+        assertEquals(EditResult("two()", TextRange(0)), EditActions.unwrap(text, TextRange(text.indexOf("two"))))
+    }
+
+    @Test
+    fun `unwrap of a try keeps the try body and drops catch and finally`() {
+        val text = "try {\n    one()\n} catch (e: Exception) {\n    two()\n} finally {\n    three()\n}"
+        assertEquals(EditResult("one()", TextRange(0)), EditActions.unwrap(text, TextRange(text.indexOf("one"))))
+    }
+
+    @Test
+    fun `unwrap follows loops and removes a do-while tail`() {
+        assertEquals(
+            EditResult("foo()", TextRange(0)),
+            EditActions.unwrap("for (x in xs) {\n    foo()\n}", TextRange(19)),
+        )
+        assertEquals(
+            EditResult("foo()", TextRange(0)),
+            EditActions.unwrap("while (x) {\n    foo()\n}", TextRange(15)),
+        )
+        assertEquals(
+            EditResult("foo()", TextRange(0)),
+            EditActions.unwrap("do {\n    foo()\n} while (x)", TextRange(9)),
+        )
+    }
+
+    @Test
+    fun `unwrap collapses a one-line block`() {
+        val text = "if (a) { foo() }"
+        assertEquals(EditResult("foo()", TextRange(0)), EditActions.unwrap(text, TextRange(9)))
+    }
+
+    @Test
+    fun `unwrap reports no candidate outside a control block`() {
+        assertNull(EditActions.unwrap("val x = 1", TextRange(4)))
+        assertNull(EditActions.unwrap("fun f() {\n    foo()\n}", TextRange(14)))
+        assertNull(EditActions.unwrap("val x = if (a) {\n    foo()\n}", TextRange(16)))
+    }
+
+    @Test
+    fun `unwrap removes the chain entirely when the body is empty`() {
+        val text = "if (a) {\n}"
+        assertEquals(EditResult("", TextRange(0)), EditActions.unwrap(text, TextRange(8)))
+    }
+
+    @Test
+    fun `reformat normalizes the indentation of a Kotlin file`() {
+        val text = "class A {\n  fun f() {\n        foo()\n  }\n}"
+        assertEquals(
+            "class A {\n    fun f() {\n        foo()\n    }\n}",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat indents one level below a line that opens two brackets`() {
+        val text = "foo(bar {\nx\n})"
+        assertEquals(
+            "foo(bar {\n    x\n})",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat uses the opening line level for a closing bracket line`() {
+        val text = "call(\nfoo()\n)"
+        assertEquals(
+            "call(\n    foo()\n)",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat aligns a continuation line`() {
+        val text = "val xs = listOf(1)\n.map { it * 2 }"
+        assertEquals(
+            "val xs = listOf(1)\n    .map { it * 2 }",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat aligns KDoc stars`() {
+        val text = "fun f() {\n/**\n * doc\n */\n}"
+        assertEquals(
+            "fun f() {\n    /**\n     * doc\n     */\n}",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat keeps the lines of a raw string`() {
+        val text = "val s = \"\"\"\n  keep   \n     me\n\"\"\""
+        assertEquals(emptyList<TextEdit>(), EditActions.reformat(text, TextRange(0), braceLanguage = true))
+    }
+
+    @Test
+    fun `reformat only touches the selected lines`() {
+        val text = "class A {\n  fun f() {}\n}"
+        assertEquals(
+            "class A {\n    fun f() {}\n}",
+            applied(text, EditActions.reformat(text, TextRange(10, 22), braceLanguage = true)),
+        )
+    }
+
+    @Test
+    fun `reformat only trims trailing whitespace outside brace languages`() {
+        val text = "def f():\n      x = 1   \n"
+        assertEquals(
+            "def f():\n      x = 1\n",
+            applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = false)),
+        )
+    }
+
+    @Test
+    fun `reformat reduces a long run of blank lines to two`() {
+        val text = "a\n\n\n\n\nb"
+        assertEquals("a\n\n\nb", applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = false)))
+    }
+
+    @Test
+    fun `reformat leaves an already formatted text alone`() {
+        val text = "class A {\n    fun f() {}\n}\n"
+        assertEquals(emptyList<TextEdit>(), EditActions.reformat(text, TextRange(0), braceLanguage = true))
+    }
+
+    private fun applied(text: String, edits: List<TextEdit>): String {
+        var result = text
+        for (edit in edits.sortedByDescending { it.start }) {
+            result = result.substring(0, edit.start) + edit.replacement + result.substring(edit.end)
+        }
+        return result
     }
 }

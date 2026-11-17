@@ -379,6 +379,69 @@ class TextFileEditorActionsTest {
         assertEquals(before, editor.value)
     }
 
+    @Test
+    fun `move statement is one undo step`() {
+        val editor = editor("val a = 1\nval b = 2")
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(12)))
+
+        assertTrue(editor.applyAction(ActionId.MOVE_STATEMENT_UP))
+        assertEquals("val b = 2\nval a = 1", editor.value.text)
+        assertTrue(editor.undo())
+        assertEquals("val a = 1\nval b = 2", editor.value.text)
+    }
+
+    @Test
+    fun `complete statement is one undo step and honors the Java semicolon`() {
+        val kotlin = editor("foo(bar(1")
+        kotlin.updateValue(TextFieldValue(kotlin.value.text, TextRange(9)))
+        assertTrue(kotlin.applyAction(ActionId.EDITOR_COMPLETE_STATEMENT))
+        assertEquals("foo(bar(1))\n", kotlin.value.text)
+        assertTrue(kotlin.undo())
+        assertEquals("foo(bar(1", kotlin.value.text)
+
+        val java = editor("foo()", name = "Main.java")
+        java.updateValue(TextFieldValue(java.value.text, TextRange(5)))
+        assertTrue(java.applyAction(ActionId.EDITOR_COMPLETE_STATEMENT))
+        assertEquals("foo();\n", java.value.text)
+    }
+
+    @Test
+    fun `unwrap is one undo step and reports when there is nothing to unwrap`() {
+        val text = "if (a) {\n    foo()\n}"
+        val editor = editor(text)
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("foo"))))
+
+        assertTrue(editor.unwrap())
+        assertEquals("foo()", editor.value.text)
+        assertTrue(editor.undo())
+        assertEquals(text, editor.value.text)
+
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+        assertFalse(editor.unwrap())
+    }
+
+    @Test
+    fun `reformat is one undo step and reports the changed lines`() {
+        val editor = editor("class A {\n  fun f() {}\n}")
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+        assertEquals("Reformatted 1 lines", editor.reformat())
+        assertEquals("class A {\n    fun f() {}\n}", editor.value.text)
+        assertTrue(editor.undo())
+        assertEquals("class A {\n  fun f() {}\n}", editor.value.text)
+
+        val formatted = editor("class A {\n    fun f() {}\n}", name = "Formatted.kt")
+        assertEquals("Nothing to reformat", formatted.reformat())
+    }
+
+    @Test
+    fun `reformat in a read-only editor changes nothing`() {
+        val editor = editor("class A {\n  fun f() {}\n}", readOnly = true)
+
+        assertEquals("File is read-only", editor.reformat())
+        assertEquals("class A {\n  fun f() {}\n}", editor.value.text)
+    }
+
     companion object {
         @BeforeAll
         @JvmStatic

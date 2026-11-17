@@ -51,6 +51,17 @@ class KeymapTest {
         assertEquals(ActionId.MOVE_LINE_UP, action("alt shift UP", KeyContext.EDITOR))
         // MoveLineDown alt shift DOWN
         assertEquals(ActionId.MOVE_LINE_DOWN, action("alt shift DOWN", KeyContext.EDITOR))
+        // MoveStatementUp meta shift UP and MoveStatementDown meta shift DOWN
+        assertEquals(ActionId.MOVE_STATEMENT_UP, action("meta shift UP", KeyContext.EDITOR))
+        assertEquals(ActionId.MOVE_STATEMENT_DOWN, action("meta shift DOWN", KeyContext.EDITOR))
+        // EditorCompleteStatement meta shift ENTER
+        assertEquals(ActionId.EDITOR_COMPLETE_STATEMENT, action("meta shift ENTER", KeyContext.EDITOR))
+        // Unwrap meta shift DELETE
+        assertEquals(ActionId.UNWRAP, action("meta shift DELETE", KeyContext.EDITOR))
+        // ReformatCode meta alt L
+        assertEquals(ActionId.REFORMAT_CODE, action("meta alt L", KeyContext.EDITOR))
+        // EditorScrollToCenter control L
+        assertEquals(ActionId.EDITOR_SCROLL_TO_CENTER, action("control L", KeyContext.EDITOR))
         // GotoLine meta L
         assertEquals(ActionId.GOTO_LINE, action("meta L", KeyContext.EDITOR))
         // $Undo meta Z

@@ -86,6 +86,12 @@ object ActionNames {
         ActionId.REOPEN_CLOSED_TAB to "Reopen Closed Tab",
         ActionId.CLOSE_OTHER_TABS to "Close Other Tabs",
         ActionId.TOGGLE_UI_FONT to "Switch UI Font",
+        ActionId.MOVE_STATEMENT_UP to "Move Statement Up",
+        ActionId.MOVE_STATEMENT_DOWN to "Move Statement Down",
+        ActionId.EDITOR_COMPLETE_STATEMENT to "Complete Current Statement",
+        ActionId.UNWRAP to "Unwrap/Remove",
+        ActionId.REFORMAT_CODE to "Reformat Code",
+        ActionId.EDITOR_SCROLL_TO_CENTER to "Scroll to Center",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

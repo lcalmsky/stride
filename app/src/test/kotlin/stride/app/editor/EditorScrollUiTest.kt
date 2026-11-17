@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
+import stride.app.keys.ActionId
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.EditorInsets
 import stride.app.ui.theme.LocalEditorInsets
@@ -185,6 +186,38 @@ class EditorScrollUiTest {
             textFieldNode().boundsInRoot.left < textLeftBefore,
             "text field left stayed ${textFieldNode().boundsInRoot.left}",
         )
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `scroll to center moves the caret line to the middle of the viewport`() = runComposeUiTest {
+        val editor = openEditor("Center.kt", (1..200).joinToString("\n") { "line $it" })
+
+        setContent {
+            CompositionLocalProvider(LocalAnimationsEnabled provides false) {
+                editor.Content(Modifier.size(480.dp, 240.dp))
+            }
+        }
+        waitForIdle()
+        editor.gotoLine("100:1")
+        waitForIdle()
+        val before = verticalValue()
+
+        assertTrue(editor.applyAction(ActionId.EDITOR_SCROLL_TO_CENTER))
+        waitForIdle()
+
+        val lineHeight = 20f
+        val visible = 240f - 16f
+        val expected = 99 * lineHeight + lineHeight / 2 - visible / 2
+        assertEquals(expected, verticalValue(), 6f)
+        assertTrue(verticalValue() != before, "the scroll stayed at $before")
+
+        val at100 = verticalValue()
+        editor.gotoLine("150:1")
+        waitForIdle()
+        assertTrue(editor.applyAction(ActionId.EDITOR_SCROLL_TO_CENTER))
+        waitForIdle()
+        assertEquals(at100 + 50 * lineHeight, verticalValue(), 1f)
     }
 
     private fun openEditor(name: String, content: String): TextFileEditor {

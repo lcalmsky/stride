@@ -161,8 +161,23 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.EDITOR_TOGGLE_CASE, ActionId.EDITOR_JOIN_LINES, ActionId.EDITOR_START_NEW_LINE,
     ActionId.EDITOR_START_NEW_LINE_BEFORE, ActionId.EDITOR_MATCH_BRACE, ActionId.EDITOR_CODE_BLOCK_START,
     ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN, ActionId.COPY_LINE,
-    ActionId.CUT_LINE,
+    ActionId.CUT_LINE, ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
+    ActionId.EDITOR_COMPLETE_STATEMENT, ActionId.EDITOR_SCROLL_TO_CENTER,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.UNWRAP -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        state.statusMessage = when {
+            editor.isReadOnly -> null
+            editor.unwrap() -> null
+            else -> "Nothing to unwrap"
+        }
+        true
+    }
+    ActionId.REFORMAT_CODE -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        state.statusMessage = editor.reformat()
+        true
+    }
     ActionId.HIPPIE_COMPLETION -> {
         val session = state.session ?: return false
         val editor = session.editors.selected as? TextFileEditor ?: return false

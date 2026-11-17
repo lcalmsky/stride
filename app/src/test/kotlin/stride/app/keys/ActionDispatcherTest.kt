@@ -72,6 +72,23 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `unwrap and reformat report their result in the status bar`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("val a = 1", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.UNWRAP, state) { null })
+        assertEquals("Nothing to unwrap", state.statusMessage)
+        assertTrue(dispatchAction(ActionId.REFORMAT_CODE, state) { null })
+        assertEquals("Nothing to reformat", state.statusMessage)
+
+        editor.updateValue(TextFieldValue("class A {\n  fun f() {}\n}", TextRange(0)))
+        assertTrue(dispatchAction(ActionId.REFORMAT_CODE, state) { null })
+        assertEquals("Reformatted 1 lines", state.statusMessage)
+    }
+
+    @Test
     fun `comment line uses the language commenter`() {
         state.focus = KeyContext.EDITOR
         val root = temp.resolve("project")

@@ -395,6 +395,12 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :96 |
 | `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :98 |
 | `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :100 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :114 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :116 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :118 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :120 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :122 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :124 |
 | `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :102 |
 | `UNDO` | EDITOR | ⌘Z | `$Undo` | :104 |
 | `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :106 |
@@ -493,6 +499,20 @@ object EditActions {
     fun toggleCase(text: String, selection: TextRange): EditResult
     fun joinLines(text: String, selection: TextRange): EditResult
     fun startNewLine(text: String, selection: TextRange, before: Boolean): EditResult
+    fun moveStatement(text: String, selection: TextRange, up: Boolean): EditResult
+    fun completeStatement(
+        text: String,
+        selection: TextRange,
+        semicolons: Boolean,
+        unit: String = "    ",
+    ): EditResult
+    fun unwrap(text: String, selection: TextRange): EditResult?
+    fun reformat(
+        text: String,
+        selection: TextRange,
+        braceLanguage: Boolean,
+        unit: String = "    ",
+    ): List<TextEdit>
     fun matchBrace(text: String, caret: Int): TextRange?
     fun codeBlockStart(text: String, caret: Int): TextRange?
     fun codeBlockEnd(text: String, caret: Int): TextRange?
@@ -538,6 +558,44 @@ produces from the search module's `DeclarationParser`. `wholeWordRanges` finds o
 are not part of a larger identifier. `hippieCandidates` orders words that start with the prefix by
 distance from the caret — preceding occurrences first, then following ones, then the words of
 `otherTexts` — and drops duplicates.
+
+`moveStatement` swaps the statement unit at the caret — or the selected lines — with its sibling
+above or below. The unit grows through the `}` of a block its first line opens, and comment
+(`//`, `/*`, `*`) and annotation (`@`) lines glued above it travel with it. The neighbour is the
+line above or below: a blank line is a one-line neighbour, the header of an enclosing block and
+the closing line of one are not crossed, and a `}` line brings the block above it. Lines are
+never re-indented, and the selection moves with the unit.
+
+`completeStatement` finishes the caret's line without parsing the file. It closes the `(` and `[`
+left open on the line at the end of its code (before trailing spaces and a comment), opens a
+block when the line starts with a block keyword and does not end with `{`, closes the braces when
+the block already has them, appends `;` when `semicolons` is set (`.java` files), and puts the
+caret on a new line with the current indentation. A `fun` line with a top-level `=` keeps its
+expression body. Brackets and comments are judged through `CodeScan`, so brackets inside strings
+and comments are ignored.
+
+`unwrap` removes the innermost `{…}` block around the caret whose header before the `{` starts
+with `if`, `else`, `for`, `while`, `do`, `try`, `catch` or `finally`. Chained `else`/`else if`,
+`catch`/`finally` blocks and a `do`'s trailing `while` are removed with it, and only the target
+block's body remains, dedented one unit. A one-line block becomes one line; an empty body removes
+the chain without leaving a blank line; `null` means there was no candidate. A header such as
+`val x = if (…) {` is not a candidate because the line does not start with the keyword.
+
+`reformat` returns the `TextEdit`s that re-indent the selected lines (or the whole file when the
+selection is empty) and trim trailing whitespace; the editor applies them as one undo step.
+Brace languages (`.kt`, `.kts`, `.java`, `.json`) get their indentation recomputed from a bracket
+stack that records the level of the line that opened each bracket, with a one-unit extra indent
+for a line that continues with `.`, `?.`, `?:`, `&&` or `||` and star alignment inside block
+comments; other files only lose trailing whitespace. Trailing whitespace stays on a line whose
+newline is inside a string literal, lines that start inside a raw string keep their indentation,
+blank lines lose their indentation, and a whole-file pass reduces a run of three or more blank
+code lines to two. Line breaks, intra-line spacing and bracket alignment are not changed, so a
+style that aligns parameters under the opening paren becomes one indent unit.
+
+`EDITOR_SCROLL_TO_CENTER` asks the editor content to put the caret's line in the middle of the
+visible viewport without moving the caret or the selection. The content reads the same
+`TextLayoutResult` and viewport height as the caret-following effect and calls
+`EditorScrollState.scrollTo` with `lineCenter - viewport/2`, clamped to the scroll range.
 
 `CodeCompletion.candidates(prefix, names, limit)` ranks names with `NameMatcher`;
 `CodeCompletion.identifiers(text, excluded)` lists a file's identifiers (leaving out the range
@@ -590,6 +648,8 @@ class TextFileEditor(
     fun applyAction(action: ActionId): Boolean
     fun hippieComplete(otherTexts: List<String> = emptyList()): Boolean
     fun renameWord(original: String, replacement: String): Int
+    fun unwrap(): Boolean                     // false when no control block encloses the caret
+    fun reformat(): String                    // the status line to show
     fun replaceRange(start: Int, end: Int, replacement: String)
 }
 ```
@@ -599,8 +659,10 @@ class TextFileEditor(
 `GOTO_LINE`, `EDITOR_ESCAPE`, `EDITOR_SELECT_WORD`, `EDITOR_UNSELECT_WORD`,
 `EDITOR_TOGGLE_CASE`, `EDITOR_JOIN_LINES`, `EDITOR_START_NEW_LINE`,
 `EDITOR_START_NEW_LINE_BEFORE`, `EDITOR_MATCH_BRACE`, `EDITOR_CODE_BLOCK_START`,
-`EDITOR_CODE_BLOCK_END`, `METHOD_UP`, `METHOD_DOWN`, `COPY_LINE`, `CUT_LINE` and
-`HIPPIE_COMPLETION` (without other editors' text). A read-only
+`EDITOR_CODE_BLOCK_END`, `METHOD_UP`, `METHOD_DOWN`, `COPY_LINE`, `CUT_LINE`,
+`MOVE_STATEMENT_UP`, `MOVE_STATEMENT_DOWN`, `EDITOR_COMPLETE_STATEMENT`, `UNWRAP`,
+`REFORMAT_CODE`, `EDITOR_SCROLL_TO_CENTER` and `HIPPIE_COMPLETION` (without other editors' text).
+A read-only
 editor consumes the edit actions without changing the text, and a file whose language has no
 commenter consumes the comment actions. Everything else returns `false`.
 
@@ -623,8 +685,10 @@ on the buffer while typing there; closing the panel restores `EDITOR`.
 (with no selected editor it does nothing): `BasicTextField` maps ⌘Z/⌘⇧Z to its own undo and
 redo (Foundation `KeyMapping.kt:71,82`), and consuming them here keeps the two stacks from
 diverging. The same table entry carries the other editor actions and returns their
-`applyAction` result, which is `false` when no editor is selected. `HIPPIE_COMPLETION` also hands
-the other open editors' text to the editor.
+`applyAction` result, which is `false` when no editor is selected. `UNWRAP` and `REFORMAT_CODE`
+call `TextFileEditor.unwrap()` and `TextFileEditor.reformat()` and copy their result into the
+status bar (`Nothing to unwrap`, `Reformatted N lines`, `Nothing to reformat`, `File is
+read-only`). `HIPPIE_COMPLETION` also hands the other open editors' text to the editor.
 
 ### Completion and rename popups
 
@@ -655,6 +719,9 @@ One effect watching `value.selection` keeps the caret visible on both axes, so e
 that moves it — arrow keys, `gotoLine`, find-bar stepping, undo/redo and edit actions — scrolls
 the same way. When the caret leaves the viewport by more than a 24 dp margin the editor scrolls
 to bring it back; a horizontal scrollbar sits along the bottom edge next to the vertical one.
+`EDITOR_SCROLL_TO_CENTER` reuses the same geometry: it reads the caret line's top and bottom from
+the layout and scrolls so that line's middle meets the middle of the visible viewport. The caret
+stays inside the following margin, so that effect leaves the new offset alone.
 The vertical scrollbar's adapter subtracts the chrome insets from its track, so the thumb reaches
 the track's end at `maxValue` instead of stopping short by the inset height.
 The gutter (line numbers) follows only the vertical scroll and stays outside the horizontal

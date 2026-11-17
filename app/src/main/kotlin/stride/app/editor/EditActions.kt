@@ -1,6 +1,7 @@
 package stride.app.editor
 
 import androidx.compose.ui.text.TextRange
+import stride.lang.TextEdit
 
 data class EditResult(val text: String, val selection: TextRange)
 
@@ -300,6 +301,275 @@ object EditActions {
         }
     }
 
+    /**
+     * Moves the statements at the caret (or the selected lines) past their sibling above or below.
+     * A unit whose line opens a `{` carries lines through its closing `}`, and the comment and
+     * annotation lines glued above it travel with it; neither side is re-indented.
+     */
+    fun moveStatement(text: String, selection: TextRange, up: Boolean): EditResult {
+        val lines = splitLines(text)
+        val scan = CodeScan(text)
+        val firstSelected = lineIndexOf(text, selection.min)
+        var lastLine = if (selection.max > selection.min) {
+            lineIndexOf(text, selection.max - 1)
+        } else {
+            firstSelected
+        }
+        lastLine = blockLineEnd(text, scan, lastLine)
+        val firstLine = attachedHeaderStart(lines, firstSelected)
+
+        val neighbourFirst: Int
+        val neighbourLast: Int
+        if (up) {
+            if (firstLine == 0) return EditResult(text, selection)
+            neighbourLast = firstLine - 1
+            neighbourFirst = previousUnitStart(text, lines, scan, neighbourLast, lastLine)
+                ?: return EditResult(text, selection)
+        } else {
+            if (lastLine >= lines.lastIndex) return EditResult(text, selection)
+            neighbourFirst = lastLine + 1
+            neighbourLast = nextUnitEnd(text, lines, scan, neighbourFirst, firstLine)
+                ?: return EditResult(text, selection)
+        }
+
+        val unitSize = lastLine - firstLine + 1
+        val neighbourSize = neighbourLast - neighbourFirst + 1
+        val blockStart = minOf(firstLine, neighbourFirst)
+        val blockEnd = maxOf(lastLine, neighbourLast)
+        val combined = if (up) {
+            lines.subList(firstLine, lastLine + 1) + lines.subList(neighbourFirst, neighbourLast + 1)
+        } else {
+            lines.subList(neighbourFirst, neighbourLast + 1) + lines.subList(firstLine, lastLine + 1)
+        }
+        val newLines = lines.subList(0, blockStart) + combined + lines.subList(blockEnd + 1, lines.size)
+
+        fun mapLine(line: Int): Int = when {
+            line in firstLine..lastLine -> if (up) line - neighbourSize else line + neighbourSize
+            line in neighbourFirst..neighbourLast -> if (up) line + unitSize else line - unitSize
+            else -> line
+        }
+        val startLine = lineIndexOf(text, selection.start)
+        val endLine = lineIndexOf(text, selection.end)
+        val newStart = offsetOf(newLines, mapLine(startLine), selection.start - lineStartAt(text, startLine))
+        val newEnd = offsetOf(newLines, mapLine(endLine), selection.end - lineStartAt(text, endLine))
+        return EditResult(newLines.joinToString("\n"), TextRange(newStart, newEnd))
+    }
+
+    /**
+     * Finishes the caret's line: closes the `(` and `[` left open on it, opens (or closes) the
+     * block the line introduces, adds a semicolon when [semicolons] is set, then puts the caret
+     * on a new line below. This works on the line's text alone and never parses the file.
+     */
+    fun completeStatement(
+        text: String,
+        selection: TextRange,
+        semicolons: Boolean,
+        unit: String = "    ",
+    ): EditResult {
+        val caret = selection.max.coerceIn(0, text.length)
+        val start = lineStart(text, caret)
+        val end = lineEnd(text, caret)
+        if (text.substring(start, end).isBlank()) return EditResult(text, TextRange(caret))
+
+        val scan = CodeScan(text)
+        val lineCodeEnd = codeEndInLine(text, start, end, scan)
+        val closers = unclosedClosers(text, start, lineCodeEnd, scan)
+
+        var current = text
+        var codeEnd = lineCodeEnd
+        var lineEndOffset = end
+        if (closers.isNotEmpty()) {
+            current = text.substring(0, lineCodeEnd) + closers + text.substring(lineCodeEnd)
+            codeEnd = lineCodeEnd + closers.length
+            lineEndOffset = end + closers.length
+        }
+        val lineScan = if (closers.isEmpty()) scan else CodeScan(current)
+        val indent = text.substring(start, start + leadingWhitespaceLength(text.substring(start, end)))
+        val innerIndent = indent + unit
+        val separator = lineSeparator(current, lineEndOffset)
+        val code = current.substring(start, codeEnd)
+        val trimmed = code.trim()
+
+        if (trimmed.endsWith("{")) {
+            val insertion = if (lineScan.match(codeEnd - 1) != null) {
+                separator + innerIndent
+            } else {
+                separator + innerIndent + separator + indent + "}"
+            }
+            return EditResult(
+                current.substring(0, codeEnd) + insertion + current.substring(codeEnd),
+                TextRange(codeEnd + separator.length + innerIndent.length),
+            )
+        }
+        if (startsWithBlockKeyword(trimmed) && !trimmed.startsWith("}") &&
+            !isExpressionBody(current, lineScan, start, codeEnd, indent.length)
+        ) {
+            val insertion = " {" + separator + innerIndent + separator + indent + "}"
+            return EditResult(
+                current.substring(0, codeEnd) + insertion + current.substring(codeEnd),
+                TextRange(codeEnd + 2 + separator.length + innerIndent.length),
+            )
+        }
+
+        val last = trimmed.lastOrNull()
+        val appendSemicolon = semicolons && last != null && last !in ";{},"
+        val source = if (appendSemicolon) {
+            current.substring(0, codeEnd) + ";" + current.substring(codeEnd)
+        } else {
+            current
+        }
+        val insertionAt = lineEndOffset + if (appendSemicolon) 1 else 0
+        val contentEnd = if (insertionAt > 0 && source[insertionAt - 1] == '\r') insertionAt - 1 else insertionAt
+        val newline = lineSeparator(source, insertionAt)
+        return EditResult(
+            source.substring(0, contentEnd) + newline + indent + source.substring(contentEnd),
+            TextRange(contentEnd + newline.length + indent.length),
+        )
+    }
+
+    /**
+     * Removes the innermost control block around the caret and keeps its body, with the body
+     * dedented one unit, as `null` when the caret is not inside a control block. Chained `else`,
+     * `catch`, `finally` blocks and a `do`'s trailing `while` go with it.
+     */
+    fun unwrap(text: String, selection: TextRange): EditResult? {
+        val scan = CodeScan(text)
+        val caret = selection.start.coerceIn(0, text.length)
+        val target = scan.bracketPairs()
+            .asSequence()
+            .filter { text[it.first] == '{' && it.first <= caret && caret <= it.second }
+            .sortedByDescending { it.first }
+            .mapNotNull { pair ->
+                controlKeyword(text, pair.first)?.let { Block(pair.first, pair.second, it) }
+            }
+            .firstOrNull() ?: return null
+
+        var first = target
+        while (true) {
+            val headerStart = lineStart(text, first.open) + leadingWhitespaceLength(
+                text.substring(lineStart(text, first.open), first.open),
+            )
+            if (headerStart >= text.length || text[headerStart] != '}') break
+            val previousOpen = scan.match(headerStart) ?: break
+            if (text.getOrNull(previousOpen) != '{') break
+            val keyword = controlKeyword(text, previousOpen) ?: break
+            if (keyword !in familyOf(target.keyword)) break
+            first = Block(previousOpen, headerStart, keyword)
+        }
+        var last = target
+        while (true) {
+            val next = nextCodeIndex(text, scan, last.close + 1) ?: break
+            val word = wordStartingAt(text, next)
+            if (word !in followersOf(target.keyword)) break
+            val bodyOpen = nextCodeBrace(text, scan, next + word.length) ?: break
+            val bodyClose = scan.match(bodyOpen) ?: break
+            last = Block(bodyOpen, bodyClose, word)
+        }
+        if (target.keyword == "do") {
+            val next = nextCodeIndex(text, scan, last.close + 1)
+            if (next != null && wordStartingAt(text, next) == "while") {
+                val conditionOpen = nextCodeParen(text, scan, next + "while".length)
+                val conditionClose = conditionOpen?.let(scan::match)
+                if (conditionClose != null) last = last.copy(close = conditionClose)
+            }
+        }
+
+        val chainFirstLine = lineStart(text, first.open)
+        var chainStart = chainFirstLine
+        var chainEnd = lineEnd(text, last.close)
+        val indent = text.substring(
+            chainFirstLine,
+            chainFirstLine + leadingWhitespaceLength(text.substring(chainFirstLine, first.open)),
+        )
+        val openLine = lineIndexOf(text, target.open)
+        val closeLine = lineIndexOf(text, target.close)
+        val openIsLineEnd = !hasCodeBetween(text, scan, target.open + 1, lineEnd(text, target.open))
+        val closeIsLineStart = !hasCodeBetween(text, scan, lineStart(text, target.close), target.close)
+        val bodyLines = if (openIsLineEnd && closeIsLineStart && closeLine > openLine + 1) {
+            (openLine + 1 until closeLine).map { line ->
+                val begin = lineStartAt(text, line)
+                dedentOneUnit(text.substring(begin, lineEnd(text, begin)))
+            }
+        } else {
+            emptyList()
+        }
+        val inlineBody = if (openIsLineEnd && closeIsLineStart) "" else text.substring(target.open + 1, target.close).trim()
+        val replacement = when {
+            openIsLineEnd && closeIsLineStart -> bodyLines.joinToString("\n")
+            inlineBody.isEmpty() -> ""
+            else -> indent + inlineBody
+        }
+        if (replacement.isEmpty()) {
+            if (chainEnd < text.length && text[chainEnd] == '\n') {
+                chainEnd++
+            } else if (chainStart > 0) {
+                chainStart--
+                if (chainStart > 0 && text[chainStart - 1] == '\r') chainStart--
+            }
+        }
+        val newText = text.substring(0, chainStart) + replacement + text.substring(chainEnd)
+
+        val caretLine = lineIndexOf(text, caret)
+        val bodyFirstLine = openLine + 1
+        val mapped = if (bodyLines.isEmpty()) {
+            val inner = text.substring(target.open + 1, target.close)
+            val bodyStart = target.open + 1 + leadingWhitespaceLength(inner)
+            chainStart + indent.length + (caret - bodyStart).coerceIn(0, inlineBody.length)
+        } else {
+            val index = caretLine - bodyFirstLine
+            if (index in bodyLines.indices) {
+                val begin = lineStartAt(text, caretLine)
+                val column = caret - begin
+                val removed = leadingWhitespaceLength(text.substring(begin, lineEnd(text, begin))) -
+                    leadingWhitespaceLength(bodyLines[index])
+                chainStart + offsetOf(bodyLines, index, 0) + (column - removed).coerceIn(0, bodyLines[index].length)
+            } else {
+                chainStart + replacement.length
+            }
+        }
+        return EditResult(newText, TextRange(mapped.coerceIn(0, newText.length)))
+    }
+
+    /**
+     * Re-indents [selection]'s lines, or the whole [text] when nothing is selected, and trims
+     * trailing whitespace. Only indentation, trailing whitespace and runs of blank lines change;
+     * line breaks and intra-line spacing are left alone.
+     */
+    fun reformat(text: String, selection: TextRange, braceLanguage: Boolean, unit: String = "    "): List<TextEdit> {
+        val infos = lineInfos(text)
+        if (infos.isEmpty()) return emptyList()
+        val scan = CodeScan(text)
+        val wholeFile = selection.min == selection.max
+        val firstTarget = if (wholeFile) 0 else lineIndexOf(text, selection.min)
+        val lastTarget = if (wholeFile) infos.lastIndex else lineIndexOf(text, selection.max - 1)
+        val deletions = if (wholeFile) blankLineDeletions(text, infos) else emptySet()
+        val edits = ArrayList<TextEdit>()
+        val stack = ArrayDeque<Pair<Char, Int>>()
+        for (line in infos.indices) {
+            val info = infos[line]
+            val content = text.substring(info.start, info.end)
+            val hasCarriageReturn = content.endsWith('\r')
+            val body = if (hasCarriageReturn) content.dropLast(1) else content
+            val level = lineLevel(text, scan, stack, info, body)
+            if (line in firstTarget..lastTarget && line !in deletions) {
+                val updated = reformattedLine(body, info, level, braceLanguage, unit)
+                if (updated != body) {
+                    edits.add(TextEdit(info.start, info.end, updated + if (hasCarriageReturn) "\r" else ""))
+                }
+            }
+            updateBracketStack(text, scan, stack, info, level)
+        }
+        for (line in deletions) {
+            val info = infos[line]
+            if (info.end < text.length) {
+                edits.add(TextEdit(info.start, info.end + 1, ""))
+            } else if (info.start > 0 && (line - 1) !in deletions) {
+                edits.add(TextEdit(info.start - 1, info.end, ""))
+            }
+        }
+        return edits
+    }
+
     /** The bracket matching the one at or just before [caret], ignoring strings and comments. */
     fun matchBrace(text: String, caret: Int): TextRange? = matchBrace(text, caret, CodeScan(text))
 
@@ -415,6 +685,400 @@ object EditActions {
             }
         }
         return ordered.filter { it != prefix && it.startsWith(prefix) }.distinct()
+    }
+
+    /** The last line of the block a line opens, or [line] when it opens none. */
+    private fun blockLineEnd(text: String, scan: CodeScan, line: Int): Int {
+        val open = firstCodeBrace(text, scan, line) ?: return line
+        val close = scan.match(open) ?: return line
+        return maxOf(line, lineIndexOf(text, close))
+    }
+
+    private fun attachedHeaderStart(lines: List<String>, line: Int): Int {
+        var start = line
+        while (start > 0 && isHeaderLine(lines[start - 1])) start--
+        return start
+    }
+
+    private fun isHeaderLine(line: String): Boolean {
+        val trimmed = line.trim()
+        return trimmed.startsWith("//") || trimmed.startsWith("/*") ||
+            trimmed.startsWith("*") || trimmed.startsWith("@")
+    }
+
+    /** The first line of the neighbour above [line], or `null` when moving into it is a no-op. */
+    private fun previousUnitStart(
+        text: String,
+        lines: List<String>,
+        scan: CodeScan,
+        line: Int,
+        unitLast: Int,
+    ): Int? {
+        if (lines[line].isBlank()) return line
+        val open = firstCodeBrace(text, scan, line)
+        if (open != null) {
+            val close = scan.match(open)
+            if (close != null && lineIndexOf(text, close) > unitLast) return null
+        }
+        val begin = lineStartAt(text, line)
+        val first = firstCodeIndex(text, scan, begin, lineEnd(text, begin))
+        if (first >= 0 && text[first] == '}') {
+            val previousOpen = scan.match(first)
+            if (previousOpen != null && lineIndexOf(text, previousOpen) < line) {
+                return attachedHeaderStart(lines, lineIndexOf(text, previousOpen))
+            }
+        }
+        return line
+    }
+
+    /** The last line of the neighbour below [line], or `null` when moving into it is a no-op. */
+    private fun nextUnitEnd(
+        text: String,
+        lines: List<String>,
+        scan: CodeScan,
+        line: Int,
+        unitFirst: Int,
+    ): Int? {
+        if (line > lines.lastIndex) return null
+        if (lines[line].isBlank()) return line
+        val begin = lineStartAt(text, line)
+        val first = firstCodeIndex(text, scan, begin, lineEnd(text, begin))
+        if (first >= 0 && text[first] == '}') {
+            val open = scan.match(first)
+            if (open != null && lineIndexOf(text, open) < unitFirst) return null
+        }
+        val own = firstCodeBrace(text, scan, line)
+        if (own != null) {
+            val close = scan.match(own)
+            if (close != null) return lineIndexOf(text, close)
+        }
+        var following = line
+        while (following <= lines.lastIndex && isHeaderLine(lines[following])) following++
+        if (following > line && following <= lines.lastIndex) {
+            val blockOpen = firstCodeBrace(text, scan, following)
+            val blockClose = blockOpen?.let(scan::match)
+            if (blockClose != null) return lineIndexOf(text, blockClose)
+        }
+        return line
+    }
+
+    private fun firstCodeIndex(text: String, scan: CodeScan, start: Int, end: Int): Int {
+        for (i in start until end) {
+            if (scan.isCode(i) && !text[i].isWhitespace()) return i
+        }
+        return -1
+    }
+
+    private fun firstCodeBrace(text: String, scan: CodeScan, line: Int): Int? {
+        val begin = lineStartAt(text, line)
+        val end = lineEnd(text, begin)
+        for (i in begin until end) {
+            if (scan.isCode(i) && text[i] == '{') return i
+        }
+        return null
+    }
+
+    /** Where the line's code ends, before trailing whitespace and a line or block comment. */
+    private fun codeEndInLine(text: String, start: Int, end: Int, scan: CodeScan): Int {
+        var visibleEnd = commentStartInLine(text, start, end, scan) ?: end
+        while (visibleEnd > start && text[visibleEnd - 1].isWhitespace()) visibleEnd--
+        return visibleEnd
+    }
+
+    private fun commentStartInLine(text: String, start: Int, end: Int, scan: CodeScan): Int? {
+        for (i in start until end - 1) {
+            if (text[i] != '/' || (text[i + 1] != '/' && text[i + 1] != '*')) continue
+            if (scan.isCode(i)) continue
+            if (scan.stringContents.any { i >= it.first && i <= it.last }) continue
+            return i
+        }
+        return null
+    }
+
+    private fun unclosedClosers(text: String, start: Int, end: Int, scan: CodeScan): String {
+        val stack = ArrayList<Char>()
+        for (i in start until end) {
+            if (!scan.isCode(i)) continue
+            when (val character = text[i]) {
+                '(', '[', '{' -> stack.add(character)
+                ')', ']', '}' -> if (stack.isNotEmpty() && BRACKET_PARTNER[stack.last()] == character) {
+                    stack.removeAt(stack.lastIndex)
+                }
+            }
+        }
+        return buildString {
+            for (index in stack.indices.reversed()) {
+                when (stack[index]) {
+                    '(' -> append(')')
+                    '[' -> append(']')
+                }
+            }
+        }
+    }
+
+    private fun startsWithBlockKeyword(code: String): Boolean {
+        val head = code.substringBefore('(').substringBefore('=').substringBefore('{')
+        val tokens = head.split(' ', '\t', ':', '<', '>', '@').filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return false
+        if (tokens.first() in BLOCK_KEYWORDS) return true
+        return tokens.any { it in DECLARATION_KEYWORDS }
+    }
+
+    private fun isExpressionBody(
+        text: String,
+        scan: CodeScan,
+        start: Int,
+        end: Int,
+        indentLength: Int,
+    ): Boolean {
+        var depth = 0
+        for (i in start + indentLength until end) {
+            if (!scan.isCode(i)) continue
+            when (text[i]) {
+                '(', '[', '{' -> depth++
+                ')', ']', '}' -> if (depth > 0) depth--
+                '=' -> {
+                    val previous = previousNonSpace(text, i)
+                    if (depth == 0 && text.getOrNull(i + 1) != '=' &&
+                        (previous == null || previous !in OPERATOR_CHARS)
+                    ) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun previousNonSpace(text: String, index: Int): Char? {
+        var i = index - 1
+        while (i >= 0 && text[i].isWhitespace()) i--
+        return text.getOrNull(i)
+    }
+
+    private fun controlKeyword(text: String, open: Int): String? {
+        val header = text.substring(lineStart(text, open), open).trim()
+        if (header.isEmpty()) return null
+        val afterClosing = if (header.startsWith("}")) header.drop(1).trim() else header
+        val word = afterClosing.takeWhile { it.isLetter() }
+        return if (word in CONTROL_KEYWORDS) word else null
+    }
+
+    private fun familyOf(keyword: String): Set<String> = when (keyword) {
+        "if", "else" -> IF_FAMILY
+        "try", "catch", "finally" -> TRY_FAMILY
+        else -> setOf(keyword)
+    }
+
+    private fun followersOf(keyword: String): Set<String> = when (keyword) {
+        "if", "else" -> setOf("else")
+        "try", "catch", "finally" -> setOf("catch", "finally")
+        else -> emptySet()
+    }
+
+    private fun nextCodeIndex(text: String, scan: CodeScan, from: Int): Int? {
+        var i = from.coerceIn(0, text.length)
+        while (i < text.length) {
+            if (scan.isCode(i) && !text[i].isWhitespace()) return i
+            i++
+        }
+        return null
+    }
+
+    private fun wordStartingAt(text: String, index: Int): String {
+        var end = index
+        while (end < text.length && (text[end].isLetter() || text[end] == '_')) end++
+        return text.substring(index, end)
+    }
+
+    private fun nextCodeBrace(text: String, scan: CodeScan, from: Int): Int? {
+        var i = from.coerceIn(0, text.length)
+        while (i < text.length) {
+            if (scan.isCode(i)) {
+                when (text[i]) {
+                    '{' -> return i
+                    ';', '}' -> return null
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun nextCodeParen(text: String, scan: CodeScan, from: Int): Int? {
+        var i = from.coerceIn(0, text.length)
+        while (i < text.length) {
+            if (scan.isCode(i)) {
+                when (text[i]) {
+                    '(' -> return i
+                    '{', ';', '}' -> return null
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun hasCodeBetween(text: String, scan: CodeScan, start: Int, end: Int): Boolean {
+        for (i in start until end) {
+            if (scan.isCode(i) && !text[i].isWhitespace()) return true
+        }
+        return false
+    }
+
+    private fun dedentOneUnit(line: String): String {
+        val whitespace = leadingWhitespaceLength(line)
+        if (whitespace == 0) return line
+        val remove = if (line[0] == '\t') 1 else minOf(whitespace, INDENT_UNIT_LENGTH)
+        return line.substring(remove)
+    }
+
+    private fun lineInfos(text: String): List<LineInfo> {
+        val infos = ArrayList<LineInfo>()
+        var inBlockComment = false
+        var inRawString = false
+        var lineStart = 0
+        while (true) {
+            val newline = text.indexOf('\n', lineStart)
+            val end = if (newline < 0) text.length else newline
+            val startsInBlockComment = inBlockComment
+            val startsInString = inRawString
+            var inString = false
+            var i = lineStart
+            while (i < end) {
+                when {
+                    inRawString && text.startsWith("\"\"\"", i) -> {
+                        inRawString = false
+                        i += 3
+                    }
+                    inRawString -> i++
+                    inBlockComment && text.startsWith("*/", i) -> {
+                        inBlockComment = false
+                        i += 2
+                    }
+                    inBlockComment -> i++
+                    inString && text[i] == '\\' -> i += 2
+                    inString && text[i] == '"' -> {
+                        inString = false
+                        i++
+                    }
+                    inString -> i++
+                    text.startsWith("//", i) -> i = end
+                    text.startsWith("/*", i) -> {
+                        inBlockComment = true
+                        i += 2
+                    }
+                    text.startsWith("\"\"\"", i) -> {
+                        inRawString = true
+                        i += 3
+                    }
+                    text[i] == '"' -> {
+                        inString = true
+                        i++
+                    }
+                    text[i] == '\'' -> {
+                        i++
+                        while (i < end && text[i] != '\'') {
+                            if (text[i] == '\\') i++
+                            i++
+                        }
+                        if (i < end) i++
+                    }
+                    else -> i++
+                }
+            }
+            infos.add(LineInfo(lineStart, end, startsInBlockComment, startsInString, inRawString || inString))
+            if (newline < 0) break
+            lineStart = newline + 1
+        }
+        return infos
+    }
+
+    private fun lineLevel(
+        text: String,
+        scan: CodeScan,
+        stack: ArrayDeque<Pair<Char, Int>>,
+        info: LineInfo,
+        body: String,
+    ): Int {
+        var level = if (stack.isEmpty()) 0 else stack.last().second + 1
+        if (body.isBlank() || info.startsInString) return level
+        val first = firstCodeIndex(text, scan, info.start, info.end)
+        if (first >= 0 && text[first] in BRACKET_CLOSING && stack.isNotEmpty() &&
+            BRACKET_PARTNER[stack.last().first] == text[first]
+        ) {
+            level = stack.last().second
+        }
+        if (!info.startsInBlockComment && startsContinuation(body.trim())) level += 1
+        return level
+    }
+
+    private fun updateBracketStack(
+        text: String,
+        scan: CodeScan,
+        stack: ArrayDeque<Pair<Char, Int>>,
+        info: LineInfo,
+        level: Int,
+    ) {
+        for (i in info.start until info.end) {
+            if (!scan.isCode(i)) continue
+            when (val character = text[i]) {
+                '(', '[', '{' -> stack.addLast(character to level)
+                ')', ']', '}' -> if (stack.isNotEmpty() && BRACKET_PARTNER[stack.last().first] == character) {
+                    stack.removeLast()
+                }
+            }
+        }
+    }
+
+    private fun reformattedLine(
+        body: String,
+        info: LineInfo,
+        level: Int,
+        braceLanguage: Boolean,
+        unit: String,
+    ): String {
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) return ""
+        val indentLength = leadingWhitespaceLength(body)
+        val existingIndent = body.substring(0, indentLength)
+        val rest = body.substring(indentLength)
+        val core = if (info.endsInString) rest else rest.trimEnd(' ', '\t')
+        val indent = when {
+            !braceLanguage -> existingIndent
+            info.startsInString -> existingIndent
+            info.startsInBlockComment && trimmed.startsWith("*") -> unit.repeat(level) + " "
+            info.startsInBlockComment -> existingIndent
+            else -> unit.repeat(level)
+        }
+        return indent + core
+    }
+
+    private fun startsContinuation(trimmed: String): Boolean = when {
+        trimmed.startsWith("..") -> false
+        trimmed.startsWith(".") -> true
+        trimmed.startsWith("?.") -> true
+        trimmed.startsWith("?:") -> true
+        trimmed.startsWith("&&") -> true
+        trimmed.startsWith("||") -> true
+        else -> false
+    }
+
+    private fun blankLineDeletions(text: String, infos: List<LineInfo>): Set<Int> {
+        val deletions = HashSet<Int>()
+        var run = 0
+        for (line in infos.indices) {
+            val info = infos[line]
+            val body = text.substring(info.start, info.end).trimEnd('\r')
+            val blank = body.isBlank() && !info.startsInBlockComment && !info.startsInString
+            if (blank) {
+                run++
+                if (run > 2) deletions.add(line)
+            } else {
+                run = 0
+            }
+        }
+        return deletions
     }
 
     private fun selectionLadder(text: String, selection: TextRange): List<TextRange> {
@@ -626,6 +1290,28 @@ private const val BRACKET_OPENING = "([{"
 private const val BRACKET_CLOSING = ")]}"
 private val NO_SPACE_BEFORE = charArrayOf(')', ']', '.', ',')
 private const val CANCELLATION_CHECK_INTERVAL = 64 * 1024
+private const val INDENT_UNIT_LENGTH = 4
+private val OPERATOR_CHARS = charArrayOf('=', '!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^')
+private val BLOCK_KEYWORDS = setOf(
+    "if", "else", "for", "while", "do", "try", "catch", "finally", "when", "switch",
+    "synchronized", "fun", "class", "interface", "object", "init",
+)
+private val DECLARATION_KEYWORDS = setOf("class", "interface", "object", "fun")
+private val CONTROL_KEYWORDS = setOf("if", "else", "for", "while", "do", "try", "catch", "finally")
+private val IF_FAMILY = setOf("if", "else")
+private val TRY_FAMILY = setOf("try", "catch", "finally")
+
+/** A control block found by [EditActions.unwrap]; [keyword] is the word that opens it. */
+private data class Block(val open: Int, val close: Int, val keyword: String)
+
+/** What [EditActions.reformat] needs to know about a line before it rewrites it. */
+private class LineInfo(
+    val start: Int,
+    val end: Int,
+    val startsInBlockComment: Boolean,
+    val startsInString: Boolean,
+    val endsInString: Boolean,
+)
 private val BRACKET_PARTNER = mapOf(
     '(' to ')', ')' to '(',
     '[' to ']', ']' to '[',

@@ -103,6 +103,7 @@ import stride.search.DeclarationParser
 import stride.search.ParsedDeclaration
 import java.util.logging.Level
 import java.util.logging.Logger
+import kotlin.math.roundToInt
 
 /** A clickable ▶ drawn in the gutter of [line] (0-based). */
 data class GutterMarker(val line: Int, val onClick: () -> Unit)
@@ -262,6 +263,10 @@ class TextFileEditor(
 
     /** Increments on every GO_TO_LINE request so an already-open popup takes focus again. */
     var gotoLineFocusRequests: Int by mutableIntStateOf(0)
+        private set
+
+    /** Increments on every scroll-to-center request so [Content] can act on it once. */
+    var centerRequests: Int by mutableIntStateOf(0)
         private set
 
     val commenter: Commenter?
@@ -492,6 +497,38 @@ class TextFileEditor(
         }
         ActionId.COPY_LINE -> copyLine(cut = false)
         ActionId.CUT_LINE -> copyLine(cut = true)
+        ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN -> {
+            if (!isReadOnly) {
+                applyEdit(
+                    EditActions.moveStatement(text, value.selection, up = action == ActionId.MOVE_STATEMENT_UP),
+                )
+            }
+            true
+        }
+        ActionId.EDITOR_COMPLETE_STATEMENT -> {
+            if (!isReadOnly) {
+                applyEdit(
+                    EditActions.completeStatement(
+                        text,
+                        value.selection,
+                        semicolons = file.extension?.lowercase() == "java",
+                    ),
+                )
+            }
+            true
+        }
+        ActionId.UNWRAP -> {
+            if (!isReadOnly) unwrap()
+            true
+        }
+        ActionId.REFORMAT_CODE -> {
+            if (!isReadOnly) reformat()
+            true
+        }
+        ActionId.EDITOR_SCROLL_TO_CENTER -> {
+            centerRequests++
+            true
+        }
         ActionId.HIPPIE_COMPLETION -> hippieComplete()
         else -> false
     }
@@ -587,6 +624,27 @@ class TextFileEditor(
         val caret = ranges.first().first + replacement.length
         applyEdit(EditResult(newText, TextRange(caret)))
         return ranges.size
+    }
+
+    /** Removes the innermost control block around the caret; `false` when there is none. */
+    fun unwrap(): Boolean {
+        if (isReadOnly) return false
+        val result = EditActions.unwrap(text, value.selection) ?: return false
+        applyEdit(result)
+        return true
+    }
+
+    /** Re-indents the selection or the whole file; returns the status line to show. */
+    fun reformat(): String {
+        if (isReadOnly) return "File is read-only"
+        val edits = EditActions.reformat(
+            text,
+            value.selection,
+            braceLanguage = file.extension?.lowercase() in BRACE_EXTENSIONS,
+        )
+        if (edits.isEmpty()) return "Nothing to reformat"
+        if (!applyEdits(edits)) return "Nothing to reformat"
+        return "Reformatted ${edits.size} lines"
     }
 
     /** Replaces `[start, end)` with [replacement] as one undo step; used by the popups. */
@@ -740,6 +798,17 @@ class TextFileEditor(
                 }
                 val targetYPx = targetY.toInt().coerceIn(0, vertical.maxValue)
                 if (targetYPx != vertical.value) vertical.scrollTo(targetYPx)
+            }
+            LaunchedEffect(centerRequests) {
+                if (centerRequests == 0) return@LaunchedEffect
+                val textLayout = layout ?: return@LaunchedEffect
+                val caretOffset = currentValue.selection.end
+                    .coerceIn(0, textLayout.layoutInput.text.length)
+                val line = textLayout.getLineForOffset(caretOffset)
+                val lineCenter = topPadPx + (textLayout.getLineTop(line) + textLayout.getLineBottom(line)) / 2f
+                // The chrome insets bound the visible viewport, so its middle sits below topPad.
+                val target = lineCenter - topPadPx - viewportHeightPx / 2f
+                vertical.scrollTo(target.roundToInt().coerceIn(0, vertical.maxValue))
             }
             val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * lineCount)
             val textMinWidth = (maxWidth - leftPad - gutterWidth - 32.dp).coerceAtLeast(0.dp)
@@ -1200,6 +1269,7 @@ class TextFileEditor(
         const val MAX_HIGHLIGHTED_SIZE: Long = 2L * 1024 * 1024
         const val GOTO_LINE_TAG: String = "goto-line"
         private const val MAX_SELECTION_STEPS: Int = 64
+        private val BRACE_EXTENSIONS = setOf("kt", "kts", "java", "json")
     }
 }
 

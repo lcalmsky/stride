@@ -15,7 +15,8 @@ enum class ActionId {
     GOTO_DECLARATION, BACK, FORWARD, FILE_STRUCTURE_POPUP, GOTO_TEST, FIND_USAGES,
     TOGGLE_BOOKMARK, SHOW_BOOKMARKS, ACTIVATE_PROJECT_TOOL_WINDOW, HIDE_ALL_WINDOWS,
     COPY_PATHS, COPY_REFERENCE, SWITCHER, SELECT_IN_PROJECT_VIEW, REOPEN_CLOSED_TAB, CLOSE_OTHER_TABS,
-    TOGGLE_UI_FONT,
+    TOGGLE_UI_FONT, MOVE_STATEMENT_UP, MOVE_STATEMENT_DOWN, EDITOR_COMPLETE_STATEMENT,
+    UNWRAP, REFORMAT_CODE, EDITOR_SCROLL_TO_CENTER,
 }
 
 enum class KeyContext {
@@ -109,6 +110,18 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("alt shift UP", ActionId.MOVE_LINE_UP, KeyContext.EDITOR)
     // MoveLineDown alt shift DOWN
     bind("alt shift DOWN", ActionId.MOVE_LINE_DOWN, KeyContext.EDITOR)
+    // MoveStatementUp meta shift UP
+    bind("meta shift UP", ActionId.MOVE_STATEMENT_UP, KeyContext.EDITOR)
+    // MoveStatementDown meta shift DOWN
+    bind("meta shift DOWN", ActionId.MOVE_STATEMENT_DOWN, KeyContext.EDITOR)
+    // EditorCompleteStatement meta shift ENTER
+    bind("meta shift ENTER", ActionId.EDITOR_COMPLETE_STATEMENT, KeyContext.EDITOR)
+    // Unwrap meta shift DELETE
+    bind("meta shift DELETE", ActionId.UNWRAP, KeyContext.EDITOR)
+    // ReformatCode meta alt L
+    bind("meta alt L", ActionId.REFORMAT_CODE, KeyContext.EDITOR)
+    // EditorScrollToCenter control L
+    bind("control L", ActionId.EDITOR_SCROLL_TO_CENTER, KeyContext.EDITOR)
     // GotoLine meta L
     bind("meta L", ActionId.GOTO_LINE, KeyContext.EDITOR)
     // $Undo meta Z
