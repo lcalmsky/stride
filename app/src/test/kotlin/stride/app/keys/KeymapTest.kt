@@ -8,6 +8,33 @@ import org.junit.jupiter.api.Test
 class KeymapTest {
     private val keymap = MacKeymap.keymap
 
+    @Test
+    fun `the navigation bindings resolve in their contexts`() {
+        // RecentLocations meta shift E
+        assertEquals(ActionId.RECENT_LOCATIONS, action("meta shift E", KeyContext.GLOBAL))
+        assertEquals(ActionId.RECENT_LOCATIONS, action("meta shift E", KeyContext.EDITOR))
+        // ShowNavBar alt HOME; meta UP only in a list window
+        assertEquals(ActionId.SHOW_NAV_BAR, action("alt HOME", KeyContext.GLOBAL))
+        assertEquals(ActionId.SHOW_NAV_BAR, action("alt HOME", KeyContext.EDITOR))
+        assertEquals(ActionId.SHOW_NAV_BAR, action("meta UP", KeyContext.LIST_WINDOW))
+        // EditSource F4; meta DOWN only in a list window
+        assertEquals(ActionId.EDIT_SOURCE, action("F4", KeyContext.GLOBAL))
+        assertEquals(ActionId.EDIT_SOURCE, action("F4", KeyContext.EDITOR))
+        assertEquals(ActionId.EDIT_SOURCE, action("meta DOWN", KeyContext.LIST_WINDOW))
+    }
+
+    @Test
+    fun `command up and command down stay unbound in the editor and global`() {
+        assertNull(action("meta UP", KeyContext.EDITOR))
+        assertNull(action("meta DOWN", KeyContext.EDITOR))
+        assertNull(action("meta UP", KeyContext.GLOBAL))
+        assertNull(action("meta DOWN", KeyContext.GLOBAL))
+        // The navigation bar owns the keyboard like the other modal popups.
+        assertNull(action("meta shift E", KeyContext.NAV_BAR))
+        assertNull(action("alt HOME", KeyContext.NAV_BAR))
+        assertNull(action("F4", KeyContext.NAV_BAR))
+    }
+
     private fun action(stroke: String, context: KeyContext): ActionId? =
         keymap.actionFor(KeyStroke.parse(stroke), context)
 

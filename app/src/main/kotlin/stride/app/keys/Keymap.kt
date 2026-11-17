@@ -25,11 +25,12 @@ enum class ActionId {
     EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
     EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
     JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
+    RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
 }
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
-    LIST_WINDOW,
+    LIST_WINDOW, NAV_BAR,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -55,7 +56,7 @@ class Keymap(
 
     companion object {
         /** Contexts whose popup handles every key itself; GLOBAL must not fire through them. */
-        private val MODAL_CONTEXTS = setOf(KeyContext.SEARCH_POPUP, KeyContext.CONTEXT_POPUP)
+        private val MODAL_CONTEXTS = setOf(KeyContext.SEARCH_POPUP, KeyContext.CONTEXT_POPUP, KeyContext.NAV_BAR)
 
         fun forPlatform(isMac: Boolean): Keymap =
             if (isMac) {
@@ -290,6 +291,16 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("shift F2", ActionId.GOTO_PREVIOUS_ERROR, KeyContext.EDITOR)
     // ShowErrorDescription meta F1
     bind("meta F1", ActionId.SHOW_ERROR_DESCRIPTION, KeyContext.EDITOR)
+    // RecentLocations meta shift E
+    bind("meta shift E", ActionId.RECENT_LOCATIONS, KeyContext.GLOBAL)
+    // ShowNavBar alt HOME; meta UP only in a list window
+    bind("alt HOME", ActionId.SHOW_NAV_BAR, KeyContext.GLOBAL)
+    bind("meta UP", ActionId.SHOW_NAV_BAR, KeyContext.LIST_WINDOW)
+    // EditSource F4; meta DOWN only in a list window.
+    // In the editor meta UP / meta DOWN keep reaching the text field, which moves the caret to
+    // the document start / end (Compose's macOS mapping); the editor uses alt HOME / F4 instead.
+    bind("F4", ActionId.EDIT_SOURCE, KeyContext.GLOBAL)
+    bind("meta DOWN", ActionId.EDIT_SOURCE, KeyContext.LIST_WINDOW)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
     // EditorCloneCaretAbove/Below have no stroke either: a double Option gesture in KeyRouter.
     // JumpToLastChange meta shift BACK_SPACE

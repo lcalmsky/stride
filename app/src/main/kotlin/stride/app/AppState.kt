@@ -23,6 +23,7 @@ import stride.app.keys.Keymap
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.EditLocations
+import stride.app.navigation.NavigationBarState
 import stride.app.navigation.NavigationHistory
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekRequest
@@ -145,6 +146,15 @@ class AppState {
     /** Incremented by every Show Usages request; the popup's scan is keyed on it. */
     var showUsagesGeneration by mutableStateOf(0L)
         private set
+
+    var recentLocationsVisible by mutableStateOf(false)
+
+    /** Incremented by the Recent Locations action; the popup is keyed on it so every open starts fresh. */
+    var recentLocationsGeneration by mutableStateOf(0)
+        private set
+
+    /** The active navigation bar; `null` when the bar is closed. */
+    var navigationBar by mutableStateOf<NavigationBarState?>(null)
 
     /** Candidates of the Go to Declaration chooser; empty when it is closed. */
     var declarationChoices by mutableStateOf(emptyList<Declaration>())
@@ -373,6 +383,14 @@ class AppState {
         focus = KeyContext.SEARCH_POPUP
     }
 
+    /** Opens Recent Locations on a fresh request; the popup keyed on it starts from the top. */
+    fun openRecentLocations() {
+        if (session == null) return
+        recentLocationsGeneration++
+        recentLocationsVisible = true
+        focus = KeyContext.SEARCH_POPUP
+    }
+
     /** Opens Find in Path (or Replace in Path with [replace]) prefilled with [query]. */
     fun openFindInPath(query: String = "", wholeWord: Boolean = false, replace: Boolean = false) {
         findInPathQuery = query
@@ -499,6 +517,13 @@ class AppState {
         editorFocusRequests++
     }
 
+    /** Hands the keyboard to the selected text editor; `false` when something else is selected. */
+    fun focusSelectedEditor(): Boolean {
+        val hasEditor = session?.editors?.selected is TextFileEditor
+        handFocusToEditor()
+        return hasEditor
+    }
+
     /** Hides the active tool window and hands the keyboard back to the selected text editor. */
     fun hideActiveWindow() {
         toolWindows.hide()
@@ -557,6 +582,8 @@ class AppState {
         toolWindowBeforeHide = null
         findToolWindow.clear()
         problemsToolWindow.reset()
+        recentLocationsVisible = false
+        navigationBar = null
         toolWindows.hide()
         focus = KeyContext.GLOBAL
     }

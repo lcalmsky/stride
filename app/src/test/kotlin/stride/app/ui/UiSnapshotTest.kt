@@ -28,6 +28,8 @@ import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.dispatchAction
+import stride.app.navigation.NavigationBarState
+import stride.app.navigation.NavigationLocation
 import stride.app.problems.CompilerMessage
 import stride.app.problems.ProblemSource
 import stride.app.problems.ProblemsModel
@@ -927,6 +929,62 @@ class UiSnapshotTest {
         }
     }
 
+
+    @Test
+    @Order(32)
+    fun `recent locations popup snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            expand(session, root, "src", "main", "kotlin", "demo")
+            val main = openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val mainText = main.value.text
+            val greetingText = greeting.value.text
+            val mainPath = main.file.path.toAbsolutePath().normalize()
+            val greetingPath = greeting.file.path.toAbsolutePath().normalize()
+            session.history.push(NavigationLocation(mainPath, mainText.indexOf("println")))
+            session.history.push(NavigationLocation(greetingPath, greetingText.indexOf("val message")))
+            session.history.push(NavigationLocation(mainPath, mainText.indexOf("fun main")))
+            session.history.push(NavigationLocation(greetingPath, greetingText.indexOf("if (count")))
+            greeting.updateValue(TextFieldValue(greetingText, TextRange(greetingText.indexOf("class Greeter") + 6)))
+
+            assertTrue(dispatchAction(ActionId.RECENT_LOCATIONS, state) { null })
+            renderApp("21-recent-locations.png", state, renderMillis = 1_500)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("21-recent-locations.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+
+    @Test
+    @Order(33)
+    fun `navigation bar snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            expand(session, root, "src", "main", "kotlin", "demo")
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val bar = NavigationBarState.forFile(root, greeting.file.path)
+            val folder = bar.segments.indexOfLast { it.isDirectory }
+            state.navigationBar = bar.copy(selected = folder).openList { path ->
+                session.tree.children(VFile(path))
+            }
+            state.focus = KeyContext.NAV_BAR
+
+            renderApp("22-navigation-bar.png", state, renderMillis = 800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("22-navigation-bar.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+
     @Test
     @Order(99)
     fun `every snapshot was written`() {
@@ -1066,6 +1124,8 @@ class UiSnapshotTest {
             "18-replace-in-path.png",
             "19-problems.png",
             "20-show-usages.png",
+            "21-recent-locations.png",
+            "22-navigation-bar.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

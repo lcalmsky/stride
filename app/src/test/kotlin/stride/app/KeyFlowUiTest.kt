@@ -1723,6 +1723,37 @@ class KeyFlowUiTest {
             state.dispose()
         }
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command up and command down keep moving the caret to the document ends`() = runComposeUiTest {
+        val root = temp.resolve("caret-ends-project")
+        Files.createDirectories(root)
+        val content = "one\ntwo\nthree\n"
+        Files.writeString(root.resolve("Main.kt"), content)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(content, TextRange(2)))
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.DirectionDown) } }
+            waitUntil(timeoutMillis = 5_000) { editor.value.selection.start == content.length }
+            assertNull(state.navigationBar)
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.DirectionUp) } }
+            waitUntil(timeoutMillis = 5_000) { editor.value.selection.start == 0 }
+            assertNull(state.navigationBar)
+            assertEquals(KeyContext.EDITOR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
 }
 
 @Composable

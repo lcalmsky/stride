@@ -17,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -120,9 +121,13 @@ import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructure
 import stride.app.navigation.FileStructureEntry
 import stride.app.navigation.FileStructurePopup
+import stride.app.navigation.NavigationBar
+import stride.app.navigation.NavigationBarChildrenPopup
+import stride.app.navigation.NavigationBarState
 import stride.app.navigation.ParameterInfoPanel
 import stride.app.navigation.QuickDefinitionPopup
 import stride.app.navigation.QuickDocPopup
+import stride.app.navigation.RecentLocationsPopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.navigation.goToDeclaration
 import stride.app.navigation.navigationLocation
@@ -130,6 +135,8 @@ import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtLine
 import stride.app.navigation.openUsagesFindWindow
+import stride.app.navigation.openFileAtOffset
+import stride.app.navigation.openNavigationBarFile
 import stride.app.problems.EditorProblems
 import stride.app.problems.ErrorDescriptionPopup
 import stride.app.run.ContextActionsPopup
@@ -197,6 +204,7 @@ fun App(
     }
     var treeWidth by remember { mutableStateOf(DesignTokens.treeDefaultWidth) }
     var treeFocused by remember { mutableStateOf(false) }
+    var navBarLeft by remember { mutableStateOf(0.dp) }
     val gotoLineEditor = session?.editors?.selected as? TextFileEditor
     val selectedEditor = session?.editors?.selected
     LaunchedEffect(gotoLineEditor, gotoLineEditor?.gotoLineVisible) {
@@ -364,6 +372,20 @@ fun App(
                                     .height(sidebarHeight),
                             )
                         }
+                        if (state.navigationBar != null) {
+                            // A click outside the bar closes it; the rows and the list draw after
+                            // this box, so their own clicks stay theirs.
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(Unit) {
+                                        detectTapGestures {
+                                            state.navigationBar = null
+                                            state.focusSelectedEditor()
+                                        }
+                                    },
+                            )
+                        }
                         TopChromeRow(
                             projectName = session.displayName(),
                             manager = session.editors,
@@ -382,8 +404,45 @@ fun App(
                             focusLabel = focusLabel(state.focus),
                             message = state.statusMessage,
                             leftInset = contentLeft,
+                            navigationBar = state.navigationBar,
+                            children = { path -> session.tree.children(VFile(path)) },
+                            onChange = { bar -> state.navigationBar = bar },
+                            onOpenFile = { file ->
+                                state.navigationBar = null
+                                openNavigationBarFile(state, session, file)
+                            },
+                            onClose = {
+                                state.navigationBar = null
+                                state.focusSelectedEditor()
+                            },
+                            onSegmentPosition = { left -> navBarLeft = left },
                             modifier = Modifier.align(Alignment.BottomStart),
                         )
+                        val navigationBarList = state.navigationBar?.list
+                        if (navigationBarList != null) {
+                            NavigationBarChildrenPopup(
+                                children = navigationBarList.children,
+                                selected = navigationBarList.selected,
+                                onChoose = { file ->
+                                    val bar = state.navigationBar
+                                    if (file.isDirectory && bar != null) {
+                                        state.navigationBar = bar.descend(file) { path ->
+                                            session.tree.children(VFile(path))
+                                        }
+                                    } else if (!file.isDirectory) {
+                                        state.navigationBar = null
+                                        openNavigationBarFile(state, session, file)
+                                    }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(
+                                        start = navBarLeft,
+                                        bottom = DesignTokens.chromeInset +
+                                            DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap,
+                                    ),
+                            )
+                        }
                     }
                 }
             }
@@ -523,6 +582,35 @@ fun App(
                         refocusEditor(state)
                     },
                 )
+            }
+        }
+        if (state.recentLocationsVisible && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
+                    },
+            ) {
+                key(state.recentLocationsGeneration) {
+                    RecentLocationsPopup(
+                        request = state.recentLocationsGeneration,
+                        locations = session.history.locations(),
+                        caret = (session.editors.selected as? TextFileEditor)?.let { navigationLocation(it) },
+                        projectRoot = session.project.root,
+                        textOf = state::textOfOpenEditor,
+                        onChoose = { location ->
+                            state.recentLocationsVisible = false
+                            if (!openFileAtOffset(state, session, location.path, location.offset)) {
+                                refocusEditor(state)
+                            }
+                        },
+                        onClose = {
+                            state.recentLocationsVisible = false
+                            refocusEditor(state)
+                        },
+                    )
+                }
             }
         }
         if (state.declarationChooserVisible && session != null) {
@@ -1470,6 +1558,12 @@ private fun BottomChromeRow(
     focusLabel: String? = null,
     message: String? = null,
     leftInset: Dp = 0.dp,
+    navigationBar: NavigationBarState? = null,
+    children: (Path) -> List<VFile> = { emptyList() },
+    onChange: (NavigationBarState) -> Unit = {},
+    onOpenFile: (VFile) -> Unit = {},
+    onClose: () -> Unit = {},
+    onSegmentPosition: (Dp) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1484,10 +1578,21 @@ private fun BottomChromeRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
     ) {
-        val editor = session.editors.selected
-        val path = relativePath(session, editor?.file)
-        if (path.isNotEmpty()) {
-            PathCapsule(path, Modifier.weight(1f, fill = false))
+        if (navigationBar != null) {
+            NavigationBar(
+                bar = navigationBar,
+                children = children,
+                onChange = onChange,
+                onOpenFile = onOpenFile,
+                onClose = onClose,
+                onSegmentPosition = { left -> onSegmentPosition(leftInset + DesignTokens.space4 + left) },
+            )
+        } else {
+            val editor = session.editors.selected
+            val path = relativePath(session, editor?.file)
+            if (path.isNotEmpty()) {
+                PathCapsule(path, Modifier.weight(1f, fill = false))
+            }
         }
         Spacer(Modifier.weight(1f))
         StatusCapsule(session, focusLabel, message)
@@ -1810,6 +1915,7 @@ private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.RUN_WINDOW -> "Run"
     KeyContext.TERMINAL -> "Terminal"
     KeyContext.LIST_WINDOW -> "Window"
+    KeyContext.NAV_BAR -> "Navigation"
     KeyContext.CONTEXT_POPUP -> null
 }
 

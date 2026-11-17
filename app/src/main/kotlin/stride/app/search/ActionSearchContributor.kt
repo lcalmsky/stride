@@ -120,6 +120,9 @@ object ActionNames {
         ActionId.JUMP_TO_LAST_CHANGE to "Last Edit Location",
         ActionId.SHOW_USAGES to "Show Usages",
         ActionId.HIGHLIGHT_USAGES_IN_FILE to "Highlight Usages in File",
+        ActionId.RECENT_LOCATIONS to "Recent Locations",
+        ActionId.SHOW_NAV_BAR to "Jump to Navigation Bar",
+        ActionId.EDIT_SOURCE to "Edit Source",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

@@ -239,6 +239,33 @@ class ListToolWindowUiTest {
         onNodeWithText("row 63").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `f4 and command down open the selected row and command down keeps the selection`() = runComposeUiTest {
+        val rows = List(5) { index -> ListWindowRow(AnnotatedString("row $index")) }
+        var opened = -1
+        setContent {
+            Box(Modifier.size(400.dp)) {
+                ListToolWindow(
+                    rows = rows,
+                    focusRequests = 1,
+                    onOpen = { opened = it },
+                    onEscape = {},
+                )
+            }
+        }
+        waitForIdle()
+
+        onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        waitForIdle()
+        onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.DirectionDown) } }
+        waitUntil(timeoutMillis = 5_000) { opened == 1 }
+
+        opened = -1
+        onRoot().performKeyInput { pressKey(Key.F4) }
+        waitUntil(timeoutMillis = 5_000) { opened == 1 }
+    }
+
     private fun bookmark(root: Path, name: String, line: Int, lineText: String): Bookmark =
         Bookmark(root.resolve(name).toAbsolutePath().normalize(), name, line, lineText)
 }

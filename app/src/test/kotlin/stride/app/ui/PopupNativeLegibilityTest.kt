@@ -45,10 +45,13 @@ import stride.app.navigation.CallText
 import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructureEntry
 import stride.app.navigation.FileStructurePopup
+import stride.app.navigation.NavigationBarChildrenPopup
+import stride.app.navigation.NavigationLocation
 import stride.app.navigation.ParameterInfoPanel
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekCandidate
 import stride.app.navigation.QuickDefinitionPopup
+import stride.app.navigation.RecentLocationsPopup
 import stride.app.navigation.QuickDocPopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.problems.ErrorDescriptionPopup
@@ -565,6 +568,50 @@ class PopupNativeLegibilityTest {
                     onOpenInFindWindow = {},
                     onClose = {},
                 )
+            },
+            PopupCase(
+                name = "recent-locations",
+                key = "popup-recent-locations",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.BUSY),
+                renderMillis = 600,
+                // A row is three code lines tall, taller than the selection pill scan allows.
+                selectionPill = false,
+            ) {
+                RecentLocationsPopup(
+                    request = 0,
+                    locations = listOf(
+                        NavigationLocation(root.resolve("src/AlphaOne.kt").toAbsolutePath(), 8),
+                        NavigationLocation(root.resolve("src/AlphaTwo.kt").toAbsolutePath(), 12),
+                        NavigationLocation(root.resolve("src/BetaOne.kt").toAbsolutePath(), 4),
+                    ),
+                    caret = null,
+                    projectRoot = root,
+                    textOf = { path ->
+                        if (path.fileName?.toString() == "BetaOne.kt") null
+                        else "package demo\n\nclass Alpha(val value: Int) {\n    val alpha = 1\n}\n"
+                    },
+                    onChoose = {},
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "nav-bar-children",
+                key = "popup-nav-bar",
+                roles = listOf(Role.TEXT, Role.BUSY),
+                renderMillis = 600,
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    NavigationBarChildrenPopup(
+                        children = listOf(
+                            VFile(root.resolve("src/AlphaOne.kt")),
+                            VFile(root.resolve("src/AlphaTwo.kt")),
+                            VFile(root.resolve("src/BetaOne.kt")),
+                        ),
+                        selected = 1,
+                        onChoose = {},
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
+                    )
+                }
             },
         )
     }

@@ -10,6 +10,7 @@ import stride.app.editor.openRename
 import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
 import stride.app.navigation.UsageMatches
+import stride.app.navigation.NavigationBarState
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
 import stride.app.navigation.goToDeclaration
@@ -396,6 +397,34 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
             state.statusMessage = "Nothing to rerun"
         }
         true
+    }
+    ActionId.RECENT_LOCATIONS -> {
+        state.openRecentLocations()
+        true
+    }
+    ActionId.SHOW_NAV_BAR -> {
+        val session = state.session ?: return false
+        // The same GLOBAL stroke reaches the terminal and the other windows; there it must go on
+        // to the focused component, so only the editor, a list window and the tree open the bar.
+        if (state.focus != KeyContext.EDITOR && state.focus != KeyContext.LIST_WINDOW &&
+            state.focus != KeyContext.GLOBAL
+        ) {
+            return false
+        }
+        state.navigationBar = NavigationBarState.forFile(
+            session.project.root,
+            session.editors.selected?.file?.path,
+        )
+        state.focus = KeyContext.NAV_BAR
+        state.statusMessage = null
+        true
+    }
+    ActionId.EDIT_SOURCE -> when (state.focus) {
+        KeyContext.EDITOR -> goToDeclaration(state)
+        // A list window opens the selected row from its own handler; the key must reach it.
+        KeyContext.LIST_WINDOW -> false
+        KeyContext.GLOBAL -> state.focusSelectedEditor()
+        else -> false
     }
 }
 

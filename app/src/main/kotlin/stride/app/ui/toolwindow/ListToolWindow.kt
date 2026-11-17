@@ -36,6 +36,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -58,10 +59,10 @@ data class ListWindowRow(
 
 /**
  * The selectable row list shared by the Bookmarks, Find and Structure tool windows. Up/Down move
- * the selection, Enter opens the selected row, Esc hands the keyboard back and leaves the window
- * visible; a click selects, a double click opens, and Delete/Backspace removes when [onDelete] is
- * set. [selectOnFocus] runs when the window takes the keyboard and once more when rows first
- * arrive, so a list parsed off the UI thread can still start on the requested row.
+ * the selection, Enter, F4 and ⌘↓ open the selected row, Esc hands the keyboard back and leaves
+ * the window visible; a click selects, a double click opens, and Delete/Backspace removes when
+ * [onDelete] is set. [selectOnFocus] runs when the window takes the keyboard and once more when
+ * rows first arrive, so a list parsed off the UI thread can still start on the requested row.
  * [onSelectionChange] reports the selected row so a header button can act on it.
  */
 @Composable
@@ -127,7 +128,11 @@ fun ListToolWindow(
                             true
                         }
                         Key.DirectionDown -> {
-                            if (rows.isNotEmpty()) selectedIndex = (index + 1).coerceAtMost(rows.lastIndex)
+                            if (event.isMetaPressed) {
+                                if (rows.isNotEmpty()) onOpen(index)
+                            } else if (rows.isNotEmpty()) {
+                                selectedIndex = (index + 1).coerceAtMost(rows.lastIndex)
+                            }
                             true
                         }
                         Key.DirectionUp -> {
@@ -142,7 +147,7 @@ fun ListToolWindow(
                                 true
                             }
                         }
-                        Key.Enter, Key.NumPadEnter -> {
+                        Key.Enter, Key.NumPadEnter, Key.F4 -> {
                             if (rows.isNotEmpty()) onOpen(index)
                             true
                         }
