@@ -247,6 +247,34 @@ class CallSitesTest {
     }
 
     @Test
+    fun `type arguments, return and receiver accessor heads open lambdas`() {
+        fun lambdas(text: String) = CallSites.find("Sample.kt", text, "load")
+
+        for (text in listOf(
+            "configure<Settings> { load() }",
+            "x.configure<A, B> { load() }",
+            "fun f(): () -> Unit { return { load() } }",
+            "fun f() { return { load() } }",
+            "val v: Value = cache.get(key) { load() }",
+            "val v: Value = cache?.get(key) { load() }",
+        )) {
+            assertTrue(lambdas(text).single().inLambda, "expected a lambda: $text")
+        }
+
+        for (text in listOf(
+            "class A<T> { fun f() { load() } }",
+            "fun <T> f() { load() }",
+            "interface I<T> { fun f() { load() } }",
+            "val x: Int get() { return load() }",
+            "var y: Int = 0\n    set(value) { load() }",
+            "fun f(): List<T> { load() }",
+            "when (x) { is List<T> -> { load() } }",
+        )) {
+            assertFalse(lambdas(text).single().inLambda, "expected no lambda: $text")
+        }
+    }
+
+    @Test
     fun `other file types have no calls`() {
         assertTrue(CallSites.find("notes.md", "foo()", "foo").isEmpty())
     }

@@ -118,6 +118,28 @@ object CallSites {
                 // A class or object header's supertype call ends in the body `{`, not a lambda.
                 return !isClassHeader(text, open)
             }
+            '>' -> {
+                // `->` closes nothing; it heads a when branch or a lambda arrow.
+                if (previous > 0 && text[previous - 1] == '-') return false
+                val arguments = matchingOpenAngle(text, previous) ?: return false
+                var index = arguments - 1
+                while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+                if (index < 0) return false
+                val end = index + 1
+                var begin = index
+                if (text[begin] == '`') {
+                    var back = begin
+                    while (back > 0 && text[back - 1] != '`') back--
+                    begin = back - 1
+                    if (begin < 0) return false
+                } else if (isIdentifierChar(text[begin])) {
+                    while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
+                } else {
+                    return false
+                }
+                if (isAfterTypeColon(text, begin)) return false
+                return isCallName(text, begin, end)
+            }
         }
         if (!isIdentifierChar(text[previous]) && text[previous] != '`') return false
         val end = previous + 1
@@ -130,6 +152,7 @@ object CallSites {
         } else {
             while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
         }
+        if (text.substring(begin, end) == "return") return true
         var before = begin - 1
         while (before >= 0 && (text[before] == ' ' || text[before] == '\t')) before--
         if (before >= 0 && text[before] == ':') return false
@@ -151,7 +174,42 @@ object CallSites {
     private fun isAccessorBefore(text: String, start: Int, end: Int): Boolean {
         val name = DeclarationParser.unquote(text.substring(start, end))
         if (name != "get" && name != "set") return false
+        var before = start - 1
+        while (before >= 0 && (text[before] == ' ' || text[before] == '\t')) before--
+        if (before >= 0 && text[before] == '.') return false
         return text.substring(0, start).let { it.lastIndexOf(':') > it.lastIndexOf('\n') }
+    }
+
+    private fun matchingOpenAngle(text: String, close: Int): Int? {
+        var depth = 0
+        var index = close
+        while (index >= 0) {
+            when (text[index]) {
+                '\n' -> return null
+                '>' -> depth++
+                '<' -> {
+                    depth--
+                    if (depth == 0) return index
+                }
+            }
+            index--
+        }
+        return null
+    }
+
+    /** `true` when the name at [start] stands in a type position, after a `:`. */
+    private fun isAfterTypeColon(text: String, start: Int): Boolean {
+        var index = start - 1
+        while (true) {
+            while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+            if (index < 0 || text[index] != '.') break
+            index--
+            if (index >= 0 && text[index] == '?') index--
+            while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+            if (index < 0 || !isIdentifierChar(text[index])) return false
+            while (index >= 0 && isIdentifierChar(text[index])) index--
+        }
+        return index >= 0 && text[index] == ':'
     }
 
     private fun matchingOpenParen(text: String, close: Int): Int? {
@@ -217,7 +275,10 @@ object CallSites {
                 val close = typeArgumentEnd(text, i) ?: return false
                 var after = close + 1
                 while (after < text.length && (text[after] == ' ' || text[after] == '\t')) after++
-                return after < text.length && text[after] == '('
+                if (after >= text.length) return false
+                if (text[after] == '(') return true
+                return kotlin && text[after] == '{' && !isClassHeader(text, start) &&
+                    !isAfterTypeColon(text, start)
             }
             // In a class header the `{` after `by <expression>` opens the class body.
             kotlin && text[i] == '{' -> return !isClassHeader(text, start)
