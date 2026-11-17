@@ -455,10 +455,6 @@ class AppState {
     }
 
     /**
-     * Opens the Show Usages popup for [name] over the same files and editor texts a Find window
-     * tab scans, and hands the popup the keyboard.
-     */
-    /**
      * Shows [tree] in the Hierarchy tool window and focuses its list. The window is registered on
      * first use, after the other tool windows, so it has no tab until a hierarchy is opened.
      */
@@ -487,6 +483,10 @@ class AppState {
         toolWindows.activate("hierarchy")
     }
 
+    /**
+     * Opens the Show Usages popup for [name] over the same files and editor texts a Find window
+     * tab scans, and hands the popup the keyboard.
+     */
     fun openShowUsagesPopup(name: String): ShowUsagesRequest? {
         val current = session ?: return null
         showUsagesGeneration++
