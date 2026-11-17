@@ -78,7 +78,9 @@ class GlassRegistry(
         dirty = false
         if (handle == 0L) return false
         var syncedAnything = false
-        val next = pieces.values.toList()
+        // This list order is the native z order: overlays (popups) last, so they sit above the
+        // surfaces they cover.
+        val next = pieces.values.sortedBy { it.overlay }
         if (!glassPiecesEqual(synced, next)) {
             synced = next
             sync(handle, next)

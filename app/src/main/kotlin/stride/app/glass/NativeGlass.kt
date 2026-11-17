@@ -4,6 +4,7 @@ import java.awt.Component
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Logger
+import stride.app.ui.theme.Appearance
 
 data class NativeGlassView(
     val key: String,
@@ -21,6 +22,8 @@ data class NativeGlassView(
     val shadowPathHeight: Double,
     /** Whether the shadow sibling is ordered below its glass view in the container. */
     val shadowBelow: Boolean,
+    /** The view's index in the container's subviews, which is the native stacking order. */
+    val zIndex: Int,
 )
 
 /**
@@ -42,6 +45,10 @@ data class NativeLayerState(
     val restoredLayers: Int,
     /** Shadow siblings under the container; zero once the shadowed pieces are gone. */
     val shadowViewCount: Int,
+    /** The window's effective appearance: 0 unknown, 1 light, 2 dark. */
+    val windowAppearance: Int,
+    /** The glass base view's effective appearance: 0 unknown, 1 light, 2 dark. */
+    val glassAppearance: Int,
 )
 
 /** The debug view of one attached window: what the native side really has. */
@@ -74,11 +81,11 @@ internal object NativeGlass {
 
     val failure: String? get() = loadFailure
 
-    /** Values per piece in [NativeGlassState]: frame, radius, style, tint and the shadow block. */
-    private const val VIEW_VALUES = 11
+    /** Values per piece in [NativeGlassState]: frame, radius, style, tint, shadow block and z. */
+    private const val VIEW_VALUES = 12
 
     /** Values in the transparency block that follows the pieces. */
-    private const val LAYER_VALUES = 11
+    private const val LAYER_VALUES = 13
 
     private fun load(): String? {
         if (!System.getProperty("os.name").lowercase().contains("mac")) return "not macOS"
@@ -128,6 +135,12 @@ internal object NativeGlass {
         if (available) runCatching { nativeDetach(handle) }
     }
 
+    /** Enqueues the window appearance; the glass material then matches the palette. */
+    fun setAppearance(handle: Long, appearance: Appearance) {
+        if (!available || handle == 0L) return
+        runCatching { nativeSetAppearance(handle, if (appearance == Appearance.LIGHT) 1 else 2) }
+    }
+
     /** Enqueues one sync; the return value is the number of pieces accepted for that run. */
     fun sync(handle: Long, pieces: List<GlassPiece>): Int {
         if (!available) return 0
@@ -173,6 +186,7 @@ internal object NativeGlass {
                 shadowPathWidth = values[at + 8],
                 shadowPathHeight = values[at + 9],
                 shadowBelow = values[at + 10] != 0.0,
+                zIndex = values[at + 11].toInt(),
             )
         }
         val layerAt = 4 + count * VIEW_VALUES
@@ -190,6 +204,8 @@ internal object NativeGlass {
                 containerOpaque = values[layerAt + 8] != 0.0,
                 restoredLayers = values[layerAt + 9].toInt(),
                 shadowViewCount = values[layerAt + 10].toInt(),
+                windowAppearance = values[layerAt + 11].toInt(),
+                glassAppearance = values[layerAt + 12].toInt(),
             )
         } else {
             null
@@ -243,6 +259,8 @@ internal object NativeGlass {
     private external fun nativeAttach(handle: Long, component: Component, javaHome: String): Boolean
 
     private external fun nativeDetach(handle: Long)
+
+    private external fun nativeSetAppearance(handle: Long, value: Int)
 
     private external fun nativeSync(
         handle: Long,

@@ -38,7 +38,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -83,12 +82,11 @@ import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MirroredStripCache
 import stride.app.ui.theme.SidebarChrome
 import stride.app.glass.LocalNativeGlass
-import stride.app.glass.nativeGlass
-import stride.app.ui.theme.backdropGlass
 import stride.app.ui.theme.backgroundExtension
 import stride.app.ui.theme.contentTint
 import stride.app.ui.theme.editorFieldLuminance
 import stride.app.ui.theme.neonBorder
+import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrollEdgeBands
 import stride.core.vfs.VFile
 import stride.lang.ColorScheme
@@ -1044,9 +1042,7 @@ class TextFileEditor(
         Row(
             modifier
                 .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
-                .clip(shape)
-                .backdropGlass(shape)
-                .nativeGlass("popup-goto-line", shape, tint = DesignTokens.nativeGlassTint, hole = true, shadow = true)
+                .popupPanel("popup-goto-line", shape, skiaShadow = false)
                 .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8)
                 // The popup floats over the text field; a passive node keeps a press in its
                 // padding from moving the caret underneath.

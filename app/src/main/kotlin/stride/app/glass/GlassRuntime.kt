@@ -12,6 +12,8 @@ import java.util.logging.Logger
 import javax.swing.JComponent
 import javax.swing.RootPaneContainer
 import org.jetbrains.skiko.SkiaLayer
+import stride.app.ui.theme.Appearance
+import stride.app.ui.theme.AppearanceState
 
 /** Window-relative dp rectangles of panels whose native glass must show through opaque content. */
 object GlassHoles {
@@ -101,11 +103,19 @@ object GlassRuntime {
         handle = attached
         attempts = 0
         failed = false
+        applyAppearance(AppearanceState.appearance)
         val plan = chromePlan(eligible = true, attached = true, failed = false)
         if (plan.titleBarProperties) setTitleBar(window, merged = true)
         GlassRegistry.shared.attach(attached)
         active.value = plan.mergedTitleRow
         log.info("native glass: on")
+    }
+
+    /** Hands the palette's appearance to the attached window, so its glass material matches. */
+    fun applyAppearance(appearance: Appearance) {
+        val current = handle
+        if (current == 0L) return
+        NativeGlass.setAppearance(current, appearance)
     }
 
     fun detach() {

@@ -244,6 +244,9 @@ object DesignTokens {
     /** Secondary labels on busy glass (a bar over code, a popup over the editor). */
     val textOnBusyGlass: Color get() = palette.textOnBusyGlass
 
+    /** The palette plate under popup text on the native glass; see [POPUP_PLATE_ALPHA]. */
+    val popupPlate: Color get() = palette.glassBase.copy(alpha = POPUP_PLATE_ALPHA)
+
     /**
      * Shadow under chrome and popup text. On thin glass the text is read against this plate, so
      * it is opaque and tight; the measured worst case is in `PopupGlassTest`. It is light on the

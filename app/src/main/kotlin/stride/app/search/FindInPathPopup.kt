@@ -36,7 +36,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
@@ -59,11 +58,9 @@ import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.glass.GlassHoles
 import stride.app.glass.LocalNativeGlass
-import stride.app.glass.nativeGlass
-import stride.app.ui.theme.backdropGlass
+import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
-import stride.app.ui.theme.popupShadow
 import stride.search.FileNameIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -122,10 +119,7 @@ fun FindInPathPopup(
                 .align(Alignment.TopCenter)
                 .padding(top = DesignTokens.popupTop)
                 .width(DesignTokens.popupWidth)
-                .popupShadow(shape)
-                .clip(shape)
-                .backdropGlass(shape)
-                .nativeGlass("popup-find-in-path", shape, tint = DesignTokens.nativeGlassTint, hole = true, shadow = true)
+                .popupPanel("popup-find-in-path", shape)
                 .then(contentFade)
                 .pointerInput(Unit) { detectTapGestures { } }
                 .onPreviewKeyEvent { event ->

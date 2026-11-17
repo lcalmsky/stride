@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithCache
@@ -64,6 +65,7 @@ import org.jetbrains.skia.Shader
 import org.jetbrains.skia.Surface
 import stride.app.editor.LocalEditorScrollState
 import stride.app.glass.LocalNativeGlass
+import stride.app.glass.nativeGlass
 
 /** [Modifier.blur]'s radius-to-sigma factor, matching Compose's `BlurSigmaScale`. */
 private const val BLUR_SIGMA_SCALE = 0.57735f
@@ -1316,6 +1318,33 @@ fun Modifier.scrimSurface(alpha: Float, holes: List<androidx.compose.ui.geometry
  */
 fun Modifier.popupShadow(shape: Shape, elevation: Dp = 24.dp): Modifier = composed {
     if (LocalNativeGlass.current) this else shadow(elevation, shape, clip = false)
+}
+
+/**
+ * Alpha of the palette plate a popup lays over the native glass. 0.90 keeps every popup text
+ * role at 4.5:1 or more on the plate over a white and over a black desktop in both palettes
+ * (the tightest is the dark secondary label at 4.89); see [popupPlateFloor].
+ */
+const val POPUP_PLATE_ALPHA = 0.90f
+
+/**
+ * The floating panel every popup uses. On the Skia path it is the liquid glass (and the drop
+ * shadow when [skiaShadow]). On the native path it is the popup's own glass piece, an overlay
+ * that cuts a hole in the surfaces below and carries the native shadow, under a palette plate:
+ * the native material's brightness follows the desktop and AppKit, so popup text is measured
+ * against the plate instead.
+ */
+fun Modifier.popupPanel(key: String, shape: Shape, skiaShadow: Boolean = true): Modifier =
+    (if (skiaShadow) popupShadow(shape) else this)
+        .clip(shape)
+        .backdropGlass(shape)
+        .nativeGlass(key, shape, tint = DesignTokens.nativeGlassTint, hole = true, shadow = true)
+        .popupPlate()
+
+private fun Modifier.popupPlate(): Modifier = composed {
+    if (!LocalNativeGlass.current) return@composed Modifier
+    val color = DesignTokens.popupPlate
+    drawBehind { drawRect(color) }
 }
 
 /** The top, side and bottom hairlines of a glass slab. */

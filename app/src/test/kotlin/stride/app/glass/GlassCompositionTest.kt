@@ -33,8 +33,8 @@ import stride.core.vfs.VFile
 /**
  * Renders the real [App] with the native glass composition path forced on. No native library is
  * involved: the system material is absent, so every pixel the image carries is Compose drawing.
- * That makes an alpha of zero inside a glass piece mean "only the system material is there",
- * which is exactly the native-path rule the popups and the editor must obey.
+ * A popup panel carries the palette plate there (alpha [PLATE_ALPHA]), which bounds the material's
+ * brightness; the editor and tool-window bodies draw nothing and leave the material alone.
  */
 @ExtendWith(FixedUiFontExtension::class)
 class GlassCompositionTest {
@@ -42,7 +42,7 @@ class GlassCompositionTest {
     lateinit var temp: Path
 
     @Test
-    fun `an empty search popup draws no fill inside its glass`() {
+    fun `an empty search popup carries the palette plate over its glass`() {
         val state = AppState()
         nativePath {
             appearance(Appearance.LIGHT) {
@@ -54,9 +54,10 @@ class GlassCompositionTest {
                     System.err.println("glass-composition popup=$popup")
                     for ((x, y) in listOf(306 to 122, 900 to 160, 800 to 196, 950 to 196)) {
                         assertEquals(
-                            0,
-                            rendered.pixels[index(x, y)].ushr(24),
-                            "popup ($x,$y) carries a Compose fill; the system material must show through",
+                            PLATE_ALPHA.toDouble(),
+                            rendered.pixels[index(x, y)].ushr(24).toDouble(),
+                            2.0,
+                            "popup ($x,$y) must carry the palette plate over the system material",
                         )
                     }
                     // The popup itself is a reported glass piece at the expected window rectangle.
@@ -69,8 +70,9 @@ class GlassCompositionTest {
                     assertEquals(300f, requireNotNull(piece).x, 0.5f)
                     assertEquals(96f, piece.y, 0.5f)
                     assertEquals(680f, piece.width, 0.5f)
-                    // A grid over the popup: labels and hints are sparse glyphs, a fill is not.
-                    assertNoFillGrid(
+                    // A grid over the popup: the plate covers every sample; only glyph ink may
+                    // differ from it, and no sample may be left to the system material.
+                    assertPlateGrid(
                         rendered,
                         popup.left.toInt() + 6,
                         popup.top.toInt() + 6,
@@ -78,7 +80,6 @@ class GlassCompositionTest {
                         popup.bottom.toInt() - 6,
                         step = 8,
                         what = "search popup",
-                        maxFilled = 0.35,
                     )
                 } finally {
                     state.dispose()
@@ -153,22 +154,21 @@ class GlassCompositionTest {
                     // and the input must reach the frame.
                     var text = 0
                     var sampled = 0
-                    for (y in (rect.y + 4).toInt() until (rect.y + rect.height - 4).toInt() step 3) {
-                        for (x in (rect.x + 4).toInt() until (rect.x + rect.width - 4).toInt() step 3) {
+                    for (y in (rect.y + 4).toInt() until (rect.y + rect.height - 4).toInt()) {
+                        for (x in (rect.x + 4).toInt() until (rect.x + rect.width - 4).toInt()) {
                             sampled++
-                            // Glyph ink, not the soft text shadow: an opaque fill would also
-                            // pass this threshold, but at a much higher fraction.
-                            if (rendered.pixels[index(x, y)].ushr(24) >= FILL_ALPHA) text++
+                            // Glyph ink, matched by colour: the palette plate under it is opaque
+                            // but tinted, so an alpha threshold would count the whole panel.
+                            if (isGlyphInk(rendered.pixels[index(x, y)])) text++
                         }
                     }
                     System.err.println("glass-composition goto-line text=$text/$sampled")
                     assertTrue(text > 40, "the goto line popup drew no text ($text of $sampled samples)")
                     // The popup is small and dense with glyphs, so a text-only frame reaches
-                    // roughly 40%; an opaque plane (the old regression was uniform alpha 38)
-                    // covers every sample.
+                    // roughly 40%; a missing plate paints the panel edge to edge instead.
                     assertTrue(
                         text.toDouble() / sampled < 0.6,
-                        "the goto line popup carries a Compose fill ($text of $sampled samples)",
+                        "the goto line popup drew text over the whole panel ($text of $sampled samples)",
                     )
                 } finally {
                     state.dispose()
@@ -198,16 +198,17 @@ class GlassCompositionTest {
                         }
                     }
                     // Inside the popup's hint bar, where the clipped code would otherwise land,
-                    // the right half is empty: no code may show through the popup's glass.
-                    var glyphsInside = 0
+                    // the plate is uniform: code under it would make the pixels opaque and vary.
+                    var leaked = 0
                     for (y in 186 until 200) {
                         for (x in 800 until 950) {
-                            if (rendered.pixels[index(x, y)].ushr(24) > 0) glyphsInside++
+                            val alpha = rendered.pixels[index(x, y)].ushr(24)
+                            if (alpha < PLATE_ALPHA - 2 || alpha > PLATE_ALPHA + 2) leaked++
                         }
                     }
-                    System.err.println("glass-composition clip outside=$glyphsOutside inside=$glyphsInside")
+                    System.err.println("glass-composition clip outside=$glyphsOutside inside=$leaked")
                     assertTrue(glyphsOutside > 100, "the editor drew no code outside the popup ($glyphsOutside)")
-                    assertEquals(0, glyphsInside, "code shows through the popup's glass ($glyphsInside pixels)")
+                    assertEquals(0, leaked, "code shows through the popup's plate ($leaked pixels)")
                 } finally {
                     state.dispose()
                 }
@@ -262,6 +263,38 @@ class GlassCompositionTest {
         val fraction = filled.toDouble() / total
         System.err.println("glass-composition fill $what=$filled/$total")
         assertTrue(fraction <= maxFilled, "$what carries a Compose fill ($filled of $total samples)")
+    }
+
+    /** Every sample is the plate or glyph ink on it; none is left transparent. */
+    private fun assertPlateGrid(
+        rendered: Rendered,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        step: Int,
+        what: String,
+    ) {
+        var plate = 0
+        var ink = 0
+        var clear = 0
+        var y = top
+        while (y < bottom) {
+            var x = left
+            while (x < right) {
+                val alpha = rendered.pixels[index(x, y)].ushr(24)
+                when {
+                    alpha == 0 -> clear++
+                    alpha in (PLATE_ALPHA - 2)..(PLATE_ALPHA + 2) -> plate++
+                    else -> ink++
+                }
+                x += step
+            }
+            y += step
+        }
+        System.err.println("glass-composition plate $what=$plate ink=$ink clear=$clear")
+        assertEquals(0, clear, "$what left samples to the system material")
+        assertTrue(plate > ink, "$what: the plate covers only $plate samples (ink $ink)")
     }
 
     private fun nativePath(block: () -> Unit) {
@@ -331,6 +364,17 @@ class GlassCompositionTest {
         return root
     }
 
+    /** A core glyph pixel: the text tokens are drawn opaque and exactly, so a fill cannot match. */
+    private fun isGlyphInk(pixel: Int): Boolean {
+        if (pixel.ushr(24) != 0xFF) return false
+        val color = androidx.compose.ui.graphics.Color(pixel)
+        return listOf(DesignTokens.text, DesignTokens.textSecondaryOnGlass).any { token ->
+            kotlin.math.abs(color.red - token.red) * 255f <= 6f &&
+                kotlin.math.abs(color.green - token.green) * 255f <= 6f &&
+                kotlin.math.abs(color.blue - token.blue) * 255f <= 6f
+        }
+    }
+
     private fun index(x: Int, y: Int): Int = y * WIDTH + x
 
     companion object {
@@ -340,6 +384,9 @@ class GlassCompositionTest {
 
         /** Alpha from which a sample counts toward the fill budget; text shadows stay below it. */
         private const val FILL_ALPHA = 32
+
+        /** 0.90 plate over a transparent image, as the offscreen render composites it. */
+        private const val PLATE_ALPHA = 230
 
         @BeforeAll
         @JvmStatic

@@ -22,6 +22,7 @@ import stride.app.ui.chooseFolder
 import stride.core.services.Application
 
 fun main(args: Array<String>) {
+    SystemAppearance.prepareProcess()
     val result = Application.init()
     val log = Logger.getLogger("stride.app")
     log.info("LoadResult enabled=${result.enabled.map { it.id }}")

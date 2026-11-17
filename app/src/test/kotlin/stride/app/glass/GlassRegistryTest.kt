@@ -109,6 +109,21 @@ class GlassRegistryTest {
     }
 
     @Test
+    fun `overlays are synced last whatever order they were reported in`() {
+        registry.attach(7L)
+        registry.report(piece("popup").copy(overlay = true))
+        registry.report(piece("sidebar"))
+        registry.report(piece("editor-surface"))
+        registry.report(piece("another-popup").copy(overlay = true))
+        assertTrue(registry.flush())
+        assertEquals(
+            listOf("sidebar", "editor-surface", "popup", "another-popup"),
+            calls.last().map { it.key },
+        )
+        assertEquals(listOf("sidebar", "editor-surface", "popup", "another-popup"), registry.lastSynced.map { it.key })
+    }
+
+    @Test
     fun `removing the drag region clears the native rectangles`() {
         registry.attach(7L)
         registry.reportDragRegion("title-row", DragRect(0f, 0f, 500f, 28f))

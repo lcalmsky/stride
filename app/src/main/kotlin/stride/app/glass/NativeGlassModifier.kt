@@ -14,8 +14,8 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 
 /**
  * Reports this element's window-relative bounds to the native glass registry. On the Skia path
- * (tests and pre-macOS 26) it does nothing. [hole] also carves this rectangle out of the opaque
- * content surface below it, so the glass shows through a popup over the editor.
+ * (tests and pre-macOS 26) it does nothing. [hole] cuts this rectangle out of the Compose content
+ * of the surfaces the piece covers, and marks the piece as an overlay so it stacks above them.
  */
 fun Modifier.nativeGlass(
     key: String,
@@ -62,6 +62,7 @@ fun Modifier.nativeGlass(
                 style = style,
                 tint = tint,
                 shadow = shadow,
+                overlay = hole,
             ),
         )
         if (hole) {

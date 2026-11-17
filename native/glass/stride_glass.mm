@@ -61,6 +61,9 @@ struct WindowState {
     std::vector<LayerOriginal> layerOriginals;
     BOOL windowOpaque = YES;
     NSColor *__strong windowBackground = nil;
+    // 0 unspecified, 1 light, 2 dark: the palette the window's glass material must follow.
+    int appearance = 0;
+    NSAppearance *__strong originalAppearance = nil;
     id __strong dragMonitor = nil;
     // Drag rectangles in window points from the top-left corner.
     std::vector<NSRect> dragRects;
@@ -350,6 +353,16 @@ JAWTGetAWTProc ResolveJAWT(JNIEnv *env, jstring javaHome) {
     return getAWT;
 }
 
+/** 0 = unknown, 1 = light, 2 = dark. */
+jint AppearanceValueOf(NSAppearance *appearance) {
+    if (!appearance) return 0;
+    NSAppearanceName match =
+        [appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+    if ([match isEqualToString:NSAppearanceNameDarkAqua]) return 2;
+    if ([match isEqualToString:NSAppearanceNameAqua]) return 1;
+    return 0;
+}
+
 /** 0 = unknown, 1 = light, 2 = dark. NSApp stays nil until AWT installs its subclass. */
 jint CurrentAppearanceValue() {
     // Never ask for the shared application here: creating a plain NSApplication before AWT
@@ -481,6 +494,13 @@ void MakeDrawingChainTransparent(WindowState &state) {
     }
 }
 
+/** The window follows the palette, so the glass material and the Compose colours agree. */
+void ApplyWindowAppearance(WindowState &state) {
+    if (!state.window || state.appearance == 0) return;
+    NSString *name = state.appearance == 2 ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
+    [state.window setAppearance:[NSAppearance appearanceNamed:name]];
+}
+
 /** Undo every transparency change: the layer flags and backgrounds and the window's own state. */
 void RestoreTransparency(WindowState &state) {
     for (LayerOriginal &original : state.layerOriginals) {
@@ -495,6 +515,7 @@ void RestoreTransparency(WindowState &state) {
     if (state.window) {
         [state.window setOpaque:state.windowOpaque];
         [state.window setBackgroundColor:state.windowBackground];
+        [state.window setAppearance:state.originalAppearance];
     }
 }
 
@@ -642,6 +663,28 @@ Java_stride_app_glass_NativeAppearance_nativeAppClassName(JNIEnv *env, jobject) 
     return result;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_stride_app_glass_NativeAppearance_nativeAppAppearanceName(JNIEnv *env, jobject) {
+    if (!NSApp) return env->NewStringUTF("");
+    auto name = std::make_shared<std::string>();
+    AskAppKitRunLoop("application appearance query", [name] {
+      if (!NSApp) return;
+      NSAppearance *appearance = NSApp.appearance;
+      if (!appearance) {
+          *name = "(nil)";
+          return;
+      }
+      const char *utf8 = appearance.name.UTF8String;
+      if (utf8) *name = utf8;
+    });
+    jstring result = env->NewStringUTF(name->c_str());
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    return result;
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_stride_app_glass_NativeAppearance_nativeStartObserver(JNIEnv *env, jobject, jobject runnable) {
     jobject callback = runnable ? env->NewGlobalRef(runnable) : nullptr;
@@ -739,6 +782,7 @@ Java_stride_app_glass_NativeGlass_nativeAttach(JNIEnv *env, jobject, jlong handl
       state.contentView = contentView;
       state.windowOpaque = [window isOpaque];
       state.windowBackground = [window backgroundColor];
+      state.originalAppearance = [window appearance];
       container.wantsLayer = YES;
       container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
       // Below the AWT content view: the Compose canvas stays the top layer and paints over
@@ -790,6 +834,16 @@ Java_stride_app_glass_NativeGlass_nativeDetach(JNIEnv *, jobject, jlong handle) 
           drawing && drawing.backgroundColor ? CGColorGetAlpha(drawing.backgroundColor) : 0.0;
       gDetached.restoredLayers = restoredLayers;
       gWindows.erase(found);
+    });
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_stride_app_glass_NativeGlass_nativeSetAppearance(JNIEnv *, jobject, jlong handle, jint value) {
+    OnAppKitRunLoop([handle, value] {
+      auto found = gWindows.find(handle);
+      if (found == gWindows.end()) return;
+      found->second.appearance = value;
+      ApplyWindowAppearance(found->second);
     });
 }
 
@@ -942,6 +996,26 @@ Java_stride_app_glass_NativeGlass_nativeSync(JNIEnv *env, jobject, jlong handle,
               ++it;
           }
       }
+      // Pieces stack in the order Java sent them, each shadow directly below its own view; the
+      // registry sends overlays last, so a popup opened later sits above the surfaces it covers.
+      NSMutableArray<NSView *> *ordered = [NSMutableArray array];
+      for (NSView *sub in state.container.subviews) {
+          bool known = sub == state.base;
+          for (auto &entry : state.pieces) if (entry.second == sub) known = true;
+          for (auto &entry : state.shadows) if (entry.second == sub) known = true;
+          if (!known) [ordered addObject:sub];
+      }
+      if (state.base && state.base.superview == state.container) [ordered addObject:state.base];
+      for (const PieceSpec &spec : *pending) {
+          auto pieceIt = state.pieces.find(spec.key);
+          if (pieceIt == state.pieces.end() || pieceIt->second.superview != state.container) continue;
+          auto shadowIt = state.shadows.find(spec.key);
+          if (shadowIt != state.shadows.end() && shadowIt->second.superview == state.container) {
+              [ordered addObject:shadowIt->second];
+          }
+          [ordered addObject:pieceIt->second];
+      }
+      if (![state.container.subviews isEqualToArray:ordered]) state.container.subviews = ordered;
       [CATransaction commit];
     });
     return (jint)pending->size();
@@ -1044,6 +1118,8 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
                   0.0,
                   (double)gDetached.restoredLayers,
                   0.0,
+                  0.0,
+                  0.0,
               };
               return;
           }
@@ -1074,6 +1150,8 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
           values->push_back((double)shadowBounds.size.width);
           values->push_back((double)shadowBounds.size.height);
           values->push_back(ShadowIsBelow(shadow, entry.second) ? 1.0 : 0.0);
+          NSUInteger zIndex = [state.container.subviews indexOfObjectIdenticalTo:entry.second];
+          values->push_back(zIndex == NSNotFound ? -1.0 : (double)zIndex);
       }
       // The transparency chain of the Compose drawing layer: the value block is fixed-size so
       // the Java side can read it after the pieces.
@@ -1094,6 +1172,8 @@ Java_stride_app_glass_NativeGlass_nativeState(JNIEnv *env, jobject, jlong handle
       values->push_back(state.container && state.container.isOpaque ? 1.0 : 0.0);
       values->push_back(0.0);  // restored layers, only reported after detach
       values->push_back((double)state.shadows.size());
+      values->push_back((double)AppearanceValueOf(state.window ? state.window.effectiveAppearance : nil));
+      values->push_back((double)AppearanceValueOf(state.base ? state.base.effectiveAppearance : nil));
     });
     if (!answered) return nullptr;
     jdoubleArray result = env->NewDoubleArray((jsize)values->size());

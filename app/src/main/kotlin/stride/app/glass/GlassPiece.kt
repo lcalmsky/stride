@@ -12,6 +12,8 @@ data class GlassPiece(
     val tint: Int? = null,
     /** Draw the piece's drop shadow on its native layer instead of in Compose. */
     val shadow: Boolean = false,
+    /** A popup piece, stacked above every other piece so its glass and shadow stay visible. */
+    val overlay: Boolean = false,
 )
 
 enum class GlassStyle { REGULAR, CLEAR }
@@ -31,7 +33,8 @@ fun sameGlassPiece(first: GlassPiece, second: GlassPiece): Boolean =
         first.cornerRadius == second.cornerRadius &&
         first.style == second.style &&
         first.tint == second.tint &&
-        first.shadow == second.shadow
+        first.shadow == second.shadow &&
+        first.overlay == second.overlay
 
 /** Keyed create/update/remove diff between two reported piece sets. */
 fun diffGlassPieces(previous: List<GlassPiece>, next: List<GlassPiece>): GlassPieceDiff {

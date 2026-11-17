@@ -217,6 +217,9 @@ fun App(
                 GlassRegistry.shared.flush()
             }
         }
+        LaunchedEffect(nativeGlass, appearance) {
+            if (nativeGlass) GlassRuntime.applyAppearance(appearance)
+        }
         MeshBackground(Modifier.fillMaxSize()) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val maxToolWindowHeight = (maxHeight * 0.8f).coerceAtLeast(ToolWindowManager.MIN_HEIGHT)

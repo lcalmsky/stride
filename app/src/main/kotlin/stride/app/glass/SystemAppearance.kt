@@ -19,6 +19,10 @@ internal object NativeAppearance {
     fun appClassName(): String =
         if (!available) "" else runCatching { nativeAppClassName() }.getOrDefault("")
 
+    /** `NSApp.appearance`'s name, `"(nil)"` when unset, or empty before AWT installs the app. */
+    fun appAppearanceName(): String =
+        if (!available) "" else runCatching { nativeAppAppearanceName() }.getOrDefault("")
+
     /** Registers the distributed theme notification; the callback runs on the AppKit main thread. */
     fun start(onChange: () -> Unit): Boolean =
         available && runCatching { nativeStartObserver(Runnable(onChange)) }.getOrDefault(false)
@@ -30,6 +34,8 @@ internal object NativeAppearance {
     private external fun nativeAppearance(): Int
 
     private external fun nativeAppClassName(): String
+
+    private external fun nativeAppAppearanceName(): String
 
     private external fun nativeStartObserver(callback: Runnable): Boolean
 
@@ -49,6 +55,17 @@ object SystemAppearance {
     private var started = false
     @Volatile
     private var poller: Thread? = null
+
+    /**
+     * Lets AWT leave NSApp's appearance unset so it follows the system. Without it JDK 21 pins
+     * NSApp to Aqua, and the native glass would stay light while the palette follows dark mode.
+     * Must run before AWT initialises.
+     */
+    fun prepareProcess() {
+        System.setProperty(APPEARANCE_PROPERTY, "system")
+    }
+
+    internal const val APPEARANCE_PROPERTY = "apple.awt.application.appearance"
 
     fun start() {
         if (started) return

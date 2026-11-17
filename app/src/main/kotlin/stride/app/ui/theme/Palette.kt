@@ -269,3 +269,13 @@ fun editorGlassFloor(palette: Palette): Color {
         plates.minBy { relativeLuminance(it) }
     }
 }
+
+/** The popup plate over the desktop extreme that is worst for the palette's text polarity. */
+fun popupPlateFloor(palette: Palette): Color {
+    val plate = palette.glassBase.copy(alpha = POPUP_PLATE_ALPHA)
+    return if (relativeLuminance(palette.background) < 0.5) {
+        blendOver(plate, Color.White)
+    } else {
+        blendOver(plate, Color.Black)
+    }
+}

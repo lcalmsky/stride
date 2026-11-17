@@ -603,6 +603,27 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(25)
+    fun `context actions over code light snapshot`() {
+        AppearanceState.set(Appearance.LIGHT)
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val editor = openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            placeCaret(editor, "fun main()")
+            check(openContextActions(state) && state.contextActionsVisible) {
+                "no context actions for the main line"
+            }
+            renderApp("14-context-actions-light.png", state, renderMillis = 800, appearance = Appearance.LIGHT)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -784,6 +805,7 @@ class UiSnapshotTest {
             "12-editor-scrolled.png",
             "13-search-over-code.png",
             "14-context-actions.png",
+            "14-context-actions-light.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

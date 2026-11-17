@@ -43,6 +43,11 @@ class NativeAppearanceOrderTest {
             afterClass(output),
             "AWT did not install its application subclass:\n$output",
         )
+        assertEquals(
+            "(nil)",
+            appAppearance(output),
+            "AWT pinned NSApp's appearance instead of leaving it to the system:\n$output",
+        )
     }
 
     private fun beforeClass(output: String): String? =
@@ -50,4 +55,7 @@ class NativeAppearanceOrderTest {
 
     private fun afterClass(output: String): String? =
         Regex("afterClass=(\\S+)").find(output)?.groupValues?.get(1)
+
+    private fun appAppearance(output: String): String? =
+        Regex("appAppearance=(\\S+)").find(output)?.groupValues?.get(1)
 }
