@@ -58,8 +58,8 @@ class TypeGraph(
      * finds a class wins:
      * 1. a dotted name `A.B`: when `A` resolves, the class `B` nested in it; otherwise the class whose
      *    package plus name (or package, container and name) equals `A.B`
-     * 2. a class nested in one of [NameContext.enclosingClasses], or a sibling of the innermost one,
-     *    in [NameContext.file]
+     * 2. a class nested in the class [NameContext.enclosingClasses] names at [NameContext.line], or a
+     *    sibling of the innermost one, in [NameContext.file]
      * 3. an explicit import whose [SourceImport.visibleName] is [written]; when that import names
      *    no project class the name is outside the project and the later steps are skipped
      * 4. a top-level class of [NameContext.packageName]
@@ -92,7 +92,11 @@ class TypeGraph(
         val filePath = context.file?.path?.toString()
         if (filePath != null) {
             for (enclosing in context.enclosingClasses) {
-                val nested = classesInFile(filePath).filter { it.container == enclosing && it.name == name }
+                val owner = classInContext(enclosing, context) ?: continue
+                val ownerKey = key(owner)
+                val nested = classesInFile(filePath).filter {
+                    it.name == name && classOf(it)?.let { declared -> key(declared) == ownerKey } == true
+                }
                 if (nested.isNotEmpty()) return sort(nested)
             }
             val innermost = context.enclosingClasses.firstOrNull()

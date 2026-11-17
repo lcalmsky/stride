@@ -88,6 +88,26 @@ class TypeGraphTest {
     }
 
     @Test
+    fun `a nested class of the same name under two outer classes stays apart`() {
+        val outerA = declaration("A", path = "src/Nested.kt", line = 0)
+        val middleA = declaration("B", path = "src/Nested.kt", line = 1, container = "A")
+        val innerA = declaration("X", path = "src/Nested.kt", line = 2, container = "B")
+        val outerC = declaration("C", path = "src/Nested.kt", line = 5)
+        val middleC = declaration("B", path = "src/Nested.kt", line = 6, container = "C")
+        val innerC = declaration("X", path = "src/Nested.kt", line = 7, container = "B")
+        val typeGraph = graph(listOf(outerA, middleA, innerA, outerC, middleC, innerC))
+
+        assertEquals(
+            listOf(innerC),
+            typeGraph.resolveType("X", context(path = "src/Nested.kt", enclosing = listOf("B", "C"), line = 7)),
+        )
+        assertEquals(
+            listOf(innerA),
+            typeGraph.resolveType("X", context(path = "src/Nested.kt", enclosing = listOf("B", "A"), line = 2)),
+        )
+    }
+
+    @Test
     fun `default import names are not project classes`() {
         val typeGraph = graph(emptyList())
         assertTrue(typeGraph.resolveType("String", context()).isEmpty())
