@@ -456,4 +456,27 @@ class KotlinCodeModelTest {
         val text = "fun f() {\n    val a = (1\n}\n"
         assertFalse(model(text).bracketsMatch)
     }
+
+    @Test
+    fun `locals named like modifiers stay references before in, is, as and else`() {
+        val text = """
+            fun f(range: IntRange, flag: Boolean) {
+                val value = 3
+                val data: Any = value
+                val open = 1
+                if (value in range) println(value)
+                if (data is String) println(data)
+                val n = open as Int
+                val m = if (flag) value else open
+            }
+        """.trimIndent()
+        val code = model(text)
+
+        val value = code.locals.first { it.name == "value" }
+        val data = code.locals.first { it.name == "data" }
+        val open = code.locals.first { it.name == "open" }
+        assertEquals(4, code.references.count { it.name == "value" && it.resolved == value })
+        assertEquals(2, code.references.count { it.name == "data" && it.resolved == data })
+        assertEquals(2, code.references.count { it.name == "open" && it.resolved == open })
+    }
 }

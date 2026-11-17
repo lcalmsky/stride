@@ -542,13 +542,20 @@ private fun markDeclarationNames(code: KotlinCode) {
             }
             token.text in KotlinCode.MODIFIER_WORDS -> {
                 val next = code.code.getOrNull(token.index + 1)
-                if (next != null && (next.type == KotlinTokenTypes.KEYWORD || isNameToken(next))) {
+                // `value in range`, `data is Foo`, `if (c) value else …` and `= value` at a line end read a local.
+                if (next != null && next.text !in OPERATOR_KEYWORDS &&
+                    '\n' !in code.text.substring(token.end, next.start) &&
+                    (next.type == KotlinTokenTypes.KEYWORD || isNameToken(next))
+                ) {
                     code.keywordTokens.add(token.index)
                 }
             }
         }
     }
 }
+
+/** Hard keywords that can follow an expression, so a modifier word before them is a name. */
+private val OPERATOR_KEYWORDS = setOf("in", "is", "as", "else")
 
 private fun markPropertyNames(code: KotlinCode, keyword: KtToken) {
     val next = code.code.getOrNull(keyword.index + 1) ?: return
