@@ -510,4 +510,41 @@ class KotlinIntroduceVariableTest {
         val applied = finish(text, ask(select(text, "a + b")), "sum")
         assertEquals("fun f() {\r\n    val sum = a + b\r\n    val total = sum\r\n}\r\n", applied.text)
     }
+
+
+    @Test
+    fun `an occurrence inside a receiver scope is left out`() {
+        val text = "class C {\n    fun f(other: C) {\n        val a = this\n        with(other) { use(this) }\n    }\n}\n"
+        val applied = finish(text, ask(select(text, "this")), "b")
+
+        assertEquals(
+            "class C {\n    fun f(other: C) {\n        val b = this\n        val a = b\n        with(other) { use(this) }\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a local only expression keeps its occurrences in a receiver scope`() {
+        val text = "fun f(a: Int) {\n    val b = a + 1\n    with(a) { use(a + 1) }\n}\n"
+        val step = select(text, "a + 1")
+        assertEquals("Replace all 2 occurrences", (step as RefactoringStep.Choose).options[1].text)
+    }
+
+
+    @Test
+    fun `an if expression whose every branch has an else is an expression`() {
+        val text = "fun f(a: Boolean, b: Boolean) {\n    val v = if (a) 1 else if (b) 2 else 3\n}\n"
+        val applied = finish(text, ask(select(text, "if (a) 1 else if (b) 2 else 3")), "value")
+
+        assertEquals(
+            "fun f(a: Boolean, b: Boolean) {\n    val value = if (a) 1 else if (b) 2 else 3\n    val v = value\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an if expression whose inner if lacks an else is refused`() {
+        val text = "fun f(a: Boolean, b: Boolean) {\n    val v = if (a) if (b) 1 else 2\n}\n"
+        assertEquals("Select an expression", refused(select(text, "if (a) if (b) 1 else 2")))
+    }
 }

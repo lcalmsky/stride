@@ -145,6 +145,7 @@ internal object KotlinIntroduceVariable {
         val search = code.tokens.filter {
             !it.isComment && (it.isCode || it.isStringBody) && it.start >= statement.start && it.end <= blockEnd
         }
+        val receiverName = receiverSensitiveName(code, expression)
         val result = ArrayList<KtRange>()
         var index = 0
         while (index + template.size <= search.size) {
@@ -167,6 +168,10 @@ internal object KotlinIntroduceVariable {
                 continue
             }
             if (!stable && deferredOccurrence(code, range, statement)) {
+                index += template.size
+                continue
+            }
+            if (receiverName != null && receiverScopeBetween(code, expression.start, range.start)) {
                 index += template.size
                 continue
             }

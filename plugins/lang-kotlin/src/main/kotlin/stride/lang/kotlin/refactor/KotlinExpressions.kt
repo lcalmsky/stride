@@ -455,16 +455,20 @@ private val KEYWORD_OPERATORS = setOf("as", "is", "in")
 /** Keywords that start a statement rather than an expression. */
 private val NON_EXPRESSION_STARTS = setOf("while", "for", "do")
 
+/** True when every top-level `if` of the expression has an `else` at the same depth. */
 private fun hasTopLevelElse(atoms: List<ExprAtom>): Boolean {
     var depth = 0
+    var ifs = 0
+    var elses = 0
     for (atom in atoms) {
         when (atom.text) {
             "(", "[", "{" -> depth++
             ")", "]", "}" -> depth--
-            "else" -> if (depth == 0) return true
+            "if" -> if (depth == 0) ifs++
+            "else" -> if (depth == 0) elses++
         }
     }
-    return false
+    return ifs <= elses
 }
 
 private val STABLE_OPERATORS = setOf(
