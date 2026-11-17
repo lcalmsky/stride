@@ -167,6 +167,41 @@ class RefactoringActionsTest {
     }
 
     @Test
+    fun `overlapping edits are refused and leave the text`() {
+        val editor = editorWith("alpha beta\n")
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(0)))
+        state.prepareRefactoring = { _, _ ->
+            RefactoringStep.Apply(
+                RefactoringEdit(listOf(TextEdit(0, 5, "ALPHA"), TextEdit(3, 8, "BETA")), caret = 0),
+            )
+        }
+
+        assertTrue(startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE))
+
+        assertEquals("Introduce Variable failed: the edits overlap", state.statusMessage)
+        assertEquals("alpha beta\n", editor.value.text)
+    }
+
+    @Test
+    fun `refactor this reuses the prepared steps`() {
+        val editor = editorWith("alpha beta\n")
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(0)))
+        var prepared = 0
+        state.prepareRefactoring = { _, _ ->
+            prepared++
+            RefactoringStep.Apply(RefactoringEdit(listOf(TextEdit(0, 0, "val x = 1\n")), caret = 0))
+        }
+
+        assertTrue(openRefactorThis(state))
+        assertEquals(3, prepared)
+        val request = requireNotNull(state.refactorThis)
+
+        assertTrue(chooseRefactorThis(state, request.rows[1].value))
+        assertEquals(3, prepared)
+        assertEquals("val x = 1\nalpha beta\n", editor.value.text)
+    }
+
+    @Test
     fun `a text changed after preparing refuses the edit and keeps it`() {
         val editor = editorWith("foo bar\n")
         editor.updateValue(TextFieldValue("foo bar\n", TextRange(0)))

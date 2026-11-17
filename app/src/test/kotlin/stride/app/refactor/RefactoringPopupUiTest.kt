@@ -32,6 +32,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -173,6 +174,31 @@ class RefactoringPopupUiTest {
         assertNull(state.statusMessage)
         waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
         onNode(hasSetTextAction()).assertIsFocused()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an empty name is not submitted and the popup stays`() = runComposeUiTest {
+        val editor = prepareProject("alpha beta\n")
+        state.prepareRefactoring = { _, _ -> namingStep() }
+
+        setContent { RefactoringHarness(state) }
+        onNode(hasSetTextAction()).performClick()
+        waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+        onRoot().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
+        }
+        waitUntil(timeoutMillis = 5_000) { state.refactoringName != null }
+        waitForIdle()
+
+        onNodeWithTag(REFACTORING_NAME_FIELD_TAG).performTextClearance()
+        onRoot().performKeyInput { pressKey(Key.Enter) }
+        waitForIdle()
+
+        onNodeWithText("Type a name").assertExists()
+        assertNotNull(state.refactoringName)
+        assertEquals("alpha beta\n", editor.value.text)
     }
 
     private fun namingStep(): RefactoringStep.AskName =
