@@ -2,7 +2,9 @@ package stride.lang.kotlin.refactor
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -562,5 +564,13 @@ class KotlinCodeModelTest {
         assertEquals(4, code.references.count { it.name == "value" && it.resolved == value })
         assertEquals(2, code.references.count { it.name == "data" && it.resolved == data })
         assertEquals(2, code.references.count { it.name == "open" && it.resolved == open })
+    }
+
+    @Test
+    fun `the model is reused for the same text instance and rebuilt for another`() {
+        val text = "fun f() {\n    println(1)\n}\n"
+
+        assertSame(kotlinCodeFor(text), kotlinCodeFor(text))
+        assertNotSame(kotlinCodeFor(text), kotlinCodeFor(String(text.toCharArray())))
     }
 }

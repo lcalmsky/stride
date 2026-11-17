@@ -477,6 +477,20 @@ internal class KotlinCode(val text: String) {
     }
 }
 
+private class CachedCode(val text: String, val code: KotlinCode)
+
+@Volatile
+private var lastCode: CachedCode? = null
+
+/** The model for [text], reused while callers pass the same `String` instance. */
+internal fun kotlinCodeFor(text: String): KotlinCode {
+    val cached = lastCode
+    if (cached != null && cached.text === text) return cached.code
+    val code = KotlinCode(text)
+    lastCode = CachedCode(text, code)
+    return code
+}
+
 /** A code token that can be a name, including soft keywords the lexer marks as keywords. */
 internal fun isNameToken(token: KtToken): Boolean =
     token.type == KotlinTokenTypes.IDENTIFIER ||

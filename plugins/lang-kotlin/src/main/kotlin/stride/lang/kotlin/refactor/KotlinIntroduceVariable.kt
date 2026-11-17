@@ -18,7 +18,7 @@ internal object KotlinIntroduceVariable {
     private const val OPTION_LIMIT = 60
 
     fun prepare(context: RefactoringContext): RefactoringStep =
-        prepare(KotlinCode(context.text), context.selectionStart, context.selectionEnd)
+        prepare(kotlinCodeFor(context.text), context.selectionStart, context.selectionEnd)
 
     fun prepare(code: KotlinCode, selectionStart: Int, selectionEnd: Int): RefactoringStep {
         val text = code.text

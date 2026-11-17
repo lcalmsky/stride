@@ -12,7 +12,7 @@ internal object KotlinInline {
     private const val NOT_TARGET = "Inline works on local variables and functions declared in this file"
 
     fun prepare(context: RefactoringContext): RefactoringStep {
-        val code = KotlinCode(context.text)
+        val code = kotlinCodeFor(context.text)
         if (!code.bracketsMatch) return RefactoringStep.Refused(BRACKETS)
         val start = minOf(context.selectionStart, context.selectionEnd).coerceIn(0, code.text.length)
         val end = maxOf(context.selectionStart, context.selectionEnd).coerceIn(0, code.text.length)
