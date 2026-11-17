@@ -41,6 +41,10 @@ class FindTab(
     var truncated: Boolean by mutableStateOf(false)
         internal set
 
+    /** An outcome line under the header; `null` when there is nothing to report. */
+    var message: String? by mutableStateOf(null)
+        internal set
+
     /** The line above the rows: the count, the running state or the truncation notice. */
     val header: String
         get() = when {
@@ -125,6 +129,23 @@ class FindToolWindowState(
         val tab = selectedTab ?: return null
         close(tab)
         return tab
+    }
+
+    /** Shows [message] under [tab]'s header; `null` clears it. */
+    fun showMessage(tab: FindTab, message: String?) {
+        tab.message = message
+    }
+
+    /** Drops [hit] from [tab] after it was replaced. */
+    fun removeHit(tab: FindTab, hit: FindInPathHit) {
+        tab.hits = tab.hits.filterNot { it === hit }
+    }
+
+    /** Ends a Replace All: the tab keeps the outcome line and no rows. */
+    fun finishReplace(tab: FindTab, message: String) {
+        tab.hits = emptyList()
+        tab.truncated = false
+        tab.message = message
     }
 
     /** Cancels the running scans and drops every tab. */

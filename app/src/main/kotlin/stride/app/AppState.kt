@@ -25,9 +25,12 @@ import stride.app.navigation.PeekRequest
 import stride.app.navigation.StructureToolWindow
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
+import stride.app.search.FindReplaceController
 import stride.app.search.FindTabKind
 import stride.app.search.FindToolWindow
 import stride.app.search.FindToolWindowState
+import stride.app.search.ReplaceOutcome
+import stride.app.search.ReplacePlan
 import stride.app.search.openFindHit
 import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
@@ -113,6 +116,9 @@ class AppState {
 
     var findInPathWholeWord by mutableStateOf(false)
 
+    /** Whether the Find in Path popup opens in replace mode. */
+    var findInPathReplace by mutableStateOf(false)
+
     /** Incremented by [openFindInPath]; the popup is keyed on it so every open starts fresh. */
     var findInPathGeneration by mutableStateOf(0)
         private set
@@ -189,6 +195,13 @@ class AppState {
 
     val findToolWindow = FindToolWindowState()
 
+    /** Plans and applies the Find window's REPLACE tabs over the open editor texts and the disk. */
+    val findReplace = FindReplaceController(
+        files = { session?.project?.service<FileNameIndex>()?.snapshot() ?: emptyList() },
+        textOf = ::textOfOpenEditor,
+        openEditors = { session?.editors?.openFiles?.filterIsInstance<TextFileEditor>() ?: emptyList() },
+    )
+
     init {
         toolWindows.register(
             ToolWindow("bookmarks", "Bookmarks", KeyContext.LIST_WINDOW) { modifier ->
@@ -223,6 +236,7 @@ class AppState {
                     },
                     onEscape = { handFocusToEditor() },
                     modifier = modifier,
+                    replace = findReplace,
                 )
             },
         )
@@ -300,13 +314,21 @@ class AppState {
         focus = KeyContext.SEARCH_POPUP
     }
 
-    /** Opens Find in Path prefilled with [query], resetting the popup. */
-    fun openFindInPath(query: String = "", wholeWord: Boolean = false) {
+    /** Opens Find in Path (or Replace in Path with [replace]) prefilled with [query]. */
+    fun openFindInPath(query: String = "", wholeWord: Boolean = false, replace: Boolean = false) {
         findInPathQuery = query
         findInPathWholeWord = wholeWord
+        findInPathReplace = replace
         findInPathGeneration++
         findInPathVisible = true
         focus = KeyContext.SEARCH_POPUP
+    }
+
+    /** Applies a Replace in Path plan from the popup and reports its outcome in the status bar. */
+    fun applyReplacePlan(plan: ReplacePlan): ReplaceOutcome {
+        val outcome = findReplace.apply(plan)
+        statusMessage = outcome.message
+        return outcome
     }
 
     /**
@@ -420,6 +442,7 @@ class AppState {
         findInPathVisible = false
         findInPathQuery = ""
         findInPathWholeWord = false
+        findInPathReplace = false
         recentFilesVisible = false
         declarationChoices = emptyList()
         declarationChooserVisible = false

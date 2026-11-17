@@ -127,6 +127,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         if (state.session != null) state.openFindInPath()
         true
     }
+    ActionId.REPLACE_IN_PATH -> {
+        if (state.session != null) state.openFindInPath(replace = true)
+        true
+    }
     ActionId.RECENT_FILES, ActionId.SWITCHER -> {
         if (state.session != null) {
             state.recentFilesVisible = true

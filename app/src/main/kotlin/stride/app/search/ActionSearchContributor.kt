@@ -47,6 +47,7 @@ object ActionNames {
         ActionId.FIND_NEXT to "Find Next",
         ActionId.FIND_PREVIOUS to "Find Previous",
         ActionId.FIND_IN_PATH to "Find in Path",
+        ActionId.REPLACE_IN_PATH to "Replace in Path",
         ActionId.GOTO_FILE to "Go to File",
         ActionId.GOTO_CLASS to "Go to Class",
         ActionId.GOTO_SYMBOL to "Go to Symbol",

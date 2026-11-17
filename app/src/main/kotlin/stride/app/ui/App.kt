@@ -439,6 +439,22 @@ fun App(
                                 options = options,
                             )
                         },
+                        replace = state.findInPathReplace,
+                        onOpenReplaceInFindWindow = { query, options, replacement ->
+                            state.findInPathVisible = false
+                            state.openFindResults(
+                                kind = FindTabKind.REPLACE,
+                                title = "Replace '$query' with '$replacement'",
+                                query = query,
+                                options = options,
+                                replacement = replacement,
+                            )
+                        },
+                        onReplaceAll = { plan ->
+                            state.findInPathVisible = false
+                            state.applyReplacePlan(plan)
+                            refocusEditor(state)
+                        },
                     )
                 }
             }

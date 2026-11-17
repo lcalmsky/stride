@@ -32,15 +32,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -64,6 +68,7 @@ import stride.search.FileNameIndex
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -75,15 +80,28 @@ fun FindInPathPopup(
     onClose: () -> Unit,
     textOf: (Path) -> String? = { null },
     onOpenInFindWindow: (query: String, options: FindOptions) -> Unit = { _, _ -> },
+    replace: Boolean = false,
+    initialReplacement: String = "",
+    onOpenReplaceInFindWindow: (query: String, options: FindOptions, replacement: String) -> Unit =
+        { _, _, _ -> },
+    onReplaceAll: (ReplacePlan) -> Unit = {},
 ) {
     var query by remember { mutableStateOf(initialQuery) }
+    var replacement by remember { mutableStateOf(initialReplacement) }
     var caseSensitive by remember { mutableStateOf(false) }
     var regex by remember { mutableStateOf(false) }
     var wholeWord by remember { mutableStateOf(initialWholeWord) }
     var hits by remember { mutableStateOf(emptyList<FindInPathHit>()) }
     var selectedIndex by remember { mutableStateOf(0) }
     var searching by remember { mutableStateOf(false) }
+    var counting by remember { mutableStateOf(false) }
+    var replaceMessage by remember { mutableStateOf<String?>(null) }
+    var confirmation by remember { mutableStateOf<String?>(null) }
+    var pendingPlan by remember { mutableStateOf<ReplacePlan?>(null) }
+    var queryFocused by remember { mutableStateOf(true) }
     val focusRequester = remember { FocusRequester() }
+    val replaceFocusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
@@ -105,9 +123,43 @@ fun FindInPathPopup(
         selectedIndex = 0
         searching = false
     }
+    LaunchedEffect(query, replacement, caseSensitive, regex, wholeWord) {
+        pendingPlan = null
+        confirmation = null
+        replaceMessage = null
+    }
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
+    }
+
+    fun cancelConfirmation() {
+        pendingPlan = null
+        confirmation = null
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    fun startReplaceAll() {
+        if (query.isEmpty() || counting) return
+        val plannedQuery = query
+        val plannedReplacement = replacement
+        val plannedOptions = FindOptions(caseSensitive, regex, wholeWord)
+        counting = true
+        replaceMessage = null
+        scope.launch {
+            val plan = withContext(Dispatchers.Default) {
+                ReplaceInPath.plan(index.snapshot(), plannedQuery, plannedOptions, plannedReplacement, textOf)
+            }
+            counting = false
+            // The query or replacement changed while counting: the plan no longer matches.
+            if (plannedQuery != query || plannedReplacement != replacement) return@launch
+            if (plan.occurrences == 0) {
+                replaceMessage = "No occurrences to replace"
+            } else {
+                pendingPlan = plan
+                confirmation = ReplaceInPath.confirmation(plan, plannedQuery, plannedReplacement)
+            }
+        }
     }
 
     Box(
@@ -127,6 +179,21 @@ fun FindInPathPopup(
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) {
                         false
+                    } else if (confirmation != null) {
+                        when (event.key) {
+                            Key.Enter, Key.NumPadEnter -> {
+                                val plan = pendingPlan
+                                pendingPlan = null
+                                confirmation = null
+                                if (plan != null) onReplaceAll(plan)
+                                true
+                            }
+                            Key.Escape -> {
+                                cancelConfirmation()
+                                true
+                            }
+                            else -> true
+                        }
                     } else {
                         when (event.key) {
                             Key.Escape -> {
@@ -141,13 +208,36 @@ fun FindInPathPopup(
                                 if (hits.isNotEmpty()) selectedIndex = (selectedIndex - 1).coerceAtLeast(0)
                                 true
                             }
-                            Key.Enter, Key.NumPadEnter -> {
-                                if (event.isMetaPressed) {
-                                    if (query.isNotEmpty()) {
-                                        onOpenInFindWindow(query, FindOptions(caseSensitive, regex, wholeWord))
+                            Key.Tab -> {
+                                if (replace) {
+                                    runCatching {
+                                        if (queryFocused) {
+                                            replaceFocusRequester.requestFocus()
+                                        } else {
+                                            focusRequester.requestFocus()
+                                        }
                                     }
+                                    true
                                 } else {
-                                    hits.getOrNull(selectedIndex)?.let(onChoose)
+                                    false
+                                }
+                            }
+                            Key.Enter, Key.NumPadEnter -> {
+                                when {
+                                    event.isMetaPressed && event.isAltPressed -> {
+                                        if (replace) startReplaceAll()
+                                    }
+                                    event.isMetaPressed -> {
+                                        if (query.isNotEmpty()) {
+                                            val options = FindOptions(caseSensitive, regex, wholeWord)
+                                            if (replace) {
+                                                onOpenReplaceInFindWindow(query, options, replacement)
+                                            } else {
+                                                onOpenInFindWindow(query, options)
+                                            }
+                                        }
+                                    }
+                                    else -> hits.getOrNull(selectedIndex)?.let(onChoose)
                                 }
                                 true
                             }
@@ -158,8 +248,11 @@ fun FindInPathPopup(
         ) {
             CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
                 Header(
+                    title = if (replace) "Replace in Path" else "Find in Path",
                     query = query,
                     onQueryChange = { query = it },
+                    replacement = if (replace) replacement else null,
+                    onReplacementChange = { replacement = it },
                     caseSensitive = caseSensitive,
                     regex = regex,
                     wholeWord = wholeWord,
@@ -167,7 +260,26 @@ fun FindInPathPopup(
                     onToggleRegex = { regex = !regex },
                     onToggleWholeWord = { wholeWord = !wholeWord },
                     focusRequester = focusRequester,
+                    replacementFocusRequester = replaceFocusRequester,
+                    onQueryFocus = { queryFocused = true },
+                    onReplacementFocus = { queryFocused = false },
                 )
+                val shownConfirmation = confirmation
+                val shownMessage = replaceMessage
+                when {
+                    shownConfirmation != null -> ReplaceConfirmationRow(
+                        text = shownConfirmation,
+                        onConfirm = {
+                            val plan = pendingPlan
+                            pendingPlan = null
+                            confirmation = null
+                            if (plan != null) onReplaceAll(plan)
+                        },
+                        onCancel = { cancelConfirmation() },
+                    )
+                    counting -> ReplaceStatusLine("counting…")
+                    shownMessage != null -> ReplaceStatusLine(shownMessage)
+                }
                 if (query.isNotEmpty()) {
                     StatusLine(searching = searching, hits = hits)
                     when {
@@ -179,10 +291,20 @@ fun FindInPathPopup(
                             fontFamily = DesignTokens.uiFont,
                             modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space12),
                         )
-                        else -> ResultList(hits, selectedIndex, onChoose)
+                        else -> ResultList(
+                            hits = hits,
+                            selectedIndex = selectedIndex,
+                            onChoose = onChoose,
+                            replacement = if (replace) replacement else null,
+                            replacementColor = DesignTokens.accentOnPopupPlate,
+                        )
                     }
                 }
-                PopupHintBar("↑↓ Navigate", "↵ Open", "⌘↵ Open in Find Window", "Esc Close")
+                if (replace) {
+                    PopupHintBar("↵ Open", "⌘↵ Open in Find Window", "⌥⌘↵ Replace All", "Esc Close")
+                } else {
+                    PopupHintBar("↑↓ Navigate", "↵ Open", "⌘↵ Open in Find Window", "Esc Close")
+                }
             }
         }
     }
@@ -190,8 +312,11 @@ fun FindInPathPopup(
 
 @Composable
 private fun Header(
+    title: String,
     query: String,
     onQueryChange: (String) -> Unit,
+    replacement: String?,
+    onReplacementChange: (String) -> Unit,
     caseSensitive: Boolean,
     regex: Boolean,
     wholeWord: Boolean,
@@ -199,53 +324,110 @@ private fun Header(
     onToggleRegex: () -> Unit,
     onToggleWholeWord: () -> Unit,
     focusRequester: FocusRequester,
+    replacementFocusRequester: FocusRequester,
+    onQueryFocus: () -> Unit,
+    onReplacementFocus: () -> Unit,
 ) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(52.dp)
-            .padding(horizontal = DesignTokens.space16),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "Find in Path",
-            color = DesignTokens.text,
-            fontSize = DesignTokens.uiTextSize,
-            fontFamily = DesignTokens.uiFont,
-        )
-        Spacer(Modifier.width(DesignTokens.space16))
-        Box(Modifier.weight(1f)) {
-            if (query.isEmpty()) {
-                Text(
-                    "Search text in project",
-                    color = DesignTokens.textOnBusyGlass,
-                    fontSize = 15.sp,
-                    fontFamily = DesignTokens.uiFont,
-                )
-            }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("find-in-path-query")
-                    .focusRequester(focusRequester),
-                singleLine = true,
-                textStyle = DesignTokens.chromeTextStyle.merge(
-                    TextStyle(
-                        color = DesignTokens.text,
+    Column {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = DesignTokens.space16),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                color = DesignTokens.text,
+                fontSize = DesignTokens.uiTextSize,
+                fontFamily = DesignTokens.uiFont,
+            )
+            Spacer(Modifier.width(DesignTokens.space16))
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        "Search text in project",
+                        color = DesignTokens.textOnBusyGlass,
                         fontSize = 15.sp,
                         fontFamily = DesignTokens.uiFont,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("find-in-path-query")
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focus -> if (focus.isFocused) onQueryFocus() },
+                    singleLine = true,
+                    textStyle = DesignTokens.chromeTextStyle.merge(
+                        TextStyle(
+                            color = DesignTokens.text,
+                            fontSize = 15.sp,
+                            fontFamily = DesignTokens.uiFont,
+                        ),
                     ),
-                ),
-                cursorBrush = SolidColor(DesignTokens.accent),
-            )
+                    cursorBrush = SolidColor(DesignTokens.accent),
+                )
+            }
+            Spacer(Modifier.width(DesignTokens.space12))
+            Toggle("Aa", caseSensitive, onToggleCase)
+            Toggle("W", wholeWord, onToggleWholeWord)
+            Toggle(".*", regex, onToggleRegex)
         }
-        Spacer(Modifier.width(DesignTokens.space12))
-        Toggle("Aa", caseSensitive, onToggleCase)
-        Toggle("W", wholeWord, onToggleWholeWord)
-        Toggle(".*", regex, onToggleRegex)
+        if (replacement != null) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(40.dp)
+                    .padding(horizontal = DesignTokens.space16),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.weight(1f)) {
+                    if (replacement.isEmpty()) {
+                        Text(
+                            "Replace with",
+                            color = DesignTokens.textOnBusyGlass,
+                            fontSize = 15.sp,
+                            fontFamily = DesignTokens.uiFont,
+                        )
+                    }
+                    BasicTextField(
+                        value = replacement,
+                        onValueChange = onReplacementChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("find-in-path-replacement")
+                            .focusRequester(replacementFocusRequester)
+                            .onFocusChanged { focus -> if (focus.isFocused) onReplacementFocus() },
+                        singleLine = true,
+                        textStyle = DesignTokens.chromeTextStyle.merge(
+                            TextStyle(
+                                color = DesignTokens.text,
+                                fontSize = 15.sp,
+                                fontFamily = DesignTokens.uiFont,
+                            ),
+                        ),
+                        cursorBrush = SolidColor(DesignTokens.accent),
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun ReplaceStatusLine(text: String) {
+    Text(
+        text,
+        color = DesignTokens.textOnBusyGlass,
+        fontSize = DesignTokens.labelTextSize,
+        fontFamily = DesignTokens.uiFont,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -282,6 +464,8 @@ private fun ResultList(
     hits: List<FindInPathHit>,
     selectedIndex: Int,
     onChoose: (FindInPathHit) -> Unit,
+    replacement: String? = null,
+    replacementColor: Color = DesignTokens.accent2,
 ) {
     val listState = rememberLazyListState()
     val visibleRows = hits.size.coerceAtMost(DesignTokens.popupMaxRows)
@@ -292,7 +476,7 @@ private fun ResultList(
     ) {
         LazyColumn(state = listState) {
             itemsIndexed(hits) { index, hit ->
-                HitRow(hit, index == selectedIndex) { onChoose(hit) }
+                HitRow(hit, index == selectedIndex, replacement, replacementColor) { onChoose(hit) }
             }
         }
         VerticalScrollbar(
@@ -304,7 +488,13 @@ private fun ResultList(
 }
 
 @Composable
-private fun HitRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit) {
+private fun HitRow(
+    hit: FindInPathHit,
+    selected: Boolean,
+    replacement: String?,
+    replacementColor: Color,
+    onClick: () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     Row(
@@ -329,7 +519,7 @@ private fun HitRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit) {
         )
         Spacer(Modifier.width(DesignTokens.space12))
         Text(
-            hitLine(hit),
+            if (replacement != null) replacePreviewLine(hit, replacement, replacementColor) else hitLine(hit),
             color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.smallTextSize,
             fontFamily = DesignTokens.codeFont,

@@ -393,6 +393,21 @@ class PopupNativeLegibilityTest {
                 )
             },
             PopupCase(
+                name = "find-in-path-replace",
+                key = "popup-find-in-path",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.AMBER, Role.ACCENT),
+                renderMillis = 1_800,
+            ) {
+                FindInPathPopup(
+                    index = index,
+                    initialQuery = "alpha",
+                    initialReplacement = "beta",
+                    replace = true,
+                    onChoose = {},
+                    onClose = {},
+                )
+            },
+            PopupCase(
                 name = "context-actions",
                 key = "popup-context-actions",
                 roles = listOf(Role.TEXT, Role.BUSY),

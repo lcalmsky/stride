@@ -713,6 +713,26 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(29)
+    fun `replace in path snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            expand(session, root, "src", "main", "kotlin", "demo")
+            openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            state.openFindInPath(query = "greet", replace = true)
+            renderApp("18-replace-in-path.png", state, renderMillis = 1_800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("18-replace-in-path.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -919,6 +939,7 @@ class UiSnapshotTest {
             "15-multi-caret.png",
             "16-folding.png",
             "17-find-window.png",
+            "18-replace-in-path.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

@@ -236,6 +236,29 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `replace in path opens the popup in replace mode`() {
+        openProjectWith("a.kt")
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(dispatchAction(ActionId.REPLACE_IN_PATH, state) { null })
+
+        assertTrue(state.findInPathVisible)
+        assertTrue(state.findInPathReplace)
+        assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+
+        state.closeSession()
+        assertFalse(state.findInPathReplace)
+
+        val withoutSession = AppState()
+        try {
+            assertTrue(dispatchAction(ActionId.REPLACE_IN_PATH, withoutSession) { null })
+            assertFalse(withoutSession.findInPathVisible)
+        } finally {
+            withoutSession.dispose()
+        }
+    }
+
+    @Test
     fun `context actions need an editor and report when nothing applies`() {
         state.focus = KeyContext.EDITOR
         assertFalse(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })

@@ -62,6 +62,7 @@ data class ListWindowRow(
  * visible; a click selects, a double click opens, and Delete/Backspace removes when [onDelete] is
  * set. [selectOnFocus] runs when the window takes the keyboard and once more when rows first
  * arrive, so a list parsed off the UI thread can still start on the requested row.
+ * [onSelectionChange] reports the selected row so a header button can act on it.
  */
 @Composable
 fun ListToolWindow(
@@ -72,6 +73,7 @@ fun ListToolWindow(
     modifier: Modifier = Modifier,
     onDelete: ((Int) -> Unit)? = null,
     selectOnFocus: (() -> Int)? = null,
+    onSelectionChange: ((Int) -> Unit)? = null,
 ) {
     var selectedIndex by remember { mutableStateOf(0) }
     var pendingSelection by remember { mutableStateOf(false) }
@@ -79,6 +81,11 @@ fun ListToolWindow(
     val focusRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
     val latestSelectOnFocus by rememberUpdatedState(selectOnFocus)
+    val latestSelectionChange by rememberUpdatedState(onSelectionChange)
+
+    LaunchedEffect(index, rows.size) {
+        latestSelectionChange?.invoke(index)
+    }
 
     LaunchedEffect(focusRequests) {
         if (focusRequests > 0) {

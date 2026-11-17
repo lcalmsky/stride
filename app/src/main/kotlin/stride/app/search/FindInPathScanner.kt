@@ -54,7 +54,8 @@ object FindInPathScanner {
         return hits
     }
 
-    private fun readText(file: VFile): String? {
+    /** The disk text of [file] under the scan rules; `null` for binary, oversized or unreadable files. */
+    internal fun readText(file: VFile): String? {
         if (file.length() > MAX_FILE_SIZE) return null
         val bytes = try {
             Files.readAllBytes(file.path)

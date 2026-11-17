@@ -53,6 +53,7 @@ import stride.app.editor.PASTE_HISTORY_SELECTED_ROW_TAG
 import stride.app.editor.RENAME_FIELD_TAG
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
+import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyEventType
@@ -66,6 +67,7 @@ import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
 import stride.app.run.TestStatus
+import stride.app.search.FindTabKind
 import stride.app.search.SEARCH_SELECTED_ROW_TAG
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
@@ -625,6 +627,101 @@ class KeyFlowUiTest {
             assertTrue(state.findInPathVisible)
             assertTrue(state.findToolWindow.tabs.isEmpty())
             assertFalse(state.toolWindows.visible)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `alt command enter confirms and applies replace all`() = runComposeUiTest {
+        val root = temp.resolve("replace-all-project")
+        Files.createDirectories(root)
+        val file = root.resolve("A.kt")
+        Files.writeString(file, "alpha one\nalpha two\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.R) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.findInPathVisible && state.findInPathReplace }
+
+            onNodeWithTag("find-in-path-query").performTextInput("alpha")
+            onNodeWithTag("find-in-path-replacement").performTextInput("beta")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("A.kt:1").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            val prompt = "Replace 2 occurrences of 'alpha' across 1 file with 'beta'? " +
+                "1 file is written to disk and cannot be undone."
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.Enter) } }
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText(prompt).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // Esc cancels the confirmation only; the popup stays open.
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitForIdle()
+            assertTrue(state.findInPathVisible)
+            assertTrue(onAllNodesWithText(prompt).fetchSemanticsNodes().isEmpty())
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.Enter) } }
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText(prompt).fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { !state.findInPathVisible }
+            assertEquals("beta one\nbeta two\n", Files.readString(file))
+            assertEquals("Replaced 2 occurrences in 1 file", state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `replace selected in the find window changes the file and drops the row`() = runComposeUiTest {
+        val root = temp.resolve("replace-selected-project")
+        Files.createDirectories(root)
+        val file = root.resolve("A.kt")
+        Files.writeString(file, "alpha one\nalpha two\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            state.openFindResults(
+                kind = FindTabKind.REPLACE,
+                title = "Replace 'alpha' with 'beta'",
+                query = "alpha",
+                options = FindOptions(),
+                replacement = "beta",
+            )
+            val tab = state.findToolWindow.tabs.single()
+            waitUntil(timeoutMillis = 5_000) { !tab.searching }
+            state.toolWindows.activate("find")
+
+            setContent { KeyFlowHarness(state) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Replace Selected").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Replace Selected").performClick()
+
+            waitUntil(timeoutMillis = 5_000) { tab.hits.size == 1 }
+            assertEquals("beta one\nalpha two\n", Files.readString(file))
+            assertEquals("Replaced 1 occurrence in 1 file", tab.message)
         } finally {
             state.dispose()
         }

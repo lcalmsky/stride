@@ -91,6 +91,8 @@ class KeymapTest {
         assertEquals(ActionId.FIND_PREVIOUS, action("meta shift G", KeyContext.FIND_BAR))
         // FindInPath meta shift F
         assertEquals(ActionId.FIND_IN_PATH, action("meta shift F", KeyContext.GLOBAL))
+        // ReplaceInPath meta shift R
+        assertEquals(ActionId.REPLACE_IN_PATH, action("meta shift R", KeyContext.GLOBAL))
         // GotoFile meta shift O
         assertEquals(ActionId.GOTO_FILE, action("meta shift O", KeyContext.GLOBAL))
         // GotoSymbol meta alt O
