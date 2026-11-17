@@ -105,6 +105,10 @@ object ActionNames {
         ActionId.EDITOR_TOGGLE_COLUMN_MODE to "Column Selection Mode",
         ActionId.EDITOR_CLONE_CARET_ABOVE to "Clone Caret Above",
         ActionId.EDITOR_CLONE_CARET_BELOW to "Clone Caret Below",
+        ActionId.EXPAND_REGION to "Expand",
+        ActionId.COLLAPSE_REGION to "Collapse",
+        ActionId.EXPAND_ALL_REGIONS to "Expand All",
+        ActionId.COLLAPSE_ALL_REGIONS to "Collapse All",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

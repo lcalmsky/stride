@@ -106,6 +106,25 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `the folding actions reach the selected editor`() {
+        state.focus = KeyContext.EDITOR
+        assertFalse(dispatchAction(ActionId.COLLAPSE_REGION, state) { null })
+
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("fun f() {\n  val a = 1\n}\n", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.COLLAPSE_REGION, state) { null })
+        assertEquals(1, editor.foldedRegions.size)
+        assertTrue(dispatchAction(ActionId.EXPAND_REGION, state) { null })
+        assertTrue(editor.foldedRegions.isEmpty())
+        assertTrue(dispatchAction(ActionId.COLLAPSE_ALL_REGIONS, state) { null })
+        assertEquals(1, editor.foldedRegions.size)
+        assertTrue(dispatchAction(ActionId.EXPAND_ALL_REGIONS, state) { null })
+        assertTrue(editor.foldedRegions.isEmpty())
+    }
+
+    @Test
     fun `goto line opens the popup and escape closes it`() {
         state.focus = KeyContext.EDITOR
         val session = openProjectWith("a.kt")

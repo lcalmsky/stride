@@ -239,6 +239,10 @@ class TextFileEditor(
     var secondaryCarets: List<TextRange> by mutableStateOf(emptyList())
         private set
 
+    /** The collapsed ranges, outer regions first; nested members stay collapsed when one opens. */
+    internal var foldedRegions: List<FoldRegion> by mutableStateOf(emptyList())
+        private set
+
     var columnMode: Boolean by mutableStateOf(false)
         private set
 
@@ -374,8 +378,8 @@ class TextFileEditor(
         }
         val cleared = if (caretStep == null && secondaryCarets.isNotEmpty()) secondaryCarets else emptyList()
         if (caretStep == null) clearCaretState()
-        if (newValue.text != text) {
-            val change = computeTextChange(text, newValue.text)
+        val change = if (newValue.text != text) computeTextChange(text, newValue.text) else null
+        if (change != null) {
             if (record) {
                 undo.record(
                     UndoEntry(
@@ -393,6 +397,7 @@ class TextFileEditor(
         }
         if (caretStep == null) secondaryCarets = emptyList()
         value = newValue
+        reconcileFolds(change, carets)
     }
 
     /** Applies a multi-caret result: the last caret becomes [value]'s selection. */
@@ -402,8 +407,8 @@ class TextFileEditor(
         val normalized = MultiCaret.normalize(clamped)
         val primary = normalized.lastOrNull() ?: value.selection
         val secondaries = if (normalized.size > 1) normalized.subList(0, normalized.size - 1).toList() else emptyList()
-        if (edit.text != text) {
-            val change = computeTextChange(text, edit.text)
+        val change = if (edit.text != text) computeTextChange(text, edit.text) else null
+        if (change != null) {
             if (record) {
                 undo.record(
                     UndoEntry(
@@ -454,6 +459,7 @@ class TextFileEditor(
         }
         secondaryCarets = secondaries
         value = TextFieldValue(edit.text, primary, edit.composition)
+        reconcileFolds(change, carets)
     }
 
     private fun clearCaretState() {
@@ -468,7 +474,7 @@ class TextFileEditor(
     internal fun onFieldValueChange(newValue: TextFieldValue) {
         if (newValue.text == text) {
             when {
-                newValue.selection != value.selection -> applyValue(newValue, record = false)
+                newValue.selection != value.selection -> applyValue(snappedSelection(newValue), record = false)
                 newValue.composition != value.composition -> value = newValue
             }
             return
@@ -505,8 +511,8 @@ class TextFileEditor(
 
     /** Restores a history entry's text, primary caret and secondary carets as one state. */
     private fun restoreHistory(newValue: TextFieldValue, secondaries: List<TextRange>) {
-        if (newValue.text != text) {
-            val change = computeTextChange(text, newValue.text)
+        val change = if (newValue.text != text) computeTextChange(text, newValue.text) else null
+        if (change != null) {
             highlighter?.edit(change.offset, change.oldLength, change.newText)
             spans = highlighter?.spans() ?: emptyList()
         }
@@ -522,6 +528,7 @@ class TextFileEditor(
         selectionStack.clear()
         hippie = null
         clearCaretState()
+        reconcileFolds(change, carets)
     }
 
     /** Moves the caret to `"line"` or `"line:column"` (1-based). Invalid input changes nothing. */
@@ -538,15 +545,171 @@ class TextFileEditor(
     /** Moves every caret; `false` when there is only the primary caret the field owns. */
     internal fun moveCarets(move: CaretMove, extend: Boolean): Boolean {
         if (secondaryCarets.isEmpty()) return false
-        caretStep = if (move == CaretMove.UP || move == CaretMove.DOWN) CaretStep.VERTICAL else CaretStep.NONE
+        val vertical = move == CaretMove.UP || move == CaretMove.DOWN
+        caretStep = if (vertical) CaretStep.VERTICAL else CaretStep.NONE
         try {
-            val (moved, columns) = MultiCaret.move(text, carets, move, extend, desiredColumns)
+            val previous = carets
+            val (moved, columns) = MultiCaret.move(text, previous, move, extend, desiredColumns)
             desiredColumns = columns
-            applyCarets(CaretEdit(text, moved), record = false)
+            applyCarets(CaretEdit(text, if (vertical) moved else snapMovedCarets(moved, previous)), record = false)
         } finally {
             caretStep = null
         }
         return true
+    }
+
+    /** Collapses the region starting on the caret's line, else the innermost one containing the caret. */
+    private fun collapseRegion() {
+        val regions = foldingRegions()
+        if (regions.isEmpty()) return
+        val caret = value.selection.end
+        val starts = MultiCaret.lineStarts(text)
+        val line = MultiCaret.lineIndexAt(starts, caret)
+        val startsOnLine = regions.filter { MultiCaret.lineIndexAt(starts, it.hiddenStart) == line }
+        val single = startsOnLine.singleOrNull()
+        val target = if (startsOnLine.size == 1 && single != null && single !in foldedRegions) {
+            single
+        } else {
+            regions.filter { it !in foldedRegions && it.contains(caret) }
+                .minByOrNull { it.hiddenEnd - it.hiddenStart }
+        } ?: return
+        foldedRegions = sortedFolds(foldedRegions + target)
+        moveCaretsOutOfFolds()
+    }
+
+    /** Expands the region starting on the caret's line, else the outermost collapsed one containing the caret. */
+    private fun expandRegion() {
+        if (foldedRegions.isEmpty()) return
+        val regions = foldingRegions()
+        val caret = value.selection.end
+        val starts = MultiCaret.lineStarts(text)
+        val line = MultiCaret.lineIndexAt(starts, caret)
+        val startsOnLine = regions.filter { MultiCaret.lineIndexAt(starts, it.hiddenStart) == line }
+        val single = startsOnLine.singleOrNull()
+        val target = if (startsOnLine.size == 1 && single != null && single in foldedRegions) {
+            single
+        } else {
+            foldedRegions.filter { it.contains(caret) }.maxByOrNull { it.hiddenEnd - it.hiddenStart }
+        } ?: return
+        foldedRegions = foldedRegions - target
+    }
+
+    private fun expandAllRegions() {
+        foldedRegions = emptyList()
+    }
+
+    private fun collapseAllRegions() {
+        foldedRegions = sortedFolds(foldingRegions())
+        moveCaretsOutOfFolds()
+    }
+
+    /** Expands the fold whose placeholder covers [viewOffset]; `false` when there is none. */
+    fun expandFoldAt(viewOffset: Int): Boolean {
+        if (foldedRegions.isEmpty()) return false
+        val view = FoldView.of(text, foldedRegions)
+        val index = view.foldIndexAtView(viewOffset)
+        if (index < 0) return false
+        val fold = view.folds[index]
+        foldedRegions = foldedRegions - fold
+        applyValue(TextFieldValue(text, TextRange(fold.hiddenStart)), record = false)
+        return true
+    }
+
+    private fun foldingCandidates(): List<FoldRegion> =
+        if (file.extension?.lowercase() in BRACE_EXTENSIONS) FoldRegions.candidates(text) else emptyList()
+
+    private fun foldingRegions(): List<FoldRegion> {
+        if (foldedRegions.isEmpty()) return foldingCandidates()
+        val candidates = foldingCandidates()
+        if (candidates.isEmpty()) return foldedRegions
+        return sortedFolds(candidates + foldedRegions)
+    }
+
+    private fun sortedFolds(regions: List<FoldRegion>): List<FoldRegion> =
+        regions.distinct().sortedWith(FOLD_REGION_ORDER)
+
+    /** Moves every caret out of a fold to that fold's start, keeping the secondary carets. */
+    private fun moveCaretsOutOfFolds() {
+        val folds = effectiveFolds(foldedRegions)
+        if (folds.isEmpty()) return
+        val moved = carets.map { caret -> TextRange(folds.snap(caret.start), folds.snap(caret.end)) }
+        caretStep = CaretStep.NONE
+        try {
+            applyCarets(CaretEdit(text, moved), record = false)
+        } finally {
+            caretStep = null
+        }
+    }
+
+    private fun List<FoldRegion>.snap(offset: Int): Int =
+        firstOrNull { it.hiddenStart < offset && offset < it.hiddenEnd }?.hiddenStart ?: offset
+
+    private fun List<FoldRegion>.snapMoved(offset: Int, old: Int): Int {
+        val fold = firstOrNull { it.hiddenStart < offset && offset < it.hiddenEnd } ?: return offset
+        return if (offset > old) fold.hiddenEnd else fold.hiddenStart
+    }
+
+    private fun FoldRegion.contains(offset: Int): Boolean = hiddenStart <= offset && offset <= hiddenEnd
+
+    /**
+     * Keeps the folds consistent with a text change and with the carets of the new state: a fold
+     * that the change touches, or that hides a caret, opens.
+     */
+    private fun reconcileFolds(change: TextChange?, carets: List<TextRange>) {
+        if (foldedRegions.isEmpty()) return
+        var regions = foldedRegions
+        if (change != null) {
+            val delta = change.newText.length - change.oldLength
+            regions = regions.mapNotNull { region ->
+                when {
+                    change.offset + change.oldLength <= region.hiddenStart ->
+                        FoldRegion(region.hiddenStart + delta, region.hiddenEnd + delta)
+                    change.offset >= region.hiddenEnd -> region
+                    else -> null
+                }
+            }
+        }
+        if (regions.isNotEmpty()) {
+            regions = regions.filterNot { region ->
+                carets.any { caret ->
+                    (caret.start > region.hiddenStart && caret.start < region.hiddenEnd) ||
+                        (caret.end > region.hiddenStart && caret.end < region.hiddenEnd)
+                }
+            }
+        }
+        if (regions != foldedRegions) foldedRegions = regions
+    }
+
+    /** Snaps a horizontal field movement out of a fold instead of letting the fold open. */
+    private fun snappedSelection(newValue: TextFieldValue): TextFieldValue {
+        if (foldedRegions.isEmpty()) return newValue
+        val folds = effectiveFolds(foldedRegions)
+        if (folds.isEmpty()) return newValue
+        val old = value.selection
+        val selection = newValue.selection
+        val start = folds.snapMoved(selection.start, old.start)
+        val end = folds.snapMoved(selection.end, old.end)
+        return if (start == selection.start && end == selection.end) {
+            newValue
+        } else {
+            newValue.copy(selection = TextRange(start, end))
+        }
+    }
+
+    private fun snapMovedCarets(moved: List<TextRange>, previous: List<TextRange>): List<TextRange> {
+        if (foldedRegions.isEmpty()) return moved
+        val folds = effectiveFolds(foldedRegions)
+        if (folds.isEmpty()) return moved
+        return moved.mapIndexed { index, caret ->
+            val before = previous.getOrNull(index)
+            if (before == null) {
+                caret
+            } else {
+                val start = folds.snapMoved(caret.start, before.start)
+                val end = folds.snapMoved(caret.end, before.end)
+                if (start == caret.start && end == caret.end) caret else TextRange(start, end)
+            }
+        }
     }
 
     /** Deletes at every caret; `false` when there is only the primary caret. */
@@ -877,6 +1040,22 @@ class TextFileEditor(
         }
         ActionId.EDITOR_CLONE_CARET_BELOW -> {
             cloneCaret(above = false)
+            true
+        }
+        ActionId.EXPAND_REGION -> {
+            expandRegion()
+            true
+        }
+        ActionId.COLLAPSE_REGION -> {
+            collapseRegion()
+            true
+        }
+        ActionId.EXPAND_ALL_REGIONS -> {
+            expandAllRegions()
+            true
+        }
+        ActionId.COLLAPSE_ALL_REGIONS -> {
+            collapseAllRegions()
             true
         }
         else -> false
@@ -1817,7 +1996,6 @@ class TextFileEditor(
         const val MAX_HIGHLIGHTED_SIZE: Long = 2L * 1024 * 1024
         const val GOTO_LINE_TAG: String = "goto-line"
         private const val MAX_SELECTION_STEPS: Int = 64
-        private val BRACE_EXTENSIONS = setOf("kt", "kts", "java", "json")
 
         /** The edit actions that run at every caret through [MultiCaret.perCaret]. */
         private val EVERY_CARET_ACTIONS = setOf(

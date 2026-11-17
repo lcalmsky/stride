@@ -215,6 +215,22 @@ class KeymapTest {
     }
 
     @Test
+    fun `the folding bindings resolve in the editor`() {
+        // ExpandRegion meta ADD | meta EQUALS
+        assertEquals(ActionId.EXPAND_REGION, action("meta ADD", KeyContext.EDITOR))
+        assertEquals(ActionId.EXPAND_REGION, action("meta EQUALS", KeyContext.EDITOR))
+        // CollapseRegion meta SUBTRACT | meta MINUS
+        assertEquals(ActionId.COLLAPSE_REGION, action("meta SUBTRACT", KeyContext.EDITOR))
+        assertEquals(ActionId.COLLAPSE_REGION, action("meta MINUS", KeyContext.EDITOR))
+        // ExpandAllRegions shift meta ADD | shift meta EQUALS
+        assertEquals(ActionId.EXPAND_ALL_REGIONS, action("meta shift ADD", KeyContext.EDITOR))
+        assertEquals(ActionId.EXPAND_ALL_REGIONS, action("meta shift EQUALS", KeyContext.EDITOR))
+        // CollapseAllRegions shift meta SUBTRACT | shift meta MINUS
+        assertEquals(ActionId.COLLAPSE_ALL_REGIONS, action("meta shift SUBTRACT", KeyContext.EDITOR))
+        assertEquals(ActionId.COLLAPSE_ALL_REGIONS, action("meta shift MINUS", KeyContext.EDITOR))
+    }
+
+    @Test
     fun `alt enter stays the context actions popup`() {
         assertEquals(ActionId.SHOW_INTENTION_ACTIONS, action("alt ENTER", KeyContext.EDITOR))
         assertNull(action("meta alt ENTER", KeyContext.CONTEXT_POPUP))

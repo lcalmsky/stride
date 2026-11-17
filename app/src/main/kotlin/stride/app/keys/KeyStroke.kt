@@ -99,6 +99,10 @@ data class KeyStroke(
             "SLASH" -> Key.Slash
             "DIVIDE" -> Key.NumPadDivide
             "MULTIPLY" -> Key.NumPadMultiply
+            "EQUALS" -> Key.Equals
+            "MINUS" -> Key.Minus
+            "ADD" -> Key.NumPadAdd
+            "SUBTRACT" -> Key.NumPadSubtract
             "OPEN_BRACKET" -> Key.LeftBracket
             "CLOSE_BRACKET" -> Key.RightBracket
             "INSERT" -> Key.Insert

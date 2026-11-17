@@ -1371,6 +1371,9 @@ internal class CodeScan(private val text: String) {
     /** Content ranges of string and character literals, delimiters excluded. */
     val stringContents = ArrayList<IntRange>()
 
+    /** Terminated block comments as start until endExclusive. */
+    val blockComments = ArrayList<IntRange>()
+
     private val brackets: List<Pair<Int, Int>> by lazy { computeBrackets() }
 
     init {
@@ -1426,11 +1429,15 @@ internal class CodeScan(private val text: String) {
                     while (i < text.length && text[i] != '\n') kinds[i++] = COMMENT
                 }
                 character == '/' && text.getOrNull(i + 1) == '*' -> {
+                    val start = i
                     while (i < text.length && !(text[i] == '*' && text.getOrNull(i + 1) == '/')) {
                         if (text[i] != '\n') kinds[i] = COMMENT
                         i++
                     }
-                    repeat(2) { if (i < text.length) kinds[i++] = COMMENT }
+                    if (i < text.length) {
+                        repeat(2) { if (i < text.length) kinds[i++] = COMMENT }
+                        blockComments.add(start until i)
+                    }
                 }
                 text.startsWith("\"\"\"", i) -> {
                     i += 3

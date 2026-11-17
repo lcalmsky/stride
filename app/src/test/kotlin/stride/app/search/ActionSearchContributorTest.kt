@@ -67,6 +67,28 @@ class ActionSearchContributorTest {
     }
 
     @Test
+    fun `the folding actions are named and show their shortcuts`() {
+        val state = AppState()
+        try {
+            val contributor = contributor(state)
+            val expand = contributor.fetch("expand", 50).single { it.item.action == ActionId.EXPAND_REGION }
+            assertEquals("Expand", expand.presentationText)
+            assertEquals("⌘+", expand.secondaryText)
+            val collapse = contributor.fetch("collapse", 50).single { it.item.action == ActionId.COLLAPSE_REGION }
+            assertEquals("Collapse", collapse.presentationText)
+            assertEquals("⌘-", collapse.secondaryText)
+            val expandAll = contributor.fetch("expand all", 5).first()
+            assertEquals(ActionId.EXPAND_ALL_REGIONS, expandAll.item.action)
+            assertEquals("⇧⌘+", expandAll.secondaryText)
+            val collapseAll = contributor.fetch("collapse all", 5).first()
+            assertEquals(ActionId.COLLAPSE_ALL_REGIONS, collapseAll.item.action)
+            assertEquals("⇧⌘-", collapseAll.secondaryText)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `process closes the popup and runs the action through the dispatcher`() {
         val state = AppState()
         val root = temp.resolve("chosen")

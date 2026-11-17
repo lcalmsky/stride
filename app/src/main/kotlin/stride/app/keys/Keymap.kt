@@ -21,6 +21,7 @@ enum class ActionId {
     PARAMETER_INFO, QUICK_DOC, QUICK_DEFINITION, SURROUND_WITH,
     SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
     EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
+    EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
 }
 
 enum class KeyContext {
@@ -251,6 +252,18 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta control G", ActionId.SELECT_ALL_OCCURRENCES, KeyContext.EDITOR)
     // EditorToggleColumnMode shift meta 8 (last declaration)
     bind("shift meta 8", ActionId.EDITOR_TOGGLE_COLUMN_MODE, KeyContext.EDITOR)
+    // ExpandRegion meta ADD | meta EQUALS
+    bind("meta ADD", ActionId.EXPAND_REGION, KeyContext.EDITOR)
+    bind("meta EQUALS", ActionId.EXPAND_REGION, KeyContext.EDITOR)
+    // CollapseRegion meta SUBTRACT | meta MINUS
+    bind("meta SUBTRACT", ActionId.COLLAPSE_REGION, KeyContext.EDITOR)
+    bind("meta MINUS", ActionId.COLLAPSE_REGION, KeyContext.EDITOR)
+    // ExpandAllRegions shift meta ADD | shift meta EQUALS
+    bind("meta shift ADD", ActionId.EXPAND_ALL_REGIONS, KeyContext.EDITOR)
+    bind("meta shift EQUALS", ActionId.EXPAND_ALL_REGIONS, KeyContext.EDITOR)
+    // CollapseAllRegions shift meta SUBTRACT | shift meta MINUS
+    bind("meta shift SUBTRACT", ActionId.COLLAPSE_ALL_REGIONS, KeyContext.EDITOR)
+    bind("meta shift MINUS", ActionId.COLLAPSE_ALL_REGIONS, KeyContext.EDITOR)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
     // EditorCloneCaretAbove/Below have no stroke either: a double Option gesture in KeyRouter.
 }

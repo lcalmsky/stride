@@ -180,6 +180,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN,
     ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
     ActionId.EDITOR_COMPLETE_STATEMENT, ActionId.EDITOR_SCROLL_TO_CENTER,
+    ActionId.EXPAND_REGION, ActionId.COLLAPSE_REGION, ActionId.EXPAND_ALL_REGIONS, ActionId.COLLAPSE_ALL_REGIONS,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
     ActionId.SELECT_NEXT_OCCURRENCE -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
