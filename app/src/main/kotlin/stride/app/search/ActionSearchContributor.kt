@@ -123,6 +123,11 @@ object ActionNames {
         ActionId.RECENT_LOCATIONS to "Recent Locations",
         ActionId.SHOW_NAV_BAR to "Jump to Navigation Bar",
         ActionId.EDIT_SOURCE to "Edit Source",
+        ActionId.GOTO_IMPLEMENTATION to "Go to Implementation",
+        ActionId.GOTO_TYPE_DECLARATION to "Go to Type Declaration",
+        ActionId.GOTO_SUPER_METHOD to "Go to Super Method",
+        ActionId.TYPE_HIERARCHY to "Type Hierarchy",
+        ActionId.CALL_HIERARCHY to "Call Hierarchy",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

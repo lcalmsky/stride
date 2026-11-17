@@ -121,6 +121,118 @@ class FileNameIndex(project: Project) : Disposable {
 The index does not start `VirtualFileManager`; the application starts it, and the index
 follows the events it publishes.
 
+## Declarations and the type graph
+
+`DeclarationParser` scans Kotlin and Java text line by line (comments and strings blanked, brace
+depth tracked); `DeclarationIndex` keeps its result for every project source file. The hierarchy
+actions (`docs/api-app.md` 「Hierarchy navigation」) read three more things from the same scan and
+three pure helpers on top of it. Nothing here resolves types the way a compiler does: names
+resolve through imports and packages only, and library, JDK and standard library types are not
+indexed.
+
+```kotlin
+enum class DeclarationKind { CLASS, SYMBOL }
+
+data class ParsedDeclaration(
+    val name: String, val kind: DeclarationKind, val line: Int,
+    val container: String? = null, val isPrivate: Boolean = false,
+    val column: Int = 0,
+    val supertypes: List<String> = emptyList(),
+    val isInterface: Boolean = false,
+    val isOverride: Boolean = false,
+)
+
+data class Declaration(
+    val name: String, val kind: DeclarationKind, val file: VFile, val relativePath: String,
+    val line: Int, val container: String? = null, val packageName: String? = null,
+    val isPrivate: Boolean = false,
+    val column: Int = 0,
+    val supertypes: List<String> = emptyList(),
+    val isInterface: Boolean = false,
+    val isOverride: Boolean = false,
+)
+
+data class SourceImport(val qualifiedName: String, val alias: String? = null, val isStar: Boolean = false) {
+    val visibleName: String?
+}
+
+enum class OutlineKind { CLASS, FUNCTION, PROPERTY, INITIALIZER, CONSTRUCTOR }
+data class OutlineMember(
+    val name: String, val kind: OutlineKind, val container: String?, val line: Int,
+    val start: Int, val nameStart: Int, val nameEnd: Int, val end: Int, val isOverride: Boolean = false,
+)
+fun List<OutlineMember>.memberAt(offset: Int): OutlineMember?
+fun List<OutlineMember>.classesAt(offset: Int): List<OutlineMember>
+
+object DeclarationParser {
+    fun parse(fileName: String, text: String): List<ParsedDeclaration>
+    fun imports(fileName: String, text: String): List<SourceImport>
+    fun outline(fileName: String, text: String): List<OutlineMember>
+    fun packageOf(text: String): String?
+}
+
+class DeclarationIndex {
+    fun snapshot(): List<Declaration>
+    fun imports(file: VFile): List<SourceImport>
+}
+
+data class NameContext(val file: VFile?, val packageName: String?, val imports: List<SourceImport>,
+                       val enclosingClasses: List<String> = emptyList())
+data class SupertypeRef(val written: String, val resolved: List<Declaration>)
+
+class TypeGraph(declarations: List<Declaration>, importsOf: (VFile) -> List<SourceImport>) {
+    fun resolveType(written: String, context: NameContext): List<Declaration>
+    fun contextOf(declaration: Declaration): NameContext
+    fun classOf(member: Declaration): Declaration?
+    fun supertypes(type: Declaration): List<SupertypeRef>
+    fun directSubtypes(type: Declaration): List<Declaration>
+    fun allSubtypes(type: Declaration): List<Declaration>
+    fun implementations(target: Declaration): List<Declaration>
+    fun superMembers(member: Declaration): List<Declaration>
+    fun membersNamed(name: String, type: Declaration, includeSupertypes: Boolean): List<Declaration>
+    fun resolveCallee(site: CallSite, context: NameContext): List<Declaration>
+    fun mayCall(target: Declaration, site: CallSite, context: NameContext): Boolean
+}
+
+data class CallSite(val name: String, val start: Int, val end: Int,
+                    val receiver: String? = null, val isReference: Boolean = false)
+object CallSites {
+    fun find(fileName: String, text: String, name: String): List<CallSite>
+    fun inRange(fileName: String, text: String, start: Int, end: Int): List<CallSite>
+}
+
+sealed interface DeclaredType {
+    data class Explicit(val written: String) : DeclaredType
+    data class ConstructorCall(val written: String) : DeclaredType
+    data class Unknown(val reason: String) : DeclaredType
+}
+object TypeReferences {
+    fun localDeclaration(fileName: String, text: String, offset: Int, name: String): Int?
+    fun declaredType(fileName: String, text: String, nameStart: Int): DeclaredType
+}
+```
+
+- The fields that existed before (`name`, `kind`, `line`, `container`, `isPrivate`) are the same
+  for every input as before the hierarchy fields were added; Search Everywhere, `⌘B`, the ⌥↩
+  import candidates and the Structure window read them. The new fields are trailing and defaulted.
+- `supertypes` are written names without type arguments, `?`, annotations, constructor arguments
+  or a `by` delegate, read across header lines (`class A(\n x: X,\n) : B(x),\n C {`). Kotlin type
+  parameter bounds (`<T : Comparable<T>>`) and primary constructor parameters are not supertypes.
+  Java reads `extends` and `implements` (an interface's `extends` list too) up to `permits` or `{`.
+- `imports` stops at the first declaration; Java `import static` is skipped.
+- `outline` lists members at every class level but no local declaration; `memberAt` picks the
+  innermost member holding an offset, `classesAt` the classes, innermost first.
+- `TypeGraph.resolveType` order: dotted name, nested or sibling class in the file, explicit import
+  (an import that names no project class ends the search: the name is outside the project), same
+  package, star import. Empty means outside project sources. KDoc in `TypeGraph.kt` is the full
+  contract of every query.
+- `CallSites` finds calls by text only: an identifier followed by `(`, by type arguments and `(`,
+  or in Kotlin by a trailing lambda `{`, or a `::name` reference, outside comments and strings;
+  keywords, annotations and declaration names are not calls.
+- `TypeReferences.declaredType` returns `Explicit` only for a written type and `ConstructorCall`
+  only for an initializer that is a single upper-case call; everything else is `Unknown` with the
+  reason the status bar shows.
+
 ## `FileSearchContributor`
 
 ```kotlin

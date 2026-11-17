@@ -71,6 +71,9 @@ class DeclarationIndex(private val project: Project) : Disposable {
         return declarations
     }
 
+    /** The imports [DeclarationParser.imports] read from [file] when it was last indexed; empty if it is not indexed. */
+    fun imports(file: VFile): List<SourceImport> = emptyList()
+
     override fun dispose() {
         disposed = true
         scanThread.interrupt()

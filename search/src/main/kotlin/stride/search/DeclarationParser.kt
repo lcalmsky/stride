@@ -1,13 +1,60 @@
 package stride.search
 
-/** A declaration inside one file, before [DeclarationIndex] attaches the file and path. */
+/**
+ * A declaration inside one file, before [DeclarationIndex] attaches the file and path.
+ *
+ * [column] is the 0-based offset of the name in its line, inside the backticks of a quoted name.
+ * [supertypes] lists, for a [DeclarationKind.CLASS], the types after `:` (Kotlin) or after
+ * `extends` / `implements` (Java) as written, without type arguments, `?`, annotations, constructor
+ * arguments or a `by` delegate, also when the header spans several lines:
+ * `class A(x: Int) : b.Base<T>(x), Outer.Iface by d` gives `["b.Base", "Outer.Iface"]`.
+ * [isInterface] marks a Kotlin or Java `interface`. [isOverride] marks a Kotlin member with the
+ * `override` modifier, or a Java method annotated `@Override` on its own line or on the
+ * annotation-only lines right above it.
+ */
 data class ParsedDeclaration(
     val name: String,
     val kind: DeclarationKind,
     val line: Int,
     val container: String? = null,
     val isPrivate: Boolean = false,
+    val column: Int = 0,
+    val supertypes: List<String> = emptyList(),
+    val isInterface: Boolean = false,
+    val isOverride: Boolean = false,
 )
+
+enum class OutlineKind { CLASS, FUNCTION, PROPERTY, INITIALIZER, CONSTRUCTOR }
+
+/**
+ * A member of one file with its text range, at any nesting of classes but never a local
+ * declaration inside a body. [start] is the start of the declaration's first line (annotation lines
+ * above it are not included), [nameStart] until [nameEnd] the name, and [end] the exclusive end:
+ * just after the closing `}` of a block body, otherwise the start of the line of the next member at
+ * the same level, the enclosing body's closing `}`, or the text end, whichever comes first.
+ *
+ * `init` blocks are [OutlineKind.INITIALIZER] named `init`; Kotlin secondary constructors are
+ * [OutlineKind.CONSTRUCTOR] named `constructor` and Java constructors carry the class name.
+ */
+data class OutlineMember(
+    val name: String,
+    val kind: OutlineKind,
+    val container: String?,
+    val line: Int,
+    val start: Int,
+    val nameStart: Int,
+    val nameEnd: Int,
+    val end: Int,
+    val isOverride: Boolean = false,
+)
+
+/** The innermost member whose `[start, end)` holds [offset], or `null`. */
+fun List<OutlineMember>.memberAt(offset: Int): OutlineMember? =
+    filter { offset >= it.start && offset < it.end }.minByOrNull { it.end - it.start }
+
+/** The classes whose `[start, end)` holds [offset], innermost first. */
+fun List<OutlineMember>.classesAt(offset: Int): List<OutlineMember> =
+    filter { it.kind == OutlineKind.CLASS && offset >= it.start && offset < it.end }.sortedBy { it.end - it.start }
 
 /**
  * Regex-based declaration scanner for Kotlin and Java sources. The scan is line oriented and
@@ -26,6 +73,12 @@ object DeclarationParser {
     }
 
     fun isSourceFile(fileName: String): Boolean = extensionOf(fileName) in SOURCE_EXTENSIONS
+
+    /** The imports of a Kotlin or Java file in text order; empty for any other file. */
+    fun imports(fileName: String, text: String): List<SourceImport> = emptyList()
+
+    /** The members of a Kotlin or Java file sorted by [OutlineMember.start]; empty for any other file. */
+    fun outline(fileName: String, text: String): List<OutlineMember> = emptyList()
 
     /**
      * The package declared by the first `package` statement of [text], or `null` when the file

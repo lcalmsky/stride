@@ -1806,7 +1806,7 @@ widget, saving before a run, and the Problems navigation actions.
 Six IntelliJ navigation actions built on data stride already had: the navigation history, the
 `⌥F7` usage search, and the project tree and path. The hierarchy actions (Implementation, Type
 Declaration, Super Method, Type and Call Hierarchy) need a new source (supertypes and calls) and
-are not part of this set.
+are in 「Hierarchy navigation」.
 
 | Action | `ActionId` | IntelliJ id | Key | Context |
 |---|---|---|---|---|
@@ -2030,6 +2030,154 @@ reaches the focused component. The three new popups and the bar are part of `pop
 `SHOW_NAV_BAR` and `EDIT_SOURCE` are bound to `⌘↑` / `⌘↓` only in `LIST_WINDOW`, and the editor uses
 `⌥Home` / `F4`. Binding them in GLOBAL as IntelliJ does would replace the caret move in the editor
 (IntelliJ moves to the document start with `⌘Home`), which is a decision left to the user.
+
+## Hierarchy navigation
+
+Five IntelliJ hierarchy actions over supertypes, overrides, declared types and calls. stride has
+no compiler, so each action states what it treats as certain and what it leaves out.
+
+| Action | `ActionId` | IntelliJ id | Key | Context |
+|---|---|---|---|---|
+| Go to Implementation | `GOTO_IMPLEMENTATION` | `GotoImplementation` | `⌥⌘B` | EDITOR |
+| Go to Type Declaration | `GOTO_TYPE_DECLARATION` | `GotoTypeDeclaration` | `⇧⌘B`, `⌃⇧B` | EDITOR |
+| Go to Super Method | `GOTO_SUPER_METHOD` | `GotoSuperMethod` | `⌘U` | EDITOR |
+| Type Hierarchy | `TYPE_HIERARCHY` | `TypeHierarchy` | `⌃H` | EDITOR |
+| Call Hierarchy | `CALL_HIERARCHY` | `CallHierarchy` | `⌃⌥H` | EDITOR |
+
+None of the six strokes had a binding before (`KeyStroke.parse` ignores modifier order; the only
+`B` and `U` bindings were `⌘B` and `⇧⌘U`). IntelliJ's macOS keymap gives the Hierarchy tool window
+(`ActivateHierarchyToolWindow`) no stroke, so stride adds none.
+
+```kotlin
+// stride.app.navigation
+class NavigationTargets(val title: String, val targets: List<Declaration>)
+fun goToImplementation(state: AppState): Boolean
+fun goToTypeDeclaration(state: AppState): Boolean
+fun goToSuperMethod(state: AppState): Boolean
+fun showTypeHierarchy(state: AppState): Boolean
+fun showCallHierarchy(state: AppState): Boolean
+
+// stride.app.hierarchy
+data class HierarchyLocation(val path: Path, val offset: Int)
+class HierarchyNode(
+    val text: String,
+    val detail: String? = null,
+    val location: HierarchyLocation? = null,
+    val iconName: String? = null,
+    val accent: Boolean = false,
+    val expanded: Boolean = false,
+    val children: (suspend () -> List<HierarchyNode>)? = null,
+)
+class HierarchyTree(val title: String, val note: String?, val roots: List<HierarchyNode>)
+
+// AppState
+var navigationTargets: NavigationTargets?
+val hierarchyTree: HierarchyTree?
+fun openHierarchy(tree: HierarchyTree)
+```
+
+The data layer (`DeclarationParser.outline`, `TypeGraph`, `TypeReferences`, `CallSites`) is in
+`docs/api-search.md` 「Declarations and the type graph」.
+
+Decision H1: the supertype, override and import data come from the declaration index, extended.
+
+| Option | Source | False positives | Files | Contract | Frame path |
+|---|---|---|---|---|---|
+| A (adopted) | `DeclarationParser` also records supertypes, `interface`, `override`, the name column and the file's imports; `TypeGraph` resolves names through imports and packages | a supertype resolves only through an import, the package or a star import, so a same-named class elsewhere is not linked; a header the scanner cannot read loses an edge (a miss, not a wrong link) | `:search` (parser, index, three new files) + app actions | trailing fields with defaults on `Declaration` and `ParsedDeclaration`, a new `DeclarationIndex.imports`: additive | index thread only; queries run when the action fires |
+| B (rejected) | a new language bean extension point (`stride.lang.hierarchyProvider`) that reads one file and returns its types and calls, plus an app service that walks the project and calls it | same parsing quality, but the resolution still needs every file's imports | `:lang` contract + descriptor + Kotlin plugin + a second project walk in app | new extension point (additive) | a second walk of every file on its own thread |
+| C (rejected) | lex every project file with `KotlinLexer` when the action fires | same as A for Kotlin | app only | none | a full project scan per action, growing with the project |
+
+A keeps one walk and one incremental update (`VFS_CHANGES`) for both Kotlin and Java, which the
+existing scanner already reads; B has no Java at all (no Java language plugin) and duplicates the
+walk; C pays the whole scan on every key press. B can still be extracted later if a third language
+needs hierarchies: it would be an additive extension point. The new parser fields must leave the
+existing ones (`name`, `kind`, `line`, `container`, `isPrivate`) unchanged for every input, since
+Search Everywhere, `⌘B`, the ⌥↩ import candidates and the Structure window read them.
+
+Decision H2: certainty. The same criterion that rejected unresolved-symbol problems (「Problems」)
+decides here: a judgement shown without being asked must be certain, because a wrong one
+mislabels correct code; a list the user asked for may hold candidates when every row shows where
+it comes from and the list says how it matched. So stride jumps directly only to exactly one
+certain target, opens a chooser (or the Hierarchy window) for candidates, says so in the status
+bar when it cannot know, and every statement of absence names its scope (`in project sources`):
+library, JDK and standard library types are not indexed.
+
+Decision H3: Go to Implementation and Go to Super Method share the `⌘B` chooser.
+
+- The target is the declaration whose name holds the caret (`DeclarationParser.outline`), else
+  the identifier at the caret resolved as a type (`TypeGraph.resolveType`) or, failing that, as a
+  call (`TypeGraph.resolveCallee`), which may give several candidates.
+- Implementation: `TypeGraph.implementations` of every target. One result opens at its name
+  (`openFileAtColumn`), several open `TargetChooserPopup` titled `Choose Implementation of <name>
+  (<n> found)` with rows `<Container>.<name> — <path>:<line>`, none reports `No implementations of
+  <name> found in project sources`.
+- Super Method: the member around the caret (`memberAt`). A function or property uses
+  `TypeGraph.superMembers`; a Kotlin member without `override` reports `<name> does not override a
+  method`; no project result reports `No super method of <name> in project sources`. In a class
+  outside any member, its resolved supertypes are the targets (`No supertype of <name> in project
+  sources` when none resolves). Outside any class: `Place the caret in a class or function`.
+- The chooser is `TargetChooserPopup` again (`navigationTargets`), not the Show Usages popup:
+  that popup is typed to matched lines (`FindInPathHit`) and these rows are declarations, which is
+  also how IntelliJ's chooser looks. It is part of `popupOwnsFocus`; Esc hands the keyboard back.
+- Differences: no gutter icons, no implementation preview, overloads are not told apart (a
+  Kotlin `override` of the same name in a subtype counts for every overload of that name).
+
+Decision H4: Go to Type Declaration only follows a type the text states.
+
+- The declaration of the identifier: the nearest in-scope local or parameter
+  (`TypeReferences.localDeclaration`), else a member named so in the enclosing classes and their
+  supertypes, else a visible top-level property or function; a class name is its own type.
+- Its type: `TypeReferences.declaredType`. An explicit type resolves from the declaration's own
+  file; a constructor call `Foo(...)` counts only when `Foo` resolves to a project class and no
+  visible top-level function is named `Foo`.
+- Anything else shows the reason in the status bar (`Cannot infer the type of <name> without a
+  compiler; declare it explicitly`), and a type that does not resolve shows `<Type> is not in
+  project sources`. A candidate list of every possible type was rejected: it would be the whole
+  index, and a wrong direct jump is the false positive H2 forbids.
+- For `List<Foo>` the type is `List` (outside the project), as in IntelliJ; type arguments are
+  not offered.
+
+Decision H5: Type and Call Hierarchy open a `Hierarchy` tool window, not a popup.
+
+| Option | Where | Navigating several nodes | IntelliJ | Files |
+|---|---|---|---|---|
+| A (adopted) | a `ListToolWindow` in the bottom panel, the tree drawn by `indent` | the tree stays while rows open in the editor | Hierarchy is a tool window | one window + state |
+| B (rejected) | a `popupPanel` popup | the popup closes on every jump, the tree is rebuilt each time | no popup form | one popup + a `PopupCase` |
+
+- The window (`hierarchy`, `Hierarchy`, `LIST_WINDOW`) is registered on the first `openHierarchy`,
+  after the other windows, so the tab strip and the existing snapshots do not change until a
+  hierarchy is opened. Each action replaces the shown tree (IntelliJ keeps a tab per hierarchy).
+- A header shows the title and the note. → expands a collapsed node (loading its children on a
+  background dispatcher, with a `Searching…` row meanwhile) or moves to its first child, ← collapses
+  an expanded node or moves to the parent, ↑/↓ move, ↵/`F4`/double click opens the node's location
+  and keeps the window, Esc hands the keyboard to the editor and ⇧Esc hides the window, as in the
+  other list windows.
+- Type Hierarchy: the root is the class; a `Supertypes` node holds the resolved supertypes upward
+  (a supertype outside the project is a leaf marked `outside project sources`), a `Subtypes` node
+  the subtypes downward. Both are expanded; the graph is in memory.
+- Differences: no scope, sort or `Base on this` controls, no separate supertypes-only or
+  subtypes-only views, no Method Hierarchy (`⇧⌘H`).
+
+Decision H6: Call Hierarchy matches calls by name and visibility.
+
+- Callers: `CallSites.find` over every project Kotlin and Java file (the open editor's text when
+  the file is open), kept when `TypeGraph.mayCall` allows it, grouped by the member around each
+  call (`memberAt`). A caller node shows `<Container>.<member>`, its path and line, and
+  `<n> calls` when there are several; it opens at its first call and expands to its own callers.
+  A member already on the path is marked `(recursive)` and does not expand.
+- Callees: `CallSites.inRange` over the member's own range, each resolved with
+  `TypeGraph.resolveCallee`; calls that reach no project declaration (library calls) are left out.
+  A callee opens at its declaration and expands to its own callees.
+- The root is the member; `Callers` is expanded, `Callees` loads on →. Each expansion keeps at most
+  200 children and ends with `… <n> more` when there are more.
+- The note says how the calls matched: `Calls are matched by name and visibility`, plus
+  `<n> declarations share this name` when more than one project declaration is named so.
+- Only-unique-name matching was rejected: most calls go through a receiver (`service.process()`),
+  so it would hide real callers without saying so; a candidate row shows its call line, which costs
+  a glance, unlike an asserted problem. Calls through an unrelated receiver class are still left
+  out by `mayCall`.
+- Differences: no scope filter, no `Base on this method`, no usage preview pane; the root cannot
+  switch between callers and callees, both are children of it.
 
 ## Declaration navigation, tests and bookmarks
 

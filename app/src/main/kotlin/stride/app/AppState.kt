@@ -20,12 +20,14 @@ import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
+import stride.app.hierarchy.HierarchyTree
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.EditLocations
 import stride.app.navigation.NavigationBarState
 import stride.app.navigation.NavigationHistory
 import stride.app.navigation.NavigationLocation
+import stride.app.navigation.NavigationTargets
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekRequest
 import stride.app.navigation.StructureToolWindow
@@ -165,6 +167,13 @@ class AppState {
     var declarationChoices by mutableStateOf(emptyList<Declaration>())
 
     var declarationChooserVisible by mutableStateOf(false)
+
+    /** The chooser Go to Implementation, Type Declaration and Super Method open; `null` when it is closed. */
+    var navigationTargets by mutableStateOf<NavigationTargets?>(null)
+
+    /** The tree the Hierarchy tool window shows; `null` until the first Type or Call Hierarchy. */
+    var hierarchyTree by mutableStateOf<HierarchyTree?>(null)
+        private set
 
     var fileStructureVisible by mutableStateOf(false)
 
@@ -443,6 +452,14 @@ class AppState {
      * Opens the Show Usages popup for [name] over the same files and editor texts a Find window
      * tab scans, and hands the popup the keyboard.
      */
+    /**
+     * Shows [tree] in the Hierarchy tool window and focuses its list. The window is registered on
+     * first use, after the other tool windows, so it has no tab until a hierarchy is opened.
+     */
+    fun openHierarchy(tree: HierarchyTree) {
+        hierarchyTree = tree
+    }
+
     fun openShowUsagesPopup(name: String): ShowUsagesRequest? {
         val current = session ?: return null
         showUsagesGeneration++

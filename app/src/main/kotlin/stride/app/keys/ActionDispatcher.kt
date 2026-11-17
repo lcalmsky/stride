@@ -15,7 +15,10 @@ import stride.app.navigation.clearUsageStatus
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
 import stride.app.navigation.goToDeclaration
+import stride.app.navigation.goToImplementation
+import stride.app.navigation.goToSuperMethod
 import stride.app.navigation.goToTest
+import stride.app.navigation.goToTypeDeclaration
 import stride.app.navigation.highlightUsagesInFile
 import stride.app.navigation.jumpToLastChange
 import stride.app.navigation.navigateBack
@@ -26,6 +29,8 @@ import stride.app.navigation.openQuickDefinition
 import stride.app.navigation.openQuickDoc
 import stride.app.navigation.selectInProjectView
 import stride.app.navigation.showBookmarks
+import stride.app.navigation.showCallHierarchy
+import stride.app.navigation.showTypeHierarchy
 import stride.app.navigation.showUsages
 import stride.app.navigation.toggleBookmark
 import stride.app.problems.ErrorDescriptionRequest
@@ -212,6 +217,11 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.FIND_USAGES -> findUsages(state)
     ActionId.SHOW_USAGES -> showUsages(state)
     ActionId.HIGHLIGHT_USAGES_IN_FILE -> highlightUsagesInFile(state)
+    ActionId.GOTO_IMPLEMENTATION -> goToImplementation(state)
+    ActionId.GOTO_TYPE_DECLARATION -> goToTypeDeclaration(state)
+    ActionId.GOTO_SUPER_METHOD -> goToSuperMethod(state)
+    ActionId.TYPE_HIERARCHY -> showTypeHierarchy(state)
+    ActionId.CALL_HIERARCHY -> showCallHierarchy(state)
     ActionId.JUMP_TO_LAST_CHANGE -> jumpToLastChange(state)
     ActionId.TOGGLE_BOOKMARK -> toggleBookmark(state)
     ActionId.SHOW_BOOKMARKS -> showBookmarks(state)

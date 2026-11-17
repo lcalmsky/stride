@@ -26,6 +26,7 @@ enum class ActionId {
     EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
     JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
     RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
+    GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
 }
 
 enum class KeyContext {
@@ -309,4 +310,15 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta alt F7", ActionId.SHOW_USAGES, KeyContext.EDITOR)
     // HighlightUsagesInFile meta shift F7
     bind("meta shift F7", ActionId.HIGHLIGHT_USAGES_IN_FILE, KeyContext.EDITOR)
+    // GotoImplementation meta alt B
+    bind("meta alt B", ActionId.GOTO_IMPLEMENTATION, KeyContext.EDITOR)
+    // GotoTypeDeclaration meta shift B, control shift B
+    bind("meta shift B", ActionId.GOTO_TYPE_DECLARATION, KeyContext.EDITOR)
+    bind("control shift B", ActionId.GOTO_TYPE_DECLARATION, KeyContext.EDITOR)
+    // GotoSuperMethod meta U
+    bind("meta U", ActionId.GOTO_SUPER_METHOD, KeyContext.EDITOR)
+    // TypeHierarchy control H
+    bind("control H", ActionId.TYPE_HIERARCHY, KeyContext.EDITOR)
+    // CallHierarchy control alt H
+    bind("control alt H", ActionId.CALL_HIERARCHY, KeyContext.EDITOR)
 }
