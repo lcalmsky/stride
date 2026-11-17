@@ -28,6 +28,11 @@ class KeymapTest {
         // HideActiveWindow shift ESCAPE
         assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.RUN_WINDOW))
         assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.TERMINAL))
+        assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.LIST_WINDOW))
+        // ActivateBookmarksToolWindow meta 2, ActivateFindToolWindow meta 3, ActivateStructureToolWindow meta 7
+        assertEquals(ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW, action("meta 2", KeyContext.GLOBAL))
+        assertEquals(ActionId.ACTIVATE_FIND_TOOL_WINDOW, action("meta 3", KeyContext.GLOBAL))
+        assertEquals(ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW, action("meta 7", KeyContext.GLOBAL))
         // Run control R
         assertEquals(ActionId.RUN, action("control R", KeyContext.GLOBAL))
         // RunClass control shift R

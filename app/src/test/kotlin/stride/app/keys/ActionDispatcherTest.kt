@@ -18,6 +18,7 @@ import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyPasteHistory
 import stride.app.editor.applyRename
+import stride.app.editor.find.FindOptions
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.run.ContextActionKind
@@ -28,6 +29,7 @@ import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
+import stride.app.search.FindTabKind
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
@@ -913,7 +915,7 @@ class ActionDispatcherTest {
     }
 
     @Test
-    fun `find usages prefills find in path with the whole word`() {
+    fun `find usages adds a whole word case sensitive tab and shows the find window`() {
         val session = openProjectWith("a.kt")
         val root = temp.resolve("project")
         val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
@@ -926,10 +928,102 @@ class ActionDispatcherTest {
 
         assertTrue(dispatchAction(ActionId.FIND_USAGES, state) { null })
 
-        assertTrue(state.findInPathVisible)
-        assertEquals("helper", state.findInPathQuery)
-        assertTrue(state.findInPathWholeWord)
-        assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+        val tab = state.findToolWindow.tabs.single()
+        assertEquals("Usages of helper", tab.title)
+        assertEquals(FindTabKind.USAGES, tab.kind)
+        assertEquals("helper", tab.query)
+        assertEquals(FindOptions(caseSensitive = true, wholeWord = true), tab.options)
+        assertTrue(state.toolWindows.visible)
+        assertEquals("find", state.toolWindows.activeId)
+        assertFalse(state.findInPathVisible)
+    }
+
+    @Test
+    fun `find usages without an identifier is not consumed and adds no tab`() {
+        state.focus = KeyContext.EDITOR
+        assertFalse(dispatchAction(ActionId.FIND_USAGES, state) { null })
+
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("a + b", TextRange(2)))
+
+        assertFalse(dispatchAction(ActionId.FIND_USAGES, state) { null })
+        assertTrue(state.findToolWindow.tabs.isEmpty())
+    }
+
+    @Test
+    fun `the list tool window keys open focus and hide through one rule`() {
+        openProjectWith("a.kt")
+        state.focus = KeyContext.GLOBAL
+
+        val windows = listOf(
+            ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW to "bookmarks",
+            ActionId.ACTIVATE_FIND_TOOL_WINDOW to "find",
+            ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW to "structure",
+        )
+        for ((action, id) in windows) {
+            assertTrue(dispatchAction(action, state) { null })
+            assertTrue(state.toolWindows.visible)
+            assertEquals(id, state.toolWindows.activeId)
+
+            state.focus = KeyContext.EDITOR
+            assertTrue(dispatchAction(action, state) { null })
+            assertTrue(state.toolWindows.visible)
+            assertEquals(id, state.toolWindows.activeId)
+
+            state.focus = KeyContext.LIST_WINDOW
+            assertTrue(dispatchAction(action, state) { null })
+            assertFalse(state.toolWindows.visible)
+            assertEquals(KeyContext.EDITOR, state.focus)
+        }
+        assertEquals(3, state.editorFocusRequests)
+    }
+
+    @Test
+    fun `the tool windows register in key number order`() {
+        assertEquals(
+            listOf("bookmarks", "find", "run", "structure", "terminal"),
+            state.toolWindows.windows.map { it.id },
+        )
+        assertEquals(
+            listOf("Bookmarks", "Find", "Run", "Structure", "Terminal"),
+            state.toolWindows.windows.map { it.title },
+        )
+        assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[0].context)
+        assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[1].context)
+        assertEquals(KeyContext.RUN_WINDOW, state.toolWindows.windows[2].context)
+        assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[3].context)
+        assertEquals(KeyContext.TERMINAL, state.toolWindows.windows[4].context)
+    }
+
+    @Test
+    fun `close tab in the find window closes the find tab and keeps the editor tab`() {
+        val session = openProjectWith("a.kt")
+        state.openFindResults(FindTabKind.OCCURRENCES, "Occurrences of 'a'", "a", FindOptions())
+        state.focus = KeyContext.LIST_WINDOW
+        assertEquals("find", state.toolWindows.activeId)
+
+        assertTrue(dispatchAction(ActionId.CLOSE_TAB, state) { null })
+
+        assertTrue(state.findToolWindow.tabs.isEmpty())
+        assertEquals(1, session.editors.openFiles.size)
+
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.CLOSE_TAB, state) { null })
+        assertTrue(session.editors.openFiles.isEmpty())
+    }
+
+    @Test
+    fun `closing the session clears the find tabs`() {
+        openProjectWith("a.kt")
+        state.openFindResults(FindTabKind.OCCURRENCES, "Occurrences of 'a'", "a", FindOptions())
+        assertEquals(1, state.findToolWindow.tabs.size)
+
+        state.closeSession()
+
+        assertTrue(state.findToolWindow.tabs.isEmpty())
+        assertNull(state.findToolWindow.selectedTab)
     }
 
     @Test

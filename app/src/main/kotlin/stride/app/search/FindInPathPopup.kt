@@ -42,13 +42,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +61,7 @@ import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 import stride.search.FileNameIndex
+import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -73,6 +73,8 @@ fun FindInPathPopup(
     initialWholeWord: Boolean = false,
     onChoose: (FindInPathHit) -> Unit,
     onClose: () -> Unit,
+    textOf: (Path) -> String? = { null },
+    onOpenInFindWindow: (query: String, options: FindOptions) -> Unit = { _, _ -> },
 ) {
     var query by remember { mutableStateOf(initialQuery) }
     var caseSensitive by remember { mutableStateOf(false) }
@@ -97,7 +99,7 @@ fun FindInPathPopup(
         searching = true
         val options = FindOptions(caseSensitive, regex, wholeWord)
         val scanned = withContext(Dispatchers.Default) {
-            FindInPathScanner.scan(index.snapshot(), query, options) { !isActive }
+            FindInPathScanner.scan(index.snapshot(), query, options, textOf = textOf) { !isActive }
         }
         hits = scanned
         selectedIndex = 0
@@ -140,7 +142,11 @@ fun FindInPathPopup(
                                 true
                             }
                             Key.Enter, Key.NumPadEnter -> {
-                                hits.getOrNull(selectedIndex)?.let(onChoose)
+                                if (event.isMetaPressed) {
+                                    onOpenInFindWindow(query, FindOptions(caseSensitive, regex, wholeWord))
+                                } else {
+                                    hits.getOrNull(selectedIndex)?.let(onChoose)
+                                }
                                 true
                             }
                             else -> false
@@ -174,7 +180,7 @@ fun FindInPathPopup(
                         else -> ResultList(hits, selectedIndex, onChoose)
                     }
                 }
-                PopupHintBar("↑↓ Navigate", "↵ Open", "Esc Close")
+                PopupHintBar("↑↓ Navigate", "↵ Open", "⌘↵ Open in Find Window", "Esc Close")
             }
         }
     }
@@ -332,11 +338,3 @@ private fun HitRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-private fun hitLine(hit: FindInPathHit) = buildAnnotatedString {
-    append(hit.lineText)
-    val from = (hit.column - 1).coerceIn(0, hit.lineText.length)
-    val to = (from + (hit.end - hit.start)).coerceIn(from, hit.lineText.length)
-    if (to > from) {
-        addStyle(SpanStyle(color = DesignTokens.neonAmber, background = DesignTokens.neonAmberGlow), from, to)
-    }
-}

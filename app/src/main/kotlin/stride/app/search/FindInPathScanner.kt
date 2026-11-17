@@ -5,6 +5,7 @@ import stride.app.editor.find.FindOptions
 import stride.core.vfs.VFile
 import stride.search.IndexedFile
 import java.nio.file.Files
+import java.nio.file.Path
 
 data class FindInPathHit(
     val file: VFile,
@@ -14,6 +15,8 @@ data class FindInPathHit(
     val lineText: String,
     val start: Int,
     val end: Int,
+    /** The matched text at scan time, so opening the hit can tell whether the offsets still fit. */
+    val matchText: String = "",
 )
 
 /** Synchronous project-wide text scan; the popup runs it off the UI thread. */
@@ -23,11 +26,16 @@ object FindInPathScanner {
 
     private const val NUL_CHECK_BYTES = 8 * 1024
 
+    /**
+     * Scans [files]; [textOf] supplies the text of a file that is open in an editor, so a search
+     * matches what the user sees. It returns `null` for files to read from disk.
+     */
     fun scan(
         files: List<IndexedFile>,
         query: String,
         options: FindOptions,
         limit: Int = MAX_HITS,
+        textOf: (Path) -> String? = { null },
         shouldStop: () -> Boolean = { false },
     ): List<FindInPathHit> {
         if (query.isEmpty() || limit <= 0) return emptyList()
@@ -35,15 +43,7 @@ object FindInPathScanner {
         for (indexed in files.sortedBy { it.relativePath }) {
             if (hits.size >= limit || shouldStop()) break
             val file = indexed.file
-            if (file.length() > MAX_FILE_SIZE) continue
-            val bytes = try {
-                Files.readAllBytes(file.path)
-            } catch (t: Throwable) {
-                continue
-            }
-            if (bytes.size > MAX_FILE_SIZE) continue
-            if (containsNul(bytes)) continue
-            val text = String(bytes, Charsets.UTF_8)
+            val text = textOf(file.path) ?: readText(file) ?: continue
             val result = FindModel.search(text, query, options)
             if (result.error != null) return emptyList()
             for (match in result.matches) {
@@ -52,6 +52,18 @@ object FindInPathScanner {
             }
         }
         return hits
+    }
+
+    private fun readText(file: VFile): String? {
+        if (file.length() > MAX_FILE_SIZE) return null
+        val bytes = try {
+            Files.readAllBytes(file.path)
+        } catch (t: Throwable) {
+            return null
+        }
+        if (bytes.size > MAX_FILE_SIZE) return null
+        if (containsNul(bytes)) return null
+        return String(bytes, Charsets.UTF_8)
     }
 
     private fun containsNul(bytes: ByteArray): Boolean {
@@ -80,6 +92,7 @@ object FindInPathScanner {
             lineText = lineText,
             start = start,
             end = end,
+            matchText = text.substring(start, end),
         )
     }
 }

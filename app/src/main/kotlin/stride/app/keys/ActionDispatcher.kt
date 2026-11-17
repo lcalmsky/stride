@@ -49,7 +49,11 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.CLOSE_TAB -> {
-        state.session?.editors?.closeSelected()
+        if (state.focus == KeyContext.LIST_WINDOW && state.toolWindows.activeId == "find") {
+            state.findToolWindow.closeSelected()
+        } else {
+            state.session?.editors?.closeSelected()
+        }
         true
     }
     ActionId.SEARCH_EVERYWHERE -> {
@@ -65,11 +69,23 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.ACTIVATE_RUN_TOOL_WINDOW -> {
-        state.toolWindows.toggle("run", focused = state.focus == KeyContext.RUN_WINDOW)
+        state.toggleToolWindow("run", KeyContext.RUN_WINDOW)
         true
     }
     ActionId.ACTIVATE_TERMINAL_TOOL_WINDOW -> {
-        state.toolWindows.toggle("terminal", focused = state.focus == KeyContext.TERMINAL)
+        state.toggleToolWindow("terminal", KeyContext.TERMINAL)
+        true
+    }
+    ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW -> {
+        state.toggleToolWindow("bookmarks", KeyContext.LIST_WINDOW)
+        true
+    }
+    ActionId.ACTIVATE_FIND_TOOL_WINDOW -> {
+        state.toggleToolWindow("find", KeyContext.LIST_WINDOW)
+        true
+    }
+    ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW -> {
+        state.toggleToolWindow("structure", KeyContext.LIST_WINDOW)
         true
     }
     ActionId.HIDE_ACTIVE_WINDOW -> {

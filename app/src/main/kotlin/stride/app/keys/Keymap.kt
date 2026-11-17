@@ -2,8 +2,9 @@ package stride.app.keys
 
 enum class ActionId {
     OPEN_FOLDER, SAVE, CLOSE_TAB, SEARCH_EVERYWHERE, NEXT_TAB, PREVIOUS_TAB, HIDE_ACTIVE_WINDOW,
-    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW, SHOW_INTENTION_ACTIONS,
-    CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
+    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
+    ACTIVATE_BOOKMARKS_TOOL_WINDOW, ACTIVATE_FIND_TOOL_WINDOW, ACTIVATE_STRUCTURE_TOOL_WINDOW,
+    SHOW_INTENTION_ACTIONS, CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
     EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
     FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
@@ -26,6 +27,7 @@ enum class ActionId {
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
+    LIST_WINDOW,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -91,7 +93,13 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta shift OPEN_BRACKET", ActionId.PREVIOUS_TAB, KeyContext.GLOBAL)
     bind("control LEFT", ActionId.PREVIOUS_TAB, KeyContext.GLOBAL)
     // HideActiveWindow shift ESCAPE
-    bind("shift ESCAPE", ActionId.HIDE_ACTIVE_WINDOW, KeyContext.RUN_WINDOW, KeyContext.TERMINAL)
+    bind(
+        "shift ESCAPE",
+        ActionId.HIDE_ACTIVE_WINDOW,
+        KeyContext.RUN_WINDOW,
+        KeyContext.TERMINAL,
+        KeyContext.LIST_WINDOW,
+    )
     // Run control R
     bind("control R", ActionId.RUN, KeyContext.GLOBAL)
     // RunClass control shift R (the last RunClass declaration)
@@ -100,8 +108,14 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta F2", ActionId.STOP, KeyContext.GLOBAL)
     // Rerun meta R; the editor's meta R is Replace
     bind("meta R", ActionId.RERUN, KeyContext.RUN_WINDOW)
+    // ActivateBookmarksToolWindow meta 2
+    bind("meta 2", ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW, KeyContext.GLOBAL)
+    // ActivateFindToolWindow meta 3
+    bind("meta 3", ActionId.ACTIVATE_FIND_TOOL_WINDOW, KeyContext.GLOBAL)
     // ActivateRunToolWindow meta 4
     bind("meta 4", ActionId.ACTIVATE_RUN_TOOL_WINDOW, KeyContext.GLOBAL)
+    // ActivateStructureToolWindow meta 7
+    bind("meta 7", ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW, KeyContext.GLOBAL)
     // EditorDuplicate control D (→meta)
     bind("meta D", ActionId.EDITOR_DUPLICATE, KeyContext.EDITOR)
     // EditorDeleteLine meta BACK_SPACE

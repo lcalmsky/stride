@@ -15,12 +15,20 @@ import stride.app.editor.SystemTextClipboard
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
+import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
 import stride.app.navigation.BookmarkManager
+import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.NavigationHistory
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekRequest
+import stride.app.navigation.StructureToolWindow
 import stride.app.navigation.navigationLocation
+import stride.app.navigation.openBookmark
+import stride.app.search.FindTabKind
+import stride.app.search.FindToolWindow
+import stride.app.search.FindToolWindowState
+import stride.app.search.openFindHit
 import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
 import stride.app.run.RunManager
@@ -34,6 +42,7 @@ import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.UiFont
 import stride.app.ui.theme.UiFontChoice
 import stride.app.ui.toolwindow.ToolWindow
+import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.core.Disposable
 import stride.core.extensions.ExtensionPointName
@@ -178,7 +187,45 @@ class AppState {
 
     val toolWindows = ToolWindowManager()
 
+    val findToolWindow = FindToolWindowState()
+
     init {
+        toolWindows.register(
+            ToolWindow("bookmarks", "Bookmarks", KeyContext.LIST_WINDOW) { modifier ->
+                val current = session
+                if (current == null) {
+                    ToolWindowEmptyState(
+                        "No bookmarks · F3 toggles one",
+                        modifier,
+                        focusRequests = toolWindows.focusRequests,
+                        onEscape = { handFocusToEditor() },
+                    )
+                } else {
+                    BookmarksToolWindow(
+                        bookmarks = current.bookmarks.entries,
+                        focusRequests = toolWindows.focusRequests,
+                        onOpen = { bookmark -> openBookmark(this@AppState, bookmark) },
+                        onRemove = { bookmark -> current.bookmarks.remove(bookmark) },
+                        onEscape = { handFocusToEditor() },
+                        modifier = modifier,
+                    )
+                }
+            },
+        )
+        toolWindows.register(
+            ToolWindow("find", "Find", KeyContext.LIST_WINDOW) { modifier ->
+                FindToolWindow(
+                    state = findToolWindow,
+                    focusRequests = toolWindows.focusRequests,
+                    onOpen = { hit ->
+                        val current = session
+                        if (current != null) openFindHit(this@AppState, current, hit)
+                    },
+                    onEscape = { handFocusToEditor() },
+                    modifier = modifier,
+                )
+            },
+        )
         toolWindows.register(
             ToolWindow("run", "Run", KeyContext.RUN_WINDOW) { modifier ->
                 val current = session
@@ -195,6 +242,30 @@ class AppState {
                         current.project.service<RunManager>(),
                         modifier,
                         focusRequests = toolWindows.focusRequests,
+                    )
+                }
+            },
+        )
+        toolWindows.register(
+            ToolWindow("structure", "Structure", KeyContext.LIST_WINDOW) { modifier ->
+                val editor = session?.editors?.selected as? TextFileEditor
+                if (editor == null) {
+                    ToolWindowEmptyState(
+                        "No structure",
+                        modifier,
+                        focusRequests = toolWindows.focusRequests,
+                        onEscape = { handFocusToEditor() },
+                    )
+                } else {
+                    StructureToolWindow(
+                        editor = editor,
+                        focusRequests = toolWindows.focusRequests,
+                        onOpen = { entry ->
+                            editor.gotoLine((entry.line + 1).toString())
+                            handFocusToEditor()
+                        },
+                        onEscape = { handFocusToEditor() },
+                        modifier = modifier,
                     )
                 }
             },
@@ -236,6 +307,48 @@ class AppState {
         findInPathGeneration++
         findInPathVisible = true
         focus = KeyContext.SEARCH_POPUP
+    }
+
+    /**
+     * Adds a Find window tab for [query] and shows the window; Find Usages and the ⌘↵
+     * "Open in Find Window" key both land here.
+     */
+    fun openFindResults(
+        kind: FindTabKind,
+        title: String,
+        query: String,
+        options: FindOptions,
+        replacement: String? = null,
+    ) {
+        val current = session ?: return
+        findToolWindow.addTab(
+            kind = kind,
+            query = query,
+            options = options,
+            title = title,
+            files = current.project.service<FileNameIndex>().snapshot(),
+            replacement = replacement,
+            textOf = ::textOfOpenEditor,
+        )
+        toolWindows.activate("find")
+    }
+
+    /** The text of the open editor for [path], so searches see unsaved changes; `null` when closed. */
+    fun textOfOpenEditor(path: Path): String? {
+        val target = path.toAbsolutePath().normalize()
+        return session?.editors?.openFiles
+            ?.filterIsInstance<TextFileEditor>()
+            ?.firstOrNull { it.file.path.toAbsolutePath().normalize() == target }
+            ?.value?.text
+    }
+
+    /**
+     * The ActivateToolWindow rule for tool windows; hiding hands the keyboard back to the editor.
+     */
+    fun toggleToolWindow(id: String, context: KeyContext) {
+        val wasActiveAndFocused = toolWindows.visible && toolWindows.activeId == id && focus == context
+        toolWindows.toggle(id, focused = focus == context)
+        if (wasActiveAndFocused) handFocusToEditor()
     }
 
     /** Shows or hides the project tree; showing it asks for the tree's focus, hiding hands it back. */
@@ -329,6 +442,7 @@ class AppState {
         projectTreeVisible = true
         treeBeforeHide = null
         toolWindowBeforeHide = null
+        findToolWindow.clear()
         toolWindows.hide()
         focus = KeyContext.GLOBAL
     }

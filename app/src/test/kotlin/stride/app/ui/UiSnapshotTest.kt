@@ -24,7 +24,9 @@ import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.FoldRegion
 import stride.app.editor.TextFileEditor
+import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
+import stride.app.search.FindTabKind
 import stride.app.run.FakeProcess
 import stride.app.run.GradleCommand
 import stride.app.run.ProcessStarter
@@ -681,6 +683,36 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(28)
+    fun `find window snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            expand(session, root, "src", "main", "kotlin", "demo")
+            openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            state.openFindResults(
+                kind = FindTabKind.USAGES,
+                title = "Usages of greet",
+                query = "greet",
+                options = FindOptions(caseSensitive = true, wholeWord = true),
+            )
+            val tab = state.findToolWindow.tabs.single()
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline && tab.searching) Thread.sleep(10)
+            check(!tab.searching) { "the usages scan did not finish" }
+            check(tab.hits.isNotEmpty()) { "the usages tab has no hits" }
+            renderApp("17-find-window.png", state, renderMillis = 800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("17-find-window.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -886,6 +918,7 @@ class UiSnapshotTest {
             "14-context-actions-light.png",
             "15-multi-caret.png",
             "16-folding.png",
+            "17-find-window.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

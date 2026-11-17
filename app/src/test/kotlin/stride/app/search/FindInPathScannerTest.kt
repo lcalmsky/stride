@@ -59,6 +59,22 @@ class FindInPathScannerTest {
         assertEquals(0, FindInPathScanner.scan(listOf(file), "foo", FindOptions()) { true }.size)
     }
 
+    @Test
+    fun `an overlay text is scanned instead of the disk bytes`() {
+        val file = indexed("A.kt", "on disk foo\n".toByteArray())
+        val overlay: (Path) -> String? = { path -> if (path == file.file.path) "unsaved foo foo\n" else null }
+
+        val hits = FindInPathScanner.scan(listOf(file), "foo", FindOptions(), textOf = overlay)
+        val disk = FindInPathScanner.scan(listOf(file), "foo", FindOptions())
+
+        assertEquals(2, hits.size)
+        assertEquals(listOf(8, 12), hits.map { it.start })
+        assertEquals("unsaved foo foo", hits.first().lineText)
+        assertEquals("foo", hits.first().matchText)
+        assertEquals(1, disk.size)
+        assertEquals("on disk foo", disk.single().lineText)
+    }
+
     private fun indexed(name: String, content: ByteArray): IndexedFile {
         val path = temp.resolve(name)
         Files.write(path, content)

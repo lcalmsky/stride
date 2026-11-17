@@ -77,9 +77,7 @@ import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -136,9 +134,11 @@ import stride.app.run.RunManager
 import stride.app.run.TestGutterMarkers
 import stride.app.run.applyContextAction
 import stride.app.search.FindInPathPopup
+import stride.app.search.FindTabKind
 import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
+import stride.app.search.openFindHit
 import stride.app.tree.TreeRow
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.AppearanceState
@@ -423,18 +423,21 @@ fun App(
                         initialWholeWord = state.findInPathWholeWord,
                         onChoose = { hit ->
                             state.findInPathVisible = false
-                            session.history.withoutRecording {
-                                (session.editors.openFile(hit.file) as? TextFileEditor)?.let { editor ->
-                                    editor.updateValue(TextFieldValue(editor.value.text, TextRange(hit.start, hit.end)))
-                                    runCatching { editor.focusRequester.requestFocus() }
-                                }
-                            }
-                            (session.editors.selected)?.let { session.history.push(navigationLocation(it)) }
-                            refocusEditor(state)
+                            openFindHit(state, session, hit)
                         },
                         onClose = {
                             state.findInPathVisible = false
                             refocusEditor(state)
+                        },
+                        textOf = state::textOfOpenEditor,
+                        onOpenInFindWindow = { query, options ->
+                            state.findInPathVisible = false
+                            state.openFindResults(
+                                kind = FindTabKind.OCCURRENCES,
+                                title = "Occurrences of '$query'",
+                                query = query,
+                                options = options,
+                            )
                         },
                     )
                 }
@@ -1725,6 +1728,7 @@ private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.SEARCH_POPUP -> "Search"
     KeyContext.RUN_WINDOW -> "Run"
     KeyContext.TERMINAL -> "Terminal"
+    KeyContext.LIST_WINDOW -> "Window"
     KeyContext.CONTEXT_POPUP -> null
 }
 

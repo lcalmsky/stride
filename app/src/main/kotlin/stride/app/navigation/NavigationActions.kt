@@ -6,7 +6,9 @@ import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.EditActions
 import stride.app.editor.TextFileEditor
+import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
+import stride.app.search.FindTabKind
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.search.Declaration
@@ -186,11 +188,16 @@ fun openFileStructure(state: AppState): Boolean {
     return true
 }
 
-/** Find in Path prefilled with the identifier at the caret and whole-word matching on. */
+/** Find Usages: a Find window tab for the identifier at the caret, whole-word and case-sensitive. */
 fun findUsages(state: AppState): Boolean {
     val editor = selectedTextEditor(state) ?: return false
     val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start) ?: return false
-    state.openFindInPath(name, wholeWord = true)
+    state.openFindResults(
+        kind = FindTabKind.USAGES,
+        title = "Usages of $name",
+        query = name,
+        options = FindOptions(caseSensitive = true, wholeWord = true),
+    )
     state.statusMessage = null
     return true
 }
