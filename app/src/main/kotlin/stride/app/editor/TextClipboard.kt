@@ -4,7 +4,10 @@ import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
 
-/** Clipboard used by the whole-line copy and cut actions; replaced in tests. */
+/**
+ * Clipboard used by the whole-line copy and cut actions and by Paste from History; replaced in
+ * tests.
+ */
 interface TextClipboard {
     /** Returns `false` when the platform clipboard is unavailable. */
     fun writeText(text: String): Boolean

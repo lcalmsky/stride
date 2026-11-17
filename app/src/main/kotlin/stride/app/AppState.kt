@@ -10,6 +10,7 @@ import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryRequest
 import stride.app.editor.FileEditorManager
 import stride.app.editor.RenameRequest
+import stride.app.editor.SurroundRequest
 import stride.app.editor.SystemTextClipboard
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
@@ -17,6 +18,8 @@ import stride.app.editor.find.FindBarState
 import stride.app.keys.KeyContext
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.NavigationHistory
+import stride.app.navigation.ParameterInfoRequest
+import stride.app.navigation.PeekRequest
 import stride.app.navigation.navigationLocation
 import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
@@ -158,6 +161,18 @@ class AppState {
 
     /** The open rename popup; `null` when it is closed. */
     var rename by mutableStateOf<RenameRequest?>(null)
+
+    /** The open Quick Documentation popup; `null` when it is closed. */
+    var quickDoc by mutableStateOf<PeekRequest?>(null)
+
+    /** The open Quick Definition popup; `null` when it is closed. */
+    var quickDefinition by mutableStateOf<PeekRequest?>(null)
+
+    /** The open Parameter Info panel, which never takes the keyboard focus. */
+    var parameterInfo by mutableStateOf<ParameterInfoRequest?>(null)
+
+    /** The open Surround With popup; `null` when it is closed. */
+    var surround by mutableStateOf<SurroundRequest?>(null)
 
     var statusMessage: String? by mutableStateOf(null)
 
@@ -306,6 +321,10 @@ class AppState {
         completion = null
         rename = null
         pasteHistory = null
+        quickDoc = null
+        quickDefinition = null
+        parameterInfo = null
+        surround = null
         statusMessage = null
         projectTreeVisible = true
         treeBeforeHide = null

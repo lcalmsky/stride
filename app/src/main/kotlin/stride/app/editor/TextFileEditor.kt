@@ -691,6 +691,13 @@ class TextFileEditor(
         return mapped
     }
 
+    /** Applies [result] as one undo step and places its selection; `false` when read-only. */
+    fun applyResult(result: EditResult): Boolean {
+        if (isReadOnly) return false
+        applyEdit(result)
+        return true
+    }
+
     private fun applyEdit(result: EditResult) {
         undo.breakMerge()
         updateValue(TextFieldValue(result.text, result.selection))

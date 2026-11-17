@@ -95,6 +95,8 @@ import stride.app.editor.FileEditorManager
 import stride.app.editor.LocalEditorScrollState
 import stride.app.editor.PasteHistoryPopup
 import stride.app.editor.RenamePopup
+import stride.app.editor.SurroundWith
+import stride.app.editor.SurroundWithPopup
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyPasteHistory
 import stride.app.editor.applyRename
@@ -113,10 +115,14 @@ import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
 import stride.app.navigation.BookmarksPopup
+import stride.app.navigation.CallText
 import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructure
 import stride.app.navigation.FileStructureEntry
 import stride.app.navigation.FileStructurePopup
+import stride.app.navigation.ParameterInfoPanel
+import stride.app.navigation.QuickDefinitionPopup
+import stride.app.navigation.QuickDocPopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.navigation.goToDeclaration
 import stride.app.navigation.navigationLocation
@@ -590,6 +596,78 @@ fun App(
                 )
             }
         }
+        val quickDoc = state.quickDoc
+        if (quickDoc != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                QuickDocPopup(
+                    candidates = quickDoc.candidates,
+                    onGoTo = { candidate ->
+                        state.quickDoc = null
+                        openDeclaration(state, session, candidate.declaration)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.quickDoc = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val quickDefinition = state.quickDefinition
+        if (quickDefinition != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                QuickDefinitionPopup(
+                    candidates = quickDefinition.candidates,
+                    onGoTo = { candidate ->
+                        state.quickDefinition = null
+                        openDeclaration(state, session, candidate.declaration)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.quickDefinition = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val surround = state.surround
+        if (surround != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                SurroundWithPopup(
+                    request = surround,
+                    onChoose = { template ->
+                        state.surround = null
+                        SurroundWith.apply(surround, template)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.surround = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        if (state.parameterInfo != null && session != null) {
+            ParameterInfoHost(state, session)
+        }
         val completion = state.completion
         if (completion != null && session != null) {
             Box(
@@ -693,12 +771,38 @@ private fun FileStructureHost(state: AppState, editor: TextFileEditor) {
     }
 }
 
+/**
+ * Draws the non-modal Parameter Info panel over the editor and closes it once the caret leaves
+ * the call, the selected editor changes, or another popup opens.
+ */
+@Composable
+private fun ParameterInfoHost(state: AppState, session: ProjectSession) {
+    val request = state.parameterInfo ?: return
+    val editor = request.editor
+    val value = editor.value
+    val active = CallText.activeIndex(value.text, request.openOffset, value.selection.start)
+    val selected = session.editors.selected
+    val otherPopup = popupOwnsFocus(state)
+    val valid = active != null && selected === editor && !otherPopup
+    LaunchedEffect(request, value.text, value.selection.start, selected, otherPopup) {
+        if (!valid) state.parameterInfo = null
+    }
+    if (!valid) return
+    Box(Modifier.fillMaxSize()) {
+        ParameterInfoPanel(
+            request = request,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
+        )
+    }
+}
+
 /** True while a popup or the find bar owns the keyboard, so closing the search must not refocus. */
 private fun popupOwnsFocus(state: AppState): Boolean =
     state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
         state.declarationChooserVisible || state.testChooserVisible || state.fileStructureVisible ||
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
+        state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.findBar.visible
 
 private fun refocusEditor(state: AppState) {

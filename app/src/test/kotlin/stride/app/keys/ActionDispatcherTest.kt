@@ -1127,6 +1127,144 @@ class ActionDispatcherTest {
         assertEquals("Completion", requireNotNull(state.completion).title)
     }
 
+    @Test
+    fun `quick documentation opens on the declaration and closes on the second request`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val text = "/** Adds one. */\nfun helper() {}\n\nfun main() {\n    helper()\n}\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.lastIndexOf("helper()") + 1)))
+
+        assertTrue(dispatchAction(ActionId.QUICK_DOC, state) { null })
+
+        val request = requireNotNull(state.quickDoc)
+        val candidate = request.candidates.first()
+        assertEquals("fun helper()", candidate.signature)
+        assertEquals("Adds one.", candidate.doc)
+        assertEquals(1, candidate.declaration.line)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+        assertTrue(dispatchAction(ActionId.QUICK_DOC, state) { null })
+        assertNull(state.quickDoc)
+    }
+
+    @Test
+    fun `quick definition opens on the declaration text`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val text = "class Foo {\n    fun a() {}\n}\n\nval use = Foo()\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.lastIndexOf("Foo") + 1)))
+
+        assertTrue(dispatchAction(ActionId.QUICK_DEFINITION, state) { null })
+
+        val candidate = requireNotNull(state.quickDefinition).candidates.first()
+        assertEquals("a.kt:1", "${candidate.declaration.relativePath}:${candidate.declaration.line + 1}")
+        assertEquals("class Foo {\n    fun a() {}\n}", candidate.definition)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+    }
+
+    @Test
+    fun `the peek actions report when the caret is not on a name`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("a + b", TextRange(2)))
+
+        assertTrue(dispatchAction(ActionId.QUICK_DOC, state) { null })
+        assertNull(state.quickDoc)
+        assertEquals("No declaration found", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.QUICK_DEFINITION, state) { null })
+        assertNull(state.quickDefinition)
+        assertEquals("No declaration found", state.statusMessage)
+    }
+
+    @Test
+    fun `parameter info opens for the call at the caret and escape closes it`() {
+        val session = openProjectWith("a.kt")
+        state.focus = KeyContext.EDITOR
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val text = "fun greet(name: String, greeting: String) {}\n\nfun main() {\n    greet(\"a\", )\n}\n"
+        val caret = text.indexOf("greet(\"a\", ") + "greet(\"a\", ".length
+        editor.updateValue(TextFieldValue(text, TextRange(caret)))
+
+        assertTrue(dispatchAction(ActionId.PARAMETER_INFO, state) { null })
+
+        val request = requireNotNull(state.parameterInfo)
+        assertEquals(listOf("fun greet(name: String, greeting: String)"), request.signatures)
+        assertEquals(text.indexOf("greet(\"a\", ") + "greet(".length - 1, request.openOffset)
+        assertEquals(KeyContext.EDITOR, state.focus)
+
+        assertTrue(dispatchAction(ActionId.EDITOR_ESCAPE, state) { null })
+        assertNull(state.parameterInfo)
+        assertEquals(KeyContext.EDITOR, state.focus)
+    }
+
+    @Test
+    fun `parameter info reports a missing call and unresolved parameters`() {
+        val root = temp.resolve("parameter-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Main.kt"),
+            "package demo\n\nfun main() {\n    missing(1)\n}\n",
+        )
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
+        val text = editor.value.text
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("missing(1)") + "missing(".length)))
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(dispatchAction(ActionId.PARAMETER_INFO, state) { null })
+        assertEquals("No parameter info for missing", state.statusMessage)
+        assertNull(state.parameterInfo)
+
+        editor.updateValue(TextFieldValue("plainName", TextRange(9)))
+        assertTrue(dispatchAction(ActionId.PARAMETER_INFO, state) { null })
+        assertEquals("No call at caret", state.statusMessage)
+        assertNull(state.parameterInfo)
+    }
+
+    @Test
+    fun `surround with opens the templates of the file type and reports the rest`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt", "a.txt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("val x = 1", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.SURROUND_WITH, state) { null })
+
+        val request = requireNotNull(state.surround)
+        assertEquals(
+            listOf(
+                "if", "if / else", "while", "do / while", "for", "try / catch",
+                "try / finally", "try / catch / finally", "run { }",
+            ),
+            request.templates.map { it.label },
+        )
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+        state.surround = null
+        session.editors.openFile(VFile(root.resolve("a.txt")))
+        assertTrue(dispatchAction(ActionId.SURROUND_WITH, state) { null })
+        assertNull(state.surround)
+        assertEquals("No surround templates for this file", state.statusMessage)
+
+        val readOnly = session.editors.openFile(VFile(root.resolve("missing.kt"))) as TextFileEditor
+        assertTrue(readOnly.isReadOnly)
+        assertTrue(dispatchAction(ActionId.SURROUND_WITH, state) { null })
+        assertNull(state.surround)
+        assertEquals("File is read-only", state.statusMessage)
+    }
+
     private fun openProjectWith(vararg names: String): ProjectSession {
         val root = temp.resolve("project")
         Files.createDirectories(root)

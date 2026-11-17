@@ -173,6 +173,24 @@ class KeymapTest {
     }
 
     @Test
+    fun `the peek and surround bindings resolve in the editor`() {
+        // ParameterInfo meta P
+        assertEquals(ActionId.PARAMETER_INFO, action("meta P", KeyContext.EDITOR))
+        // QuickJavaDoc F1; control J
+        assertEquals(ActionId.QUICK_DOC, action("F1", KeyContext.EDITOR))
+        assertEquals(ActionId.QUICK_DOC, action("control J", KeyContext.EDITOR))
+        // QuickImplementations alt SPACE
+        assertEquals(ActionId.QUICK_DEFINITION, action("alt SPACE", KeyContext.EDITOR))
+        // SurroundWith meta alt T
+        assertEquals(ActionId.SURROUND_WITH, action("meta alt T", KeyContext.EDITOR))
+        // None of them answer while a modal popup owns the keyboard.
+        assertNull(action("meta P", KeyContext.CONTEXT_POPUP))
+        assertNull(action("F1", KeyContext.CONTEXT_POPUP))
+        assertNull(action("alt SPACE", KeyContext.CONTEXT_POPUP))
+        assertNull(action("meta alt T", KeyContext.CONTEXT_POPUP))
+    }
+
+    @Test
     fun `actions without a stroke stay reachable from the actions tab`() {
         assertTrue(keymap.strokesFor(ActionId.REOPEN_CLOSED_TAB).isEmpty())
         assertTrue(keymap.strokesFor(ActionId.CLOSE_OTHER_TABS).isEmpty())

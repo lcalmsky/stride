@@ -95,6 +95,10 @@ object ActionNames {
         ActionId.OPTIMIZE_IMPORTS to "Optimize Imports",
         ActionId.SMART_TYPE_COMPLETION to "Type-Matching Completion",
         ActionId.PASTE_MULTIPLE to "Paste from History",
+        ActionId.PARAMETER_INFO to "Parameter Info",
+        ActionId.QUICK_DOC to "Quick Documentation",
+        ActionId.QUICK_DEFINITION to "Quick Definition",
+        ActionId.SURROUND_WITH to "Surround With",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

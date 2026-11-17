@@ -475,6 +475,10 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :193 |
 | `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :195 |
 | `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :197 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :199 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :201, :202 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :204 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :206 |
 | `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :166 |
 | `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :168 |
 | `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :169 |
@@ -671,6 +675,61 @@ step, writes it back to the system clipboard and moves it to the front. `COPY_LI
 `CUT_LINE` record the text they copy — the selection when there is one, the whole line
 otherwise. An empty history reports `Clipboard history is empty` without opening the popup.
 
+`PARAMETER_INFO` (⌘P) draws a non-modal panel over the editor. `CallText.openParen` walks back
+over code, judged through `CodeScan`, to the innermost unclosed `(`, whose partner may be after
+the caret or absent; `calleeName` takes the identifier before it, skipping whitespace and a
+`<…>` generic argument list. The declaration lookup below resolves that name to signatures, and
+each panel line joins one overload's parameters — split at the top-level commas of the first
+balanced `(…)` in the declaration's signature — with `, ` in the code font. The parameter the
+caret is in (the count of top-level commas between `(` and the caret) is bold in
+`DesignTokens.accentOnPopupPlate`; an overload with no such parameter is dimmed, and a signature
+with no parameters shows `<no parameters>`. Up to five overloads are shown. The panel never
+takes the keyboard focus: it recomputes from the editor's live text and caret on every
+recomposition and closes when the caret moves before `(` or past the matching `)`, the selected
+editor changes, another popup opens, or Escape is pressed — `dispatchAction` handles
+`EDITOR_ESCAPE` ahead of the editor's own Escape handling so the panel closes first. `No call at
+caret` means no unclosed call precedes the caret; `No parameter info for <name>` means the
+declarations were found but none carries a parameter list.
+
+`QUICK_DOC` (F1, ⌃J) and `QUICK_DEFINITION` (⌥Space) share `DeclarationPeek.lookup`: the current
+file first — the declaration of the name nearest before the caret, or every declaration with
+that name when there is none before it — then the declaration index, ranked by package and
+module, with other files' private declarations removed and one entry per file and line. The
+declaration's source is read from its open `TextFileEditor` or else from the file; a file that
+fails to read is dropped from the list. Before the index is ready only the current file's
+declarations are used, and an empty list reports the usual `INDEXING_MESSAGE`; after that an
+empty list reports `No declaration found`. `DeclarationSource` extracts three pieces without a
+parser: the signature runs from the declaration's line while its brackets are unbalanced, stops
+before the first code `{` or a top-level `=`, and joins at most five lines with single spaces;
+the documentation is a KDoc block or a run of `//` lines directly above the declaration — with
+annotation lines skipped and a blank line breaking the connection — with the markers and the
+leading `*` removed; the definition runs from the documentation's first line (else the first
+annotation, else the declaration) through the matching `}` of the block the signature opens
+(else to the signature's end), keeps the first 40 lines, and loses the common indentation.
+
+Quick Documentation shows at most three candidates, each with its signature, `relativePath:line`
+and documentation (or `No documentation`), scrolling vertically inside a capped height. Enter
+opens the first candidate and the popup closes; Escape, F1 or ⌃J close it. Quick Definition shows
+one candidate's definition in the code font with `relativePath:line` and `1/<n>` in the header,
+`… <n> more lines` when the definition was cut, and ←/→ switching candidates; Enter or ⌘↓ opens
+the current one. Both open their declaration through `openDeclaration`, so back and forward move
+between the peek target and the place it was invoked from.
+
+`SURROUND_WITH` (⌥⌘T) wraps the lines the selection covers — the caret line when it is
+collapsed — in a template of the file type. Kotlin (`.kt`, `.kts`) offers `if`, `if / else`,
+`while`, `do / while`, `for`, `try / catch`, `try / finally`, `try / catch / finally` and
+`run { }`; Java (`.java`) offers the same block set with the Java `catch (Exception e)` clause
+plus `synchronized` and a plain `{ }`. The header takes the first target line's indentation and
+the body gains one four-space unit (blank lines are not indented); `run { }` and `{ }` leave the
+body as it is and map the caret by the inserted header. `if`, `while`, `for` and `synchronized`
+put the caret in the condition parentheses, `do / while` in the trailing `while (…)`, the try
+templates select `Exception`, and `try / finally` leaves the caret on the empty finally line.
+The edit is one undo step through `TextFileEditor.applyResult`. The popup applies the highlighted
+template with Enter or with its shortcut key (`1`…`9`, `0`, then letters), ↑↓ move and Escape
+closes. An expression-level wrap (parentheses, string literals) is not offered: the unit is
+always whole lines. A file type with no table reports `No surround templates for this file`, and
+a read-only editor `File is read-only`.
+
 `stride.app.editor.UndoManager` keeps the undo and redo stacks:
 
 ```kotlin
@@ -721,6 +780,7 @@ class TextFileEditor(
     fun unwrap(): Boolean                     // false when no control block encloses the caret
     fun reformat(): String                    // the status line to show
     fun replaceRange(start: Int, end: Int, replacement: String)
+    fun applyResult(result: EditResult): Boolean  // one undo step; false when read-only
 }
 ```
 

@@ -1285,6 +1285,75 @@ class KeyFlowUiTest {
             state.dispose()
         }
     }
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `quick definition opens with alt space and enter jumps to the declaration`() = runComposeUiTest {
+        val root = temp.resolve("quick-definition-ui-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "fun helper() {}\n\nfun main() {\n    helper()\n}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val text = editor.value.text
+            editor.updateValue(TextFieldValue(text, TextRange(text.lastIndexOf("helper()") + 1)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { pressKey(Key.Spacebar) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.quickDefinition != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.quickDefinition == null }
+            assertEquals(0, editor.value.text.take(editor.value.selection.start).count { it == '\n' })
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `surround with opens from the keyboard and a shortcut key applies the template`() = runComposeUiTest {
+        val root = temp.resolve("surround-ui-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "val x = 1\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.T) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.surround != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.One) }
+            waitUntil(timeoutMillis = 5_000) { state.surround == null }
+            assertEquals("if () {\n    val x = 1\n}\n", editor.value.text)
+            assertEquals("if (".length, editor.value.selection.start)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
 }
 
 @Composable

@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
@@ -29,15 +32,24 @@ import stride.app.editor.CompletionPopup
 import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryPopup
 import stride.app.editor.RenamePopup
+import stride.app.editor.SurroundRequest
+import stride.app.editor.SurroundWith
+import stride.app.editor.SurroundWithPopup
 import stride.app.editor.TextFileEditor
 import stride.app.glass.GlassHoles
 import stride.app.glass.GlassRegistry
 import stride.app.glass.LocalNativeGlass
 import stride.app.navigation.Bookmark
 import stride.app.navigation.BookmarksPopup
+import stride.app.navigation.CallText
 import stride.app.navigation.ChooserRow
 import stride.app.navigation.FileStructureEntry
 import stride.app.navigation.FileStructurePopup
+import stride.app.navigation.ParameterInfoPanel
+import stride.app.navigation.ParameterInfoRequest
+import stride.app.navigation.PeekCandidate
+import stride.app.navigation.QuickDefinitionPopup
+import stride.app.navigation.QuickDocPopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.run.ContextAction
 import stride.app.run.ContextActionKind
@@ -55,6 +67,7 @@ import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.lang.TextEdit
+import stride.search.Declaration
 import stride.search.DeclarationKind
 import stride.search.FileNameIndex
 
@@ -74,6 +87,7 @@ class PopupNativeLegibilityTest {
         SECONDARY("textSecondaryOnGlass"),
         ACCENT2("accent2"),
         AMBER("neonAmber"),
+        ACCENT("accentOnPopupPlate"),
         ;
 
         fun color(): Color = when (this) {
@@ -82,6 +96,7 @@ class PopupNativeLegibilityTest {
             SECONDARY -> DesignTokens.textSecondaryOnGlass
             ACCENT2 -> DesignTokens.accent2
             AMBER -> DesignTokens.neonAmber
+            ACCENT -> DesignTokens.accentOnPopupPlate
         }
     }
 
@@ -256,6 +271,45 @@ class PopupNativeLegibilityTest {
         )
         val search = SearchEverywhere(project)
         val index = project.service<FileNameIndex>()
+        val peekCandidates = listOf(
+            PeekCandidate(
+                declaration = Declaration(
+                    "alphaOne",
+                    DeclarationKind.CLASS,
+                    VFile(root.resolve("src/AlphaOne.kt")),
+                    "src/AlphaOne.kt",
+                    2,
+                ),
+                signature = "class AlphaOne(val alpha: Int)",
+                doc = "A sample declaration used by the popup checks.",
+                definition = "class AlphaOne {\n    val alpha = 1\n}",
+                definitionTruncatedLines = 0,
+            ),
+            PeekCandidate(
+                declaration = Declaration(
+                    "alphaTwo",
+                    DeclarationKind.CLASS,
+                    VFile(root.resolve("src/AlphaTwo.kt")),
+                    "src/AlphaTwo.kt",
+                    2,
+                ),
+                signature = "class AlphaTwo(val alpha: Int)",
+                doc = null,
+                definition = "class AlphaTwo {\n    val alpha = 2\n}",
+                definitionTruncatedLines = 12,
+            ),
+        )
+        val callText = "alpha(1, 2)"
+        val callEditor = TextFileEditor(VFile(root.resolve("src/Call.kt")))
+        callEditor.updateValue(TextFieldValue(callText, TextRange(callText.length - 1)))
+        val parameterInfo = ParameterInfoRequest(
+            editor = callEditor,
+            openOffset = requireNotNull(CallText.openParen(callText, callText.length - 1)),
+            signatures = listOf(
+                "alpha(first: Int, second: Int)",
+                "alpha(value: Int)",
+            ),
+        )
         return listOf(
             PopupCase(
                 name = "file-structure",
@@ -396,6 +450,50 @@ class PopupNativeLegibilityTest {
                 // The 1 dp neon stroke and its faint glow sit at the rounded edge, and the row's
                 // 12 dp right padding is empty, so 4 dp in is a clear block.
                 editor.GotoLinePopup(Modifier.padding(top = DesignTokens.popupTop))
+            },
+            PopupCase(
+                name = "quick-doc",
+                key = "popup-quick-doc",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.BUSY),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                QuickDocPopup(candidates = peekCandidates, onGoTo = {}, onClose = {})
+            },
+            PopupCase(
+                name = "quick-definition",
+                key = "popup-quick-definition",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.BUSY),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                QuickDefinitionPopup(candidates = peekCandidates, onGoTo = {}, onClose = {})
+            },
+            PopupCase(
+                name = "parameter-info",
+                key = "popup-parameter-info",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    ParameterInfoPanel(
+                        request = parameterInfo,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
+                    )
+                }
+            },
+            PopupCase(
+                name = "surround",
+                key = "popup-surround",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.BUSY),
+                renderMillis = 600,
+            ) {
+                SurroundWithPopup(
+                    request = SurroundRequest(editor, SurroundWith.templatesFor("kt")),
+                    onChoose = {},
+                    onClose = {},
+                )
             },
         )
     }

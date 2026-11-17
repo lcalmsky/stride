@@ -6,6 +6,7 @@ import stride.app.editor.TextFileEditor
 import stride.app.editor.openCodeCompletion
 import stride.app.editor.openPasteHistory
 import stride.app.editor.openRename
+import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
@@ -14,6 +15,9 @@ import stride.app.navigation.goToTest
 import stride.app.navigation.navigateBack
 import stride.app.navigation.navigateForward
 import stride.app.navigation.openFileStructure
+import stride.app.navigation.openParameterInfo
+import stride.app.navigation.openQuickDefinition
+import stride.app.navigation.openQuickDoc
 import stride.app.navigation.selectInProjectView
 import stride.app.navigation.showBookmarks
 import stride.app.navigation.toggleBookmark
@@ -158,9 +162,18 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action)
         true
     }
+    // Esc closes Parameter Info before the editor's own Escape handling sees it.
+    ActionId.EDITOR_ESCAPE -> {
+        if (state.parameterInfo != null) {
+            state.parameterInfo = null
+            true
+        } else {
+            (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+        }
+    }
     ActionId.EDITOR_DUPLICATE, ActionId.EDITOR_DELETE_LINE, ActionId.COMMENT_LINE, ActionId.COMMENT_BLOCK,
     ActionId.MOVE_LINE_UP, ActionId.MOVE_LINE_DOWN, ActionId.GOTO_LINE, ActionId.INDENT, ActionId.UNINDENT,
-    ActionId.EDITOR_ESCAPE, ActionId.EDITOR_SELECT_WORD, ActionId.EDITOR_UNSELECT_WORD,
+    ActionId.EDITOR_SELECT_WORD, ActionId.EDITOR_UNSELECT_WORD,
     ActionId.EDITOR_TOGGLE_CASE, ActionId.EDITOR_JOIN_LINES, ActionId.EDITOR_START_NEW_LINE,
     ActionId.EDITOR_START_NEW_LINE_BEFORE, ActionId.EDITOR_MATCH_BRACE, ActionId.EDITOR_CODE_BLOCK_START,
     ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN,
@@ -215,6 +228,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.PASTE_MULTIPLE -> openPasteHistory(state)
+    ActionId.PARAMETER_INFO -> openParameterInfo(state)
+    ActionId.QUICK_DOC -> openQuickDoc(state)
+    ActionId.QUICK_DEFINITION -> openQuickDefinition(state)
+    ActionId.SURROUND_WITH -> openSurroundWith(state)
     ActionId.RENAME_ELEMENT -> openRename(state)
     ActionId.RUN -> {
         val session = state.session ?: return false

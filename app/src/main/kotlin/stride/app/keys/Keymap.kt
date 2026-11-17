@@ -18,6 +18,7 @@ enum class ActionId {
     TOGGLE_UI_FONT, MOVE_STATEMENT_UP, MOVE_STATEMENT_DOWN, EDITOR_COMPLETE_STATEMENT,
     UNWRAP, REFORMAT_CODE, EDITOR_SCROLL_TO_CENTER,
     OPTIMIZE_IMPORTS, SMART_TYPE_COMPLETION, PASTE_MULTIPLE,
+    PARAMETER_INFO, QUICK_DOC, QUICK_DEFINITION, SURROUND_WITH,
 }
 
 enum class KeyContext {
@@ -195,6 +196,15 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control alt O", ActionId.OPTIMIZE_IMPORTS, KeyContext.EDITOR)
     // PasteMultiple meta shift V
     bind("meta shift V", ActionId.PASTE_MULTIPLE, KeyContext.EDITOR)
+    // ParameterInfo meta P
+    bind("meta P", ActionId.PARAMETER_INFO, KeyContext.EDITOR)
+    // QuickJavaDoc F1; control J (the second macOS default stroke)
+    bind("F1", ActionId.QUICK_DOC, KeyContext.EDITOR)
+    bind("control J", ActionId.QUICK_DOC, KeyContext.EDITOR)
+    // QuickImplementations alt SPACE
+    bind("alt SPACE", ActionId.QUICK_DEFINITION, KeyContext.EDITOR)
+    // SurroundWith meta alt T
+    bind("meta alt T", ActionId.SURROUND_WITH, KeyContext.EDITOR)
     // RenameElement shift F6
     bind("shift F6", ActionId.RENAME_ELEMENT, KeyContext.EDITOR)
     // $Copy and $Cut with an empty selection take the whole line

@@ -248,6 +248,9 @@ object DesignTokens {
     /** The palette plate under popup text on the native glass; see [POPUP_PLATE_ALPHA]. */
     val popupPlate: Color get() = palette.glassBase.copy(alpha = POPUP_PLATE_ALPHA)
 
+    /** [accent] for popup text, moved just far enough to clear [contrastText] on the plate. */
+    val accentOnPopupPlate: Color get() = readableOn(palette.accent, popupPlateFloor(palette))
+
     /**
      * Shadow under chrome and popup text. On thin glass the text is read against this plate, so
      * it is opaque and tight; the measured worst case is in `PopupGlassTest`. It is light on the
