@@ -211,6 +211,34 @@ provider that throws, and returns quick fixes before intentions while keeping th
 inside each category. Edits of one action must not overlap. `:lang` does not depend on
 `:search`; the app supplies `SymbolLookup` from its declaration index.
 
+### Import optimizers
+
+Language plugins rewrite a document's import block through the bean extension point
+`stride.lang.importOptimizer`, keyed by `language` like `lang.commenter`. An optimizer only
+reads the text and returns edits; the app applies them.
+
+```kotlin
+interface ImportOptimizer {
+    fun optimize(text: String): List<TextEdit>              // offsets of the original text
+    companion object {
+        const val EP_NAME = "stride.lang.importOptimizer"
+        val EP: BeanExtensionPointName<ImportOptimizerBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): ImportOptimizer?
+    }
+}
+
+class ImportOptimizerBean : ExtensionBean() {
+    override val key: String?                              // attributes["language"]
+    val language: String?
+    fun optimizer(): ImportOptimizer
+}
+```
+
+The edits use the offsets of the original text and must not overlap; an empty list means
+there is nothing to change. `forLanguage` returns a freshly created optimizer for the first
+bean whose `language` attribute equals `language.id`, or `null` when no bean matches, so a
+file type without a registered optimizer reports that Optimize Imports is unavailable.
+
 ## `stride.lang.kotlin`
 
 ```kotlin
@@ -267,6 +295,27 @@ when a top-level project declaration has the same name. Private top-level declar
 not offered: `ParsedDeclaration` and `Declaration` carry `isPrivate`, set from the
 declaration's own modifiers.
 
+### Kotlin import optimizer
+
+`KotlinImportOptimizer` rewrites the import block with the same decisions as the quick fix
+above: it shares `parseImports`, `usedIdentifiersIn` and `collapseBlankLine` with
+`KotlinImportIntentions`, so an import the quick fix would remove is exactly one the
+optimizer drops. An import is unused when its alias or last segment never appears as an
+identifier or soft keyword outside the package and import lines; star imports and
+operator-convention names (`getValue`, `plus`, `component1`, `assign`, …) always count as
+used, and a repeated `path as alias` is kept once.
+
+The kept imports are sorted by group — everything else, `java.`, `javax.`, `kotlin.`, then
+aliases — and by path inside a group, matching the default Kotlin layout. The block keeps
+its own line endings (`\r\n` or `\n`). A comment on a line between imports turns sorting
+off: only the removed import lines are deleted and the remaining order stays as it is, which
+also keeps the blank line after the block. When every import goes, the blank line after the
+block is collapsed unless a comment still sits in it. A file whose block is already in that
+shape returns no edits.
+
+The limits are the intentions' limits: there is no compiler, a name used only in a KDoc link
+counts as unused, and nothing is reordered around comments.
+
 ## `stride.lang.json`
 
 ```kotlin
@@ -299,6 +348,7 @@ character (including an unknown word) as `BAD_CHARACTER`.
                                    implementationClass="stride.lang.kotlin.KotlinSyntaxHighlighterFactory"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportIntentions"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
+    <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
   </extensions>
 </stride-plugin>
 ```
@@ -338,8 +388,10 @@ Both plugins register extensions only. The two extension points are declared by 
 | `:lang` | `ColorSchemeTest` | logo palette, light background, fallback chain |
 | `:lang` | `LangPluginIntegrationTest` | both real descriptors parsed with `PluginDescriptorParser`, extensions instantiated through a real `ExtensionArea`, file types and highlighters resolved |
 | `:lang` | `IntentionProviderEpTest` | providers resolved by language key, quick fixes sorted before intentions across providers, a throwing provider skipped, unknown language empty |
+| `:lang` | `ImportOptimizerEpTest` | the Kotlin descriptor registers one import optimizer, the bean resolves through the real descriptor, an unknown language resolves to `null` |
 | `:plugins:lang-kotlin` | `KotlinLexerTest` | token kinds, per-line multi-line tokens, resume at every line start |
 | `:plugins:lang-kotlin` | `LineStateHighlighterTest` | 200 seeded random edits equal a full relex, single-line edit relexes one line |
 | `:plugins:lang-kotlin` | `KotlinImportIntentionsTest` | import insertion positions, same-package, imported, alias, star and qualified skips, caret in strings and comments, the candidate limit, unused import removal with operator names, aliases, stars and template usages |
+| `:plugins:lang-kotlin` | `KotlinImportOptimizerTest` | unused and duplicate removal, the java/javax/kotlin/alias group order, blank-line collapse, a comment inside the block keeping the order and the blank line after it, star and KDoc-link cases, an already optimized file and a file with no imports reporting no edits |
 | `:plugins:lang-kotlin` | `KotlinValVarIntentionTest` | `val`/`var` toggle, `const val` and `lateinit var` skipped, keywords in comments ignored |
 | `:plugins:lang-json` | `JsonLexerTest` | token kinds, invalid characters, resume at every line start |

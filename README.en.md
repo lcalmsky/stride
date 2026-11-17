@@ -43,8 +43,11 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
 - **Tabbed editor** open files become tabs, and opening the same file again selects its tab. Close with `⌘W` and switch with `⌘⇧]`·`⌃→` and `⌘⇧[`·`⌃←`. `Reopen Closed Tab` and `Close Other Tabs` in the Actions tab bring back a closed tab or close the rest
 - **Syntax highlighting** the Kotlin and JSON plugins each provide a lexer and a highlighter. Files larger than 2 MB open read-only without highlighting
-- **Editing** duplicate, delete, and move lines, toggle line and block comments, indent, and undo or redo from the keyboard. `⌘L` jumps to a `line` or `line:column`. With no selection, `⌘C`·`⌘X` copy or cut the whole line
-- **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, and `⇧F6` renames within the file
+- **Editing** duplicate, delete, and move lines, toggle line and block comments, indent, and undo or redo from the keyboard. `⌘L` jumps to a `line` or `line:column`. With no selection, `⌘C`·`⌘X` copy or cut the whole line, and `⌘⇧V` pastes one of the last 20 copied texts
+- **Statement editing** `⌘⇧↑`·`⌘⇧↓` swap a statement, together with its block and the comments and annotations right above it, with its neighbor in the same block. `⌘⇧↩` closes open brackets and opens a block on lines such as `if` or `fun` to finish the statement, and `⌘⇧⌦` unwraps the `if`, `else`, `for`, `while`, `do`, or `try` around the caret and keeps only its body. `⌘⌥T` surrounds the selected lines with a template such as `if` or `try / catch` (Kotlin and Java)
+- **Code cleanup** `⌘⌥L` recomputes indentation from bracket depth and tidies trailing whitespace and runs of blank lines (Kotlin, Java, and JSON; other files get the whitespace cleanup only). It never moves line breaks. `⌃⌥O` removes unused and duplicate imports in Kotlin files and sorts them in IntelliJ's default order. `⌃L` scrolls the caret line to the middle of the view
+- **Code info** `⌘P` shows the parameter list of the call at the caret with the current parameter highlighted, and keeps following the caret while you type. `F1`·`⌃J` show the KDoc or comment above the declaration, and `⌥Space` shows its source in a popup. Declarations come from the current file and the declaration index
+- **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, `⌃⇧Space` narrows the candidates to classes in a type position and to symbols in an expression position, and `⇧F6` renames within the file
 - **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure, `⌘⇧T` goes to the test, `⌥F7` finds usages, and `F3`·`⌘F3` handle bookmarks
 - **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
@@ -193,8 +196,19 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌃⇧↑` / `⌃⇧↓` | Move to the previous / next method |
 | `⌥/` | Word completion |
 | `⌃Space` · `⌃⌥Space` | Completion popup |
+| `⌃⇧Space` | Completion narrowed by type or expression position |
 | `⇧F6` | Rename in the file |
 | `⌘C` / `⌘X` | Copy / cut the whole line when there is no selection |
+| `⌘⇧V` | Paste from clipboard history |
+| `⌘⇧↑` / `⌘⇧↓` | Move statement up / down |
+| `⌘⇧↩` | Complete statement |
+| `⌘⇧⌦` | Unwrap the enclosing block |
+| `⌘⌥T` | Surround with a template |
+| `⌘⌥L` | Reformat code |
+| `⌃⌥O` | Optimize imports |
+| `⌃L` | Scroll the caret line to the middle |
+| `⌘P` | Parameter info |
+| `F1` · `⌃J` / `⌥Space` | Declaration docs / declaration source |
 | **Find** | |
 | `⌘F` | Open the find bar |
 | `⌘R` | Expand the replace row |
@@ -258,9 +272,9 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 
 ## How it works
 
-The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, and intention APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, and file types, and the Kotlin plugin also registers the import quick fixes and the `val`/`var` intention.
+The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, intention, and import optimizer APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, and file types, and the Kotlin plugin also registers the import quick fixes, the `val`/`var` intention, and the import optimizer.
 
-Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
+Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
 
 The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 

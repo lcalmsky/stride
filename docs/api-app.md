@@ -416,86 +416,86 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `OPEN_FOLDER` | GLOBAL | ⌘O | (none) | :65 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :67 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :69 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :81 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :83 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :85, :86 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :88, :89 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :91 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :93 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :95 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :97 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :99 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :101 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :103 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :105 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :107, :108 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :110 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :112 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :114 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :116 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :118 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :120 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :122 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :124 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :126 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :128 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :130 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :132 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :134 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :136 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :138 |
+| `FIND` | EDITOR | ⌘F | `Find` | :140 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :142 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :144 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :146 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :148 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :150 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :152 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :154 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :156 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :158 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :160 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :162 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :164 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :166 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :168 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :170 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :172 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :174 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :176 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :178 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :180 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :182 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :184 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :186 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :188 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :191, :192 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :194 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :196 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :198 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :200 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :202, :203 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :205 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :207 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :209 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :211 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :212 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :214 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :216, :217 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :219, :220 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :222 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :224 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :226 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :228 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :230 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :232 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :234 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :236 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :238 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :240, :241 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :243 |
+| `OPEN_FOLDER` | GLOBAL | ⌘O | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :71, :72 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :74, :75 |
-| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :77 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :79 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :81 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :83 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :85 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :87 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :89 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :91 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :93, :94 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :96 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :98 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :100 |
-| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :114 |
-| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :116 |
-| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :118 |
-| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :120 |
-| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :122 |
-| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :124 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :102 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :104 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :106 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :108 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :110 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :112 |
-| `FIND` | EDITOR | ⌘F | `Find` | :114 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :116 |
-| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :118 |
-| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :120 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :122 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :124 |
-| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :126 |
-| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :128 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :130 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :132 |
-| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :134 |
-| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :136 |
-| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :138 |
-| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :140 |
-| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :142 |
-| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :144 |
-| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :146 |
-| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :148 |
-| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :150 |
-| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :152 |
-| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :154 |
-| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :156 |
-| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :158 |
-| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :160 |
-| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :162 |
-| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :164 |
-| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :193 |
-| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :195 |
-| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :197 |
-| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :199 |
-| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :201, :202 |
-| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :204 |
-| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :206 |
-| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :166 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :168 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :169 |
-| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :178 |
-| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :180, :181 |
-| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :183, :184 |
-| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :186 |
-| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :188 |
-| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :190 |
-| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :192 |
-| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :194 |
-| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :196 |
-| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :198 |
-| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :200 |
-| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :202 |
-| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :204, :205 |
-| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :206 |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
 | `TOGGLE_UI_FONT` | — | (none) | — | — |
 | `CLOSE_OTHER_TABS` | — | (none) | — | — |
@@ -686,8 +686,10 @@ caret is in (the count of top-level commas between `(` and the caret) is bold in
 with no parameters shows `<no parameters>`. Up to five overloads are shown. The panel never
 takes the keyboard focus: it recomputes from the editor's live text and caret on every
 recomposition and closes when the caret moves before `(` or past the matching `)`, the selected
-editor changes, another popup opens, or Escape is pressed — `dispatchAction` handles
-`EDITOR_ESCAPE` ahead of the editor's own Escape handling so the panel closes first. `No call at
+editor changes, another popup opens, `AppState.focus` leaves `EDITOR` (the go-to-line field, a
+tool window or the tree), or Escape is pressed; it does not reopen by itself when the editor
+regains the focus. `dispatchAction` handles `EDITOR_ESCAPE` ahead of the editor's own Escape
+handling so the panel closes first. `No call at
 caret` means no unclosed call precedes the caret; `No parameter info for <name>` means the
 declarations were found but none carries a parameter list.
 
@@ -700,7 +702,8 @@ fails to read is dropped from the list. Before the index is ready only the curre
 declarations are used, and an empty list reports the usual `INDEXING_MESSAGE`; after that an
 empty list reports `No declaration found`. `DeclarationSource` extracts three pieces without a
 parser: the signature runs from the declaration's line while its brackets are unbalanced, stops
-before the first code `{` or a top-level `=`, and joins at most five lines with single spaces;
+before the first code `{` or a top-level `=`, leaves out the parts `CodeScan` marks as comments
+(string-literal contents stay), and joins at most five lines with single spaces;
 the documentation is a KDoc block or a run of `//` lines directly above the declaration — with
 annotation lines skipped and a blank line breaking the connection — with the markers and the
 leading `*` removed; the definition runs from the documentation's first line (else the first
@@ -713,7 +716,10 @@ opens the first candidate and the popup closes; Escape, F1 or ⌃J close it. Qui
 one candidate's definition in the code font with `relativePath:line` and `1/<n>` in the header,
 `… <n> more lines` when the definition was cut, and ←/→ switching candidates; Enter or ⌘↓ opens
 the current one. Both open their declaration through `openDeclaration`, so back and forward move
-between the peek target and the place it was invoked from.
+between the peek target and the place it was invoked from. Because these two popups move to
+another location, they darken the editor with `scrimSurface` like the navigation popups;
+Surround With, Paste from History, completion and rename edit the caret's own place, so they
+draw no scrim.
 
 `SURROUND_WITH` (⌥⌘T) wraps the lines the selection covers — the caret line when it is
 collapsed — in a template of the file type. Kotlin (`.kt`, `.kts`) offers `if`, `if / else`,
