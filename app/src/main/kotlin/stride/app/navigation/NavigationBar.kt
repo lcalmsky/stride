@@ -3,6 +3,7 @@ package stride.app.navigation
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.LocalTextStyle
@@ -27,12 +29,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isMetaPressed
@@ -40,8 +46,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -160,16 +167,36 @@ fun openNavigationBarFile(state: AppState, session: ProjectSession, file: VFile)
     if (open) {
         session.editors.openFile(file)
         state.focusSelectedEditor()
-    } else {
-        openFileAtOffset(state, session, path, 0)
+        return true
     }
-    return true
+    val opened = openFileAtOffset(state, session, path, 0)
+    if (!opened) state.focusSelectedEditor()
+    return opened
+}
+
+/** The child list's left edge: the selected segment's, kept so the list stays inside [windowWidth]. */
+fun navigationBarListLeft(segmentLeft: Dp, windowWidth: Dp): Dp {
+    val rightmost = (windowWidth - NAV_BAR_LIST_WIDTH - DesignTokens.chromeInset).coerceAtLeast(0.dp)
+    return segmentLeft.coerceIn(0.dp, rightmost)
+}
+
+/**
+ * Places the child list at [left], moved left when it would otherwise leave the window; the
+ * window width is the node's width constraint.
+ */
+internal fun Modifier.navigationBarListStart(left: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val start = navigationBarListLeft(left, constraints.maxWidth.toDp()).roundToPx()
+    layout(constraints.maxWidth, placeable.height) { placeable.place(start, 0) }
 }
 
 /**
  * The bottom capsule while the navigation bar is active: the project root, each folder and the
  * file as segments. It owns the keyboard (the modal [stride.app.keys.KeyContext.NAV_BAR]) and
  * reports the selected segment's left edge so the child list can sit above it.
+ *
+ * Every segment's bounds are recorded, not only the selected one's: selecting another segment
+ * re-lays out nothing, so a callback gated on the selection would keep the first one's x.
  */
 @Composable
 fun NavigationBar(
@@ -184,10 +211,32 @@ fun NavigationBar(
     val shape = RoundedCornerShape(percent = 50)
     val focusRequester = remember { FocusRequester() }
     val density = LocalDensity.current
+    val scrollState = rememberScrollState()
+    var segmentBounds by remember { mutableStateOf<Map<Path, Rect>>(emptyMap()) }
+    val selectedBounds = segmentBounds[bar.segment.path]
+    val latestOnSegmentPosition by rememberUpdatedState(onSegmentPosition)
 
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
+    }
+
+    LaunchedEffect(bar.segment.path, selectedBounds, scrollState.viewportSize) {
+        val bounds = selectedBounds ?: return@LaunchedEffect
+        val viewport = scrollState.viewportSize
+        if (viewport <= 0) return@LaunchedEffect
+        val start = scrollState.value
+        val target = when {
+            bounds.left < start -> bounds.left
+            bounds.right > start + viewport -> bounds.right - viewport
+            else -> return@LaunchedEffect
+        }
+        scrollState.scrollTo(target.toInt().coerceIn(0, scrollState.maxValue))
+    }
+
+    val selectedLeft = selectedBounds?.let { with(density) { (it.left - scrollState.value).toDp() } }
+    LaunchedEffect(selectedLeft) {
+        selectedLeft?.let(latestOnSegmentPosition)
     }
 
     fun activateSegment(): Boolean {
@@ -257,16 +306,25 @@ fun NavigationBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
-            bar.segments.forEachIndexed { index, segment ->
-                NavigationBarSegmentItem(
-                    segment = segment,
-                    selected = index == bar.selected,
-                    onClick = {
-                        val next = bar.copy(selected = index, list = null)
-                        onChange(if (segment.isDirectory) next.openList(children) else next)
-                    },
-                    onPosition = { left -> if (index == bar.selected) onSegmentPosition(with(density) { left.toDp() }) },
-                )
+            Row(
+                Modifier.horizontalScroll(scrollState),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                bar.segments.forEachIndexed { index, segment ->
+                    NavigationBarSegmentItem(
+                        segment = segment,
+                        selected = index == bar.selected,
+                        onClick = {
+                            val next = bar.copy(selected = index, list = null)
+                            onChange(if (segment.isDirectory) next.openList(children) else next)
+                        },
+                        onPosition = { bounds ->
+                            if (segmentBounds[segment.path] != bounds) {
+                                segmentBounds = segmentBounds + (segment.path to bounds)
+                            }
+                        },
+                    )
+                }
             }
         }
     }
@@ -277,7 +335,7 @@ private fun NavigationBarSegmentItem(
     segment: NavigationBarSegment,
     selected: Boolean,
     onClick: () -> Unit,
-    onPosition: (Float) -> Unit,
+    onPosition: (Rect) -> Unit,
 ) {
     val interaction = remember(segment.path) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -293,7 +351,7 @@ private fun NavigationBarSegmentItem(
             .then(pill)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .onGloballyPositioned { coordinates -> onPosition(coordinates.positionInParent().x) }
+            .onGloballyPositioned { coordinates -> onPosition(coordinates.boundsInParent()) }
             .padding(horizontal = DesignTokens.space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {

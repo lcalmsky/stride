@@ -117,6 +117,15 @@ fun recentLocationRows(
 }
 
 /**
+ * The row holding [selected] after [rows] were recomputed, so a place keeps its selection when
+ * the caret line drops out and the rows collapse; the first row when it is gone.
+ */
+fun recentLocationIndex(rows: List<RecentLocationRow>, selected: NavigationLocation?): Int {
+    val index = rows.indexOfFirst { it.location == selected }
+    return if (index < 0) 0 else index
+}
+
+/**
  * The place's line and one line on each side, 0-based [line], clamped to what the text has. The
  * lines are trimmed like a bookmark's, so a fragment reads as one column.
  */
@@ -157,7 +166,7 @@ fun RecentLocationsPopup(
     onClose: () -> Unit,
 ) {
     var texts by remember(request) { mutableStateOf(emptyMap<Path, String>()) }
-    var selectedIndex by remember(request) { mutableStateOf(0) }
+    var selectedLocation by remember(request) { mutableStateOf<NavigationLocation?>(null) }
     val focusRequester = remember { FocusRequester() }
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
@@ -185,7 +194,7 @@ fun RecentLocationsPopup(
     val rows = remember(locations, caret, projectRoot, texts) {
         recentLocationRows(locations, projectRoot, caret) { path -> texts[path] }
     }
-    val index = selectedIndex.coerceIn(0, (rows.size - 1).coerceAtLeast(0))
+    val index = recentLocationIndex(rows, selectedLocation)
 
     LaunchedEffect(index, rows.size) {
         if (rows.isEmpty()) return@LaunchedEffect
@@ -223,12 +232,14 @@ fun RecentLocationsPopup(
                                 if (event.isMetaPressed) {
                                     rows.getOrNull(index)?.let { onChoose(it.location) }
                                 } else if (rows.isNotEmpty()) {
-                                    selectedIndex = (index + 1).coerceAtMost(rows.lastIndex)
+                                    selectedLocation = rows[(index + 1).coerceAtMost(rows.lastIndex)].location
                                 }
                                 true
                             }
                             Key.DirectionUp -> {
-                                if (rows.isNotEmpty()) selectedIndex = (index - 1).coerceAtLeast(0)
+                                if (rows.isNotEmpty()) {
+                                    selectedLocation = rows[(index - 1).coerceAtLeast(0)].location
+                                }
                                 true
                             }
                             Key.Enter, Key.NumPadEnter, Key.F4 -> {

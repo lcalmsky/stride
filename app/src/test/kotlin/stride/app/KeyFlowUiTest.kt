@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -14,6 +15,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -38,6 +40,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.flow.collect
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -60,6 +63,7 @@ import stride.app.keys.KeyEventType
 import stride.app.keys.KeyRouter
 import stride.app.keys.dispatchAction
 import stride.app.keys.handleWindowKeyEvent
+import stride.app.navigation.NavigationLocation
 import stride.app.run.FakeProcess
 import stride.app.run.ProcessStarter
 import stride.app.run.RunConfiguration
@@ -81,6 +85,7 @@ import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
+import stride.search.SearchTab
 
 @ExtendWith(FixedUiFontExtension::class)
 class KeyFlowUiTest {
@@ -1913,6 +1918,280 @@ class KeyFlowUiTest {
             waitUntil(timeoutMillis = 5_000) { state.showUsages == null }
             val second = text.lastIndexOf("helper")
             assertEquals(TextRange(second, second + "helper".length), editor.value.selection)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a tab click closes the navigation bar and keeps the editor on the new tab`() = runComposeUiTest {
+        val root = temp.resolve("nav-bar-tab-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("A.kt"), "package demo\n")
+        Files.writeString(root.resolve("B.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val a = session.editors.openFile(VFile(root.resolve("A.kt"))) as TextFileEditor
+            session.editors.openFile(VFile(root.resolve("B.kt")))
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar != null }
+            assertEquals(KeyContext.NAV_BAR, state.focus)
+
+            onNode(hasText("A.kt") and SemanticsMatcher("tab row") { node -> node.boundsInRoot.top < 120f })
+                .performClick()
+
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertTrue(session.editors.selected === a)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `edit source from the actions tab reaches the declaration at the caret`() = runComposeUiTest {
+        val root = temp.resolve("actions-edit-source-project")
+        Files.createDirectories(root)
+        val text = "fun helper() {}\n\nfun main() {\n    helper()\n}\n"
+        Files.writeString(root.resolve("Main.kt"), text)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(text, TextRange(text.lastIndexOf("helper") + 1)))
+
+            state.openSearch(SearchTab.ACTIONS)
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasSetTextAction() and isFocused()).performTextInput("edit source")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Edit Source").fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { !state.searchVisible }
+            waitUntil(timeoutMillis = 5_000) {
+                editor.value.text.take(editor.value.selection.start).count { it == '\n' } == 0
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `jump to navigation bar from the actions tab opens the bar`() = runComposeUiTest {
+        val root = temp.resolve("actions-nav-bar-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("Main.kt")))
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            state.openSearch(SearchTab.ACTIONS)
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasSetTextAction() and isFocused()).performTextInput("jump to navigation bar")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Jump to Navigation Bar").fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { !state.searchVisible }
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar != null }
+            assertEquals(KeyContext.NAV_BAR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `recent locations from the actions tab keeps the search popup focus`() = runComposeUiTest {
+        val root = temp.resolve("actions-recent-locations-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("Main.kt")))
+            state.projectTreeVisible = false
+
+            val seen = mutableListOf<KeyContext>()
+            setContent {
+                LaunchedEffect(Unit) {
+                    snapshotFlow { state.focus }.collect { synchronized(seen) { seen += it } }
+                }
+                KeyFlowHarness(state)
+            }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            state.openSearch(SearchTab.ACTIONS)
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasSetTextAction() and isFocused()).performTextInput("recent locations")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Recent Locations").fetchSemanticsNodes().isNotEmpty()
+            }
+            synchronized(seen) { seen.clear() }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.recentLocationsVisible }
+            waitForIdle()
+            assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+            // Nothing hands the keyboard to the editor between the search closing and the popup.
+            assertFalse(synchronized(seen) { seen.contains(KeyContext.EDITOR) }, "focus went $seen")
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the child list sits over the folder segment it lists`() = runComposeUiTest {
+        val root = temp.resolve("nav-bar-list-position-project")
+        Files.createDirectories(root.resolve("src/main"))
+        Files.writeString(root.resolve("src/main/App.kt"), "package demo\n")
+        Files.writeString(root.resolve("src/Util.kt"), "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("src/main/App.kt")))
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar != null }
+            waitForIdle()
+
+            // From the file segment, ← twice reaches the src folder, and ↓ lists its children.
+            onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+            onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar?.segment?.name == "src" }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar?.list != null }
+            waitForIdle()
+
+            val segment = onNodeWithText("src").fetchSemanticsNode().boundsInRoot
+            val row = onNodeWithText("Util.kt").fetchSemanticsNode().boundsInRoot
+            assertEquals(segment.left, row.left, 1f)
+            assertTrue(row.bottom <= segment.top)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a long path scrolls inside the bar and never moves the status capsule`() = runComposeUiTest {
+        val root = temp.resolve("nav-bar-long-path-project")
+        var directory = root
+        for (index in 1..12) {
+            directory = directory.resolve("nested-folder-" + index.toString().padStart(2, '0'))
+        }
+        Files.createDirectories(directory)
+        val file = directory.resolve("Deep.kt")
+        Files.writeString(file, "package demo\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(file))
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val windowRight = onRoot().fetchSemanticsNode().boundsInRoot.right
+            val statusBefore = onAllNodesWithText("Ln ", substring = true).fetchSemanticsNodes().single().boundsInRoot
+            // The focus chip is the status group's last item, so its right edge is the group's.
+            val labelBefore = onNodeWithText("Editor").fetchSemanticsNode().boundsInRoot
+
+            assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.navigationBar != null }
+            waitForIdle()
+            val statusAfter = onAllNodesWithText("Ln ", substring = true).fetchSemanticsNodes().single().boundsInRoot
+            // A bar that takes the whole row leaves the status capsule no width or pushes it out.
+            assertTrue(statusAfter.right <= windowRight)
+            assertTrue(statusAfter.width >= statusBefore.width)
+            val labelAfter = onNodeWithText("Navigation").fetchSemanticsNode().boundsInRoot
+            assertEquals(labelBefore.right, labelAfter.right, 1f)
+
+            for (name in listOf("nested-folder-12", "nested-folder-11")) {
+                onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+                waitUntil(timeoutMillis = 5_000) { state.navigationBar?.segment?.name == name }
+                waitForIdle()
+                val segment = onNodeWithText(name).fetchSemanticsNode().boundsInRoot
+                assertTrue(segment.left >= 0f, "$name starts left of the window")
+                assertTrue(segment.right <= statusAfter.left, "$name is not inside the bar")
+                assertTrue(segment.width >= 80f, "$name is squeezed instead of scrolled into view")
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `recent locations keeps the caret line it opened on`() = runComposeUiTest {
+        val root = temp.resolve("recent-locations-caret-project")
+        Files.createDirectories(root)
+        val text = "alpha\nbeta\ngamma\ndelta\n"
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, text)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+            state.projectTreeVisible = false
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val gamma = NavigationLocation(file, text.indexOf("gamma"))
+            editor.updateValue(TextFieldValue(text, TextRange(gamma.offset)))
+            waitForIdle()
+            session.history.record(NavigationLocation(file, text.indexOf("delta")))
+
+            assertTrue(dispatchAction(ActionId.RECENT_LOCATIONS, state) { null })
+            waitUntil(timeoutMillis = 5_000) { state.recentLocationsVisible }
+            waitForIdle()
+
+            assertEquals(gamma, state.recentLocationsCaret)
+            onAllNodesWithText("line 4").assertCountEquals(1)
+            onAllNodesWithText("line 3").assertCountEquals(0)
+
+            editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("alpha"))))
+            waitForIdle()
+            onAllNodesWithText("line 3").assertCountEquals(0)
+            assertEquals(gamma, state.recentLocationsCaret)
         } finally {
             state.dispose()
         }

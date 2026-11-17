@@ -25,6 +25,7 @@ import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.EditLocations
 import stride.app.navigation.NavigationBarState
 import stride.app.navigation.NavigationHistory
+import stride.app.navigation.NavigationLocation
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekRequest
 import stride.app.navigation.StructureToolWindow
@@ -148,6 +149,10 @@ class AppState {
         private set
 
     var recentLocationsVisible by mutableStateOf(false)
+
+    /** The caret when Recent Locations opened; the popup leaves that line out while it is open. */
+    var recentLocationsCaret by mutableStateOf<NavigationLocation?>(null)
+        private set
 
     /** Incremented by the Recent Locations action; the popup is keyed on it so every open starts fresh. */
     var recentLocationsGeneration by mutableStateOf(0)
@@ -385,8 +390,10 @@ class AppState {
 
     /** Opens Recent Locations on a fresh request; the popup keyed on it starts from the top. */
     fun openRecentLocations() {
-        if (session == null) return
+        val current = session ?: return
         recentLocationsGeneration++
+        // The caret is read here, not in composition: the popup keeps the line it opened on.
+        recentLocationsCaret = (current.editors.selected as? TextFileEditor)?.let { navigationLocation(it) }
         recentLocationsVisible = true
         focus = KeyContext.SEARCH_POPUP
     }
@@ -508,21 +515,18 @@ class AppState {
      * Moves the focus context to the selected text editor and asks it to take the keyboard, so
      * hiding the panel that owned focus does not leave both the context and the real focus gone.
      */
-    private fun handFocusToEditor() {
+    private fun handFocusToEditor(): Boolean {
         if (session?.editors?.selected !is TextFileEditor) {
             focus = KeyContext.GLOBAL
-            return
+            return false
         }
         focus = KeyContext.EDITOR
         editorFocusRequests++
+        return true
     }
 
     /** Hands the keyboard to the selected text editor; `false` when something else is selected. */
-    fun focusSelectedEditor(): Boolean {
-        val hasEditor = session?.editors?.selected is TextFileEditor
-        handFocusToEditor()
-        return hasEditor
-    }
+    fun focusSelectedEditor(): Boolean = handFocusToEditor()
 
     /** Hides the active tool window and hands the keyboard back to the selected text editor. */
     fun hideActiveWindow() {
@@ -583,6 +587,7 @@ class AppState {
         findToolWindow.clear()
         problemsToolWindow.reset()
         recentLocationsVisible = false
+        recentLocationsCaret = null
         navigationBar = null
         toolWindows.hide()
         focus = KeyContext.GLOBAL

@@ -104,4 +104,28 @@ class RecentLocationsTest {
         assertEquals("Other.kt", rows.single().fileName)
         assertEquals("/elsewhere", rows.single().directory)
     }
+
+    @Test
+    fun `the selected place keeps its row when the rows collapse`() {
+        val other = NavigationLocation(app, appText.indexOf("class App"))
+        val sameLineOlder = NavigationLocation(greet, greetText.indexOf("println"))
+        val sameLineNewer = NavigationLocation(greet, greetText.indexOf("println") + 2)
+        val history = listOf(other, sameLineOlder, sameLineNewer)
+
+        // Before the text arrives the rows are keyed by path and offset, so the two places stay.
+        val before = recentLocationRows(history, root, null) { null }
+        assertEquals(listOf(sameLineNewer, sameLineOlder, other), before.map { it.location })
+        assertEquals(1, recentLocationIndex(before, sameLineOlder))
+
+        // The text dedupes the two places of one line, so the row the user chose is gone: the
+        // selection falls back to the first row, not to whatever ordinal it used to hold.
+        val after = recentLocationRows(history, root, null) { texts[it] }
+        assertEquals(listOf(sameLineNewer, other), after.map { it.location })
+        assertEquals(0, recentLocationIndex(after, sameLineOlder))
+        assertEquals(sameLineNewer, after[recentLocationIndex(after, sameLineOlder)].location)
+        // The bare ordinal the selection used before now names a row the user never chose.
+        assertEquals(other, after[1].location)
+        assertEquals(1, recentLocationIndex(after, other))
+        assertEquals(0, recentLocationIndex(after, null))
+    }
 }

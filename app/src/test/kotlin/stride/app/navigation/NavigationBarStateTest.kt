@@ -1,5 +1,6 @@
 package stride.app.navigation
 
+import androidx.compose.ui.unit.dp
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -93,5 +94,12 @@ class NavigationBarStateTest {
 
         assertEquals(listOf("project", "Other.kt"), bar.segments.map { it.name })
         assertEquals(listOf(true, false), bar.segments.map { it.isDirectory })
+    }
+
+    @Test
+    fun `the child list starts at the segment and is pulled inside the window`() {
+        assertEquals(120.dp, navigationBarListLeft(120.dp, 1_024.dp))
+        assertEquals(654.dp, navigationBarListLeft(900.dp, 1_024.dp))
+        assertEquals(0.dp, navigationBarListLeft(500.dp, 300.dp))
     }
 }

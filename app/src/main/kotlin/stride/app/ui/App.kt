@@ -132,6 +132,7 @@ import stride.app.navigation.RecentLocationsPopup
 import stride.app.navigation.TargetChooserPopup
 import stride.app.navigation.clearUsageStatus
 import stride.app.navigation.goToDeclaration
+import stride.app.navigation.navigationBarListStart
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
@@ -209,6 +210,16 @@ fun App(
     var navBarLeft by remember { mutableStateOf(0.dp) }
     val gotoLineEditor = session?.editors?.selected as? TextFileEditor
     val selectedEditor = session?.editors?.selected
+    var barEditor by remember { mutableStateOf(selectedEditor) }
+    LaunchedEffect(selectedEditor) {
+        val previous = barEditor
+        barEditor = selectedEditor
+        // A tab click or an action that switches tabs closes the bar; it follows the editor.
+        if (previous !== selectedEditor && state.navigationBar != null) {
+            state.navigationBar = null
+            state.focusSelectedEditor()
+        }
+    }
     LaunchedEffect(gotoLineEditor, gotoLineEditor?.gotoLineVisible) {
         // The goto-line field removes itself on close without a focus-lost event.
         if (state.focus == KeyContext.EDITOR_FIELD && gotoLineEditor?.gotoLineVisible != true) {
@@ -438,8 +449,8 @@ fun App(
                                 },
                                 modifier = Modifier
                                     .align(Alignment.BottomStart)
+                                    .navigationBarListStart(navBarLeft)
                                     .padding(
-                                        start = navBarLeft,
                                         bottom = DesignTokens.chromeInset +
                                             DesignTokens.statusCapsuleHeight + DesignTokens.chromeGap,
                                     ),
@@ -598,7 +609,7 @@ fun App(
                     RecentLocationsPopup(
                         request = state.recentLocationsGeneration,
                         locations = session.history.locations(),
-                        caret = (session.editors.selected as? TextFileEditor)?.let { navigationLocation(it) },
+                        caret = state.recentLocationsCaret,
                         projectRoot = session.project.root,
                         textOf = state::textOfOpenEditor,
                         onChoose = { location ->
@@ -976,7 +987,8 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
-        state.errorDescription != null || state.findBar.visible
+        state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
+        state.navigationBar != null || state.findBar.visible
 
 private fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR
@@ -1581,22 +1593,26 @@ private fun BottomChromeRow(
         horizontalArrangement = Arrangement.spacedBy(DesignTokens.chromeGap),
     ) {
         if (navigationBar != null) {
-            NavigationBar(
-                bar = navigationBar,
-                children = children,
-                onChange = onChange,
-                onOpenFile = onOpenFile,
-                onClose = onClose,
-                onSegmentPosition = { left -> onSegmentPosition(leftInset + DesignTokens.space4 + left) },
-            )
+            // The box takes the row minus the status capsule, so a long path scrolls inside the
+            // bar instead of pushing the status capsule out; a short one still sizes to content.
+            Box(Modifier.weight(1f)) {
+                NavigationBar(
+                    bar = navigationBar,
+                    children = children,
+                    onChange = onChange,
+                    onOpenFile = onOpenFile,
+                    onClose = onClose,
+                    onSegmentPosition = { left -> onSegmentPosition(leftInset + DesignTokens.space4 + left) },
+                )
+            }
         } else {
             val editor = session.editors.selected
             val path = relativePath(session, editor?.file)
             if (path.isNotEmpty()) {
                 PathCapsule(path, Modifier.weight(1f, fill = false))
             }
+            Spacer(Modifier.weight(1f))
         }
-        Spacer(Modifier.weight(1f))
         StatusCapsule(session, focusLabel, message)
     }
 }

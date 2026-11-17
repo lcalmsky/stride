@@ -1833,41 +1833,6 @@ class ActionDispatcherTest {
     }
 
     @Test
-    fun `show nav bar opens in the editor, a list window and the global context only`() {
-        assertFalse(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
-
-        val session = openProjectWith("a.kt")
-        state.focus = KeyContext.EDITOR
-        assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
-        assertEquals(KeyContext.NAV_BAR, state.focus)
-        assertEquals("a.kt", requireNotNull(state.navigationBar).segment.name)
-        assertEquals("a.kt", session.editors.selected?.file?.name)
-
-        for (context in listOf(KeyContext.LIST_WINDOW, KeyContext.GLOBAL)) {
-            state.navigationBar = null
-            state.focus = context
-            assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
-            assertEquals(KeyContext.NAV_BAR, state.focus)
-            assertTrue(state.navigationBar != null)
-        }
-
-        for (context in listOf(
-            KeyContext.TERMINAL,
-            KeyContext.RUN_WINDOW,
-            KeyContext.FIND_BAR,
-            KeyContext.EDITOR_FIELD,
-            KeyContext.SEARCH_POPUP,
-            KeyContext.CONTEXT_POPUP,
-        )) {
-            state.navigationBar = null
-            state.focus = context
-            assertFalse(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
-            assertEquals(context, state.focus)
-            assertNull(state.navigationBar)
-        }
-    }
-
-    @Test
     fun `edit source goes to the declaration in the editor`() {
         val root = temp.resolve("edit-source-declaration")
         Files.createDirectories(root)
@@ -1882,25 +1847,6 @@ class ActionDispatcherTest {
 
         val line = editor.value.text.take(editor.value.selection.start).count { it == '\n' }
         assertEquals(0, line)
-    }
-
-    @Test
-    fun `edit source is left to a list window and the terminal`() {
-        openProjectWith("a.kt")
-
-        for (context in listOf(
-            KeyContext.LIST_WINDOW,
-            KeyContext.TERMINAL,
-            KeyContext.RUN_WINDOW,
-            KeyContext.FIND_BAR,
-            KeyContext.EDITOR_FIELD,
-            KeyContext.SEARCH_POPUP,
-            KeyContext.CONTEXT_POPUP,
-        )) {
-            state.focus = context
-            assertFalse(dispatchAction(ActionId.EDIT_SOURCE, state) { null })
-        }
-        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
     }
 
     @Test
@@ -1948,6 +1894,93 @@ class ActionDispatcherTest {
 
         assertTrue(editor.usageHighlights.isEmpty())
         assertEquals("Copied /project/a.kt", state.statusMessage)
+    }
+
+    @Test
+    fun `show nav bar opens everywhere but the terminal and the field contexts`() {
+        assertFalse(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+
+        val session = openProjectWith("a.kt")
+        state.focus = KeyContext.EDITOR
+        assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+        assertEquals(KeyContext.NAV_BAR, state.focus)
+        assertEquals("a.kt", requireNotNull(state.navigationBar).segment.name)
+        assertEquals("a.kt", session.editors.selected?.file?.name)
+
+        for (context in listOf(
+            KeyContext.LIST_WINDOW,
+            KeyContext.GLOBAL,
+            KeyContext.SEARCH_POPUP,
+            KeyContext.CONTEXT_POPUP,
+        )) {
+            state.navigationBar = null
+            state.focus = context
+            assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+            assertEquals(KeyContext.NAV_BAR, state.focus)
+            assertTrue(state.navigationBar != null)
+        }
+
+        for (context in listOf(
+            KeyContext.TERMINAL,
+            KeyContext.RUN_WINDOW,
+            KeyContext.FIND_BAR,
+            KeyContext.EDITOR_FIELD,
+        )) {
+            state.navigationBar = null
+            state.focus = context
+            assertFalse(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+            assertEquals(context, state.focus)
+            assertNull(state.navigationBar)
+        }
+    }
+
+    @Test
+    fun `edit source is left to a list window, the terminal and the run window`() {
+        openProjectWith("a.kt")
+
+        for (context in listOf(
+            KeyContext.LIST_WINDOW,
+            KeyContext.TERMINAL,
+            KeyContext.RUN_WINDOW,
+            KeyContext.FIND_BAR,
+            KeyContext.EDITOR_FIELD,
+        )) {
+            state.focus = context
+            assertFalse(dispatchAction(ActionId.EDIT_SOURCE, state) { null })
+        }
+        assertEquals(KeyContext.EDITOR_FIELD, state.focus)
+    }
+
+    @Test
+    fun `edit source from the actions tab goes to the declaration with the search closed`() {
+        val root = temp.resolve("edit-source-actions")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "fun helper() {}\n\nfun main() {\n    helper()\n}\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.lastIndexOf("helper") + 1)))
+        // The Actions tab closes the search before it dispatches, but the focus is still the popup's.
+        state.searchVisible = false
+        state.focus = KeyContext.SEARCH_POPUP
+
+        assertTrue(dispatchAction(ActionId.EDIT_SOURCE, state) { null })
+
+        val line = editor.value.text.take(editor.value.selection.start).count { it == '\n' }
+        assertEquals(0, line)
+        assertEquals(KeyContext.EDITOR, state.focus)
+    }
+
+    @Test
+    fun `show nav bar opens from the actions tab with the search closed`() {
+        openProjectWith("a.kt")
+        state.searchVisible = false
+        state.focus = KeyContext.SEARCH_POPUP
+
+        assertTrue(dispatchAction(ActionId.SHOW_NAV_BAR, state) { null })
+
+        assertEquals(KeyContext.NAV_BAR, state.focus)
+        assertEquals("a.kt", requireNotNull(state.navigationBar).segment.name)
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

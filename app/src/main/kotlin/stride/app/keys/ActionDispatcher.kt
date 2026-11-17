@@ -43,6 +43,14 @@ import stride.core.services.service
 import stride.search.SearchTab
 import java.nio.file.Path
 
+/** Contexts whose own component consumes the navigation keys, so the bar must not take them. */
+private val NON_NAV_BAR_CONTEXTS = setOf(
+    KeyContext.TERMINAL,
+    KeyContext.RUN_WINDOW,
+    KeyContext.FIND_BAR,
+    KeyContext.EDITOR_FIELD,
+)
+
 /**
  * Applies [action] to [state]. Returns `true` when the event was consumed; actions with no
  * implementation return `false` so the key reaches the focused component.
@@ -408,13 +416,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.SHOW_NAV_BAR -> {
         val session = state.session ?: return false
-        // The same GLOBAL stroke reaches the terminal and the other windows; there it must go on
-        // to the focused component, so only the editor, a list window and the tree open the bar.
-        if (state.focus != KeyContext.EDITOR && state.focus != KeyContext.LIST_WINDOW &&
-            state.focus != KeyContext.GLOBAL
-        ) {
-            return false
-        }
+        // The same stroke reaches the terminal and the other windows; there it must go on to the
+        // focused component. Search Everywhere's Actions tab dispatches here with the search
+        // popup still in `focus`, and it opens the bar.
+        if (state.focus in NON_NAV_BAR_CONTEXTS) return false
         state.navigationBar = NavigationBarState.forFile(
             session.project.root,
             session.editors.selected?.file?.path,
@@ -424,11 +429,12 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.EDIT_SOURCE -> when (state.focus) {
-        KeyContext.EDITOR -> goToDeclaration(state)
         // A list window opens the selected row from its own handler; the key must reach it.
         KeyContext.LIST_WINDOW -> false
+        KeyContext.TERMINAL, KeyContext.RUN_WINDOW, KeyContext.FIND_BAR, KeyContext.EDITOR_FIELD -> false
         KeyContext.GLOBAL -> state.focusSelectedEditor()
-        else -> false
+        // The editor, and the Actions tab whose search popup already closed over it.
+        else -> goToDeclaration(state)
     }
 }
 
