@@ -286,11 +286,15 @@ internal class KotlinCode(val text: String) {
         return if (lineEnd < text.length && text[lineEnd] == '\r' && lineEnd + 1 < text.length && text[lineEnd + 1] == '\n') "\r\n" else "\n"
     }
 
-    /** True when no code token other than the statement itself sits on its lines, before or after it. */
-    fun isAloneOnLine(statement: KtStatement): Boolean {
+    /**
+     * True when no code token other than the statement itself sits on its lines, before or after it.
+     * With [trailingSemicolon] a closing `;` right after the statement counts as part of it.
+     */
+    fun isAloneOnLine(statement: KtStatement, trailingSemicolon: Boolean = false): Boolean {
         if (!isBlank(lineStart(statement.start), statement.start)) return false
-        val after = statement.end
-        val lineEnd = lineEnd(after)
+        val lineEnd = lineEnd(statement.end)
+        var after = statement.end
+        if (trailingSemicolon && after < lineEnd && text[after] == ';') after++
         var index = after
         while (index < lineEnd) {
             if (!text[index].isWhitespace()) {

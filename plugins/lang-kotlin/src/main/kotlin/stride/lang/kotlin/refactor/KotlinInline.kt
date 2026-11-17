@@ -51,20 +51,37 @@ internal object KotlinInline {
         val declared = code.functions.firstOrNull { it.nameToken.index == token.index }
         if (declared != null) {
             if (declared.container == FunctionContainer.LOCAL) return RefactoringStep.Refused(NOT_TARGET)
+            if (!isOnlyFunctionName(code, declared.name)) return RefactoringStep.Refused(NOT_TARGET)
             return KotlinInlineFunction.prepare(code, declared, null)
         }
         if (!isCallee(code, token)) return RefactoringStep.Refused(NOT_TARGET)
         val name = token.text.removeSurrounding("`")
-        val candidates = code.functions.filter { it.name == name }
-        if (candidates.size != 1) return RefactoringStep.Refused(NOT_TARGET)
-        val function = candidates.single()
+        if (!isOnlyFunctionName(code, name)) return RefactoringStep.Refused(NOT_TARGET)
+        val function = code.functions.single { it.name == name }
         if (function.container == FunctionContainer.LOCAL) return RefactoringStep.Refused(NOT_TARGET)
         return KotlinInlineFunction.prepare(code, function, token)
     }
 
+    /** R5 Target: exactly one function of [name] in the file and no local, parameter or import with it. */
+    private fun isOnlyFunctionName(code: KotlinCode, name: String): Boolean {
+        if (code.functions.count { it.name == name } != 1) return false
+        if (code.locals.any { it.name == name }) return false
+        return !importedNames(code).contains(name)
+    }
+
+    private fun importedNames(code: KotlinCode): Set<String> {
+        val names = HashSet<String>()
+        for (range in code.nonExpressionRanges) {
+            val tokens = code.code.filter { it.start >= range.start && it.end <= range.end }
+            if (tokens.firstOrNull()?.text != "import") continue
+            val last = tokens.lastOrNull { isNameToken(it) } ?: continue
+            names.add(last.text.removeSurrounding("`"))
+        }
+        return names
+    }
+
     private fun isCallee(code: KotlinCode, token: KtToken): Boolean {
-        val next = nextCodeToken(code, token.end) ?: return false
-        if (next.text != "(") return false
+        if (!callsWith(code, token)) return false
         val previous = previousCodeToken(code, token.start) ?: return true
         if (previous.text == "::") return false
         if (previous.type == KotlinTokenTypes.DOT) {
@@ -72,6 +89,13 @@ internal object KotlinInline {
             return before.text == "this"
         }
         return true
+    }
+
+    /** True when [token] is followed by an argument list or by only a trailing lambda. */
+    internal fun callsWith(code: KotlinCode, token: KtToken): Boolean {
+        val next = nextCodeToken(code, token.end) ?: return false
+        if (next.text == "(") return true
+        return KotlinInlineFunction.trailingLambda(code, token) != null
     }
 
     private fun prepareVariable(code: KotlinCode, local: KtLocal): RefactoringStep {
@@ -91,8 +115,12 @@ internal object KotlinInline {
         if (declaredInNestedScope(code, local)) {
             return RefactoringStep.Refused("$name is declared again in a nested scope")
         }
-        if (!code.isAloneOnLine(statement)) {
+        if (!code.isAloneOnLine(statement, trailingSemicolon = true)) {
             return RefactoringStep.Refused("The declaration shares its line with other code")
+        }
+        val initializerText = code.text.substring(initializer.start, initializer.end)
+        if (uses.any { it.usage != TemplateUsage.NONE } && initializerText.any { it == '\n' || it == '\r' }) {
+            return RefactoringStep.Refused("The inlined code spans several lines and cannot go into a string template")
         }
         if (code.isStable(initializer)) {
             variableCapture(code, local, initializer, uses)?.let {
@@ -116,6 +144,13 @@ internal object KotlinInline {
                 return RefactoringStep.Refused("Inlining would make $it refer to another declaration")
             }
         }
+        receiverSensitiveName(code, initializer)?.let { name ->
+            for (use in uses) {
+                if (receiverScopeBetween(code, initializer.start, use.token.start)) {
+                    return RefactoringStep.Refused("$name could mean something else at line ${code.lineIndex(use.token.start) + 1}")
+                }
+            }
+        }
         return RefactoringStep.Apply(variableEdit(code, local, statement, initializer, uses))
     }
 
@@ -137,8 +172,15 @@ internal object KotlinInline {
             when {
                 block.kind == BlockKind.LAMBDA -> return true
                 block.kind == BlockKind.CONTROL_BODY && block.loopBody -> return true
-                block.kind == BlockKind.CLASS_BODY && block.headerKeyword == "object" -> return true
+                block.kind == BlockKind.CLASS_BODY -> return true
                 block.kind == BlockKind.FUNCTION_BODY && isLocalFunctionBody(code, block) -> return true
+            }
+        }
+        for (function in code.functions) {
+            if (function.container != FunctionContainer.LOCAL) continue
+            val body = function.expressionRange ?: continue
+            if (body.contains(use.start) && !body.contains(declarationOffset) && !function.contains(declarationOffset)) {
+                return true
             }
         }
         return false

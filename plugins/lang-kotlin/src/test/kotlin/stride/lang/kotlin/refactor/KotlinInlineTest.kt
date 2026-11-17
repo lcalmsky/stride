@@ -568,4 +568,281 @@ class KotlinInlineTest {
         val text = "fun f() {\n    val a = Foo(1\n    println(a)\n}\n"
         assertEquals("Brackets do not match in this file", refused(caretAt(text, "a", 1)))
     }
+
+
+    @Test
+    fun `a stable this initializer is refused inside a receiver lambda`() {
+        val withCall = "class C {\n    fun f(other: C) {\n        val x = this\n        with(other) { println(x) }\n    }\n}\n"
+        assertEquals("this could mean something else at line 4", refused(caretAt(withCall, "x)")))
+
+        val apply = "class C {\n    fun f() {\n        val x = this\n        listOf(1).apply { println(x) }\n    }\n}\n"
+        assertEquals("this could mean something else at line 4", refused(caretAt(apply, "x)")))
+    }
+
+    @Test
+    fun `a stable this initializer is refused inside a local class`() {
+        val text = "class C {\n    fun f() {\n        val x = this\n        class D {\n            fun g() = x\n        }\n    }\n}\n"
+        assertEquals("this could mean something else at line 5", refused(caretAt(text, "= x", delta = 2)))
+    }
+
+    @Test
+    fun `an initializer name rebound by a local class member is refused`() {
+        val text = "private val base = 1\nfun f() {\n    val x = base + 1\n    class C {\n        val base = 10\n        fun g() = x\n    }\n}\n"
+        assertEquals("x's initializer would run later or repeatedly", refused(caretAt(text, "= x", delta = 2)))
+    }
+
+    @Test
+    fun `a local only initializer is still inlined inside a lambda`() {
+        val text = "fun f(a: Int) {\n    val x = a + 1\n    run { println(x) }\n}\n"
+        val applied = apply(caretAt(text, "x)"), text)
+
+        assertEquals("fun f(a: Int) {\n    run { println(a + 1) }\n}\n", applied.text)
+        assertEquals("Inlined x (1 use)", applied.message)
+    }
+
+    @Test
+    fun `a non-stable initializer used in an expression body local function is refused`() {
+        val text = "fun f() {\n    val x = load()\n    fun g() = x\n}\n"
+        assertEquals("x's initializer would run later or repeatedly", refused(caretAt(text, "= x", delta = 2)))
+    }
+
+    @Test
+    fun `a non-stable initializer used in a local class is refused`() {
+        val definition = "fun f() {\n    val x = load()\n    class C { fun g() = x }\n}\n"
+        assertEquals(
+            "x's initializer would run later or repeatedly",
+            refused(caretAt(definition, "= x }\n", delta = 2)),
+        )
+        val property = "fun f() {\n    val x = load()\n    class C { val p = x }\n}\n"
+        assertEquals(
+            "x's initializer would run later or repeatedly",
+            refused(caretAt(property, "= x }\n", delta = 2)),
+        )
+    }
+
+    @Test
+    fun `a non-stable initializer used in a block body local function is refused`() {
+        val text = "fun f() {\n    val x = load()\n    fun g() {\n        println(x)\n    }\n}\n"
+        assertEquals("x's initializer would run later or repeatedly", refused(caretAt(text, "x)")))
+    }
+
+
+    @Test
+    fun `a body name rebound in a class body call is refused`() {
+        val member = "private val base = 1\nprivate fun addOne(v: Int) = v + base\n\n" +
+            "class A {\n    val base = 10\n    fun g() {\n        println(addOne(1))\n    }\n}\n"
+        assertEquals("base could mean something else at line 7", refused(caretAt(member, "addOne(1)")))
+
+        val call = "private fun helper() = 1\nprivate fun addOne(v: Int) = v + helper()\n\n" +
+            "class A {\n    fun helper() = 10\n    fun g() { println(addOne(1)) }\n}\n"
+        assertEquals("helper could mean something else at line 6", refused(caretAt(call, "addOne(1)")))
+    }
+
+    @Test
+    fun `a body name rebound in a receiver lambda call is refused`() {
+        val text = "private val base = 1\nprivate fun addOne(v: Int) = v + base\n\n" +
+            "class A {\n    val base = 10\n    fun g(other: A) {\n        with(other) { println(addOne(1)) }\n    }\n}\n"
+        assertEquals("base could mean something else at line 7", refused(caretAt(text, "addOne(1)")))
+    }
+
+    @Test
+    fun `a member body read rebound in a receiver lambda is refused`() {
+        val text = "class A {\n    val count = 2\n    private fun show(v: Int) = v + count\n" +
+            "    fun g(other: A) {\n        with(other) { println(show(1)) }\n    }\n}\n"
+        assertEquals("count could mean something else at line 5", refused(caretAt(text, "show(1)")))
+
+        val explicit = "class A {\n    val count = 2\n    private fun show(v: Int) = v + this.count\n" +
+            "    fun g(other: A) {\n        with(other) { println(show(1)) }\n    }\n}\n"
+        assertEquals("this could mean something else at line 5", refused(caretAt(explicit, "show(1)")))
+    }
+
+    @Test
+    fun `a parameter only function is inlined in a class body`() {
+        val text = "private fun sq(x: Int) = x * x\n\nclass A {\n    fun g() {\n        println(sq(2))\n    }\n}\n"
+        val applied = apply(choose(caretAt(text, "sq(2)"), 0), text)
+
+        assertEquals(
+            "private fun sq(x: Int) = x * x\n\nclass A {\n    fun g() {\n        println(2 * 2)\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a parameter only function is inlined inside a lambda`() {
+        val text = "private fun sq(x: Int) = x * x\n\nfun f() {\n    list.forEach { println(sq(2)) }\n}\n"
+        val applied = apply(choose(caretAt(text, "sq(2)"), 0), text)
+
+        assertEquals(
+            "private fun sq(x: Int) = x * x\n\nfun f() {\n    list.forEach { println(2 * 2) }\n}\n",
+            applied.text,
+        )
+    }
+
+
+    @Test
+    fun `a function whose name is a parameter is not a target`() {
+        val text = "class A {\n    private fun run(v: Int) = v + 1\n    fun g(run: (Int) -> Int) {\n" +
+            "        println(run(2))\n    }\n}\n"
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "fun run", delta = 4)))
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "run(2)")))
+    }
+
+    @Test
+    fun `an overloaded function is not a target`() {
+        val text = "private fun f(v: Int) = v + 1\nprivate fun f(v: String) = v.length\n\n" +
+            "fun g() {\n    println(f(\"a\"))\n    println(f(1))\n}\n"
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "fun f", delta = 4)))
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "f(\"a\")")))
+    }
+
+    @Test
+    fun `a function whose name an import ends with is not a target`() {
+        val text = "import a.b.twice\n\nprivate fun twice(v: Int) = v * 2\n\nfun f() {\n    println(twice(2))\n}\n"
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "twice(2)")))
+    }
+
+
+    @Test
+    fun `an argument evaluated after an increment in the body is refused`() {
+        val text = "private fun f(v: Int) = (i++) + v\n\nfun g() {\n    println(f(load()))\n}\n"
+        assertEquals("Arguments of the call at line 4 would run in a different order", refused(caretAt(text, "f(load())")))
+    }
+
+
+    @Test
+    fun `a several line initializer cannot go into a simple template`() {
+        val text = "fun f(a: Int, b: Int) {\n    val x = a +\n        b\n    println(\"\$x\")\n}\n"
+        assertEquals(
+            "The inlined code spans several lines and cannot go into a string template",
+            refused(caretAt(text, "x = a")),
+        )
+    }
+
+    @Test
+    fun `a several line initializer cannot go into a braced template`() {
+        val text = "fun f(a: Int, b: Int) {\n    val x = a +\n        b\n    println(\"\${x}\")\n}\n"
+        assertEquals(
+            "The inlined code spans several lines and cannot go into a string template",
+            refused(caretAt(text, "x = a")),
+        )
+    }
+
+    @Test
+    fun `a several line body cannot go into a template call`() {
+        val text = "private fun f(v: Int) = v +\n    1\n\nfun g() {\n    println(\"\${f(2)}\")\n}\n"
+        assertEquals(
+            "The inlined code spans several lines and cannot go into a string template",
+            refused(caretAt(text, "f(2)")),
+        )
+    }
+
+
+    @Test
+    fun `a call that passes only a trailing lambda is inlined at the call`() {
+        val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each { println(1) }\n}\n"
+        val applied = apply(choose(caretAt(text, "each {"), 0), text)
+
+        assertEquals("private fun each(block: () -> Unit) = block()\n\nfun f() {\n    ({ println(1) })()\n}\n", applied.text)
+        assertEquals("Inlined a call of each", applied.message)
+    }
+
+    @Test
+    fun `a call that passes only a trailing lambda is inlined in all mode`() {
+        val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each { println(1) }\n}\n"
+        val edit = (caretAt(text, "fun each", delta = 4) as RefactoringStep.Apply).edit
+
+        assertEquals("fun f() {\n    ({ println(1) })()\n}\n", apply(text, edit.edits))
+        assertEquals("Inlined a call of each", edit.message)
+    }
+
+    @Test
+    fun `a trailing lambda on the next line is a call`() {
+        val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each\n    { println(1) }\n}\n"
+        val applied = apply(choose(caretAt(text, "each\n"), 0), text)
+
+        assertEquals("private fun each(block: () -> Unit) = block()\n\nfun f() {\n    ({ println(1) })()\n}\n", applied.text)
+    }
+
+
+    @Test
+    fun `a when subject is not a target`() {
+        val text = "fun f() {\n    when (val x = load()) {\n        1 -> println(x)\n    }\n}\n"
+        assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "x = load")))
+    }
+
+
+    @Test
+    fun `a declaration ending with a semicolon is alone on its line`() {
+        val text = "fun f() {\n    val x = 1;\n    println(x)\n}\n"
+        val applied = apply(caretAt(text, "x = 1"), text)
+
+        assertEquals("fun f() {\n    println(1)\n}\n", applied.text)
+        assertEquals("Inlined x (1 use)", applied.message)
+    }
+
+
+    @Test
+    fun `a unit return type function inlines`() {
+        val text = "private fun show(v: Int): Unit {\n    println(v)\n}\n\nfun f() {\n    show(2)\n}\n"
+        val applied = apply(choose(caretAt(text, "show(2)"), 0), text)
+
+        assertEquals("private fun show(v: Int): Unit {\n    println(v)\n}\n\nfun f() {\n    println(2)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `nested calls are inlined inside out`() {
+        val text = "private fun twice(v: Int) = v * 2\n\nfun f() {\n    println(twice(twice(2)))\n}\n"
+        val edit = (caretAt(text, "fun twice", delta = 4) as RefactoringStep.Apply).edit
+
+        assertEquals("fun f() {\n    println((2 * 2) * 2)\n}\n", apply(text, edit.edits))
+    }
+
+    @Test
+    fun `a call inside a template is inlined`() {
+        val text = "private fun twice(v: Int) = v * 2\n\nfun f() {\n    println(\"\${twice(2)}\")\n}\n"
+        val applied = apply(choose(caretAt(text, "twice(2)"), 0), text)
+
+        assertEquals("private fun twice(v: Int) = v * 2\n\nfun f() {\n    println(\"\${2 * 2}\")\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a written type matching a literal is inlined`() {
+        val text = "fun f() {\n    val n: Int = 1\n    println(n)\n}\n"
+        val applied = apply(caretAt(text, "n: Int"), text)
+
+        assertEquals("fun f() {\n    println(1)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `removal drops the annotation line`() {
+        val text = "@Suppress(\"unused\")\nprivate fun twice(v: Int) = v * 2\n\nfun f() {\n    println(twice(2))\n}\n"
+        val edit = (caretAt(text, "fun twice", delta = 4) as RefactoringStep.Apply).edit
+
+        assertEquals("fun f() {\n    println(2 * 2)\n}\n", apply(text, edit.edits))
+    }
+
+
+    @Test
+    fun `an implicit lambda label is allowed`() {
+        val text = "private fun f(v: Int) = xs.forEach { return@forEach v }\n\nfun g() {\n    println(f(2))\n}\n"
+        val applied = apply(choose(caretAt(text, "f(2)"), 0), text)
+
+        assertEquals(
+            "private fun f(v: Int) = xs.forEach { return@forEach v }\n\n" +
+                "fun g() {\n    println(xs.forEach { return@forEach 2 })\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an implicit label of a call with arguments is allowed`() {
+        val text = "private fun g(v: Int) = xs.map(f) { return@map v }\n\nfun h() {\n    println(g(1))\n}\n"
+        val applied = apply(choose(caretAt(text, "g(1)"), 0), text)
+
+        assertEquals(
+            "private fun g(v: Int) = xs.map(f) { return@map v }\n\n" +
+                "fun h() {\n    println(xs.map(f) { return@map 1 })\n}\n",
+            applied.text,
+        )
+    }
 }

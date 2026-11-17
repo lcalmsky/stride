@@ -15,11 +15,12 @@ internal object KotlinInlineFunction {
     private class CallSite(
         val calleeToken: KtToken,
         val calleeStart: Int,
-        val open: KtToken,
-        val close: KtToken,
+        /** `null` for a call that passes only a trailing lambda. */
+        val open: KtToken?,
+        val close: KtToken?,
         val trailing: KtBlock?,
     ) {
-        val end: Int get() = trailing?.close?.end ?: close.end
+        val end: Int get() = trailing?.close?.end ?: close?.end ?: calleeToken.end
 
         val range: KtRange get() = KtRange(calleeStart, end)
     }
@@ -182,7 +183,7 @@ internal object KotlinInlineFunction {
         return false
     }
 
-    /** The labels of lambdas written in [range]; `return@label` may only name one of them. */
+    /** The labels of lambdas written in [range], written and implicit; `return@label` may name one. */
     private fun lambdaLabels(code: KotlinCode, range: KtRange): Set<String> {
         val labels = HashSet<String>()
         for (index in code.code.indices) {
@@ -193,7 +194,28 @@ internal object KotlinInlineFunction {
             val block = code.blocks.firstOrNull { it.open.index == index + 2 } ?: continue
             if (block.kind == BlockKind.LAMBDA) labels.add(token.text.removeSurrounding("`"))
         }
+        for (block in code.blocks) {
+            if (block.kind != BlockKind.LAMBDA) continue
+            if (block.open.start < range.start) continue
+            if ((block.close?.end ?: block.open.end) > range.end) continue
+            implicitLambdaLabel(code, block)?.let { labels.add(it) }
+        }
         return labels
+    }
+
+    /** The implicit label of a lambda: the name of the function it is passed to. */
+    private fun implicitLambdaLabel(code: KotlinCode, block: KtBlock): String? {
+        val previous = KotlinInline.previousCodeToken(code, block.open.start) ?: return null
+        val name = when {
+            isNameToken(previous) -> previous
+            previous.text == ")" -> {
+                val open = code.matching(previous.index)?.takeIf { it.text == "(" } ?: return null
+                val callee = KotlinInline.previousCodeToken(code, open.start) ?: return null
+                callee.takeIf { isNameToken(it) }
+            }
+            else -> null
+        } ?: return null
+        return name.text.removeSurrounding("`")
     }
 
     private fun scanUses(code: KotlinCode, function: KtFunction): Uses {
@@ -217,24 +239,31 @@ internal object KotlinInlineFunction {
                 references.add(token)
                 continue
             }
+            if (code.references.firstOrNull { it.token.index == token.index }?.resolved != null) continue
             if (previous?.type == KotlinTokenTypes.DOT) {
                 val before = KotlinInline.previousCodeToken(code, previous.start)
-                if (before?.text == "this" && next?.text == "(") {
-                    callSite(code, token, before.start, next)?.let { calls.add(it) }
-                } else if (next?.text == "(") {
-                    otherObjects.add(token)
+                if (before?.text == "this") {
+                    callSiteAt(code, token, before.start)?.let { calls.add(it) } ?: references.add(token)
                 } else {
-                    references.add(token)
+                    when {
+                        next?.text == "(" -> otherObjects.add(token)
+                        trailingLambda(code, token) != null -> otherObjects.add(token)
+                        else -> references.add(token)
+                    }
                 }
                 continue
             }
-            if (next?.text == "(") {
-                callSite(code, token, token.start, next)?.let { calls.add(it) }
-            } else {
-                references.add(token)
-            }
+            callSiteAt(code, token, token.start)?.let { calls.add(it) } ?: references.add(token)
         }
         return Uses(calls.sortedBy { it.range.start }, references, otherObjects)
+    }
+
+    /** A call of the name at [token], with parentheses, a trailing lambda, or only a trailing lambda. */
+    private fun callSiteAt(code: KotlinCode, token: KtToken, calleeStart: Int): CallSite? {
+        val next = KotlinInline.nextCodeToken(code, token.end)
+        if (next?.text == "(") return callSite(code, token, calleeStart, next)
+        val lambda = trailingLambda(code, token) ?: return null
+        return CallSite(token, calleeStart, null, null, lambda)
     }
 
     private fun callSite(code: KotlinCode, token: KtToken, calleeStart: Int, open: KtToken): CallSite? {
@@ -245,6 +274,32 @@ internal object KotlinInlineFunction {
             trailing = code.blocks.firstOrNull { it.open.index == after.index && it.kind == BlockKind.LAMBDA }
         }
         return CallSite(token, calleeStart, open, close, trailing)
+    }
+
+    /**
+     * The lambda [token] passes without parentheses: `{` right after it on the same or the next
+     * line, with nothing but whitespace between.
+     */
+    internal fun trailingLambda(code: KotlinCode, token: KtToken): KtBlock? {
+        val next = KotlinInline.nextCodeToken(code, token.end) ?: return null
+        if (next.text != "{") return null
+        val block = code.blocks.firstOrNull { it.open.index == next.index } ?: return null
+        if (block.kind != BlockKind.LAMBDA) return null
+        val between = code.text.substring(token.end, next.start)
+        if (between.any { !it.isWhitespace() }) return null
+        var breaks = 0
+        var index = 0
+        while (index < between.length) {
+            if (between[index] == '\r') {
+                breaks++
+                index++
+                if (index < between.length && between[index] == '\n') index++
+                continue
+            }
+            if (between[index] == '\n') breaks++
+            index++
+        }
+        return if (breaks <= 1) block else null
     }
 
     private fun hasLineBreak(text: String, from: Int, to: Int): Boolean {
@@ -349,14 +404,14 @@ internal object KotlinInlineFunction {
         }
         val effectful = bindings.filter { !it.stable }.sortedBy { it.order }
         var previous = -1
-        val bodyCalls = code.callsIn(body.range)
+        val bodyEffects = code.effectsIn(body.range)
         for (binding in effectful) {
             val useStart = binding.uses.single().range.start
             if (useStart <= previous) {
                 return CallPlan.Refused("Arguments of the call at line $line would run in a different order")
             }
             previous = useStart
-            if (bodyCalls.any { it.closeOffset < useStart }) {
+            if (bodyEffects.any { it.offset < useStart }) {
                 return CallPlan.Refused("Arguments of the call at line $line would run in a different order")
             }
         }
@@ -365,6 +420,11 @@ internal object KotlinInlineFunction {
         }
         argumentNameCapture(code, body, bindings)?.let {
             return CallPlan.Refused("$it means something else at the call at line $line")
+        }
+        receiverSensitiveName(code, body.range)?.let { name ->
+            if (receiverScopeBetween(code, function.nameToken.start, site.calleeStart)) {
+                return CallPlan.Refused("$name could mean something else at line $line")
+            }
         }
         val replacements = ArrayList<Pair<KtRange, String>>()
         var atomic = code.isAtomic(body.range)
@@ -381,7 +441,11 @@ internal object KotlinInlineFunction {
         }
         val substituted = KotlinInline.replaceRange(code, body.range, replacements)
         val wrap = !atomic && !KotlinInline.fillsWholeSlot(code, site.range)
-        return CallPlan.Ready(site.range, if (wrap) "($substituted)" else substituted)
+        val text = if (wrap) "($substituted)" else substituted
+        if (site.calleeToken.index in code.templateTokens && text.any { it == '\n' || it == '\r' }) {
+            return CallPlan.Refused("The inlined code spans several lines and cannot go into a string template")
+        }
+        return CallPlan.Ready(site.range, text)
     }
 
     private fun argumentSource(
@@ -399,7 +463,9 @@ internal object KotlinInlineFunction {
 
     private fun bindArguments(code: KotlinCode, function: KtFunction, site: CallSite): List<Binding>? {
         val parameters = function.parameters
-        val segments = KotlinInline.segments(code, site.open, site.close)
+        val open = site.open
+        val close = site.close
+        val segments = if (open != null && close != null) KotlinInline.segments(code, open, close) else emptyList()
         val assigned = arrayOfNulls<KtRange>(parameters.size)
         val orders = IntArray(parameters.size) { -1 }
         val positional = ArrayList<Pair<KtRange, Int>>()
