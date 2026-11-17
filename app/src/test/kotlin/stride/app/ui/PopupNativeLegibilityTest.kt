@@ -57,11 +57,12 @@ import stride.search.DeclarationKind
 import stride.search.FileNameIndex
 
 /**
- * The native glass has no Compose backdrop: a popup's glyphs sit directly on the system material,
- * whose brightness follows the desktop and AppKit. Each popup renders offscreen on the native path
- * over a white and over a black desktop in both palettes, and every text role it uses must clear
+ * On the native path a popup's glyphs sit on the palette plate, while the system material under
+ * the plate takes the desktop's brightness. Each popup renders offscreen on the native path over
+ * a white and over a black desktop in both palettes, and every text role it can draw must clear
  * 4.5:1 on a glyph-free block inside the panel, and the selected row's label on its pill. The
- * desktop opposite to the palette's polarity is the case that fails without a palette plate.
+ * desktop opposite to the palette's polarity is the case that fails without the plate; the tokens
+ * themselves are checked without a render by [PopupPlateContrastTest].
  */
 @ExtendWith(FixedUiFontExtension::class)
 class PopupNativeLegibilityTest {
@@ -85,6 +86,7 @@ class PopupNativeLegibilityTest {
     private class PopupCase(
         val name: String,
         val key: String,
+        /** Every role the popup can draw; one rendered sample may show only some of them. */
         val roles: List<Role>,
         val renderMillis: Long,
         /** The popup draws no selection pill, so only the panel block is measured. */

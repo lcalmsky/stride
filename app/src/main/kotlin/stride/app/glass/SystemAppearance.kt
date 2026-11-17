@@ -19,7 +19,10 @@ internal object NativeAppearance {
     fun appClassName(): String =
         if (!available) "" else runCatching { nativeAppClassName() }.getOrDefault("")
 
-    /** `NSApp.appearance`'s name, `"(nil)"` when unset, or empty before AWT installs the app. */
+    /**
+     * `NSApp.appearance`'s name, `"(nil)"` when unset, or empty before AWT installs the app or
+     * when the AppKit thread does not answer within one second.
+     */
     fun appAppearanceName(): String =
         if (!available) "" else runCatching { nativeAppAppearanceName() }.getOrDefault("")
 
@@ -59,10 +62,12 @@ object SystemAppearance {
     /**
      * Lets AWT leave NSApp's appearance unset so it follows the system. Without it JDK 21 pins
      * NSApp to Aqua, and the native glass would stay light while the palette follows dark mode.
-     * Must run before AWT initialises.
+     * Must run before AWT initialises; an explicitly set [APPEARANCE_PROPERTY] is left alone.
      */
     fun prepareProcess() {
-        System.setProperty(APPEARANCE_PROPERTY, "system")
+        if (System.getProperty(APPEARANCE_PROPERTY) == null) {
+            System.setProperty(APPEARANCE_PROPERTY, "system")
+        }
     }
 
     internal const val APPEARANCE_PROPERTY = "apple.awt.application.appearance"

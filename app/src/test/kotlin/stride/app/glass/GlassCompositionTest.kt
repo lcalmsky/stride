@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -151,21 +152,47 @@ class GlassCompositionTest {
                     val rect = requireNotNull(piece)
                     System.err.println("glass-composition goto-line=$rect")
                     // The clip used to cut the popup's own hole out of its own text; the label
-                    // and the input must reach the frame.
+                    // and the input must reach the frame, and every other sample must be the
+                    // palette plate or the antialiased edge of glyph ink on it.
                     var text = 0
+                    var plate = 0
+                    var blend = 0
+                    var accent = 0
+                    var foreign = 0
+                    var firstForeign = ""
                     var sampled = 0
                     for (y in (rect.y + 4).toInt() until (rect.y + rect.height - 4).toInt()) {
                         for (x in (rect.x + 4).toInt() until (rect.x + rect.width - 4).toInt()) {
                             sampled++
                             // Glyph ink, matched by colour: the palette plate under it is opaque
                             // but tinted, so an alpha threshold would count the whole panel.
-                            if (isGlyphInk(rendered.pixels[index(x, y)])) text++
+                            val pixel = rendered.pixels[index(x, y)]
+                            when {
+                                isGlyphInk(pixel) -> text++
+                                isPlate(pixel) -> plate++
+                                isGlyphBlend(pixel) -> blend++
+                                isAccentDecoration(pixel) -> accent++
+                                else -> {
+                                    foreign++
+                                    if (firstForeign.isEmpty()) {
+                                        firstForeign = "($x,$y)=#%08X".format(pixel)
+                                    }
+                                }
+                            }
                         }
                     }
-                    System.err.println("glass-composition goto-line text=$text/$sampled")
+                    System.err.println(
+                        "glass-composition goto-line text=$text plate=$plate blend=$blend " +
+                            "accent=$accent foreign=$foreign/$sampled $firstForeign",
+                    )
                     assertTrue(text > 40, "the goto line popup drew no text ($text of $sampled samples)")
-                    // The popup is small and dense with glyphs, so a text-only frame reaches
-                    // roughly 40%; a missing plate paints the panel edge to edge instead.
+                    assertEquals(
+                        0,
+                        foreign,
+                        "the goto line popup carried a fill that is neither plate, glyph ink, " +
+                            "nor an accent decoration ($foreign of $sampled samples, first $firstForeign)",
+                    )
+                    // The glyphs cover well under half the panel; the plate covers the rest.
                     assertTrue(
                         text.toDouble() / sampled < 0.6,
                         "the goto line popup drew text over the whole panel ($text of $sampled samples)",
@@ -295,6 +322,11 @@ class GlassCompositionTest {
         System.err.println("glass-composition plate $what=$plate ink=$ink clear=$clear")
         assertEquals(0, clear, "$what left samples to the system material")
         assertTrue(plate > ink, "$what: the plate covers only $plate samples (ink $ink)")
+        val inkShare = ink.toDouble() / (plate + ink)
+        assertTrue(
+            ink <= 0.35 * (plate + ink),
+            "$what: ink covers %.2f of the filled samples (ink $ink, plate $plate)".format(inkShare),
+        )
     }
 
     private fun nativePath(block: () -> Unit) {
@@ -367,12 +399,52 @@ class GlassCompositionTest {
     /** A core glyph pixel: the text tokens are drawn opaque and exactly, so a fill cannot match. */
     private fun isGlyphInk(pixel: Int): Boolean {
         if (pixel.ushr(24) != 0xFF) return false
-        val color = androidx.compose.ui.graphics.Color(pixel)
-        return listOf(DesignTokens.text, DesignTokens.textSecondaryOnGlass).any { token ->
-            kotlin.math.abs(color.red - token.red) * 255f <= 6f &&
-                kotlin.math.abs(color.green - token.green) * 255f <= 6f &&
-                kotlin.math.abs(color.blue - token.blue) * 255f <= 6f
+        val color = Color(pixel)
+        return glyphTokens().any { token -> channelsMatch(color, token, 6) }
+    }
+
+    /** The plate as the transparent scene composites it: [PLATE_ALPHA] over the glass base colour. */
+    private fun isPlate(pixel: Int): Boolean {
+        if (pixel.ushr(24) !in (PLATE_ALPHA - 2)..(PLATE_ALPHA + 2)) return false
+        return channelsMatch(Color(pixel), DesignTokens.popupPlate, 6)
+    }
+
+    /** An antialiased glyph edge: the plate mixed with one of the popup's text tokens. */
+    private fun isGlyphBlend(pixel: Int): Boolean {
+        val color = Color(pixel)
+        val plate = DesignTokens.popupPlate
+        return glyphTokens().any { token -> onSegment(color, plate, token, 8) }
+    }
+
+    /** The neon border and the input cursor are accent strokes the popup itself draws on top. */
+    private fun isAccentDecoration(pixel: Int): Boolean =
+        onSegment(Color(pixel), DesignTokens.popupPlate, DesignTokens.accent, 8)
+
+    private fun glyphTokens(): List<Color> = listOf(DesignTokens.text, DesignTokens.textSecondaryOnGlass)
+
+    private fun channelsMatch(first: Color, second: Color, tolerance: Int): Boolean {
+        val limit = tolerance / 255f
+        return kotlin.math.abs(first.red - second.red) <= limit &&
+            kotlin.math.abs(first.green - second.green) <= limit &&
+            kotlin.math.abs(first.blue - second.blue) <= limit
+    }
+
+    /** Whether [sample] lies on the channel-wise line from [from] to [to], within [tolerance]. */
+    private fun onSegment(sample: Color, from: Color, to: Color, tolerance: Int): Boolean {
+        val limit = tolerance / 255f
+        for (step in 0..100) {
+            val t = step / 100f
+            val red = from.red + (to.red - from.red) * t
+            val green = from.green + (to.green - from.green) * t
+            val blue = from.blue + (to.blue - from.blue) * t
+            if (kotlin.math.abs(sample.red - red) <= limit &&
+                kotlin.math.abs(sample.green - green) <= limit &&
+                kotlin.math.abs(sample.blue - blue) <= limit
+            ) {
+                return true
+            }
         }
+        return false
     }
 
     private fun index(x: Int, y: Int): Int = y * WIDTH + x

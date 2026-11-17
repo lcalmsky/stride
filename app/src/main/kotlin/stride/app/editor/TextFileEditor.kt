@@ -1041,7 +1041,13 @@ class TextFileEditor(
         }
         Row(
             modifier
-                .neonBorder(DesignTokens.accent, shape, radius = DesignTokens.glowRadiusLarge)
+                // The native path paints the popup plate over this border, so draw it last there.
+                .neonBorder(
+                    DesignTokens.accent,
+                    shape,
+                    radius = DesignTokens.glowRadiusLarge,
+                    overContent = LocalNativeGlass.current,
+                )
                 .popupPanel("popup-goto-line", shape, skiaShadow = false)
                 .padding(horizontal = DesignTokens.space12, vertical = DesignTokens.space8)
                 // The popup floats over the text field; a passive node keeps a press in its

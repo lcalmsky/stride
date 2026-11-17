@@ -123,8 +123,9 @@ object DesignTokens {
     )
 
     /**
-     * Tint over the system material on the native path: the neutral floor that keeps text at
-     * 4.5:1 even when a white desktop shows through the glass.
+     * Tint over the system material on the native path, used by the chrome pieces: the sidebar,
+     * the capsules, the find bar and the popup glass. Popup text contrast is guaranteed by
+     * [popupPlate], not by this tint.
      */
     val nativeGlassTint: Int get() = palette.nativeGlassTint
 

@@ -67,9 +67,10 @@ data class NativeGlassState(
  * AWT event dispatch thread, so no Java thread may ever block on the AppKit thread in a way that
  * only the GCD main queue would service (that is the v1.4.0 launch deadlock). Nothing here does.
  * [supported] reads only the OS version and a class, cached and lock-free. Mutations (attach,
- * sync, drag regions, detach, the appearance observer) are enqueued on the AppKit run loop and
- * return immediately, in the order they were called. Queries that must answer synchronously
- * (state reads, the appearance query) wait on that same run loop with a bound, then fall back.
+ * sync, drag regions, detach, the window appearance, the appearance observer) are enqueued on the
+ * AppKit run loop and return immediately, in the order they were called. Queries that must answer
+ * synchronously (state reads, the appearance query, NSApp's appearance name) wait on that same
+ * run loop with a bound, then fall back.
  * The window lookup in [attach] stays on the calling thread because JAWT requires its lock there.
  */
 internal object NativeGlass {

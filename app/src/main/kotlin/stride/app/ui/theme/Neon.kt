@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -23,14 +24,27 @@ import stride.app.ui.LocalAnimationsEnabled
 
 enum class NeonEdge { TOP, BOTTOM }
 
-/** A crisp 1dp outline plus the same color's glow. */
+/**
+ * A crisp 1dp outline plus the same color's glow. It is drawn behind the content unless
+ * [overContent], which draws the same border above it.
+ */
 fun Modifier.neonBorder(
     color: Color,
     shape: Shape,
     radius: Dp = DesignTokens.glowRadius,
     alpha: Float = 1f,
-): Modifier = drawBehind {
-    if (alpha <= 0f) return@drawBehind
+    overContent: Boolean = false,
+): Modifier = if (overContent) {
+    drawWithContent {
+        drawContent()
+        drawNeonBorder(color, shape, radius, alpha)
+    }
+} else {
+    drawBehind { drawNeonBorder(color, shape, radius, alpha) }
+}
+
+private fun DrawScope.drawNeonBorder(color: Color, shape: Shape, radius: Dp, alpha: Float) {
+    if (alpha <= 0f) return
     val stroke = 1.dp.toPx()
     val glowPaint = strokePaint(color.glow(alpha), stroke * 2f).apply {
         asFrameworkPaint().maskFilter = MaskFilter.makeBlur(FilterBlurMode.NORMAL, radius.toPx() / 2f)
