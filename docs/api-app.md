@@ -376,6 +376,7 @@ enum class ActionId {
     ACTIVATE_PROBLEMS_TOOL_WINDOW, GOTO_NEXT_ERROR, GOTO_PREVIOUS_ERROR, SHOW_ERROR_DESCRIPTION,
     JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
     RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
+    GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
 }
 
 enum class KeyContext {
@@ -428,109 +429,114 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :87 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :89 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :91 |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :93, :94 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :96, :97 |
-| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :99 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :107 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :109 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :111 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :113 |
-| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :115 |
-| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :117 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :119 |
-| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :121 |
-| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :289 |
-| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :291 |
-| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :293 |
-| `RECENT_LOCATIONS` | GLOBAL | ⌘⇧E | `RecentLocations` | :295 |
-| `SHOW_NAV_BAR` | GLOBAL, LIST_WINDOW | ⌥Home (GLOBAL), ⌘↑ (LIST_WINDOW only; the editor keeps ⌘↑ for the document start) | `ShowNavBar` | :297, :298 |
-| `EDIT_SOURCE` | GLOBAL, LIST_WINDOW | F4 (GLOBAL), ⌘↓ (LIST_WINDOW only; the editor keeps ⌘↓ for the document end) | `EditSource` | :302, :303 |
-| `JUMP_TO_LAST_CHANGE` | GLOBAL | ⌘⇧⌫ | `JumpToLastChange` | :307 |
-| `SHOW_USAGES` | EDITOR | ⌘⌥F7 | `ShowUsages` | :309 |
-| `HIGHLIGHT_USAGES_IN_FILE` | EDITOR | ⌘⇧F7 | `HighlightUsagesInFile` | :311 |
-| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :123 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :125 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :127 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :129, :130 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :132 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :134 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :136 |
-| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :138 |
-| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :140 |
-| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :142 |
-| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :144 |
-| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :146 |
-| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :148 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :150 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :152 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :154 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :156 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :158 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :160 |
-| `FIND` | EDITOR | ⌘F | `Find` | :162 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :164 |
-| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :166 |
-| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :168 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :170 |
-| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :172 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :174 |
-| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :176 |
-| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :178 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :180 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :182 |
-| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :184 |
-| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :186 |
-| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :188 |
-| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :190 |
-| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :192 |
-| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :194 |
-| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :196 |
-| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :198 |
-| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :200 |
-| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :202 |
-| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :204 |
-| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :206 |
-| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :208 |
-| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :210 |
-| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :212 |
-| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :215, :216 |
-| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :218 |
-| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :220 |
-| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :222 |
-| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :224 |
-| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :226, :227 |
-| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :229 |
-| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :231 |
-| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :233 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :235 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :236 |
-| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :238 |
-| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :240, :241 |
-| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :243, :244 |
-| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :246 |
-| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :248 |
-| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :250 |
-| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :252 |
-| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :254 |
-| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :256 |
-| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :258 |
-| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :260 |
-| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :262 |
-| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :264, :265 |
-| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :267 |
-| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :269 |
-| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :271 |
-| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :273 |
-| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :275 |
+| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :88 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :90 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :92 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :94, :95 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :97, :98 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :100 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :108 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :110 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :112 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :114 |
+| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :116 |
+| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :118 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :120 |
+| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :122 |
+| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :290 |
+| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :292 |
+| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :294 |
+| `RECENT_LOCATIONS` | GLOBAL | ⌘⇧E | `RecentLocations` | :296 |
+| `SHOW_NAV_BAR` | GLOBAL, LIST_WINDOW | ⌥Home (GLOBAL), ⌘↑ (LIST_WINDOW only; the editor keeps ⌘↑ for the document start) | `ShowNavBar` | :298, :299 |
+| `EDIT_SOURCE` | GLOBAL, LIST_WINDOW | F4 (GLOBAL), ⌘↓ (LIST_WINDOW only; the editor keeps ⌘↓ for the document end) | `EditSource` | :303, :304 |
+| `JUMP_TO_LAST_CHANGE` | GLOBAL | ⌘⇧⌫ | `JumpToLastChange` | :308 |
+| `SHOW_USAGES` | EDITOR | ⌘⌥F7 | `ShowUsages` | :310 |
+| `HIGHLIGHT_USAGES_IN_FILE` | EDITOR | ⌘⇧F7 | `HighlightUsagesInFile` | :312 |
+| `GOTO_IMPLEMENTATION` | EDITOR | ⌘⌥B | `GotoImplementation` | :314 |
+| `GOTO_TYPE_DECLARATION` | EDITOR | ⌘⇧B , ⌃⇧B | `GotoTypeDeclaration` | :316, :317 |
+| `GOTO_SUPER_METHOD` | EDITOR | ⌘U | `GotoSuperMethod` | :319 |
+| `TYPE_HIERARCHY` | EDITOR | ⌃H | `TypeHierarchy` | :321 |
+| `CALL_HIERARCHY` | EDITOR | ⌃⌥H | `CallHierarchy` | :323 |
+| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :124 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :126 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :128 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :130, :131 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :133 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :135 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :137 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :139 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :141 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :143 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :145 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :147 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :149 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :151 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :153 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :155 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :157 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :159 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :161 |
+| `FIND` | EDITOR | ⌘F | `Find` | :163 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :165 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :167 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :169 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :171 |
+| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :173 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :175 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :177 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :179 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :181 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :183 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :185 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :187 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :189 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :191 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :193 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :195 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :197 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :199 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :201 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :203 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :205 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :207 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :209 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :211 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :213 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :216, :217 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :219 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :221 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :223 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :225 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :227, :228 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :230 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :232 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :234 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :236 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :237 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :239 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :241, :242 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :244, :245 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :247 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :249 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :251 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :253 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :255 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :257 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :259 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :261 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :263 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :265, :266 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :268 |
+| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :270 |
+| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :272 |
+| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :274 |
+| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :276 |
 | `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
 | `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
-| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :277, :278 |
-| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :280, :281 |
-| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :283, :284 |
-| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :286, :287 |
+| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :278, :279 |
+| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :281, :282 |
+| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :284, :285 |
+| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :287, :288 |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -2095,7 +2101,10 @@ existing ones (`name`, `kind`, `line`, `container`, `isPrivate`) unchanged for e
 Search Everywhere, `⌘B`, the ⌥↩ import candidates and the Structure window read them. Two
 deliberate exceptions were made later: a class body `{` on a later header line, and a member written
 on the class line or after a closing brace, now yield the member with its container where the
-earlier parser lost it — added declarations, never a changed existing one.
+earlier parser lost it — added declarations, never a changed existing one. A third exception does
+change an existing declaration: a Kotlin extension property `val Config.size` is now named `size`,
+where the earlier parser named it after its receiver (`Config`), which Search Everywhere then listed
+as a property called `Config`.
 
 Decision H2: certainty. The same criterion that rejected unresolved-symbol problems (「Problems」)
 decides here: a judgement shown without being asked must be certain, because a wrong one
@@ -3619,7 +3628,7 @@ Maven Central alone does not carry it.
 | `SearchSelectionPillTest` | the Search Everywhere popup on the Skia path in both palettes and on the native path for structure only: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and on Skia the pill reads at least 1.15 against the panel (the offscreen native render has no panel, so its contrast rests on the token model) |
 | `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
-| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line, a Kotlin editor with several carets selecting the same word, a Kotlin editor with one function body folded (asserted folded before rendering), the Find window with a usages tab, the Replace in Path popup, and the Problems window's File range over an editor with an error and a warning |
+| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line, a Kotlin editor with several carets selecting the same word, a Kotlin editor with one function body folded (asserted folded before rendering), the Find window with a usages tab, the Replace in Path popup, and the Problems window's File range over an editor with an error and a warning, and the Hierarchy window's type hierarchy of a class with a supertype and a subtype |
 | `MultiCaretTest` | normalization folding overlaps, shared ends and enclosed collapsed carets; typing replication through repeated characters, selections and out-of-document ranges; movement, word and line ends, deletion, paste distribution and copy ranges; occurrence selection and whole-word matching; caret cloning, blocks, toggling and the per-caret runner; thousands of carets staying under a second |
 | `TextFileEditorMultiCaretTest` | field-change replication and undo, consecutive typing merging into one step, selection-only changes dropping the carets and composition-only changes keeping them, program edits and rename restoring them through undo, Esc order, every-caret actions, multi-caret copy/cut/paste, column mode and cloning, read-only behaviour |
 | `MultiCaretUiTest` | typing and delete keys through the real composition at every caret, Esc, clipboard paste, column mode typing, the double-Option clone gesture, ⌥⇧-click and ⌥-drag, and a plain click on the primary caret dropping the secondary ones |
@@ -3658,3 +3667,10 @@ Maven Central alone does not carry it.
 | `TextEditorProviderTest` | a file at the highlighted-size limit stays editable and one byte above the limit is read-only |
 | `RepositoryAcceptanceTest` | repository tree top level with generated directories hidden, `Main.kt` as a selected highlighted tab, double-Shift search opening `docs/api-search.md`, and the repository Kotlin and search snapshots |
 | `TreeEditorGlassTest` | the sidebar showing the mirrored document (rewriting the code changes its pixels), the gap between the top capsules following the code under the row instead of a full-width bar, the top capsule's rim brighter than its bottom edge, the tab-group selection pill moving to the newly selected tab, the editor tint over the same field pixel, the status capsule's label run clearing 4.5:1 over scrolled code (5.6:1), the tree focus halo on focus, the go-to-line backdrop blur, the gutter line-number contrast on the worst content tint, the search capsule's shortcut hint clearing 4.5:1 on its glass (5.5:1), the gap left of the gutter carrying no glyph contrast while the text column does, and the top and bottom edge bands following the code with no single-row luminance jump |
+| `HierarchyActionsTest` | the five actions needing an editor, an unfinished index reporting the indexing message, the search popup context, a class's only implementation and a member's overriding ones, the chooser leaving out sub-interfaces and keeping abstract and Java classes, absence reported in project sources, a missing identifier, super method through overrides, a Kotlin member without override and a supertype outside project sources, the chooser for a twice-inherited member and for a class's two interfaces, a class name opening its single supertype, the caret outside a class and function, type declaration from an explicit type, a local parameter and a constructor call, an initializer it cannot infer and a type outside project sources, a class name as its own type, the chooser for duplicate project types, a name with no declaration, type hierarchy around a class name and the innermost-class fallback, type hierarchy outside a class, call hierarchy rooted on a declaration, on the call at the caret and on the enclosing function, call hierarchy outside a function, callees opening on demand, the chooser state clearing when the session closes, a super method and a type hierarchy for a class the buffer has not saved, the edited buffer's line for an open target, a dirty target opened at its current line, the cached graph dropped on close, and one root per declaration for an ambiguous call |
+| `TypeHierarchyNodesTest` | the root naming the class with its path and opening at its name, direct subtypes expanding further, a supertype outside the project as a leaf with its written name, a class already on the path as a recursive leaf, 200 children per level ending with a more leaf, several roots collapsed with the title counting them, and more than twenty roots ending with a more leaf |
+| `CallHierarchyNodesTest` | callers grouped by member with the call count and first call, a recursive caller, a call outside every member as a file row, callees opening at the declaration in path-then-offset order, a recursive callee, 200 children per level ending with a more leaf, the note counting every declaration that shares the name (a class included), several roots collapsed with the title counting them, deeper expansions reusing the file texts, and an extension function's receiver linking its callers and callees |
+| `HierarchyToolWindowStateTest` | a row's depth and expansion marker, expanded nodes opening as soon as they are shown with their children following, children running once across collapse and expand, the searching row while children load, a failing children call showing one error row without a retry, an empty children result as a leaf, a replaced tree ignoring the old tree's load, right expanding to the first child and left collapsing to the parent, a leaf consuming the horizontal keys, toggling, clear, background loads and UI toggles without snapshot conflicts, a cycle in the children graph, a load finishing after clear leaving no entries, and rows opening a node's location |
+| `HierarchyToolWindowUiTest` | opening a hierarchy registering and focusing the window with its title and note, right expanding a lazy node and left collapsing it, enter opening a node's location while keeping the window, enter flipping a node without a location, and escape handing the keyboard to the editor with the window still visible |
+| `HierarchyKeyFlowUiTest` | ⌃H opening the hierarchy without touching the editor text, ⌘⌥B opening the chooser with enter opening the chosen file, escape closing the chooser and returning the keyboard, ⌘U going to the super method, both type declaration strokes reaching the declared type, ⌃⌥H opening the call hierarchy, the chooser rows naming the container and the path, a letter key not reaching the editor while the chooser is open, and go to implementation from the actions tab |
+| `HierarchyKeymapTest` | the six hierarchy strokes resolving in the editor, modifier order not changing the stroke, and the strokes not firing in the global or modal contexts |

@@ -261,15 +261,19 @@ object TypeReferences {
   the one declared nearest before the member, so two nested classes with the same simple name in
   one file stay apart (`membersByClass` uses the same result).
 - `CallSites` finds calls by text only: an identifier followed by `(`, by type arguments and `(`,
-  or in Kotlin by a trailing lambda `{`, or a `::name` reference, outside comments and strings;
-  keywords, annotations and declaration names are not calls. The `{` of a `by <expression>` in a
-  class header opens the class body, a Kotlin property accessor `get()`/`set()` after modifiers and
-  annotations only is a declaration, and a Java method or constructor head is a declaration even
-  when `outline` missed it. A name is in a type position only when the scan back to its `:` passes
-  no word that cannot stand in a type (`by`, `val`, `return`, ...) and no lambda arrow `->` whose
-  left side is not a parameter list `)`, and a `fun interface` head is a class header, not a call.
+  or in Kotlin by a trailing lambda `{` (directly or after type arguments), or a `::name`
+  reference, outside comments and strings; keywords (modifiers such as `open` or `value` are names,
+  not keywords), annotations and declaration names are not calls. A name in a type position is not
+  a call before a `{`, so a return type is never read as a trailing-lambda call: scanning back from
+  the name over `.`, `?`, `,`, balanced `<...>`/`(...)` and a function type's `->` (whose left side
+  is a `)`) reaches a `:` that is not an elvis `?:` or a `::`, without passing a word that cannot
+  stand in a type (`by`, `val`, `return`, ...) or a lambda arrow. The `{` of a `by <expression>` in
+  a class header (a `fun interface` head included) opens the class body, a Kotlin property accessor
+  `get()`/`set()` after modifiers and annotations only is a declaration, and a Java method or
+  constructor head is a declaration even when `outline` missed it.
 - `CallSite.inLambda` marks a Kotlin call inside a lambda literal, counted from the file start: the
-  `{` of a call's trailing lambda, the `{` after a call's `)`, and a `{` after `(`, `,` or `=`. A
+  `{` of a call's trailing lambda (also after type arguments), the `{` after a call's `)`
+  (`cache.get(key) {` included), and a `{` after `(`, `,`, `=` or `return`. A
   declared body, a control block, a `when` branch, an accessor and a class header are not lambdas;
   Java calls are never inside one.
 - `TypeReferences.declaredType` returns `Explicit` only for a written type and `ConstructorCall`
