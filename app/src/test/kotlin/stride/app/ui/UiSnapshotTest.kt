@@ -625,6 +625,29 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(26)
+    fun `multi caret editor snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            expand(session, root, "src", "main", "kotlin", "demo")
+            openEditor(session, root.resolve("docs/notes.md"))
+            openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val text = greeting.value.text
+            // `count` appears on three lines, so the occurrence selection paints three bands.
+            greeting.updateValue(TextFieldValue(text, TextRange(text.indexOf("count"))))
+            greeting.selectAllOccurrences()
+            greeting.toggleCaretAt(text.indexOf("message") + "message".length)
+            renderApp("15-multi-caret.png", state, renderMillis = 800)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -828,6 +851,7 @@ class UiSnapshotTest {
             "13-search-over-code.png",
             "14-context-actions.png",
             "14-context-actions-light.png",
+            "15-multi-caret.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

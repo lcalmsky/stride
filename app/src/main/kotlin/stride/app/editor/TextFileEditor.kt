@@ -39,6 +39,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -51,13 +52,20 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.isAltPressed
+import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -1111,6 +1119,9 @@ class TextFileEditor(
         val caretLine = lineIndexAt(currentValue.text, currentValue.selection.start)
         val lineHeight = with(LocalDensity.current) { DesignTokens.codeLineHeight.toDp() }
         val gutterText = remember(lineCount, caretLine) { buildGutterText(lineCount, caretLine) }
+        val secondaryLines = remember(currentValue.text, secondaryCarets) {
+            secondaryCaretLines(currentValue.text, secondaryCarets)
+        }
 
         BoxWithConstraints(modifier.contentTint()) {
             val density = LocalDensity.current
@@ -1120,6 +1131,7 @@ class TextFileEditor(
             val bottomPad = 8.dp + chromeInsets.bottom
             val topPadPx = with(density) { topPad.toPx() }
             val viewportHeightPx = with(density) { (maxHeight - topPad - bottomPad).coerceAtLeast(0.dp).toPx() }
+            val windowHeightPx = with(density) { maxHeight.toPx() }
             LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight, leftPad) {
                 val textLayout = layout ?: return@LaunchedEffect
                 // The layout can still be the previous document's for one frame after a tab switch.
@@ -1176,11 +1188,15 @@ class TextFileEditor(
             val sidebar = LocalSidebarChrome.current
             Canvas(Modifier.matchParentSize()) {
                 val linePx = DesignTokens.codeLineHeight.toPx()
-                val top = topPadPx + caretLine * linePx - vertical.value
-                if (top + linePx > 0f && top < size.height) {
-                    // Nothing of the current line paints left of the floating sidebar; that strip
-                    // keeps the editor's own field colour.
-                    clipRect(left = sidebar?.left?.toPx() ?: 0f) {
+                val first = ((vertical.value - topPadPx) / linePx).toInt() - 1
+                val last = ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
+                // Nothing of a current line paints left of the floating sidebar; that strip
+                // keeps the editor's own field colour.
+                val clipLeft = sidebar?.left?.toPx() ?: 0f
+                fun paintLine(line: Int) {
+                    val top = topPadPx + line * linePx - vertical.value
+                    if (top + linePx <= 0f || top >= size.height) return
+                    clipRect(left = clipLeft) {
                         drawRect(
                             DesignTokens.currentLineGlow,
                             topLeft = Offset(0f, top),
@@ -1193,6 +1209,12 @@ class TextFileEditor(
                         )
                     }
                 }
+                for (index in firstLineAtOrAfter(secondaryLines, first) until secondaryLines.size) {
+                    val line = secondaryLines[index]
+                    if (line > last) break
+                    if (line != caretLine) paintLine(line)
+                }
+                paintLine(caretLine)
             }
             VerticalScrollViewport(vertical, Modifier.fillMaxSize(), layered = layered) {
             Box(
@@ -1222,26 +1244,126 @@ class TextFileEditor(
                                     start = leftPad + gutterWidth + DesignTokens.space16,
                                     end = DesignTokens.space16,
                                 )
+                                // Only when there are secondary carets does the chain grow, so
+                                // the single-caret path keeps its modifiers and frame cost.
+                                .then(
+                                    if (secondaryCarets.isEmpty()) {
+                                        Modifier
+                                    } else {
+                                        Modifier.drawWithContent {
+                                            val textLayout = latestLayout.value
+                                            if (textLayout == null) {
+                                                drawContent()
+                                                return@drawWithContent
+                                            }
+                                            // The layout can still be the previous document's
+                                            // for one frame after a tab switch.
+                                            val limit = textLayout.layoutInput.text.length
+                                            for (caret in secondaryCarets) {
+                                                if (caret.collapsed) continue
+                                                val from = caret.min.coerceIn(0, limit)
+                                                val to = caret.max.coerceIn(0, limit)
+                                                if (from < to) {
+                                                    drawPath(
+                                                        textLayout.getPathForRange(from, to),
+                                                        DesignTokens.selection,
+                                                    )
+                                                }
+                                            }
+                                            drawContent()
+                                            val caretWidth = 2.dp.toPx()
+                                            for (caret in secondaryCarets) {
+                                                val rect = textLayout.getCursorRect(caret.end.coerceIn(0, limit))
+                                                drawRect(
+                                                    DesignTokens.accent2,
+                                                    topLeft = Offset(rect.left, rect.top),
+                                                    size = Size(caretWidth, rect.height),
+                                                )
+                                            }
+                                        }
+                                    },
+                                )
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    val command = CaretKeys.commandFor(
+                                        key = event.key,
+                                        meta = event.isMetaPressed,
+                                        ctrl = event.isCtrlPressed,
+                                        alt = event.isAltPressed,
+                                        shift = event.isShiftPressed,
+                                        hasSecondary = secondaryCarets.isNotEmpty(),
+                                        columnMode = columnMode,
+                                    ) ?: return@onPreviewKeyEvent false
+                                    when (command) {
+                                        is CaretKeyCommand.Move -> moveCarets(command.move, command.extend)
+                                        is CaretKeyCommand.ExtendBlock ->
+                                            extendBlock(command.dLine, command.dCol)
+                                        is CaretKeyCommand.Delete ->
+                                            deleteAtCarets(command.forward, command.word)
+                                        CaretKeyCommand.Paste -> clipboard.readText()?.let(::pasteAtCarets)
+                                    }
+                                    true
+                                }
                                 .pointerInput(Unit) {
                                     awaitPointerEventScope {
                                         while (true) {
                                             val event = awaitPointerEvent(PointerEventPass.Initial)
                                             if (event.type != PointerEventType.Press) continue
-                                            if (!event.keyboardModifiers.isMetaPressed) continue
                                             val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
                                             val textLayout = latestLayout.value ?: continue
-                                            val line = textLayout.getLineForVerticalPosition(change.position.y)
-                                            val inside = insideLine(
-                                                change.position,
-                                                textLayout.getLineTop(line),
-                                                textLayout.getLineBottom(line),
-                                                textLayout.getLineRight(line),
-                                            )
-                                            if (!inside) continue
-                                            val offset = textLayout.getOffsetForPosition(change.position)
-                                                .coerceIn(0, text.length)
+                                            val modifiers = event.keyboardModifiers
+                                            if (modifiers.isMetaPressed) {
+                                                val line = textLayout.getLineForVerticalPosition(change.position.y)
+                                                val inside = insideLine(
+                                                    change.position,
+                                                    textLayout.getLineTop(line),
+                                                    textLayout.getLineBottom(line),
+                                                    textLayout.getLineRight(line),
+                                                )
+                                                if (!inside) continue
+                                                val offset = textLayout.getOffsetForPosition(change.position)
+                                                    .coerceIn(0, text.length)
+                                                change.consume()
+                                                onGoToDeclarationAt?.invoke(offset)
+                                                continue
+                                            }
+                                            val gesture = caretPointerGesture(
+                                                meta = false,
+                                                ctrl = modifiers.isCtrlPressed,
+                                                alt = modifiers.isAltPressed,
+                                                shift = modifiers.isShiftPressed,
+                                                columnMode = columnMode,
+                                            ) ?: continue
                                             change.consume()
-                                            onGoToDeclarationAt?.invoke(offset)
+                                            when (gesture) {
+                                                CaretPointerGesture.TOGGLE -> {
+                                                    toggleCaretAt(
+                                                        textLayout.getOffsetForPosition(change.position)
+                                                            .coerceIn(0, text.length),
+                                                    )
+                                                    runCatching { focusRequester.requestFocus() }
+                                                }
+                                                CaretPointerGesture.BLOCK -> {
+                                                    val anchor = blockCorner(textLayout, change.position)
+                                                    selectBlock(
+                                                        anchor.line,
+                                                        anchor.column,
+                                                        anchor.line,
+                                                        anchor.column,
+                                                    )
+                                                    runCatching { focusRequester.requestFocus() }
+                                                    while (true) {
+                                                        val next = awaitPointerEvent(PointerEventPass.Initial)
+                                                        val moved = next.changes
+                                                            .firstOrNull { it.id == change.id } ?: break
+                                                        val current = latestLayout.value ?: textLayout
+                                                        val lead = blockCorner(current, moved.position)
+                                                        selectBlock(anchor.line, anchor.column, lead.line, lead.column)
+                                                        moved.consume()
+                                                        if (!moved.pressed) break
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 },
@@ -1264,14 +1386,25 @@ class TextFileEditor(
                         .contentTint()
                         .drawBehind {
                             val linePx = DesignTokens.codeLineHeight.toPx()
-                            val glowTop = caretLine * linePx
-                            if (glowTop + linePx > 0f && glowTop < size.height) {
+                            // The gutter scrolls with the content, so the visible rows are the
+                            // viewport translated back by the scroll offset.
+                            val first = ((vertical.value - topPadPx) / linePx).toInt() - 1
+                            val last = ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
+                            fun paintLine(line: Int) {
+                                val glowTop = line * linePx
+                                if (glowTop + linePx <= 0f || glowTop >= size.height) return
                                 drawRect(
                                     DesignTokens.currentLineGlow,
                                     topLeft = Offset(0f, glowTop),
                                     size = Size(size.width, linePx),
                                 )
                             }
+                            for (index in firstLineAtOrAfter(secondaryLines, first) until secondaryLines.size) {
+                                val line = secondaryLines[index]
+                                if (line > last) break
+                                if (line != caretLine) paintLine(line)
+                            }
+                            paintLine(caretLine)
                             val stroke = 1.dp.toPx()
                             drawRect(
                                 DesignTokens.glassBorderSide,
@@ -1601,6 +1734,33 @@ class TextFileEditor(
         return line
     }
 
+    /** The document line and column a press at [position] points at, past the line end included. */
+    private fun blockCorner(layout: TextLayoutResult, position: Offset): BlockCorner {
+        val source = layout.layoutInput.text
+        val line = layout.getLineForVerticalPosition(position.y).coerceIn(0, layout.lineCount - 1)
+        val start = layout.getLineStart(line).coerceIn(0, source.length)
+        var end = start
+        while (end < source.length && source[end] != '\n') end++
+        if (end > start && source[end - 1] == '\r') end--
+        val length = end - start
+        val lineRight = layout.getLineRight(line)
+        val column = if (position.x <= lineRight) {
+            (layout.getOffsetForPosition(position) - start).coerceIn(0, length)
+        } else {
+            virtualColumn(position.x, lineRight, length, asciiCharWidth(layout))
+        }
+        return BlockCorner(line, column)
+    }
+
+    /** The width of the first non-blank ASCII glyph; the virtual column step of the block drag. */
+    private fun asciiCharWidth(layout: TextLayoutResult): Float {
+        val source = layout.layoutInput.text
+        for (index in source.indices) {
+            if (source[index].code in 0x21..0x7e) return layout.getBoundingBox(index).width
+        }
+        return 0f
+    }
+
     private fun buildGutterText(lineCount: Int, caretLine: Int): AnnotatedString = buildAnnotatedString {
         for (line in 1..lineCount) {
             val start = length
@@ -1642,6 +1802,22 @@ class TextFileEditor(
             ActionId.EDITOR_TOGGLE_CASE,
         )
     }
+}
+
+/** A press position as the document line and character column it lands on. */
+private data class BlockCorner(val line: Int, val column: Int)
+
+/** The sorted, distinct document lines a secondary caret ends on. */
+internal fun secondaryCaretLines(text: String, carets: List<TextRange>): IntArray {
+    if (carets.isEmpty()) return IntArray(0)
+    val starts = MultiCaret.lineStarts(text)
+    return carets.map { MultiCaret.lineIndexAt(starts, it.end) }.distinct().sorted().toIntArray()
+}
+
+/** The index of the first element of [lines] that is at least [line]. */
+internal fun firstLineAtOrAfter(lines: IntArray, line: Int): Int {
+    val found = lines.binarySearch(line)
+    return if (found >= 0) found else -found - 1
 }
 
 /**
