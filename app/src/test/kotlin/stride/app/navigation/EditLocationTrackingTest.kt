@@ -159,13 +159,13 @@ class EditLocationTrackingTest {
         findBar.open(editor, replace = true)
         findBar.regex = true
         findBar.query = "f(o)o"
-        findBar.replacement = "b\$1r"
+        findBar.replacement = "b\$1\$1r"
         findBar.refresh(editor)
 
         findBar.replaceAll(editor)
 
-        assertEquals("bor\nbor ZX bor Y bor\n", editor.value.text)
-        assertTrue(8 in locations.offsets(), "the place on X moved: ${locations.offsets()}")
+        assertEquals("boor\nboor ZX boor Y boor\n", editor.value.text)
+        assertTrue(10 in locations.offsets(), "the place on Z moved: ${locations.offsets()}")
     }
 
     @Test
