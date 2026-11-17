@@ -368,15 +368,18 @@ character (including an unknown word) as `BAD_CHARACTER`.
 </stride-plugin>
 ```
 
-Both plugins register extensions only. The two extension points are declared by the
-`stride.core` descriptor in step 3, with the declarations below; the qualified names are
-`stride.fileType` and `stride.lang.syntaxHighlighterFactory` because the plugin id is
-`stride.core`.
+Both plugins register extensions only. The language extension points are declared by the
+`stride.core` descriptor in step 3, with the declarations below; the qualified names start
+with `stride.` (`stride.fileType`, `stride.lang.syntaxHighlighterFactory`, ...) because the
+plugin id is `stride.core`.
 
 ```xml
 <extensionPoints>
   <extensionPoint name="fileType" beanClass="stride.lang.FileTypeBean"/>
   <extensionPoint name="lang.syntaxHighlighterFactory" beanClass="stride.lang.SyntaxHighlighterFactoryBean"/>
+  <extensionPoint name="lang.commenter" beanClass="stride.lang.CommenterBean"/>
+  <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
+  <extensionPoint name="lang.importOptimizer" beanClass="stride.lang.ImportOptimizerBean"/>
 </extensionPoints>
 ```
 
