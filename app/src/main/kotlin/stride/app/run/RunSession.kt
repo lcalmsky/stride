@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import stride.app.problems.CompilerMessage
+import stride.app.problems.CompilerMessageParser
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -69,6 +71,8 @@ class RunSession(
     val configuration: RunConfiguration,
     private val process: Process,
     private val displayCommand: String,
+    /** Receives the compiler messages of a build that ran to its end, before [exitCode] is set. */
+    private val onCompilerMessages: ((List<CompilerMessage>) -> Unit)? = null,
 ) {
     val consoleLines: SnapshotStateList<String> = mutableStateListOf(displayCommand)
     val tree = TestTree()
@@ -88,6 +92,10 @@ class RunSession(
     /** Set once a write to the child's stdin failed; the writer thread has stopped by then. */
     @Volatile
     private var stdinClosed = false
+
+    /** Set by [stop]; a stopped session never hands its compiler messages to the project. */
+    @Volatile
+    private var stopped = false
 
     /** Adds [line], dropping the oldest lines once the console exceeds [MAX_CONSOLE_LINES]. */
     private fun appendConsole(line: String) {
@@ -110,13 +118,19 @@ class RunSession(
     }
 
     private fun read() {
+        val messages = ArrayList<CompilerMessage>()
         val code = runCatching {
             process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                 var line = reader.readLine()
                 while (line != null) {
                     when (val parsed = TestEventParser.parse(line)) {
                         is ParsedLine.Event -> tree.apply(parsed.event)
-                        is ParsedLine.Output -> appendConsole(parsed.text)
+                        is ParsedLine.Output -> {
+                            appendConsole(parsed.text)
+                            CompilerMessageParser.parse(parsed.text)?.let { message ->
+                                if (messages.size < MAX_COMPILER_MESSAGES) messages += message
+                            }
+                        }
                     }
                     line = reader.readLine()
                 }
@@ -125,6 +139,7 @@ class RunSession(
         }.getOrElse {
             runCatching { process.exitValue() }.getOrDefault(-1)
         }
+        if (!stopped) runCatching { onCompilerMessages?.invoke(messages) }
         exitCode = code
     }
 
@@ -163,6 +178,7 @@ class RunSession(
     }
 
     fun stop() {
+        stopped = true
         writer?.interrupt()
         runCatching {
             process.toHandle().descendants().forEach { it.destroyForcibly() }
@@ -173,6 +189,7 @@ class RunSession(
     companion object {
         const val MAX_PENDING_INPUT = 64
         const val MAX_CONSOLE_LINES = 10_000
+        const val MAX_COMPILER_MESSAGES = 1_000
         private const val CONSOLE_TRIM_BATCH = 1_000
         private const val INPUT_POLL_MILLIS = 100L
     }

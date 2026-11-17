@@ -282,3 +282,9 @@ fun popupPlateFloor(palette: Palette): Color {
 
 /** [palette]'s accent moved just far enough to clear the popup plate floor's text contrast. */
 fun accentOnPopupPlate(palette: Palette): Color = readableOn(palette.accent, popupPlateFloor(palette))
+
+/**
+ * [palette]'s error colour moved far enough to clear the popup plate floor's contrast. The
+ * rendered 8-bit plate rounds a hair darker than the blend model, so it aims at 4.6, not 4.5.
+ */
+fun errorOnPopupPlate(palette: Palette): Color = readableOn(palette.neonPink, popupPlateFloor(palette), 4.6)

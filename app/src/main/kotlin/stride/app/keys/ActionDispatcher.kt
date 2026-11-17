@@ -22,6 +22,8 @@ import stride.app.navigation.openQuickDoc
 import stride.app.navigation.selectInProjectView
 import stride.app.navigation.showBookmarks
 import stride.app.navigation.toggleBookmark
+import stride.app.problems.ErrorDescriptionRequest
+import stride.app.problems.ProblemNavigation
 import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
@@ -61,11 +63,19 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.NEXT_TAB -> {
-        state.session?.editors?.selectNext()
+        if (state.focus == KeyContext.LIST_WINDOW && state.toolWindows.activeId == "problems") {
+            state.problemsToolWindow.selectNext()
+        } else {
+            state.session?.editors?.selectNext()
+        }
         true
     }
     ActionId.PREVIOUS_TAB -> {
-        state.session?.editors?.selectPrevious()
+        if (state.focus == KeyContext.LIST_WINDOW && state.toolWindows.activeId == "problems") {
+            state.problemsToolWindow.selectPrevious()
+        } else {
+            state.session?.editors?.selectPrevious()
+        }
         true
     }
     ActionId.ACTIVATE_RUN_TOOL_WINDOW -> {
@@ -86,6 +96,37 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW -> {
         state.toggleToolWindow("structure", KeyContext.LIST_WINDOW)
+        true
+    }
+    ActionId.ACTIVATE_PROBLEMS_TOOL_WINDOW -> {
+        state.toggleToolWindow("problems", KeyContext.LIST_WINDOW)
+        true
+    }
+    ActionId.GOTO_NEXT_ERROR, ActionId.GOTO_PREVIOUS_ERROR -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        val target = ProblemNavigation.target(
+            problems = editor.problems,
+            caret = editor.value.selection.start,
+            forward = action == ActionId.GOTO_NEXT_ERROR,
+        )
+        if (target == null) {
+            state.statusMessage = "No problems in this file"
+        } else {
+            editor.jumpTo(target.start)
+            state.statusMessage = null
+        }
+        true
+    }
+    ActionId.SHOW_ERROR_DESCRIPTION -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        val problems = ProblemNavigation.at(editor.problems, editor.value.selection.start)
+        if (problems.isEmpty()) {
+            state.statusMessage = "No problems at the caret"
+        } else {
+            state.errorDescription = ErrorDescriptionRequest(editor, problems)
+            state.focus = KeyContext.CONTEXT_POPUP
+            state.statusMessage = null
+        }
         true
     }
     ActionId.HIDE_ACTIVE_WINDOW -> {

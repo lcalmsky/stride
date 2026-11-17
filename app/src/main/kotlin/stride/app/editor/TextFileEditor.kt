@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
@@ -85,6 +86,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.problems.FileProblem
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.EdgeBandCache
@@ -105,6 +107,7 @@ import stride.lang.Commenter
 import stride.lang.FileTypeRegistry
 import stride.lang.LanguageFileType
 import stride.lang.LineStateHighlighter
+import stride.lang.ProblemSeverity
 import stride.lang.SyntaxHighlighterFactory
 import stride.lang.TextAttributes
 import stride.lang.TextAttributesKey
@@ -271,6 +274,9 @@ class TextFileEditor(
     var searchSpans: List<BackgroundSpan> by mutableStateOf(emptyList())
 
     var gutterMarkers: List<GutterMarker> by mutableStateOf(emptyList())
+
+    /** The problems of the current text, drawn as squiggles and walked by F2/⇧F2. */
+    var problems: List<FileProblem> by mutableStateOf(emptyList())
 
     /** 0-based lines carrying a bookmark mark in the gutter. */
     var bookmarkLines: Set<Int> by mutableStateOf(emptySet())
@@ -531,6 +537,16 @@ class TextFileEditor(
         hippie = null
         clearCaretState()
         reconcileFolds(change, carets)
+    }
+
+    /**
+     * Moves the caret to [offset], dropping the secondary carets and unfolding a collapsed range
+     * the way [gotoLine] does; the jump is recorded through [onJump].
+     */
+    fun jumpTo(offset: Int) {
+        val clamped = offset.coerceIn(0, text.length)
+        applyValue(TextFieldValue(text, TextRange(clamped)), record = false)
+        onJump?.invoke()
     }
 
     /** Moves the caret to `"line"` or `"line:column"` (1-based). Invalid input changes nothing. */
@@ -1329,6 +1345,8 @@ class TextFileEditor(
         val gutterSlices = remember(this) { LineSliceCache() }
         val latestLayout = rememberUpdatedState(layout)
         val latestFolds = rememberUpdatedState(foldView)
+        val currentProblems = problems
+        val latestProblems = rememberUpdatedState(problems)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
         var layeredScroll by remember(this) { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
         LaunchedEffect(lineCount) {
@@ -1585,6 +1603,39 @@ class TextFileEditor(
                                                     style = Stroke(width = 1.dp.toPx()),
                                                 )
                                             }
+                                        }
+                                    },
+                                )
+                                // Only when there are problems does the chain grow, so the
+                                // clean path keeps its modifiers and frame cost.
+                                .then(
+                                    if (currentProblems.isEmpty()) {
+                                        Modifier
+                                    } else {
+                                        Modifier.drawWithContent {
+                                            drawContent()
+                                            val textLayout = latestLayout.value ?: return@drawWithContent
+                                            val folds = latestFolds.value
+                                            val length = text.length
+                                            val expected = if (folds.isEmpty) length else folds.viewLength
+                                            if (textLayout.layoutInput.text.length != expected) {
+                                                return@drawWithContent
+                                            }
+                                            // Same window as the background canvas, in layout rows.
+                                            val linePx = DesignTokens.codeLineHeight.toPx()
+                                            val lastLine = (textLayout.lineCount - 1).coerceAtLeast(0)
+                                            val first = (((vertical.value - topPadPx) / linePx).toInt() - 1)
+                                                .coerceIn(0, lastLine)
+                                            val last = (((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1)
+                                                .coerceIn(0, lastLine)
+                                            drawProblemUnderlines(
+                                                textLayout = textLayout,
+                                                problems = latestProblems.value,
+                                                folds = folds,
+                                                textLength = length,
+                                                first = first,
+                                                last = last,
+                                            )
                                         }
                                     },
                                 )
@@ -2291,6 +2342,63 @@ internal fun paintVisibleLines(
     slice.paint(canvas)
     canvas.restore()
     onPainted(range.last - range.first + 1)
+}
+
+/**
+ * Draws a squiggle under every problem that starts in the layout rows [first]..[last] and is
+ * not hidden inside a fold. Offsets are mapped from the document into the folded layout, and a
+ * problem whose range crosses lines is drawn once per line.
+ */
+private fun DrawScope.drawProblemUnderlines(
+    textLayout: TextLayoutResult,
+    problems: List<FileProblem>,
+    folds: FoldView,
+    textLength: Int,
+    first: Int,
+    last: Int,
+) {
+    val limit = textLayout.layoutInput.text.length
+    val strokeWidth = 1.dp.toPx()
+    for (problem in problems) {
+        if (problem.start < 0 || problem.start >= textLength) continue
+        if (!folds.isEmpty && folds.docLength == textLength && folds.foldIndexContaining(problem.start) >= 0) continue
+        val end = problem.end.coerceIn(problem.start, textLength)
+        val usable = folds.isEmpty || folds.docLength != textLength
+        val from = (if (usable) problem.start else folds.toView(problem.start)).coerceIn(0, limit)
+        val to = (if (usable) end else folds.toView(end)).coerceIn(from, limit)
+        if (from >= limit) continue
+        val firstLine = textLayout.getLineForOffset(from)
+        val lastLine = textLayout.getLineForOffset((to.coerceAtLeast(from + 1) - 1).coerceAtMost(limit - 1))
+        if (lastLine < first || firstLine > last) continue
+        val color = if (problem.severity == ProblemSeverity.ERROR) DesignTokens.neonPink else DesignTokens.neonAmber
+        for (line in maxOf(firstLine, first)..minOf(lastLine, last)) {
+            val lineStart = textLayout.getLineStart(line)
+            val lineEnd = textLayout.getLineEnd(line)
+            val segmentStart = maxOf(from, lineStart)
+            val segmentEnd = minOf(maxOf(to, segmentStart + 1), lineEnd)
+            if (segmentEnd <= segmentStart) continue
+            val left = textLayout.getHorizontalPosition(segmentStart, usePrimaryDirection = true)
+            var right = textLayout.getHorizontalPosition(segmentEnd, usePrimaryDirection = true)
+            if (right <= left) right = left + 4 * strokeWidth
+            drawWave(left, right, textLayout.getLineBottom(line) - 2.dp.toPx(), color, strokeWidth)
+        }
+    }
+}
+
+/** A one-pixel-high zigzag along [left]..[right] at [baseline]. */
+private fun DrawScope.drawWave(left: Float, right: Float, baseline: Float, color: Color, strokeWidth: Float) {
+    val step = 3.dp.toPx()
+    val amplitude = 1.dp.toPx()
+    val path = Path()
+    path.moveTo(left, baseline)
+    var x = left
+    var up = true
+    while (x < right) {
+        x = minOf(x + step, right)
+        path.lineTo(x, baseline + if (up) -amplitude else amplitude)
+        up = !up
+    }
+    drawPath(path, color, style = Stroke(width = strokeWidth))
 }
 
 /**

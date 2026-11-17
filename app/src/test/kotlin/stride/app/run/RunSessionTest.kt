@@ -6,6 +6,12 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.app.problems.CompilerMessage
+import stride.lang.ProblemSeverity
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
 import java.nio.file.Path
 
 class RunSessionTest {
@@ -108,6 +114,45 @@ class RunSessionTest {
     }
 
     @Test
+    fun `a finished session hands its compiler messages to the callback`() {
+        val path = temp.resolve("A.kt").toAbsolutePath().normalize()
+        val uri = path.toUri().toString()
+        val output = "hello\ne: $uri:3:2 boom\nw: $uri:4:1 unused\n"
+        var received: List<CompilerMessage>? = null
+
+        val session = RunSession(configuration(), FakeProcess(output.toByteArray(), exitCode = 1), "gradle :test") {
+            received = it
+        }
+        session.start()
+        waitUntil { received != null }
+        waitUntil { session.exitCode != null }
+
+        val messages = requireNotNull(received)
+        assertEquals(2, messages.size)
+        assertEquals(path, messages[0].path)
+        assertEquals(2, messages[0].line)
+        assertEquals(1, messages[0].column)
+        assertEquals(ProblemSeverity.ERROR, messages[0].severity)
+        assertEquals("boom", messages[0].message)
+        assertEquals(ProblemSeverity.WARNING, messages[1].severity)
+    }
+
+    @Test
+    fun `a stopped session does not hand its compiler messages`() {
+        val process = StreamingProcess()
+        var called = false
+
+        val session = RunSession(configuration(), process, "gradle :test") { called = true }
+        session.start()
+        process.write("e: file:///work/A.kt:1:1 boom\n")
+        Thread.sleep(100)
+        session.stop()
+        waitUntil { !session.isRunning }
+
+        assertFalse(called)
+    }
+
+    @Test
     fun `stop destroys the process even when toHandle is unsupported`() {
         val process = FakeProcess(blocking = true)
 
@@ -127,5 +172,43 @@ class RunSessionTest {
             Thread.sleep(10)
         }
         assertTrue(condition(), "condition not met within ${timeoutMillis}ms")
+    }
+}
+
+/** A process whose output the test writes, so the reader can be stopped mid-stream. */
+private class StreamingProcess : Process() {
+    private val writer = PipedOutputStream()
+    private val reader = PipedInputStream(writer)
+
+    @Volatile
+    private var destroyed = false
+
+    fun write(line: String) {
+        writer.write(line.toByteArray(Charsets.UTF_8))
+        writer.flush()
+    }
+
+    override fun getOutputStream(): java.io.OutputStream = ByteArrayOutputStream()
+
+    override fun getInputStream(): java.io.InputStream = reader
+
+    override fun getErrorStream(): java.io.InputStream = ByteArrayInputStream(ByteArray(0))
+
+    override fun waitFor(): Int {
+        while (!destroyed) Thread.sleep(10)
+        return -1
+    }
+
+    override fun exitValue(): Int = -1
+
+    override fun destroy() {
+        destroyed = true
+        runCatching { writer.close() }
+        runCatching { reader.close() }
+    }
+
+    override fun destroyForcibly(): Process {
+        destroy()
+        return this
     }
 }

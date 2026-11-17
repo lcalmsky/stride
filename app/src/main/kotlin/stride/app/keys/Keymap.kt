@@ -4,6 +4,7 @@ enum class ActionId {
     OPEN_FOLDER, SAVE, CLOSE_TAB, SEARCH_EVERYWHERE, NEXT_TAB, PREVIOUS_TAB, HIDE_ACTIVE_WINDOW,
     RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
     ACTIVATE_BOOKMARKS_TOOL_WINDOW, ACTIVATE_FIND_TOOL_WINDOW, ACTIVATE_STRUCTURE_TOOL_WINDOW,
+    ACTIVATE_PROBLEMS_TOOL_WINDOW, GOTO_NEXT_ERROR, GOTO_PREVIOUS_ERROR, SHOW_ERROR_DESCRIPTION,
     SHOW_INTENTION_ACTIONS, CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
     EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
@@ -114,6 +115,8 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta 3", ActionId.ACTIVATE_FIND_TOOL_WINDOW, KeyContext.GLOBAL)
     // ActivateRunToolWindow meta 4
     bind("meta 4", ActionId.ACTIVATE_RUN_TOOL_WINDOW, KeyContext.GLOBAL)
+    // ActivateProblemsViewToolWindow meta 6
+    bind("meta 6", ActionId.ACTIVATE_PROBLEMS_TOOL_WINDOW, KeyContext.GLOBAL)
     // ActivateStructureToolWindow meta 7
     bind("meta 7", ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW, KeyContext.GLOBAL)
     // EditorDuplicate control D (→meta)
@@ -280,6 +283,12 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     // CollapseAllRegions shift meta SUBTRACT | shift meta MINUS
     bind("meta shift SUBTRACT", ActionId.COLLAPSE_ALL_REGIONS, KeyContext.EDITOR)
     bind("meta shift MINUS", ActionId.COLLAPSE_ALL_REGIONS, KeyContext.EDITOR)
+    // GotoNextError F2
+    bind("F2", ActionId.GOTO_NEXT_ERROR, KeyContext.EDITOR)
+    // GotoPreviousError shift F2
+    bind("shift F2", ActionId.GOTO_PREVIOUS_ERROR, KeyContext.EDITOR)
+    // ShowErrorDescription meta F1
+    bind("meta F1", ActionId.SHOW_ERROR_DESCRIPTION, KeyContext.EDITOR)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
     // EditorCloneCaretAbove/Below have no stroke either: a double Option gesture in KeyRouter.
 }

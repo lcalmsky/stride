@@ -128,6 +128,8 @@ import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtLine
+import stride.app.problems.EditorProblems
+import stride.app.problems.ErrorDescriptionPopup
 import stride.app.run.ContextActionsPopup
 import stride.app.run.RunConfigurationPopup
 import stride.app.run.RunManager
@@ -296,6 +298,7 @@ fun App(
                                     bottomInset = if (state.toolWindows.visible) DesignTokens.chromeGap else bottomBand,
                                 )
                                 TestGutterMarkers(session, state.toolWindows) { message -> state.statusMessage = message }
+                                EditorProblems(session)
                             }
                             if (state.toolWindows.visible) {
                                 VerticalSplitter(onResize = { delta ->
@@ -688,6 +691,21 @@ fun App(
         if (state.parameterInfo != null && session != null) {
             ParameterInfoHost(state, session)
         }
+        val errorDescription = state.errorDescription
+        if (errorDescription != null && session != null) {
+            val selected = session.editors.selected
+            LaunchedEffect(errorDescription, selected) {
+                if (selected !== errorDescription.editor) state.errorDescription = null
+            }
+            if (selected === errorDescription.editor) {
+                Box(Modifier.fillMaxSize()) {
+                    ErrorDescriptionPopup(errorDescription) {
+                        state.errorDescription = null
+                        refocusEditor(state)
+                    }
+                }
+            }
+        }
         val completion = state.completion
         if (completion != null && session != null) {
             Box(
@@ -825,7 +843,7 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
-        state.findBar.visible
+        state.errorDescription != null || state.findBar.visible
 
 private fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR

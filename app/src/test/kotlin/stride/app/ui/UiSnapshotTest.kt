@@ -26,6 +26,9 @@ import stride.app.editor.FoldRegion
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
+import stride.app.problems.CompilerMessage
+import stride.app.problems.ProblemsModel
 import stride.app.search.FindTabKind
 import stride.app.run.FakeProcess
 import stride.app.run.GradleCommand
@@ -40,6 +43,7 @@ import stride.app.terminal.TerminalSession
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.ProblemSeverity
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 import stride.search.SearchTab
@@ -733,6 +737,55 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(0)
+    fun `problems window snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            expand(session, root, "src", "main", "kotlin", "demo")
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val text = greeting.value.text
+            val path = greeting.file.path.toAbsolutePath().normalize()
+            fun lineOf(needle: String): Int = text.substring(0, text.indexOf(needle)).count { it == '\n' }
+            fun columnOf(needle: String): Int {
+                val index = text.indexOf(needle)
+                return index - (text.lastIndexOf('\n', index) + 1)
+            }
+            val model = session.project.service<ProblemsModel>()
+            model.publishBuild(
+                listOf(
+                    CompilerMessage(
+                        path,
+                        lineOf("joinToString"),
+                        columnOf("joinToString"),
+                        ProblemSeverity.ERROR,
+                        "Unresolved reference: joinToString",
+                    ),
+                    CompilerMessage(
+                        path,
+                        lineOf("count <= 0"),
+                        columnOf("count <= 0"),
+                        ProblemSeverity.WARNING,
+                        "Parameter 'count' is never used",
+                    ),
+                ),
+            )
+            val problems = model.compute(path, greeting.file.name, text)
+            greeting.problems = problems
+            greeting.updateValue(TextFieldValue(text, TextRange(problems.first().start)))
+            state.toolWindows.activate("problems")
+            state.focus = KeyContext.LIST_WINDOW
+            renderApp("19-problems.png", state, renderMillis = 1_200)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("19-problems.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -940,6 +993,7 @@ class UiSnapshotTest {
             "16-folding.png",
             "17-find-window.png",
             "18-replace-in-path.png",
+            "19-problems.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

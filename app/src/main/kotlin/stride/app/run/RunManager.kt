@@ -4,9 +4,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import stride.app.problems.ProblemsModel
 import stride.core.Disposable
 import stride.core.services.Project
 import stride.core.services.Service
+import stride.core.services.service
 
 class StartedProcess(val process: Process, val displayCommand: String)
 
@@ -60,7 +62,16 @@ class RunManager(private val project: Project) : Disposable {
         val existing = runSessions.indexOfFirst { it.configuration.identity == configuration.identity }
         if (existing >= 0) runSessions.removeAt(existing).stop()
         val started = starter.start(configuration)
-        val session = RunSession(configuration, started.process, started.displayCommand)
+        val session = RunSession(
+            configuration,
+            started.process,
+            started.displayCommand,
+            onCompilerMessages = if (configuration.command == null) {
+                { messages -> project.service<ProblemsModel>().publishBuild(messages) }
+            } else {
+                null
+            },
+        )
         if (existing >= 0) runSessions.add(existing, session) else runSessions.add(session)
         current = session
         session.start()

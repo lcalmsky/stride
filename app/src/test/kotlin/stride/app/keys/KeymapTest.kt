@@ -43,6 +43,12 @@ class KeymapTest {
         assertEquals(ActionId.RERUN, action("meta R", KeyContext.RUN_WINDOW))
         // ActivateRunToolWindow meta 4
         assertEquals(ActionId.ACTIVATE_RUN_TOOL_WINDOW, action("meta 4", KeyContext.GLOBAL))
+        // ActivateProblemsViewToolWindow meta 6
+        assertEquals(ActionId.ACTIVATE_PROBLEMS_TOOL_WINDOW, action("meta 6", KeyContext.GLOBAL))
+        // GotoNextError F2, GotoPreviousError shift F2, ShowErrorDescription meta F1
+        assertEquals(ActionId.GOTO_NEXT_ERROR, action("F2", KeyContext.EDITOR))
+        assertEquals(ActionId.GOTO_PREVIOUS_ERROR, action("shift F2", KeyContext.EDITOR))
+        assertEquals(ActionId.SHOW_ERROR_DESCRIPTION, action("meta F1", KeyContext.EDITOR))
         // EditorDuplicate control D (→meta)
         assertEquals(ActionId.EDITOR_DUPLICATE, action("meta D", KeyContext.EDITOR))
         // EditorDeleteLine meta BACK_SPACE

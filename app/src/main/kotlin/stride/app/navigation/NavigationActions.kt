@@ -57,6 +57,20 @@ fun openFileAtLine(state: AppState, session: ProjectSession, file: VFile, line: 
     (editor as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
 }
 
+/** Opens [file] at [line] and [column] (0-based) and records the landing position as one history entry. */
+fun openFileAtColumn(state: AppState, session: ProjectSession, file: VFile, line: Int, column: Int) {
+    val editor = session.history.withoutRecording {
+        session.editors.openFile(file)?.also { opened ->
+            val textEditor = opened as? TextFileEditor ?: return@also
+            textEditor.jumpTo(EditActions.gotoLine(textEditor.value.text, line + 1, column + 1).start)
+        }
+    } ?: return
+    session.history.push(navigationLocation(editor))
+    state.focus = KeyContext.EDITOR
+    state.statusMessage = null
+    (editor as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
+}
+
 /** Opens [location]; a target whose file is gone is reported and dropped from the history. */
 private fun openLocation(state: AppState, session: ProjectSession, location: NavigationLocation): Boolean {
     if (!Files.exists(location.path)) {

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.app.problems.ProblemsModel
 import stride.core.services.Project
 import stride.core.services.service
 import java.nio.file.Path
@@ -286,6 +287,56 @@ class RunManagerTest {
             manager.run(configuration("same").copy(args = listOf("other")))
 
             assertEquals(2, manager.recent.size)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `a gradle run publishes its compiler messages to the project`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val model = project.service<ProblemsModel>()
+            val path = temp.resolve("A.kt").toAbsolutePath().normalize()
+            manager.starter = ProcessStarter {
+                StartedProcess(FakeProcess("e: ${path.toUri()}:1:1 boom\n".toByteArray()), "fake")
+            }
+
+            manager.run(configuration())
+            waitUntil { model.buildVersion == 1 }
+
+            val errors = model.projectErrors { false }.single().errors
+            assertEquals(listOf("boom"), errors.map { it.message })
+            assertEquals(path, model.projectErrors { false }.single().path)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `a command run does not publish compiler messages`() {
+        val project = Project(temp)
+        try {
+            val manager = project.service<RunManager>()
+            val model = project.service<ProblemsModel>()
+            val path = temp.resolve("B.kt").toAbsolutePath().normalize()
+            manager.starter = ProcessStarter {
+                StartedProcess(FakeProcess("e: ${path.toUri()}:1:1 boom\n".toByteArray()), "fake")
+            }
+
+            manager.run(
+                RunConfiguration(
+                    name = "run",
+                    workingDir = temp,
+                    kind = RunKind.APPLICATION,
+                    command = listOf("run"),
+                ),
+            )
+            waitUntil { manager.sessions.all { !it.isRunning } }
+
+            assertEquals(0, model.buildVersion)
+            assertTrue(model.projectErrors { false }.isEmpty())
         } finally {
             project.dispose()
         }

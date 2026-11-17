@@ -21,6 +21,9 @@ import stride.app.editor.applyRename
 import stride.app.editor.find.FindOptions
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
+import stride.app.problems.FileProblem
+import stride.app.problems.ProblemScope
+import stride.app.problems.ProblemSource
 import stride.app.run.ContextActionKind
 import stride.app.run.FakeProcess
 import stride.app.run.applyContextAction
@@ -33,6 +36,7 @@ import stride.app.search.FindTabKind
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.ProblemSeverity
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 import stride.search.SearchTab
@@ -984,6 +988,7 @@ class ActionDispatcherTest {
             ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW to "bookmarks",
             ActionId.ACTIVATE_FIND_TOOL_WINDOW to "find",
             ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW to "structure",
+            ActionId.ACTIVATE_PROBLEMS_TOOL_WINDOW to "problems",
         )
         for ((action, id) in windows) {
             assertTrue(dispatchAction(action, state) { null })
@@ -1000,24 +1005,96 @@ class ActionDispatcherTest {
             assertFalse(state.toolWindows.visible)
             assertEquals(KeyContext.EDITOR, state.focus)
         }
-        assertEquals(3, state.editorFocusRequests)
+        assertEquals(4, state.editorFocusRequests)
     }
 
     @Test
     fun `the tool windows register in key number order`() {
         assertEquals(
-            listOf("bookmarks", "find", "run", "structure", "terminal"),
+            listOf("bookmarks", "find", "run", "problems", "structure", "terminal"),
             state.toolWindows.windows.map { it.id },
         )
         assertEquals(
-            listOf("Bookmarks", "Find", "Run", "Structure", "Terminal"),
+            listOf("Bookmarks", "Find", "Run", "Problems", "Structure", "Terminal"),
             state.toolWindows.windows.map { it.title },
         )
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[0].context)
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[1].context)
         assertEquals(KeyContext.RUN_WINDOW, state.toolWindows.windows[2].context)
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[3].context)
-        assertEquals(KeyContext.TERMINAL, state.toolWindows.windows[4].context)
+        assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[4].context)
+        assertEquals(KeyContext.TERMINAL, state.toolWindows.windows[5].context)
+    }
+
+    @Test
+    fun `next and previous error move the caret onto the problems`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("one\nsecond\nthird\n", TextRange(1)))
+        editor.problems = listOf(
+            FileProblem(ProblemSeverity.WARNING, "warning", ProblemSource.EDITOR, 0, 0, 0, 3),
+            FileProblem(ProblemSeverity.ERROR, "error", ProblemSource.BUILD, 1, 0, 4, 10),
+        )
+
+        assertTrue(dispatchAction(ActionId.GOTO_NEXT_ERROR, state) { null })
+        assertEquals(4, editor.value.selection.start)
+        assertNull(state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.GOTO_PREVIOUS_ERROR, state) { null })
+        assertEquals(4, editor.value.selection.start)
+    }
+
+    @Test
+    fun `error keys report when there is no editor or no problem`() {
+        assertFalse(dispatchAction(ActionId.GOTO_NEXT_ERROR, state) { null })
+        assertFalse(dispatchAction(ActionId.GOTO_PREVIOUS_ERROR, state) { null })
+        assertFalse(dispatchAction(ActionId.SHOW_ERROR_DESCRIPTION, state) { null })
+
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("one\n", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.GOTO_NEXT_ERROR, state) { null })
+        assertEquals("No problems in this file", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.SHOW_ERROR_DESCRIPTION, state) { null })
+        assertEquals("No problems at the caret", state.statusMessage)
+        assertNull(state.errorDescription)
+    }
+
+    @Test
+    fun `show error description opens on the problems at the caret`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(2)))
+        val atCaret = FileProblem(ProblemSeverity.ERROR, "first", ProblemSource.BUILD, 0, 0, 0, 5)
+        val elsewhere = FileProblem(ProblemSeverity.WARNING, "second", ProblemSource.EDITOR, 0, 6, 6, 10)
+        editor.problems = listOf(atCaret, elsewhere)
+
+        assertTrue(dispatchAction(ActionId.SHOW_ERROR_DESCRIPTION, state) { null })
+
+        val request = requireNotNull(state.errorDescription)
+        assertEquals(listOf(atCaret), request.problems)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+        assertNull(state.statusMessage)
+    }
+
+    @Test
+    fun `shift command bracket switches the problems range only while that window is focused`() {
+        openProjectWith("a.kt")
+        assertEquals(ProblemScope.FILE, state.problemsToolWindow.scope)
+        state.toolWindows.activate("problems")
+        state.focus = KeyContext.LIST_WINDOW
+
+        assertTrue(dispatchAction(ActionId.NEXT_TAB, state) { null })
+        assertEquals(ProblemScope.PROJECT_ERRORS, state.problemsToolWindow.scope)
+
+        assertTrue(dispatchAction(ActionId.PREVIOUS_TAB, state) { null })
+        assertEquals(ProblemScope.FILE, state.problemsToolWindow.scope)
+
+        state.toolWindows.activate("find")
+        assertTrue(dispatchAction(ActionId.NEXT_TAB, state) { null })
+        assertEquals(ProblemScope.FILE, state.problemsToolWindow.scope)
     }
 
     @Test

@@ -17,6 +17,8 @@ import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
 import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
+import stride.app.keys.KeyRouter
+import stride.app.keys.Keymap
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.NavigationHistory
@@ -25,6 +27,12 @@ import stride.app.navigation.PeekRequest
 import stride.app.navigation.StructureToolWindow
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
+import stride.app.navigation.openFileAtColumn
+import stride.app.problems.ErrorDescriptionRequest
+import stride.app.problems.FileProblem
+import stride.app.problems.ProblemsModel
+import stride.app.problems.ProblemsToolWindow
+import stride.app.problems.ProblemsToolWindowState
 import stride.app.search.FindReplaceController
 import stride.app.search.FindTabKind
 import stride.app.search.FindToolWindow
@@ -186,6 +194,9 @@ class AppState {
     /** The open Parameter Info panel, which never takes the keyboard focus. */
     var parameterInfo by mutableStateOf<ParameterInfoRequest?>(null)
 
+    /** The open Show Error Description popup; `null` when it is closed. */
+    var errorDescription by mutableStateOf<ErrorDescriptionRequest?>(null)
+
     /** The open Surround With popup; `null` when it is closed. */
     var surround by mutableStateOf<SurroundRequest?>(null)
 
@@ -194,6 +205,9 @@ class AppState {
     val toolWindows = ToolWindowManager()
 
     val findToolWindow = FindToolWindowState()
+
+    /** The Problems window's selected range, kept while the window is hidden. */
+    val problemsToolWindow = ProblemsToolWindowState()
 
     /** Plans and applies the Find window's REPLACE tabs over the open editor texts and the disk. */
     val findReplace = FindReplaceController(
@@ -256,6 +270,38 @@ class AppState {
                         current.project.service<RunManager>(),
                         modifier,
                         focusRequests = toolWindows.focusRequests,
+                    )
+                }
+            },
+        )
+        toolWindows.register(
+            ToolWindow("problems", "Problems", KeyContext.LIST_WINDOW) { modifier ->
+                val current = session
+                if (current == null) {
+                    ToolWindowEmptyState(
+                        "No file selected",
+                        modifier,
+                        focusRequests = toolWindows.focusRequests,
+                        onEscape = { handFocusToEditor() },
+                    )
+                } else {
+                    val editor = current.editors.selected as? TextFileEditor
+                    ProblemsToolWindow(
+                        editor = editor,
+                        model = current.project.service<ProblemsModel>(),
+                        toolState = problemsToolWindow,
+                        focusRequests = toolWindows.focusRequests,
+                        keymap = Keymap.forPlatform(KeyRouter.isMacOs()),
+                        root = current.project.root,
+                        isOpen = { path ->
+                            current.editors.openFiles.any { it.file.path.toAbsolutePath().normalize() == path }
+                        },
+                        onOpenEditorProblem = { problem -> openEditorProblem(editor, problem) },
+                        onOpenFileProblem = { path, problem ->
+                            openFileAtColumn(this@AppState, current, VFile(path), problem.line, problem.column)
+                        },
+                        onEscape = { handFocusToEditor() },
+                        modifier = modifier,
                     )
                 }
             },
@@ -398,6 +444,17 @@ class AppState {
         if (projectTreeVisible) treeFocusRequests++
     }
 
+    /** Moves the caret of [editor] to [problem]'s start and hands the keyboard back to it. */
+    private fun openEditorProblem(editor: TextFileEditor?, problem: FileProblem) {
+        val target = editor ?: return
+        if (problem.start >= 0) {
+            target.jumpTo(problem.start)
+        } else {
+            target.gotoLine((problem.line + 1).toString())
+        }
+        handFocusToEditor()
+    }
+
     /**
      * Moves the focus context to the selected text editor and asks it to take the keyboard, so
      * hiding the panel that owned focus does not leave both the context and the real focus gone.
@@ -461,11 +518,13 @@ class AppState {
         quickDefinition = null
         parameterInfo = null
         surround = null
+        errorDescription = null
         statusMessage = null
         projectTreeVisible = true
         treeBeforeHide = null
         toolWindowBeforeHide = null
         findToolWindow.clear()
+        problemsToolWindow.reset()
         toolWindows.hide()
         focus = KeyContext.GLOBAL
     }

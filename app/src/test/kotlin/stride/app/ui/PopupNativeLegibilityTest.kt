@@ -51,6 +51,10 @@ import stride.app.navigation.PeekCandidate
 import stride.app.navigation.QuickDefinitionPopup
 import stride.app.navigation.QuickDocPopup
 import stride.app.navigation.TargetChooserPopup
+import stride.app.problems.ErrorDescriptionPopup
+import stride.app.problems.ErrorDescriptionRequest
+import stride.app.problems.FileProblem
+import stride.app.problems.ProblemSource
 import stride.app.run.ContextAction
 import stride.app.run.ContextActionKind
 import stride.app.run.ContextActionsPopup
@@ -66,6 +70,7 @@ import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.ProblemSeverity
 import stride.lang.TextEdit
 import stride.search.Declaration
 import stride.search.DeclarationKind
@@ -88,6 +93,7 @@ class PopupNativeLegibilityTest {
         ACCENT2("accent2"),
         AMBER("neonAmber"),
         ACCENT("accentOnPopupPlate"),
+        ERROR("errorOnPopupPlate"),
         ;
 
         fun color(): Color = when (this) {
@@ -97,6 +103,7 @@ class PopupNativeLegibilityTest {
             ACCENT2 -> DesignTokens.accent2
             AMBER -> DesignTokens.neonAmber
             ACCENT -> DesignTokens.accentOnPopupPlate
+            ERROR -> DesignTokens.errorOnPopupPlate
         }
     }
 
@@ -497,6 +504,40 @@ class PopupNativeLegibilityTest {
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
                     )
                 }
+            },
+            PopupCase(
+                name = "error-description",
+                key = "popup-error-description",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.BUSY, Role.ERROR, Role.AMBER),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                ErrorDescriptionPopup(
+                    request = ErrorDescriptionRequest(
+                        editor = editor,
+                        problems = listOf(
+                            FileProblem(
+                                ProblemSeverity.ERROR,
+                                "Unresolved reference: alpha",
+                                ProblemSource.BUILD,
+                                2,
+                                4,
+                                -1,
+                                -1,
+                            ),
+                            FileProblem(
+                                ProblemSeverity.WARNING,
+                                "Variable 'alpha' is never used",
+                                ProblemSource.EDITOR,
+                                3,
+                                8,
+                                20,
+                                25,
+                            ),
+                        ),
+                    ),
+                    onClose = {},
+                )
             },
             PopupCase(
                 name = "surround",

@@ -20,6 +20,7 @@ class PopupPlateContrastTest {
         "accent2" to { palette: Palette -> palette.accent2 },
         "neonAmber" to { palette: Palette -> palette.neonAmber },
         "accentOnPopupPlate" to { palette: Palette -> accentOnPopupPlate(palette) },
+        "errorOnPopupPlate" to { palette: Palette -> errorOnPopupPlate(palette) },
     )
 
     private fun plate(palette: Palette): Color = palette.glassBase.copy(alpha = POPUP_PLATE_ALPHA)
