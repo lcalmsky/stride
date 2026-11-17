@@ -608,6 +608,7 @@ class AppState {
         showUsages = null
         declarationChoices = emptyList()
         declarationChooserVisible = false
+        navigationTargets = null
         fileStructureVisible = false
         testChoices = emptyList()
         testChooserVisible = false

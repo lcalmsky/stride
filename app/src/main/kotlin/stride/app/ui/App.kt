@@ -136,6 +136,7 @@ import stride.app.navigation.navigationBarListStart
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
+import stride.app.navigation.openFileAtColumn
 import stride.app.navigation.openFileAtLine
 import stride.app.navigation.openUsagesFindWindow
 import stride.app.navigation.openFileAtOffset
@@ -656,6 +657,33 @@ fun App(
                 )
             }
         }
+        if (state.navigationTargets != null && session != null) {
+            val targets = requireNotNull(state.navigationTargets)
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = targets.title,
+                    rows = targets.targets.map { declaration ->
+                        val label = declaration.container?.let { "$it.${declaration.name}" } ?: declaration.name
+                        ChooserRow("$label — ${declaration.relativePath}:${declaration.line + 1}", declaration)
+                    },
+                    onChoose = { declaration ->
+                        state.navigationTargets = null
+                        openFileAtColumn(state, session, declaration.file, declaration.line, declaration.column)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.navigationTargets = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
         if (state.testChooserVisible && session != null) {
             Box(
                 Modifier
@@ -983,7 +1011,8 @@ private fun ParameterInfoHost(state: AppState, session: ProjectSession) {
 /** True while a popup or the find bar owns the keyboard, so closing the search must not refocus. */
 private fun popupOwnsFocus(state: AppState): Boolean =
     state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
-        state.declarationChooserVisible || state.testChooserVisible || state.fileStructureVisible ||
+        state.declarationChooserVisible || state.navigationTargets != null ||
+        state.testChooserVisible || state.fileStructureVisible ||
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||

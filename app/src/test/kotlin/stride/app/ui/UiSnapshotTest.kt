@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterAll
@@ -986,12 +987,113 @@ class UiSnapshotTest {
 
 
     @Test
+    @Order(34)
+    fun `type hierarchy window snapshot`() {
+        val root = hierarchyProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
+            expand(session, root, "demo", "shapes")
+            val shape = openEditor(session, root.resolve("demo/shapes/Shape.kt"))
+            val text = shape.value.text
+            shape.updateValue(TextFieldValue(text, TextRange(text.indexOf("interface Shape") + 10)))
+
+            assertTrue(dispatchAction(ActionId.TYPE_HIERARCHY, state) { null })
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline &&
+                state.hierarchyToolWindow.rows.none { it.node?.text == "Circle" }
+            ) {
+                Thread.sleep(20)
+            }
+            val rows = state.hierarchyToolWindow.rows
+            assertTrue(rows.any { it.node?.text == "Subtypes" }, "the Subtypes row did not load")
+            assertTrue(rows.any { it.node?.text == "Circle" }, "the subtype rows did not load")
+
+            state.toolWindows.height = 420.dp
+            renderApp("23-type-hierarchy.png", state, renderMillis = 1_500)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("23-type-hierarchy.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
             val file = SnapshotRenderer.snapshotDir().resolve(name)
             assertTrue(Files.exists(file) && Files.size(file) > 0, "$name is missing or empty")
         }
+    }
+
+    private fun hierarchyProject(): Path {
+        val root = temp.resolve("hierarchy-project")
+        fun write(relative: String, text: String) {
+            val file = root.resolve(relative)
+            Files.createDirectories(file.parent)
+            Files.writeString(file, text)
+        }
+        write(
+            "demo/shapes/Shape.kt",
+            """
+            package demo.shapes
+
+            interface Shape {
+                fun area(): Double
+            }
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/shapes/Circle.kt",
+            """
+            package demo.shapes
+
+            class Circle(val r: Double) : Shape {
+                override fun area() = r * r
+            }
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/shapes/Polygon.kt",
+            """
+            package demo.shapes
+
+            abstract class Polygon : Shape
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/shapes/Square.kt",
+            """
+            package demo.shapes
+
+            class Square : Polygon() {
+                override fun area() = 1.0
+            }
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/shapes/Solid.kt",
+            """
+            package demo.shapes
+
+            interface Solid : Shape
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/shapes/Triangle.java",
+            """
+            package demo.shapes;
+
+            public class Triangle implements Shape {
+                public double area() {
+                    return 0;
+                }
+            }
+            """.trimIndent() + "\n",
+        )
+        return root
     }
 
     private fun demoProject(): Path {
@@ -1126,6 +1228,7 @@ class UiSnapshotTest {
             "20-show-usages.png",
             "21-recent-locations.png",
             "22-navigation-bar.png",
+            "23-type-hierarchy.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

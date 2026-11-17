@@ -49,6 +49,7 @@ class HierarchyToolWindowState(
 
     private val entries = mutableStateMapOf<HierarchyNode, NodeEntry>()
     private val jobs = ConcurrentHashMap.newKeySet<Job>()
+    private val applyLock = Any()
     private var generation = 0L
 
     /** The shown tree; `null` until the first hierarchy is opened and after [clear]. */
@@ -185,17 +186,21 @@ class HierarchyToolWindowState(
             } catch (t: Throwable) {
                 Result.failure(t)
             }
-            Snapshot.withMutableSnapshot {
-                if (startedFor != generation) return@withMutableSnapshot
-                val current = entries[node] ?: return@withMutableSnapshot
-                val children = result.getOrNull()
-                entries[node] = current.copy(
-                    loading = false,
-                    loaded = true,
-                    children = children ?: emptyList(),
-                    error = result.exceptionOrNull()?.let { it.message ?: it::class.simpleName },
-                )
-                children?.filter { it.expanded }?.forEach { expand(it) }
+            // Two children of one expanded node load at once; their applies must not overlap on
+            // the shared entries map or Compose throws SnapshotApplyConflictException.
+            synchronized(applyLock) {
+                Snapshot.withMutableSnapshot {
+                    if (startedFor != generation) return@withMutableSnapshot
+                    val current = entries[node] ?: return@withMutableSnapshot
+                    val children = result.getOrNull()
+                    entries[node] = current.copy(
+                        loading = false,
+                        loaded = true,
+                        children = children ?: emptyList(),
+                        error = result.exceptionOrNull()?.let { it.message ?: it::class.simpleName },
+                    )
+                    children?.filter { it.expanded }?.forEach { expand(it) }
+                }
             }
         }
         jobs += job
