@@ -303,8 +303,9 @@ object EditActions {
 
     /**
      * Moves the statements at the caret (or the selected lines) past their sibling above or below.
-     * A unit whose line opens a `{` carries lines through its closing `}`, and the comment and
-     * annotation lines glued above it travel with it; neither side is re-indented.
+     * A unit whose first or last line opens a `{` carries lines through its closing `}`, and the
+     * comment and annotation lines glued above it travel with it; neither side is re-indented. A
+     * unit that starts with the `}` of a block opened above it stays where it is.
      */
     fun moveStatement(text: String, selection: TextRange, up: Boolean): EditResult {
         val lines = splitLines(text)
@@ -315,8 +316,9 @@ object EditActions {
         } else {
             firstSelected
         }
-        lastLine = blockLineEnd(text, scan, lastLine)
+        lastLine = maxOf(blockLineEnd(text, scan, lastLine), blockLineEnd(text, scan, firstSelected))
         val firstLine = attachedHeaderStart(lines, firstSelected)
+        if (startsByClosingBlock(text, scan, firstSelected, firstLine)) return EditResult(text, selection)
 
         val neighbourFirst: Int
         val neighbourLast: Int
@@ -350,9 +352,19 @@ object EditActions {
         }
         val startLine = lineIndexOf(text, selection.start)
         val endLine = lineIndexOf(text, selection.end)
+        val endsAtNextLineStart =
+            endLine == lastLine + 1 && selection.end == lineStartAt(text, endLine)
+        val newText = newLines.joinToString("\n")
         val newStart = offsetOf(newLines, mapLine(startLine), selection.start - lineStartAt(text, startLine))
-        val newEnd = offsetOf(newLines, mapLine(endLine), selection.end - lineStartAt(text, endLine))
-        return EditResult(newLines.joinToString("\n"), TextRange(newStart, newEnd))
+        val newEnd = if (endsAtNextLineStart) {
+            offsetOf(newLines, mapLine(lastLine), newLines[mapLine(lastLine)].length) + 1
+        } else {
+            offsetOf(newLines, mapLine(endLine), selection.end - lineStartAt(text, endLine))
+        }
+        return EditResult(
+            newText,
+            TextRange(newStart.coerceIn(0, newText.length), newEnd.coerceIn(0, newText.length)),
+        )
     }
 
     /**
@@ -373,7 +385,8 @@ object EditActions {
 
         val scan = CodeScan(text)
         val lineCodeEnd = codeEndInLine(text, start, end, scan)
-        val closers = unclosedClosers(text, start, lineCodeEnd, scan)
+        val lineEndsWithBrace = text.substring(start, lineCodeEnd).endsWith("{")
+        val closers = if (lineEndsWithBrace) "" else unclosedClosers(text, start, lineCodeEnd, scan)
 
         var current = text
         var codeEnd = lineCodeEnd
@@ -396,9 +409,15 @@ object EditActions {
             } else {
                 separator + innerIndent + separator + indent + "}"
             }
+            // A comment after the `{` stays on the line the block opens.
+            val insertAt = if (lineEndOffset > 0 && current[lineEndOffset - 1] == '\r') {
+                lineEndOffset - 1
+            } else {
+                lineEndOffset
+            }
             return EditResult(
-                current.substring(0, codeEnd) + insertion + current.substring(codeEnd),
-                TextRange(codeEnd + separator.length + innerIndent.length),
+                current.substring(0, insertAt) + insertion + current.substring(insertAt),
+                TextRange(insertAt + separator.length + innerIndent.length),
             )
         }
         if (startsWithBlockKeyword(trimmed) && !trimmed.startsWith("}") &&
@@ -475,12 +494,21 @@ object EditActions {
         }
 
         val chainFirstLine = lineStart(text, first.open)
-        var chainStart = chainFirstLine
-        var chainEnd = lineEnd(text, last.close)
-        val indent = text.substring(
-            chainFirstLine,
-            chainFirstLine + leadingWhitespaceLength(text.substring(chainFirstLine, first.open)),
-        )
+        val headerStart = chainFirstLine + leadingWhitespaceLength(text.substring(chainFirstLine, first.open))
+        val headKeywordStart = if (text.getOrNull(headerStart) == '}') {
+            var i = headerStart + 1
+            while (i < first.open && (text[i] == ' ' || text[i] == '\t')) i++
+            i
+        } else {
+            headerStart
+        }
+        var chainStart = if (headKeywordStart == headerStart) chainFirstLine else headKeywordStart
+        val indent = text.substring(chainFirstLine, headerStart)
+        var closingEnd = last.close
+        var afterClose = closingEnd + 1
+        while (afterClose < text.length && (text[afterClose] == ' ' || text[afterClose] == '\t')) afterClose++
+        if (text.getOrNull(afterClose) == ';') closingEnd = afterClose
+        val tailStart = closingEnd + 1
         val openLine = lineIndexOf(text, target.open)
         val closeLine = lineIndexOf(text, target.close)
         val openIsLineEnd = !hasCodeBetween(text, scan, target.open + 1, lineEnd(text, target.open))
@@ -497,34 +525,47 @@ object EditActions {
         val replacement = when {
             openIsLineEnd && closeIsLineStart -> bodyLines.joinToString("\n")
             inlineBody.isEmpty() -> ""
-            else -> indent + inlineBody
+            chainStart == chainFirstLine -> indent + inlineBody
+            else -> inlineBody
         }
-        if (replacement.isEmpty()) {
-            if (chainEnd < text.length && text[chainEnd] == '\n') {
-                chainEnd++
-            } else if (chainStart > 0) {
-                chainStart--
-                if (chainStart > 0 && text[chainStart - 1] == '\r') chainStart--
+        val tailEnd = lineEnd(text, tailStart)
+        val tail = text.substring(tailStart, tailEnd)
+        val removalEnd = when {
+            !tail.isBlank() || replacement.isNotEmpty() -> tailEnd
+            tailEnd < text.length && text[tailEnd] == '\n' -> tailEnd + 1
+            else -> {
+                if (chainStart > 0) {
+                    chainStart--
+                    if (chainStart > 0 && text[chainStart - 1] == '\r') chainStart--
+                }
+                tailEnd
             }
         }
-        val newText = text.substring(0, chainStart) + replacement + text.substring(chainEnd)
+        val keptTail = if (tail.isBlank() && replacement.isEmpty()) "" else tail
+        val appendFrom = if (tail.isBlank()) removalEnd else tailEnd
+        val newText = text.substring(0, chainStart) + replacement + keptTail + text.substring(appendFrom)
 
         val caretLine = lineIndexOf(text, caret)
         val bodyFirstLine = openLine + 1
-        val mapped = if (bodyLines.isEmpty()) {
-            val inner = text.substring(target.open + 1, target.close)
-            val bodyStart = target.open + 1 + leadingWhitespaceLength(inner)
-            chainStart + indent.length + (caret - bodyStart).coerceIn(0, inlineBody.length)
-        } else {
-            val index = caretLine - bodyFirstLine
-            if (index in bodyLines.indices) {
-                val begin = lineStartAt(text, caretLine)
-                val column = caret - begin
-                val removed = leadingWhitespaceLength(text.substring(begin, lineEnd(text, begin))) -
-                    leadingWhitespaceLength(bodyLines[index])
-                chainStart + offsetOf(bodyLines, index, 0) + (column - removed).coerceIn(0, bodyLines[index].length)
-            } else {
-                chainStart + replacement.length
+        val mapped = when {
+            replacement.isEmpty() -> chainStart
+            bodyLines.isEmpty() -> {
+                val inner = text.substring(target.open + 1, target.close)
+                val bodyStart = target.open + 1 + leadingWhitespaceLength(inner)
+                chainStart + replacement.length - inlineBody.length +
+                    (caret - bodyStart).coerceIn(0, inlineBody.length)
+            }
+            else -> {
+                val index = caretLine - bodyFirstLine
+                if (index in bodyLines.indices) {
+                    val begin = lineStartAt(text, caretLine)
+                    val column = caret - begin
+                    val removed = leadingWhitespaceLength(text.substring(begin, lineEnd(text, begin))) -
+                        leadingWhitespaceLength(bodyLines[index])
+                    chainStart + offsetOf(bodyLines, index, 0) + (column - removed).coerceIn(0, bodyLines[index].length)
+                } else {
+                    chainStart + replacement.length
+                }
             }
         }
         return EditResult(newText, TextRange(mapped.coerceIn(0, newText.length)))
@@ -563,8 +604,6 @@ object EditActions {
             val info = infos[line]
             if (info.end < text.length) {
                 edits.add(TextEdit(info.start, info.end + 1, ""))
-            } else if (info.start > 0 && (line - 1) !in deletions) {
-                edits.add(TextEdit(info.start - 1, info.end, ""))
             }
         }
         return edits
@@ -694,6 +733,15 @@ object EditActions {
         return maxOf(line, lineIndexOf(text, close))
     }
 
+    /** True when [line] starts with the `}` of a block opened above [unitFirst]. */
+    private fun startsByClosingBlock(text: String, scan: CodeScan, line: Int, unitFirst: Int): Boolean {
+        val begin = lineStartAt(text, line)
+        val first = firstCodeIndex(text, scan, begin, lineEnd(text, begin))
+        if (first < 0 || text[first] != '}') return false
+        val open = scan.match(first) ?: return false
+        return lineIndexOf(text, open) < unitFirst
+    }
+
     private fun attachedHeaderStart(lines: List<String>, line: Int): Int {
         var start = line
         while (start > 0 && isHeaderLine(lines[start - 1])) start--
@@ -787,10 +835,8 @@ object EditActions {
 
     private fun commentStartInLine(text: String, start: Int, end: Int, scan: CodeScan): Int? {
         for (i in start until end - 1) {
-            if (text[i] != '/' || (text[i + 1] != '/' && text[i + 1] != '*')) continue
-            if (scan.isCode(i)) continue
-            if (scan.stringContents.any { i >= it.first && i <= it.last }) continue
-            return i
+            if (text[i] != '/' || !scan.isComment(i)) continue
+            if (text[i + 1] == '/' || text[i + 1] == '*') return i
         }
         return null
     }
@@ -840,7 +886,7 @@ object EditActions {
                 '=' -> {
                     val previous = previousNonSpace(text, i)
                     if (depth == 0 && text.getOrNull(i + 1) != '=' &&
-                        (previous == null || previous !in OPERATOR_CHARS)
+                        (previous == null || previous !in COMPOUND_ASSIGNMENT_CHARS)
                     ) {
                         return true
                     }
@@ -1038,15 +1084,15 @@ object EditActions {
         braceLanguage: Boolean,
         unit: String,
     ): String {
+        // Whitespace inside a string literal is part of the value, so the line stays as it is.
+        if (info.startsInString || info.endsInString) return body
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return ""
         val indentLength = leadingWhitespaceLength(body)
         val existingIndent = body.substring(0, indentLength)
-        val rest = body.substring(indentLength)
-        val core = if (info.endsInString) rest else rest.trimEnd(' ', '\t')
+        val core = body.substring(indentLength).trimEnd(' ', '\t')
         val indent = when {
             !braceLanguage -> existingIndent
-            info.startsInString -> existingIndent
             info.startsInBlockComment && trimmed.startsWith("*") -> unit.repeat(level) + " "
             info.startsInBlockComment -> existingIndent
             else -> unit.repeat(level)
@@ -1291,7 +1337,8 @@ private const val BRACKET_CLOSING = ")]}"
 private val NO_SPACE_BEFORE = charArrayOf(')', ']', '.', ',')
 private const val CANCELLATION_CHECK_INTERVAL = 64 * 1024
 private const val INDENT_UNIT_LENGTH = 4
-private val OPERATOR_CHARS = charArrayOf('=', '!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^')
+/** Characters that turn the `=` after them into a compound assignment or comparison. */
+private val COMPOUND_ASSIGNMENT_CHARS = charArrayOf('=', '!', '+', '-', '*', '/', '%', '&', '|', '^')
 private val BLOCK_KEYWORDS = setOf(
     "if", "else", "for", "while", "do", "try", "catch", "finally", "when", "switch",
     "synchronized", "fun", "class", "interface", "object", "init",
@@ -1336,6 +1383,9 @@ internal class CodeScan(private val text: String) {
     }
 
     fun isCode(index: Int): Boolean = kinds[index] == CODE
+
+    /** True when [index] is inside a line or block comment. */
+    fun isComment(index: Int): Boolean = kinds[index] == COMMENT
 
     /** Every matched bracket pair as (open, close), innermost included. */
     fun bracketPairs(): List<Pair<Int, Int>> = brackets

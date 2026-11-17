@@ -596,42 +596,51 @@ distance from the caret — preceding occurrences first, then following ones, th
 `otherTexts` — and drops duplicates.
 
 `moveStatement` swaps the statement unit at the caret — or the selected lines — with its sibling
-above or below. The unit grows through the `}` of a block its first line opens, and comment
-(`//`, `/*`, `*`) and annotation (`@`) lines glued above it travel with it. The neighbour is the
-line above or below: a blank line is a one-line neighbour, the header of an enclosing block and
-the closing line of one are not crossed, and a `}` line brings the block above it. Lines are
-never re-indented, and the selection moves with the unit.
+above or below. The unit grows through the `}` of a block its first or last line opens, and
+comment (`//`, `/*`, `*`) and annotation (`@`) lines glued above it travel with it. The neighbour
+is the line above or below: a blank line is a one-line neighbour, the header of an enclosing
+block and the closing line of one are not crossed, and a `}` line brings the block above it. A
+unit whose first line starts with the `}` of a block opened above it is not moved. Lines are
+never re-indented, and the selection moves with the unit; a selection that ends at the start of
+the line below the unit keeps covering just the unit.
 
 `completeStatement` finishes the caret's line without parsing the file. It closes the `(` and `[`
 left open on the line at the end of its code (before trailing spaces and a comment), opens a
 block when the line starts with a block keyword and does not end with `{`, closes the braces when
 the block already has them, appends `;` when `semicolons` is set (`.java` files), and puts the
 caret on a new line with the current indentation. A `fun` line with a top-level `=` keeps its
-expression body. Brackets and comments are judged through `CodeScan`, so brackets inside strings
-and comments are ignored.
+expression body, also when its return type closes with `>` (`fun f(): Map<String, Int> = mapOf()`).
+A line that ends with `{` leaves its open brackets alone and puts the new content after a
+trailing comment, so `foo({` gains no `)`. Brackets and comments are judged through `CodeScan`,
+so brackets inside strings and comments are ignored.
 
 `unwrap` removes the innermost `{…}` block around the caret whose header before the `{` starts
 with `if`, `else`, `for`, `while`, `do`, `try`, `catch` or `finally`. Chained `else`/`else if`,
 `catch`/`finally` blocks and a `do`'s trailing `while` are removed with it, and only the target
 block's body remains, dedented one unit. A one-line block becomes one line; an empty body removes
-the chain without leaving a blank line; `null` means there was no candidate. A header such as
-`val x = if (…) {` is not a candidate because the line does not start with the keyword.
+the chain without leaving a blank line, with the caret where the chain was; `null` means there
+was no candidate. Text after the chain's closing `}`, `while (…)` or `;` on the same line — a
+comment or another statement — stays where it is, as does code in front of a header that does
+not start its line. A header such as `val x = if (…) {` is not a candidate because the line does
+not start with the keyword.
 
 `reformat` returns the `TextEdit`s that re-indent the selected lines (or the whole file when the
 selection is empty) and trim trailing whitespace; the editor applies them as one undo step.
 Brace languages (`.kt`, `.kts`, `.java`, `.json`) get their indentation recomputed from a bracket
 stack that records the level of the line that opened each bracket, with a one-unit extra indent
 for a line that continues with `.`, `?.`, `?:`, `&&` or `||` and star alignment inside block
-comments; other files only lose trailing whitespace. Trailing whitespace stays on a line whose
-newline is inside a string literal, lines that start inside a raw string keep their indentation,
-blank lines lose their indentation, and a whole-file pass reduces a run of three or more blank
-code lines to two. Line breaks, intra-line spacing and bracket alignment are not changed, so a
-style that aligns parameters under the opening paren becomes one indent unit.
+comments; other files only lose trailing whitespace. A line that starts or ends inside a string
+literal is left exactly as it is, blank lines lose their indentation, and a whole-file pass
+reduces a run of three or more blank code lines to two. Line breaks, intra-line spacing and
+bracket alignment are not changed, so a style that aligns parameters under the opening paren
+becomes one indent unit.
 
 `EDITOR_SCROLL_TO_CENTER` asks the editor content to put the caret's line in the middle of the
 visible viewport without moving the caret or the selection. The content reads the same
-`TextLayoutResult` and viewport height as the caret-following effect and calls
-`EditorScrollState.scrollTo` with `lineCenter - viewport/2`, clamped to the scroll range.
+`TextLayoutResult` and viewport height as the caret-following effect: it takes the line's centre
+including the top padding (`topPad + (lineTop + lineBottom) / 2`), subtracts `topPad` and half
+the viewport height, and calls `EditorScrollState.scrollTo` with the result clamped to the scroll
+range.
 
 `CodeCompletion.candidates(prefix, names, limit)` ranks names with `NameMatcher`;
 `CodeCompletion.identifiers(text, excluded)` lists a file's identifiers (leaving out the range

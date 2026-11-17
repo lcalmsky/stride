@@ -615,9 +615,25 @@ class EditActionsTest {
     @Test
     fun `move statement keeps the selection with the unit`() {
         assertEquals(
-            EditResult("two\none\nthree", TextRange(0, 8)),
+            EditResult("two\none\nthree", TextRange(0, 4)),
             EditActions.moveStatement("one\ntwo\nthree", TextRange(4, 8), up = true),
         )
+    }
+
+    @Test
+    fun `move statement carries the block its first selected line opens`() {
+        val text = "fun a() {\n    one()\n}\nval b = 1"
+        assertEquals(
+            EditResult("val b = 1\nfun a() {\n    one()\n}", TextRange(10, 28)),
+            EditActions.moveStatement(text, TextRange(0, 18), up = false),
+        )
+    }
+
+    @Test
+    fun `move statement does not move a line that closes a block above it`() {
+        val text = "fun f() {\n    one()\n}"
+        val caret = text.indexOf('}')
+        assertEquals(EditResult(text, TextRange(caret)), EditActions.moveStatement(text, TextRange(caret), up = true))
     }
 
     @Test
@@ -645,6 +661,34 @@ class EditActionsTest {
         assertEquals(
             EditResult("fun f() = 1\n", TextRange(12)),
             EditActions.completeStatement("fun f() = 1", TextRange(11), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement leaves a generic return type expression body alone`() {
+        assertEquals(
+            EditResult("fun f(): Map<String, Int> = mapOf()\n", TextRange(36)),
+            EditActions.completeStatement("fun f(): Map<String, Int> = mapOf()", TextRange(35), semicolons = false),
+        )
+        assertEquals(
+            EditResult("fun f(): List<Int> = listOf()\n", TextRange(30)),
+            EditActions.completeStatement("fun f(): List<Int> = listOf()", TextRange(29), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement puts the new block after a trailing comment`() {
+        assertEquals(
+            EditResult("if (x > 0) { // why\n    \n}", TextRange(24)),
+            EditActions.completeStatement("if (x > 0) { // why", TextRange(19), semicolons = false),
+        )
+    }
+
+    @Test
+    fun `complete statement does not close brackets on a line that ends with a brace`() {
+        assertEquals(
+            EditResult("foo({\n    \n}", TextRange(10)),
+            EditActions.completeStatement("foo({", TextRange(5), semicolons = false),
         )
     }
 
@@ -746,6 +790,32 @@ class EditActionsTest {
     }
 
     @Test
+    fun `unwrap keeps the text after the closing brace`() {
+        val text = "if (a) {\n    one()\n} // note\nval b = 1"
+        assertEquals(
+            EditResult("one() // note\nval b = 1", TextRange(1)),
+            EditActions.unwrap(text, TextRange(14)),
+        )
+    }
+
+    @Test
+    fun `unwrap keeps a statement after a one-line block`() {
+        assertEquals(
+            EditResult("foo() bar()", TextRange(3)),
+            EditActions.unwrap("if (a) { foo() } bar()", TextRange(12)),
+        )
+    }
+
+    @Test
+    fun `unwrap puts the caret where it removed an empty body`() {
+        val text = "fun f() {\n    if (a) {\n    }\n    bar()\n}"
+        assertEquals(
+            EditResult("fun f() {\n    bar()\n}", TextRange(10)),
+            EditActions.unwrap(text, TextRange(24)),
+        )
+    }
+
+    @Test
     fun `reformat normalizes the indentation of a Kotlin file`() {
         val text = "class A {\n  fun f() {\n        foo()\n  }\n}"
         assertEquals(
@@ -793,6 +863,12 @@ class EditActionsTest {
     @Test
     fun `reformat keeps the lines of a raw string`() {
         val text = "val s = \"\"\"\n  keep   \n     me\n\"\"\""
+        assertEquals(emptyList<TextEdit>(), EditActions.reformat(text, TextRange(0), braceLanguage = true))
+    }
+
+    @Test
+    fun `reformat keeps a whitespace-only line of a raw string`() {
+        val text = "val s = \"\"\"\n    \n  x\n\"\"\""
         assertEquals(emptyList<TextEdit>(), EditActions.reformat(text, TextRange(0), braceLanguage = true))
     }
 
