@@ -83,7 +83,13 @@ fun FindToolWindow(
         tabState.busy = true
         scope.launch {
             try {
-                val planned = withContext(Dispatchers.Default) { controller.planHit(current, hit) }
+                val hitPlan = withContext(Dispatchers.Default) { controller.planHit(current, hit) }
+                val error = hitPlan.error
+                if (error != null) {
+                    state.showMessage(current, error)
+                    return@launch
+                }
+                val planned = hitPlan.plan
                 val outcome = if (planned == null) {
                     ReplaceOutcome(skippedChanged = 1)
                 } else {

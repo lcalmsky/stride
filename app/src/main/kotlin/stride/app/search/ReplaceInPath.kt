@@ -35,9 +35,14 @@ data class ReplaceFilePlan(
 /**
  * Every file a Replace All would change; the totals drive the confirmation and the status.
  * [error] is set instead of [files] when the replacement string is not valid for the regex, so
- * the UIs report it and never offer the confirmation.
+ * the UIs report it and never offer the confirmation. [skippedEncoding] counts the files that had
+ * a match when read leniently but are not valid UTF-8, so Replace leaves them alone.
  */
-data class ReplacePlan(val files: List<ReplaceFilePlan>, val error: String? = null) {
+data class ReplacePlan(
+    val files: List<ReplaceFilePlan>,
+    val error: String? = null,
+    val skippedEncoding: Int = 0,
+) {
     val occurrences: Int get() = files.sumOf { it.edits.size }
 
     /** Planned files that would be written to disk, so they cannot be undone in stride. */
@@ -52,6 +57,7 @@ data class ReplaceOutcome(
     val skippedChanged: Int = 0,
     val unsavedFiles: Int = 0,
     val failed: Int = 0,
+    val skippedEncoding: Int = 0,
 ) {
     val message: String
         get() = buildString {
@@ -59,9 +65,13 @@ data class ReplaceOutcome(
             if (skippedReadOnly > 0) append(", $skippedReadOnly skipped (read-only)")
             if (skippedChanged > 0) append(", $skippedChanged skipped (changed)")
             if (failed > 0) append(", $failed failed")
+            if (skippedEncoding > 0) append(", ${counted(skippedEncoding, "file")} skipped (not UTF-8)")
             if (unsavedFiles > 0) append("; ${counted(unsavedFiles, "open file")} not saved")
         }
 }
+
+/** The plan of one Replace Selected, or the reason it cannot be applied in [error]. */
+data class HitPlan(val plan: ReplaceFilePlan?, val error: String? = null)
 
 /**
  * Two-phase Replace in Path: [plan] reads every file through the overlay (open editor text,
@@ -140,10 +150,17 @@ object ReplaceInPath {
     ): ReplacePlan {
         if (query.isEmpty()) return ReplacePlan(emptyList())
         val planned = ArrayList<ReplaceFilePlan>()
+        var skippedEncoding = 0
         for (indexed in files.sortedBy { it.relativePath }) {
             if (shouldStop()) break
             val overlay = textOf(indexed.file.path)
-            val text = overlay ?: FindInPathScanner.readText(indexed.file) ?: continue
+            val text = overlay ?: FindInPathScanner.readTextStrict(indexed.file)
+            if (text == null) {
+                if (overlay == null && hasMatch(FindInPathScanner.readText(indexed.file), query, options)) {
+                    skippedEncoding++
+                }
+                continue
+            }
             val computed = computed(text, query, options, replacement)
             computed.error?.let { return ReplacePlan(emptyList(), error = "Invalid replacement: $it") }
             val edits = computed.edits
@@ -158,30 +175,51 @@ object ReplaceInPath {
                 ),
             )
         }
-        return ReplacePlan(planned)
+        return ReplacePlan(planned, skippedEncoding = skippedEncoding)
     }
 
-    /** The single edit of [hit], or `null` when the text no longer has a match at its range. */
+    /**
+     * The single edit of [hit]; [HitPlan.plan] is `null` and [HitPlan.error] set when the hit
+     * cannot be applied, and both are `null` when the text no longer has a match at its range.
+     */
     fun planHit(
         hit: FindInPathHit,
         query: String,
         options: FindOptions,
         replacement: String,
         textOf: (Path) -> String? = { null },
-    ): ReplaceFilePlan? {
-        if (query.isEmpty()) return null
+    ): HitPlan {
+        if (query.isEmpty()) return HitPlan(null)
         val overlay = textOf(hit.file.path)
-        val text = overlay ?: FindInPathScanner.readText(hit.file) ?: return null
-        val edit = replacementsFor(text, query, options, replacement)
-            .firstOrNull { it.start == hit.start && it.end == hit.end } ?: return null
-        return ReplaceFilePlan(
-            file = hit.file,
-            relativePath = hit.relativePath,
-            source = if (overlay != null) ReplaceSource.EDITOR else ReplaceSource.DISK,
-            originalText = text,
-            edits = listOf(edit),
+        val text = if (overlay != null) {
+            overlay
+        } else {
+            FindInPathScanner.readTextStrict(hit.file) ?: return HitPlan(
+                plan = null,
+                error = if (FindInPathScanner.readText(hit.file) != null) {
+                    "${hit.relativePath} is not UTF-8"
+                } else {
+                    null
+                },
+            )
+        }
+        val computed = computed(text, query, options, replacement)
+        computed.error?.let { return HitPlan(plan = null, error = "Invalid replacement: $it") }
+        val edit = computed.edits.firstOrNull { it.start == hit.start && it.end == hit.end }
+            ?: return HitPlan(null)
+        return HitPlan(
+            ReplaceFilePlan(
+                file = hit.file,
+                relativePath = hit.relativePath,
+                source = if (overlay != null) ReplaceSource.EDITOR else ReplaceSource.DISK,
+                originalText = text,
+                edits = listOf(edit),
+            ),
         )
     }
+
+    private fun hasMatch(text: String?, query: String, options: FindOptions): Boolean =
+        text != null && FindModel.search(text, query, options).matches.isNotEmpty()
 
     /**
      * Writes [plan] on the caller's (UI) thread. An open editor takes the edits as one undo step
@@ -220,7 +258,8 @@ object ReplaceInPath {
             } else {
                 when {
                     !Files.isWritable(planned.file.path) -> readOnly += planned.edits.size
-                    FindInPathScanner.readText(planned.file) != planned.originalText -> changed += planned.edits.size
+                    FindInPathScanner.readTextStrict(planned.file) != planned.originalText ->
+                        changed += planned.edits.size
                     else -> try {
                         write(planned)
                         replaced += planned.edits.size
@@ -231,16 +270,25 @@ object ReplaceInPath {
                 }
             }
         }
-        return ReplaceOutcome(replaced, files, readOnly, changed, unsaved, failed)
+        return ReplaceOutcome(replaced, files, readOnly, changed, unsaved, failed, plan.skippedEncoding)
     }
 
-    /** IntelliJ's Replace All wording, including the disk warning when any file is not open. */
+    /**
+     * IntelliJ's Replace All wording, including the disk warning when any file is not open and
+     * the notice for files that had a match but are not valid UTF-8.
+     */
     fun confirmation(plan: ReplacePlan, query: String, replacement: String): String {
-        val text = "Replace ${counted(plan.occurrences, "occurrence")} of '$query' across " +
+        var text = "Replace ${counted(plan.occurrences, "occurrence")} of '$query' across " +
             "${counted(plan.files.size, "file")} with '$replacement'?"
-        if (plan.diskFiles == 0) return text
-        val verb = if (plan.diskFiles == 1) "is" else "are"
-        return "$text ${counted(plan.diskFiles, "file")} $verb written to disk and cannot be undone."
+        if (plan.diskFiles > 0) {
+            val verb = if (plan.diskFiles == 1) "is" else "are"
+            text += " ${counted(plan.diskFiles, "file")} $verb written to disk and cannot be undone."
+        }
+        if (plan.skippedEncoding > 0) {
+            val verb = if (plan.skippedEncoding == 1) "is" else "are"
+            text += " ${counted(plan.skippedEncoding, "file")} $verb not UTF-8 and $verb skipped."
+        }
+        return text
     }
 
     private fun patternFlags(caseSensitive: Boolean): Int =
@@ -258,7 +306,7 @@ class FindReplaceController(
     fun planAll(tab: FindTab): ReplacePlan =
         ReplaceInPath.plan(files(), tab.query, tab.options, tab.replacement.orEmpty(), textOf)
 
-    fun planHit(tab: FindTab, hit: FindInPathHit): ReplaceFilePlan? =
+    fun planHit(tab: FindTab, hit: FindInPathHit): HitPlan =
         ReplaceInPath.planHit(hit, tab.query, tab.options, tab.replacement.orEmpty(), textOf)
 
     fun apply(plan: ReplacePlan): ReplaceOutcome = ReplaceInPath.apply(plan, openEditors())

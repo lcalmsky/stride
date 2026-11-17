@@ -35,13 +35,14 @@ class FindInPathScannerTest {
     }
 
     @Test
-    fun `a file that is not valid UTF-8 is skipped`() {
+    fun `a file that is not valid UTF-8 is still searched`() {
         val legacy = indexed("legacy.txt", "foo café\n".toByteArray(Charsets.ISO_8859_1))
         val valid = indexed("valid.txt", "foo\n".toByteArray())
 
         val hits = FindInPathScanner.scan(listOf(legacy, valid), "foo", FindOptions())
 
-        assertEquals(listOf("valid.txt"), hits.map { it.relativePath })
+        assertEquals(listOf("legacy.txt", "valid.txt"), hits.map { it.relativePath })
+        assertEquals(listOf(1, 1), hits.map { it.column })
     }
 
     @Test

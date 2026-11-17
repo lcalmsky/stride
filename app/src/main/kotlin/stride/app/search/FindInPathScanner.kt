@@ -58,12 +58,26 @@ object FindInPathScanner {
     }
 
     /**
-     * The disk text of [file] under the scan rules; `null` for binary, oversized, unreadable or
-     * non-UTF-8 files. Decoding is strict, like [stride.app.editor.TextFileEditor] reads a file:
-     * a file whose bytes are not valid UTF-8 is left out instead of being rewritten with U+FFFD
-     * replacement characters by Replace in Path.
+     * The disk text of [file] under the scan rules; `null` for binary, oversized or unreadable
+     * files. Decoding is lenient on purpose: a file that is not valid UTF-8 must still yield the
+     * ASCII matches it has, so searching does not depend on the encoding of the file.
      */
     internal fun readText(file: VFile): String? {
+        val bytes = readBytes(file) ?: return null
+        return String(bytes, Charsets.UTF_8)
+    }
+
+    /**
+     * The disk text of [file] like [readText], but `null` when the bytes are not valid UTF-8:
+     * Replace in Path reads through here so it never writes U+FFFD replacement characters into
+     * a file it cannot round-trip.
+     */
+    internal fun readTextStrict(file: VFile): String? {
+        val bytes = readBytes(file) ?: return null
+        return decodeStrictUtf8(bytes)
+    }
+
+    private fun readBytes(file: VFile): ByteArray? {
         if (file.length() > MAX_FILE_SIZE) return null
         val bytes = try {
             Files.readAllBytes(file.path)
@@ -72,7 +86,7 @@ object FindInPathScanner {
         }
         if (bytes.size > MAX_FILE_SIZE) return null
         if (containsNul(bytes)) return null
-        return decodeStrictUtf8(bytes)
+        return bytes
     }
 
     private fun decodeStrictUtf8(bytes: ByteArray): String? = try {

@@ -101,8 +101,19 @@ class ReplaceInPathTest {
         val outcome = ReplaceInPath.apply(plan, emptyList())
 
         assertTrue(plan.files.isEmpty())
+        assertEquals(1, plan.skippedEncoding)
         assertEquals(0, outcome.replaced)
+        assertEquals(1, outcome.skippedEncoding)
         assertArrayEquals(original, Files.readAllBytes(path))
+        assertEquals(
+            "Replace 0 occurrences of 'alpha' across 0 files with 'beta'? " +
+                "1 file is not UTF-8 and is skipped.",
+            ReplaceInPath.confirmation(plan, "alpha", "beta"),
+        )
+        assertEquals(
+            "Replaced 0 occurrences in 0 files, 1 file skipped (not UTF-8)",
+            outcome.message,
+        )
     }
 
     @Test
@@ -184,10 +195,37 @@ class ReplaceInPathTest {
         Files.writeString(path, "alpha\n")
         val hit = hit(path, "alpha", 0, 5)
 
-        assertNotNull(ReplaceInPath.planHit(hit, "alpha", FindOptions(), "beta"))
+        assertNotNull(ReplaceInPath.planHit(hit, "alpha", FindOptions(), "beta").plan)
 
         Files.writeString(path, "beta\n")
-        assertNull(ReplaceInPath.planHit(hit, "alpha", FindOptions(), "beta"))
+        assertNull(ReplaceInPath.planHit(hit, "alpha", FindOptions(), "beta").plan)
+    }
+
+    @Test
+    fun `a hit with an invalid regex replacement reports the error`() {
+        val path = temp.resolve("A.kt")
+        Files.writeString(path, "alpha\n")
+        val hit = hit(path, "alpha", 0, 5)
+
+        val plan = ReplaceInPath.planHit(hit, """(\w+)""", FindOptions(regex = true), "\$2")
+
+        assertNull(plan.plan)
+        assertEquals("Invalid replacement: No group 2", plan.error)
+        assertEquals("alpha\n", Files.readString(path))
+    }
+
+    @Test
+    fun `a hit in a file that is not valid UTF-8 reports the encoding`() {
+        val path = temp.resolve("Legacy.kt")
+        val original = "alpha café\n".toByteArray(Charsets.ISO_8859_1)
+        Files.write(path, original)
+        val hit = hit(path, "alpha", 0, 5)
+
+        val plan = ReplaceInPath.planHit(hit, "alpha", FindOptions(), "beta")
+
+        assertNull(plan.plan)
+        assertEquals("Legacy.kt is not UTF-8", plan.error)
+        assertArrayEquals(original, Files.readAllBytes(path))
     }
 
     @Test
@@ -195,7 +233,9 @@ class ReplaceInPathTest {
         val path = temp.resolve("A.kt")
         Files.writeString(path, "alpha alpha\n")
         val editor = TextFileEditor(VFile(path))
-        val planned = requireNotNull(ReplaceInPath.planHit(hit(path, "alpha", 0, 5), "alpha", FindOptions(), "beta"))
+        val planned = requireNotNull(
+            ReplaceInPath.planHit(hit(path, "alpha", 0, 5), "alpha", FindOptions(), "beta").plan,
+        )
 
         val outcome = ReplaceInPath.apply(ReplacePlan(listOf(planned)), listOf(editor))
 
@@ -214,7 +254,9 @@ class ReplaceInPathTest {
         val path = temp.resolve("A.kt")
         Files.writeString(path, "alpha\n")
         val editor = TextFileEditor(VFile(path), readOnly = true)
-        val planned = requireNotNull(ReplaceInPath.planHit(hit(path, "alpha", 0, 5), "alpha", FindOptions(), "beta"))
+        val planned = requireNotNull(
+            ReplaceInPath.planHit(hit(path, "alpha", 0, 5), "alpha", FindOptions(), "beta").plan,
+        )
 
         val outcome = ReplaceInPath.apply(ReplacePlan(listOf(planned)), listOf(editor))
 
@@ -281,6 +323,10 @@ class ReplaceInPathTest {
             "Replaced 2 occurrences in 2 files, 1 skipped (read-only), 1 skipped (changed); 1 open file not saved",
             ReplaceOutcome(replaced = 2, files = 2, skippedReadOnly = 1, skippedChanged = 1, unsavedFiles = 1).message,
         )
+        assertEquals(
+            "Replaced 0 occurrences in 0 files, 2 files skipped (not UTF-8)",
+            ReplaceOutcome(skippedEncoding = 2).message,
+        )
     }
 
     @Test
@@ -300,6 +346,11 @@ class ReplaceInPathTest {
             "Replace 2 occurrences of 'alpha' across 1 file with 'beta'? " +
                 "1 file is written to disk and cannot be undone.",
             ReplaceInPath.confirmation(two, "alpha", "beta"),
+        )
+        assertEquals(
+            "Replace 0 occurrences of 'alpha' across 0 files with 'beta'? " +
+                "2 files are not UTF-8 and are skipped.",
+            ReplaceInPath.confirmation(ReplacePlan(emptyList(), skippedEncoding = 2), "alpha", "beta"),
         )
     }
 

@@ -252,7 +252,7 @@ class FindToolWindowStateTest {
             openEditors = { listOf(editor) },
         )
         val hit = tab.hits.single()
-        val planned = requireNotNull(controller.planHit(tab, hit))
+        val planned = requireNotNull(controller.planHit(tab, hit).plan)
         val outcome = controller.apply(ReplacePlan(listOf(planned)))
 
         state.finishReplaceSelected(tab, hit.file, outcome, emptyList())

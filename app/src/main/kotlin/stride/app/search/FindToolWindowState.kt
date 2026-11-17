@@ -164,11 +164,6 @@ class FindToolWindowState(
         tab.message = message
     }
 
-    /** Drops [hit] from [tab] after it was replaced. */
-    fun removeHit(tab: FindTab, hit: FindInPathHit) {
-        tab.hits = tab.hits.filterNot { it === hit }
-    }
-
     /** The replace state of [tab]; kept here so it outlives the composition that started a plan. */
     fun replaceState(tab: FindTab): ReplaceTabState =
         replaceStates.computeIfAbsent(tab.id) { ReplaceTabState() }

@@ -771,6 +771,82 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `replace selected with an invalid regex replacement shows the error and keeps the row`() = runComposeUiTest {
+        val root = temp.resolve("replace-selected-invalid-replacement-project")
+        Files.createDirectories(root)
+        val file = root.resolve("A.kt")
+        Files.writeString(file, "alpha one\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            state.openFindResults(
+                kind = FindTabKind.REPLACE,
+                title = "Replace '(alpha)' with '\$2'",
+                query = "(alpha)",
+                options = FindOptions(regex = true),
+                replacement = "\$2",
+            )
+            val tab = state.findToolWindow.tabs.single()
+            waitUntil(timeoutMillis = 5_000) { !tab.searching }
+            state.toolWindows.activate("find")
+
+            setContent { KeyFlowHarness(state) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Replace Selected").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Replace Selected").performClick()
+
+            waitUntil(timeoutMillis = 5_000) { tab.message == "Invalid replacement: No group 2" }
+            assertEquals(1, tab.hits.size)
+            assertEquals("alpha one\n", Files.readString(file))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `replace selected on a file that is not valid UTF-8 shows the error and keeps the row`() = runComposeUiTest {
+        val root = temp.resolve("replace-selected-legacy-encoding-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Legacy.kt")
+        Files.write(file, "alpha café\n".toByteArray(Charsets.ISO_8859_1))
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            state.openFindResults(
+                kind = FindTabKind.REPLACE,
+                title = "Replace 'alpha' with 'beta'",
+                query = "alpha",
+                options = FindOptions(),
+                replacement = "beta",
+            )
+            val tab = state.findToolWindow.tabs.single()
+            waitUntil(timeoutMillis = 5_000) { !tab.searching }
+            state.toolWindows.activate("find")
+
+            setContent { KeyFlowHarness(state) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Replace Selected").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Replace Selected").performClick()
+
+            waitUntil(timeoutMillis = 5_000) { tab.message == "Legacy.kt is not UTF-8" }
+            assertEquals(1, tab.hits.size)
+            assertEquals("alpha café\n", String(Files.readAllBytes(file), Charsets.ISO_8859_1))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `an invalid regex replacement shows the message and a fixed one confirms`() = runComposeUiTest {
         val root = temp.resolve("invalid-replacement-project")
         Files.createDirectories(root)
