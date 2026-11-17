@@ -193,6 +193,14 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `an effect at the end of the declaration is not between it and the use`() {
+        val text = "fun f() {\n    var out = 0\n    val x = (out += 1)\n    println(x)\n}\n"
+        val applied = apply(caretAt(text, "x)"), text)
+        assertEquals("fun f() {\n    var out = 0\n    println((out += 1))\n}\n", applied.text)
+        assertEquals("Inlined x (1 use)", applied.message)
+    }
+
+    @Test
     fun `an initializer with a call after another effect is refused`() {
         val text = "fun f() {\n    val x = load()\n    reset()\n    println(x)\n}\n"
         assertEquals(

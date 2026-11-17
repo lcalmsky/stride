@@ -109,7 +109,7 @@ internal object KotlinInline {
             if (code.isConditional(use.range) || controlBodyAfterDeclaration(code, local.nameToken.start, use.range)) {
                 return RefactoringStep.Refused("$name's initializer would run only in some cases")
             }
-            if (code.effects.any { it.offset >= statement.end && it.offset < use.range.start }) {
+            if (code.effects.any { it.offset > statement.end && it.offset < use.range.start }) {
                 return RefactoringStep.Refused("Code between the declaration and the use of $name would run before its initializer")
             }
             variableCapture(code, local, initializer, uses)?.let {
