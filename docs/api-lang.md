@@ -249,18 +249,23 @@ of this step.
 ### Kotlin intentions
 
 The plugin registers two providers for `kotlin`. Both read tokens from `KotlinLexer`; the
-identifiers inside `${...}` templates are lexed again so they count as code, while plain
-string bodies and comments do not.
+identifiers inside `${...}` templates are lexed again and `$name` templates become
+identifiers, so both count as code, while an escaped `\$`, plain string bodies and comments
+do not. Imports are read only from the file header (blank lines, comments, `@file:`
+annotations, `package` and `import` lines), so an `import` line inside a later string is
+not an import.
 
 | provider | category | entry |
 |---|---|---|
 | `KotlinImportIntentions` | quick fix | `Import '<fqn>'` for the identifier at the caret when no import binds it, it is not qualified by `.`, it is not declared in the file and the lookup has candidates outside the file's package and star imports (sorted, at most 6). The import goes in sorted position among the imports, else after the `package` line with one blank line, else at the top |
-| `KotlinImportIntentions` | quick fix | `Remove unused import '<path>'` and `Remove unused imports`, only with the caret in the import block. An import is unused when its alias or last segment never appears as an identifier outside the package and import lines. Star imports and operator-convention names (`getValue`, `plus`, `component1`, …) always count as used. Removing every import also drops the blank line after them |
-| `KotlinValVarIntention` | intention | `Change 'val' to 'var'` or the reverse for the first `val`/`var` keyword on the caret's line, except `const val` and `lateinit var` |
+| `KotlinImportIntentions` | quick fix | `Remove unused import '<path>'` and `Remove unused imports`, only with the caret in the import block. An import is unused when its alias or last segment never appears as an identifier or soft keyword (`data`, `value`, …) outside the package and import lines. Star imports and operator-convention names (`getValue`, `plus`, `component1`, `assign`, …) always count as used. Removing every import also drops the blank line after them |
+| `KotlinValVarIntention` | intention | `Change 'val' to 'var'` or the reverse for the first `val`/`var` keyword on the caret's line, except `const val`, `lateinit var`, `override var`, a `when (val …)` subject and lines where `by`, `get` or `set` follows |
 
 There is no compiler behind these checks. A name used only in a KDoc link counts as unused,
 and an identifier that is really a local or a parameter can still get import candidates
-when a top-level project declaration has the same name.
+when a top-level project declaration has the same name. Private top-level declarations are
+not offered: `ParsedDeclaration` and `Declaration` carry `isPrivate`, set from the
+declaration's own modifiers.
 
 ## `stride.lang.json`
 

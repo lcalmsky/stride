@@ -198,7 +198,9 @@ overlapping edits change nothing and return `false`. Actions without edits run a
 `ContextActionsPopup` draws a header row (`textOnBusyGlass`, `labelTextSize`) before each
 group only when the actions span two or more groups, so a run-only menu looks as it did.
 The hint reads `↵ Apply` when any entry is a quick fix or an intention, `↵ Run` otherwise.
-`RunConfigurationPopup` (⌃⌥R) shares `ChoicePopup` and draws no headers.
+`RunConfigurationPopup` (⌃⌥R) shares `ChoicePopup` and draws no headers. The first row is
+selected, so with a quick fix or an intention present `Enter` applies it instead of running.
+`ProjectSymbolLookup` skips declarations with `isPrivate`.
 
 ## Project tree
 
