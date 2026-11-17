@@ -23,7 +23,7 @@ sealed interface DeclaredType {
 /** Reads declared types from Kotlin and Java text without resolving anything. */
 object TypeReferences {
     /**
-     * The name offset of the nearest declaration of [name] before [offset] that is in scope at
+     * The name offset of the nearest declaration of [name] at or before [offset] that is in scope at
      * [offset] inside the enclosing member ([DeclarationParser.outline]): a local `val`/`var`, a
      * parameter of the enclosing function or of an enclosing lambda (typed or not), a `for` or
      * `catch` variable; in Java a local, parameter, `for` or `catch` variable. A declaration inside a
@@ -39,16 +39,36 @@ object TypeReferences {
         if (offset <= member.nameStart) return null
         val sanitized = sanitizeSource(text)
         val candidates = ArrayList<LocalCandidate>()
+        val regionEnd = identifierRegionEnd(sanitized, offset).coerceAtMost(member.end)
         if (kotlin) {
-            kotlinLocals(sanitized, member, offset, name, candidates)
+            kotlinLocals(sanitized, member, offset, regionEnd, name, candidates)
         } else {
-            javaLocals(sanitized, member, offset, name, candidates)
+            javaLocals(sanitized, member, regionEnd, name, candidates)
         }
         return candidates
-            .filter { it.nameStart in (member.nameStart + 1) until offset && offset < it.scopeEnd }
+            .filter {
+                offset < it.scopeEnd &&
+                    (it.nameStart in (member.nameStart + 1) until offset ||
+                        (it.nameStart <= offset && offset < nameEndAt(sanitized, it.nameStart)))
+            }
             .maxByOrNull { it.nameStart }
             ?.nameStart
     }
+
+    /**
+     * [offset] when it is not inside an identifier, otherwise the end of the line holding that
+     * identifier: reading on lets a declaration whose name holds the caret still match the text
+     * that follows its name.
+     */
+    private fun identifierRegionEnd(text: String, offset: Int): Int {
+        var end = offset
+        while (end < text.length && isIdentifierChar(text[end])) end++
+        if (end == offset) return offset
+        val lineEnd = text.indexOf('\n', end)
+        return if (lineEnd < 0) text.length else lineEnd
+    }
+
+    private fun isIdentifierChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
 
     /**
      * The type declared by the declaration whose name starts at [nameStart]: a property, local,
@@ -72,10 +92,10 @@ object TypeReferences {
         text: String,
         member: OutlineMember,
         offset: Int,
+        regionEnd: Int,
         name: String,
         candidates: MutableList<LocalCandidate>,
     ) {
-        val regionEnd = offset.coerceAtMost(member.end)
         for (match in KOTLIN_LOCAL.findAll(text.substring(member.start, regionEnd))) {
             if (DeclarationParser.unquote(match.groupValues[1]) != name) continue
             val start = member.start + match.groups[1]!!.range.first
@@ -171,11 +191,10 @@ object TypeReferences {
     private fun javaLocals(
         text: String,
         member: OutlineMember,
-        offset: Int,
+        regionEnd: Int,
         name: String,
         candidates: MutableList<LocalCandidate>,
     ) {
-        val regionEnd = offset.coerceAtMost(member.end)
         val region = text.substring(member.start, regionEnd)
         for (match in JAVA_LOCAL.findAll(region)) {
             if (match.groupValues[2] != name) continue

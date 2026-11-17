@@ -174,6 +174,41 @@ class CallSitesTest {
     }
 
     @Test
+    fun `modifier words do not hide a call of the same name`() {
+        val text = """
+            fun run(door: Door, x: Holder) {
+                door.open()
+                value(1)
+                x.data()
+            }
+            open class A
+            data class B(val x: Int)
+            inline fun f() {}
+            companion object {
+            }
+            enum class E {
+            }
+        """.trimIndent()
+        assertEquals(1, CallSites.find("Sample.kt", text, "open").size)
+        assertEquals(1, CallSites.find("Sample.kt", text, "value").size)
+        assertEquals(1, CallSites.find("Sample.kt", text, "data").size)
+        assertEquals(listOf("door"), CallSites.find("Sample.kt", text, "open").map { it.receiver })
+        assertEquals(listOf("x"), CallSites.find("Sample.kt", text, "data").map { it.receiver })
+        assertTrue(CallSites.find("Sample.kt", text, "inline").isEmpty())
+        assertTrue(CallSites.find("Sample.kt", text, "companion").isEmpty())
+        assertTrue(CallSites.find("Sample.kt", text, "enum").isEmpty())
+
+        val javaText = """
+            class Sample {
+                static {
+                    init();
+                }
+            }
+        """.trimIndent()
+        assertTrue(CallSites.find("Sample.java", javaText, "static").isEmpty())
+    }
+
+    @Test
     fun `other file types have no calls`() {
         assertTrue(CallSites.find("notes.md", "foo()", "foo").isEmpty())
     }

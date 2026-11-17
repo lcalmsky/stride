@@ -94,6 +94,52 @@ class DeclarationParserHierarchyTest {
     }
 
     @Test
+    fun `a comparison inside a class header is not a type argument list`() {
+        val declarations = kotlin("class A(val x: Boolean = 1 < 2) : Base()")
+        assertEquals(listOf("Base"), declarations.single { it.name == "A" }.supertypes)
+    }
+
+    @Test
+    fun `a closed class header keeps a generic supertype and the next one`() {
+        val declarations = kotlin("class A : Base<Map<String, Int>>(), Other")
+        assertEquals(listOf("Base", "Other"), declarations.single { it.name == "A" }.supertypes)
+    }
+
+    @Test
+    fun `a header with a comparison does not slow down the rest of the file`() {
+        val text = buildString {
+            append("class A(val x: Boolean = 1 < 2) : Base()\n")
+            repeat(5000) { append("fun f$it() {}\n") }
+        }
+        val started = System.nanoTime()
+        val declarations = DeclarationParser.parse("Sample.kt", text)
+        val elapsed = System.nanoTime() - started
+        assertEquals(listOf("Base"), declarations.first { it.name == "A" }.supertypes)
+        assertEquals(5001, declarations.size)
+        assertTrue(elapsed < 1_000_000_000L, "parse took ${elapsed / 1_000_000} ms")
+    }
+
+    @Test
+    fun `a header with an unclosed angle bracket stops after its line budget`() {
+        val text = buildString {
+            append("class Broken<T\n")
+            repeat(5000) { append("fun f$it() {}\n") }
+        }
+        val started = System.nanoTime()
+        val declarations = DeclarationParser.parse("Sample.kt", text)
+        val elapsed = System.nanoTime() - started
+        assertTrue(declarations.first { it.name == "Broken" }.supertypes.isEmpty())
+        assertTrue(elapsed < 1_000_000_000L, "parse took ${elapsed / 1_000_000} ms")
+    }
+
+    @Test
+    fun `a data class header of eighty parameter lines keeps its supertype`() {
+        val parameters = (1..80).joinToString(",\n") { "    val p$it: Int = $it" }
+        val declarations = kotlin("data class Settings(\n$parameters,\n) : Base()")
+        assertEquals(listOf("Base"), declarations.single { it.name == "Settings" }.supertypes)
+    }
+
+    @Test
     fun `an unnamed companion object is not a declaration`() {
         val declarations = kotlin(
             """

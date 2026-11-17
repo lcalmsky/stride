@@ -387,6 +387,11 @@ private abstract class SourceScanner(private val kotlinSyntax: Boolean) {
             pendingHeader = null
             return
         }
+        if (header.lines >= MAX_HEADER_LINES) {
+            pendingHeader = null
+            return
+        }
+        header.lines++
         header.text.append(' ').append(code)
         evaluateHeader(header)
     }
@@ -557,6 +562,8 @@ private const val KOTLIN_MODIFIERS =
 private const val KOTLIN_PROPERTY_MODIFIERS =
     "public|private|protected|internal|open|abstract|final|override|lateinit|const|inline|" +
         "noinline|crossinline|suspend|tailrec|operator|infix|external|actual|expect|vararg"
+
+private const val MAX_HEADER_LINES = 200
 
 private const val JAVA_TYPE_MODIFIERS =
     "public|private|protected|static|final|abstract|sealed|non-sealed|strictfp"
@@ -801,6 +808,7 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
 
 private class HeaderAccumulator(val index: Int, val text: StringBuilder, val kotlin: Boolean) {
     var tentative: Boolean = false
+    var lines: Int = 1
 }
 
 private class HeaderAnalysis(
@@ -852,20 +860,26 @@ private fun depthScan(text: String): DepthScan {
     var angle = 0
     var paren = 0
     var bracket = 0
+    var braceDepth = 0
     var colon = -1
     var brace = -1
     var where = -1
     var i = 0
     while (i < text.length) {
         val c = text[i]
+        val flat = paren == 0 && bracket == 0 && braceDepth == 0
         when {
-            c == '<' -> angle++
-            c == '>' -> if (angle > 0) angle--
+            c == '<' && flat -> angle++
+            c == '>' && flat -> if (angle > 0) angle--
             c == '(' -> paren++
             c == ')' -> if (paren > 0) paren--
             c == '[' -> bracket++
             c == ']' -> if (bracket > 0) bracket--
-            c == '{' && angle == 0 && paren == 0 && bracket == 0 -> if (brace < 0) brace = i
+            c == '{' && angle == 0 && paren == 0 && bracket == 0 -> {
+                if (brace < 0) brace = i
+                braceDepth++
+            }
+            c == '}' && angle == 0 && paren == 0 && bracket == 0 -> if (braceDepth > 0) braceDepth--
             c == ':' && angle == 0 && paren == 0 && bracket == 0 -> if (colon < 0) colon = i
             else -> if (angle == 0 && paren == 0 && bracket == 0) {
                 if (where < 0 && matchesWordAt(text, i, "where")) where = i

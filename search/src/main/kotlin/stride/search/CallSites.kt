@@ -227,10 +227,7 @@ object CallSites {
         "if", "when", "for", "while", "do", "catch", "try", "return", "throw", "super", "this",
         "object", "fun", "class", "interface", "constructor", "init", "else", "in", "is", "as",
         "typeof", "switch", "synchronized", "new", "assert", "sizeof", "case", "default", "finally",
-        "break", "continue", "package", "import", "val", "var", "typealias", "enum", "sealed", "data",
-        "companion", "annotation", "public", "private", "protected", "internal", "static", "final",
-        "abstract", "open", "override", "lateinit", "const", "inner", "inline", "value", "actual",
-        "expect", "external", "operator", "infix", "suspend", "vararg", "reified",
+        "break", "continue", "package", "import", "val", "var", "typealias", "static",
     )
 
     private val FUN_AFTER = Regex("""^(?:<[^>]*>\s*)?(?:[\w$.<>?]+\s*\.\s*)?$""")

@@ -148,6 +148,54 @@ class TypeReferencesTest {
     }
 
     @Test
+    fun `a caret on a local declaration name still finds that declaration`() {
+        val kotlinText = """
+            fun f() {
+                val counter: Foo = make()
+                use(counter)
+            }
+        """.trimIndent()
+        val kotlinStart = kotlinText.indexOf("counter")
+        for (offset in intArrayOf(kotlinStart, kotlinStart + 3, kotlinStart + "counter".length - 1)) {
+            assertEquals(
+                kotlinStart,
+                TypeReferences.localDeclaration("Sample.kt", kotlinText, offset, "counter"),
+                "kotlin offset $offset",
+            )
+        }
+
+        val javaText = """
+            class Sample {
+                void run() {
+                    Foo counter = make();
+                    use(counter);
+                }
+            }
+        """.trimIndent()
+        val javaStart = javaText.indexOf("counter")
+        for (offset in intArrayOf(javaStart, javaStart + 3, javaStart + "counter".length - 1)) {
+            assertEquals(
+                javaStart,
+                TypeReferences.localDeclaration("Sample.java", javaText, offset, "counter"),
+                "java offset $offset",
+            )
+        }
+    }
+
+    @Test
+    fun `a caret on a parameter name finds that parameter`() {
+        val text = """
+            fun greet(name: String) {
+                println(name)
+            }
+        """.trimIndent()
+        val start = text.indexOf("name:")
+        for (offset in intArrayOf(start, start + 2, start + "name".length - 1)) {
+            assertEquals(start, TypeReferences.localDeclaration("Sample.kt", text, offset, "name"), "offset $offset")
+        }
+    }
+
+    @Test
     fun `offset outside a member has no local declaration`() {
         val text = "val top = 1\nfun run() {}\n"
         assertNull(TypeReferences.localDeclaration("Sample.kt", text, 0, "top"))
