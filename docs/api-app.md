@@ -2370,7 +2370,11 @@ R3 to R5.
   `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`), when the next
   line starts with `.`, `?.`, `?:`, `&&`, `||`, `else`, `catch`, `finally`, or with `while` after a
   `do` body, or when the line holds only annotations. Newlines inside `()`, `[]` and nested `{}`
-  never split.
+  never split. These shapes also keep one statement, all on the joining side: a control body
+  without braces (a newline after `if (…)`, `for (…)`, `while (…)`, `catch (…)`, `else`, `try`,
+  `do`, `finally`), a next line starting with a block `{` that is not a lambda, `->` or `:`, and
+  text inside strings and templates. The trailing `while (…)` of `do … while` ends its statement,
+  and a lambda's parameter list with its `->` is not a statement.
 - **Locals and references.** Locals are `val`/`var` (single and destructured), function
   parameters, lambda parameters (`it` for a lambda without an arrow), `for` variables, `catch`
   parameters, `when (val x = …)` and local `fun`, `class` and `object` names. A reference is an
@@ -2401,8 +2405,9 @@ R3 to R5.
 
 | Case | Result |
 |---|---|
-| A selection | the trimmed selection is the expression; it must pass the expression rules below |
-| No selection | candidates from the caret token, innermost first: the postfix chains holding it (`a`, `a.b`, `a.b.c()`), each enclosing whole call argument or parenthesized expression, then the statement's whole value (right of `=`, after `return` or `throw`, or the whole expression statement); only candidates passing the rules stay. One is used directly; several open the `Expressions` chooser with the candidate highlighted |
+| A selection | the trimmed selection is the expression; it must pass the expression rules below, otherwise `Select an expression`, which also answers a selection starting in a string or a comment (template code excluded) and a caret with no candidate. A selection of only whitespace counts as no selection |
+| No selection | candidates from the caret token, innermost first: the postfix chains holding it (`a`, `a.b`, `a.b.c()`), each enclosing whole call argument or parenthesized expression, then the statement's whole value (right of `=`, after `return` or `throw`, or the whole expression statement); only candidates passing the rules stay. One is used directly; several open the `Expressions` chooser with the candidate highlighted and its text on one line, cut to 60 characters and `…` |
+| Expression text in messages | `<expr>` is the expression on one line, cut to its first 37 characters and `...` past 40 |
 | Expression rules | starts and ends on token boundaries; brackets inside pair up; no statement split, `;`, top-level `=` or `:` inside; no top-level `val`, `var`, `fun`, `class`, `object`, `interface`, `typealias`; does not start or end with an operator; not after `.`, `?.` or `::`; not followed by `(`, `[`, a trailing-lambda `{`, `=`, a compound assignment, `++` or `--`; not a type (after `:`, `as`, `as?`, `is`, `!is`, or inside `<…>` type arguments); not inside an annotation, `import` or `package`; no `return`, `break`, `continue` or `throw` except `return@label` inside a lambda written within it |
 | Not in a statement block | refuse: `Introduce Variable works inside a function body`; a function written `= expression` refuses with `Expression body: convert it to a block body first` |
 | The statement shares its line | refuse: `The statement shares its line; put it on its own line first` |
@@ -2447,7 +2452,7 @@ lambda.
 | Stable initializer | every reference is replaced. Where a name in the initializer resolves to another declaration at a reference: `Inlining would make <y> refer to another declaration` |
 | Other initializers | exactly one reference (`<name> is used <n> times and its initializer is not stable`); not inside a lambda, loop body, local function or object expression that does not also hold the declaration (`<name>'s initializer would run later or repeatedly`); not conditional in its statement and not inside a control body entered after the declaration (`<name>'s initializer would run only in some cases`); no effect between the end of the declaration and the reference (`Code between the declaration and the use of <name> would run before its initializer`) |
 | Substitution | the reference becomes the initializer as written, in parentheses unless the initializer is atomic (an identifier, a literal, `this`, a postfix chain of names, calls, indexing and `!!`, or one parenthesized group) or the reference fills a whole argument, a whole right side of `=`, a whole statement, the whole value after `return`, or a whole `if`, `when` or `while` condition. `$name` becomes `${<initializer>}` and `${name}` becomes `${<initializer>}` |
-| Variable result | the declaration's lines are removed with their line break; status `Inlined <name> (<n> uses)`; the caret goes to the first replaced use |
+| Variable result | the declaration's lines are removed with their line break; status `Inlined <name> (<n> uses)`, `(1 use)` for one; the caret goes to the first replaced use |
 | Function body | `= <expression>`, a block holding only `return <expression>`, or, for a function without a return type or with `: Unit`, a block holding one expression statement. Otherwise `<name> has a body of several statements` |
 | Function refusals | `open`, `override`, `abstract` or an interface member: `Calls of <name> may reach another implementation`. Type parameters: `<name> is generic`. An extension receiver: `<name> is an extension function`. `vararg`: `<name> has a vararg parameter`. The body calls `<name>`: `<name> is recursive`. A `return` besides the leading one, except `return@label` of a lambda in the body: `<name> returns from inside its body`. A return type other than `Unit`, unless the body is a constructor call of exactly that type, a literal of it, or a comparison or logical expression for `Boolean`: `<name> declares type <T>; the inlined expression could get a different type` |
 | Calls | `<name>(<args>)` or `this.<name>(<args>)`; named arguments map by name and a trailing lambda to the last parameter. Omitted arguments with defaults: `The call at line <n> uses default arguments`. A member function called from another class body: `The call at line <n> is in another class`. A statement-body function whose call is not a whole statement: `The call at line <n> uses the result of <name>` |
@@ -2467,9 +2472,9 @@ inlining every call.
   when `openRename` would open its popup), `Introduce Variable…`, `Extract Method…`, `Inline…`
   (when the provider's step is not `Refused`). An entry runs the same path as its stroke and
   reuses the step already prepared. With no entry the status reads `No refactorings available at
-  the caret`. IntelliJ lists only applicable refactorings too; the out-of-scope ones (Change
-  Signature `⌘F6`, Move `F6`, Safe Delete `⌘⌦`, Extract Parameter, Field and Constant) are not
-  listed.
+  the caret`; a read-only editor opens no popup and reads `File is read-only`. IntelliJ lists only
+  applicable refactorings too; the out-of-scope ones (Change Signature `⌘F6`, Move `F6`, Safe
+  Delete `⌘⌦`, Extract Parameter, Field and Constant) are not listed.
 - **Choosers.** `RefactoringStep.Choose` opens the same popup with the step's title and options; a
   step with one option is followed without showing it. While an option is selected its ranges
   are drawn through `TextFileEditor.usageHighlights` (spans merged only when non-empty, as in N4)
