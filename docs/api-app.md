@@ -17,6 +17,7 @@ no `<depends>` and declares the extension points that the other modules extend:
   <extensionPoints>
     <extensionPoint name="fileType" beanClass="stride.lang.FileTypeBean"/>
     <extensionPoint name="lang.syntaxHighlighterFactory" beanClass="stride.lang.SyntaxHighlighterFactoryBean"/>
+    <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
     <extensionPoint qualifiedName="stride.searchEverywhereContributor"
                     interface="stride.search.SearchEverywhereContributorFactory"/>
     <extensionPoint name="fileEditorProvider" interface="stride.app.editor.FileEditorProvider"/>
@@ -159,6 +160,45 @@ beanClass="stride.lang.CommenterBean"/>`; because its id is `stride.core` the po
 
 Both register `//`, `/*` and `*/`. A language without a commenter (plain text) resolves to
 `null`; the editor then consumes the comment actions without changing the text.
+
+### Intentions and the ⌥↩ menu
+
+⌥↩ (`SHOW_INTENTION_ACTIONS`) opens one popup with three groups in this order: quick fixes,
+intentions and run entries. Languages contribute the first two through the `:lang`
+extension point `stride.lang.intentionProvider` (contract in `docs/api-lang.md`); the run
+group is the existing main, test, rerun and stop entries.
+
+```kotlin
+package stride.app.run
+
+enum class ContextActionKind { QUICK_FIX, INTENTION, RUN_MAIN, RUN_TEST, RUN_TEST_CLASS, RERUN, STOP }
+enum class ContextActionGroup(val title: String) { QUICK_FIX("Quick fixes"), INTENTION("Intentions"), RUN("Run") }
+data class ContextAction(val kind: ContextActionKind, val label: String, val edits: List<TextEdit> = emptyList()) {
+    val group: ContextActionGroup
+}
+
+object ContextActions {
+    fun collect(text: String, fileName: String, caretOffset: Int, rerunName: String? = null,
+                runningName: String? = null, intentions: List<IntentionAction> = emptyList()): List<ContextAction>
+    fun intentionsAt(text: String, fileName: String, caretOffset: Int, symbols: SymbolLookup): List<IntentionAction>
+}
+
+fun openContextActions(state: AppState): Boolean
+fun applyContextAction(state: AppState, action: ContextAction): Boolean   // edits, else run
+```
+
+`openContextActions` passes a `stride.app.intention.ProjectSymbolLookup` over the project's
+`DeclarationIndex`: top-level declarations (`container == null`) with a package map their
+simple name to `<package>.<name>`. It never waits for the index scan and rebuilds its map
+only when `snapshot()` returns a new list. `applyContextAction` hands an action's edits to
+`TextFileEditor.applyEdits(edits): Boolean`, which applies them as one undo step and maps
+the caret through them; a read-only editor, an empty list, an edit out of range or two
+overlapping edits change nothing and return `false`. Actions without edits run as before.
+
+`ContextActionsPopup` draws a header row (`textOnBusyGlass`, `labelTextSize`) before each
+group only when the actions span two or more groups, so a run-only menu looks as it did.
+The hint reads `↵ Apply` when any entry is a quick fix or an intention, `↵ Run` otherwise.
+`RunConfigurationPopup` (⌃⌥R) shares `ChoicePopup` and draws no headers.
 
 ## Project tree
 
@@ -2144,7 +2184,7 @@ Maven Central alone does not carry it.
 | `KeyStrokeTextTest` | macOS glyph formatting and order, platform modifier labels (`Ctrl+S`, `Shift+Ctrl+O`) for non-macOS keymaps, first bound stroke per action |
 | `WelcomeHintsTest` | hints read from the keymap, Double Shift as the literal gesture, and platform modifier labels on a non-macOS keymap |
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
-| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
 | `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
@@ -2185,7 +2225,8 @@ Maven Central alone does not carry it.
 | `CodeCompletionTest` | identifier order, prefix and camel-hump ranking with duplicates, blank-prefix ordering, the result limit and language keywords |
 | `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections |
 | `TextFileEditorUndoTest` | undo restores text, selection and a freshly highlighted editor; duplicate undo; read-only actions; commenter resolution; goto line parsing and the popup flag |
-| `TextFileEditorActionsTest` | extend/shrink selection and its reset, join and start-new-line undo steps, toggle case, brace and code-block caret moves, method up/down, whole-line copy and cut through a fake clipboard, hippie cycling and restart, one-step rename and replace range |
+| `TextFileEditorActionsTest` | extend/shrink selection and its reset, join and start-new-line undo steps, toggle case, brace and code-block caret moves, method up/down, whole-line copy and cut through a fake clipboard, hippie cycling and restart, one-step rename and replace range, `applyEdits` caret mapping, one undo step and rejection of overlapping or read-only edits |
+| `ContextActionsTest` | run entry order, then quick fixes before intentions before run entries with the run order unchanged |
 | `CommenterEpTest` | `lang.commenter` resolves kotlin and json to `//` and `/* */`, plain text to `null`, one registration per language plugin |
 | `TerminalSessionTest` | fake-connector output, ANSI styles, carriage return and erase, resize, write, key encoding, dispose |
 | `PtyShellIntegrationTest` | a real `/bin/zsh -lc` PTY writing into the terminal model (skipped when no PTY is available) |

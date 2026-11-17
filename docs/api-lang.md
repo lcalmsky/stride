@@ -170,6 +170,47 @@ shifted copies of the old spans. `lastRelexedLineCount` is the number of lines r
 the last edit; an edit inside ordinary single-line code relexes one line. After every edit
 `spans()` equals the spans of a newly constructed highlighter over the same text.
 
+### Intentions
+
+Language plugins contribute ⌥↩ quick fixes and intentions through the bean extension point
+`stride.lang.intentionProvider`, keyed by `language` like `lang.commenter`. A provider only
+reads the text and returns edits; the app applies them.
+
+```kotlin
+data class TextEdit(val start: Int, val end: Int, val replacement: String)   // offsets of the original text
+enum class IntentionCategory { QUICK_FIX, INTENTION }
+data class IntentionAction(val text: String, val category: IntentionCategory, val edits: List<TextEdit>)
+
+fun interface SymbolLookup {                       // simple name → fully qualified names
+    fun qualifiedNames(simpleName: String): List<String>
+    companion object { val EMPTY: SymbolLookup }
+}
+
+class IntentionContext(val text: String, val caretOffset: Int, val fileName: String,
+                       val symbols: SymbolLookup = SymbolLookup.EMPTY)
+
+interface IntentionProvider {
+    fun collect(context: IntentionContext): List<IntentionAction>
+    companion object {
+        const val EP_NAME = "stride.lang.intentionProvider"
+        val EP: BeanExtensionPointName<IntentionProviderBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): List<IntentionProvider>
+        fun collect(language: Language, context: IntentionContext,
+                    area: ExtensionArea = Application.extensionArea): List<IntentionAction>
+    }
+}
+
+class IntentionProviderBean : ExtensionBean() {
+    override val key: String?                      // attributes["language"]
+    fun provider(): IntentionProvider
+}
+```
+
+`collect` runs every provider of the language in extension-point order, logs and skips a
+provider that throws, and returns quick fixes before intentions while keeping the order
+inside each category. Edits of one action must not overlap. `:lang` does not depend on
+`:search`; the app supplies `SymbolLookup` from its declaration index.
+
 ## `stride.lang.kotlin`
 
 ```kotlin
@@ -205,6 +246,22 @@ resumption; quotes inside a template are not treated as nested strings, so a `}`
 quoted literal in a template closes the template early. That is the documented simplification
 of this step.
 
+### Kotlin intentions
+
+The plugin registers two providers for `kotlin`. Both read tokens from `KotlinLexer`; the
+identifiers inside `${...}` templates are lexed again so they count as code, while plain
+string bodies and comments do not.
+
+| provider | category | entry |
+|---|---|---|
+| `KotlinImportIntentions` | quick fix | `Import '<fqn>'` for the identifier at the caret when no import binds it, it is not qualified by `.`, it is not declared in the file and the lookup has candidates outside the file's package and star imports (sorted, at most 6). The import goes in sorted position among the imports, else after the `package` line with one blank line, else at the top |
+| `KotlinImportIntentions` | quick fix | `Remove unused import '<path>'` and `Remove unused imports`, only with the caret in the import block. An import is unused when its alias or last segment never appears as an identifier outside the package and import lines. Star imports and operator-convention names (`getValue`, `plus`, `component1`, …) always count as used. Removing every import also drops the blank line after them |
+| `KotlinValVarIntention` | intention | `Change 'val' to 'var'` or the reverse for the first `val`/`var` keyword on the caret's line, except `const val` and `lateinit var` |
+
+There is no compiler behind these checks. A name used only in a KDoc link counts as unused,
+and an identifier that is really a local or a parameter can still get import candidates
+when a top-level project declaration has the same name.
+
 ## `stride.lang.json`
 
 ```kotlin
@@ -235,6 +292,8 @@ character (including an unknown word) as `BAD_CHARACTER`.
     <fileType extension="kts" language="kotlin" implementationClass="stride.lang.kotlin.KotlinFileType"/>
     <lang.syntaxHighlighterFactory language="kotlin"
                                    implementationClass="stride.lang.kotlin.KotlinSyntaxHighlighterFactory"/>
+    <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportIntentions"/>
+    <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
   </extensions>
 </stride-plugin>
 ```
@@ -273,6 +332,9 @@ Both plugins register extensions only. The two extension points are declared by 
 | `:lang` | `FileTypeRegistryTest` | extension key, case-insensitivity, last dot, plain-text fallback |
 | `:lang` | `ColorSchemeTest` | logo palette, light background, fallback chain |
 | `:lang` | `LangPluginIntegrationTest` | both real descriptors parsed with `PluginDescriptorParser`, extensions instantiated through a real `ExtensionArea`, file types and highlighters resolved |
+| `:lang` | `IntentionProviderEpTest` | providers resolved by language key, quick fixes sorted before intentions across providers, a throwing provider skipped, unknown language empty |
 | `:plugins:lang-kotlin` | `KotlinLexerTest` | token kinds, per-line multi-line tokens, resume at every line start |
 | `:plugins:lang-kotlin` | `LineStateHighlighterTest` | 200 seeded random edits equal a full relex, single-line edit relexes one line |
+| `:plugins:lang-kotlin` | `KotlinImportIntentionsTest` | import insertion positions, same-package, imported, alias, star and qualified skips, caret in strings and comments, the candidate limit, unused import removal with operator names, aliases, stars and template usages |
+| `:plugins:lang-kotlin` | `KotlinValVarIntentionTest` | `val`/`var` toggle, `const val` and `lateinit var` skipped, keywords in comments ignored |
 | `:plugins:lang-json` | `JsonLexerTest` | token kinds, invalid characters, resume at every line start |

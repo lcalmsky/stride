@@ -95,7 +95,7 @@ brew install --cask lcalmsky/stride/stride
 
 - **테스트 실행** `src/test` 아래 `.kt` 파일의 클래스 줄과 `@Test` 함수마다 거터에 `▶` 가 붙습니다. 눌러서 그 테스트를 실행합니다. `⌃⇧R` 은 커서 위치의 테스트를, 없으면 파일의 main 이나 스크립트를 실행합니다
 - **main 실행** Kotlin·Java 의 `main` 함수 줄에도 거터 `▶` 가 붙습니다. `⌃R` 은 마지막 실행이 있으면 다시 실행하고, 없으면 `⌃⇧R` 과 같은 대상을 실행합니다. `.py`·`.sh`·`.js`·`.rb`·`.kts` 스크립트와 Gradle 밖 단일 Java 파일은 직접 실행하고, Gradle 소스셋의 Kotlin·Java 는 `strideRunMain` 작업으로 실행합니다
-- **컨텍스트 액션과 실행 구성** `⌥↩` 는 커서 위치에서 실행할 main·테스트와 다시 실행·중지를 팝업으로 보여 줍니다. `⌃⌥R` 은 현재 파일의 실행 항목과 최근 실행 10개를 보여 주고 `Enter` 로 실행합니다. `⌘F9` 는 `classes`·`testClasses` 를 빌드합니다
+- **인텐션·퀵픽스와 실행 구성** `⌥↩` 는 커서 위치의 퀵픽스, 인텐션, 실행 항목을 묶음별로 나눈 팝업을 엽니다. Kotlin 에서는 프로젝트 선언 인덱스로 찾은 미해결 심볼을 import 하고, import 블록에서 안 쓰는 import 를 지우고, `val`·`var` 를 바꿉니다. 실행 묶음에는 커서 위치에서 실행할 main·테스트와 다시 실행·중지가 그대로 남고, 적용한 편집은 `⌘Z` 한 번으로 되돌립니다. `⌃⌥R` 은 현재 파일의 실행 항목과 최근 실행 10개를 보여 주고 `Enter` 로 실행합니다. `⌘F9` 는 `classes`·`testClasses` 를 빌드합니다
 - **Run 창** 실행 세션이 둘 이상이거나 끝난 세션이 있으면 창 위에 탭이 생기고 `×` 로 닫습니다. 테스트 실행은 트리와 콘솔로 나눠 통과·실패·건너뜀 수를 세고, 메서드를 고르면 메시지와 스택, 그 테스트의 출력을 보여 줍니다. 애플리케이션 실행은 콘솔만 보여 주며 콘솔 아래 입력 줄로 표준 입력을 보냅니다. `⌘F2` 로 중지하고 `⌘R` 로 다시 실행하며 `⌘4` 로 창을 엽니다
 - **항상 실행** Gradle init script 가 `Test` 작업의 최신 검사와 빌드 캐시를 끕니다. 같은 테스트를 다시 돌려도 건너뛰지 않고 이벤트를 보고합니다
 
@@ -258,9 +258,9 @@ JDK 21 이 필요합니다. Gradle toolchain 이 21 을 요구합니다.
 
 ## 동작 방식
 
-앱은 여섯 모듈로 나뉩니다. `core` 는 서비스·확장점·`Disposer` 를 제공하고, `lang` 은 언어와 파일 종류·하이라이터·주석 처리 API 를 정의합니다. `search` 는 파일 이름 인덱스, Kotlin·Java 선언 인덱스, Search Everywhere 의 모델을, `app` 은 Compose Desktop UI 와 에디터·탐색·북마크·Run·터미널을 담습니다. `plugins/lang-kotlin` 과 `plugins/lang-json` 이 각각 Kotlin 과 JSON 의 렉서·하이라이터·파일 종류를 등록합니다.
+앱은 여섯 모듈로 나뉩니다. `core` 는 서비스·확장점·`Disposer` 를 제공하고, `lang` 은 언어와 파일 종류·하이라이터·주석 처리·인텐션 API 를 정의합니다. `search` 는 파일 이름 인덱스, Kotlin·Java 선언 인덱스, Search Everywhere 의 모델을, `app` 은 Compose Desktop UI 와 에디터·탐색·북마크·Run·터미널을 담습니다. `plugins/lang-kotlin` 과 `plugins/lang-json` 이 각각 Kotlin 과 JSON 의 렉서·하이라이터·파일 종류를 등록하고, Kotlin 플러그인은 import 퀵픽스와 `val`·`var` 인텐션도 등록합니다.
 
-모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
+모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
 
 에디터는 스크롤 뷰포트와 크롬 인셋을 따로 둡니다. 내용은 창 가장자리까지 이어지고 유리 캡슐과 사이드바가 그 위에 떠 있으며, 인셋은 캐럿 스크롤·거터·스크롤바 여백에 반영됩니다. 1,000줄 이상 문서는 내용을 별도 스크롤 레이어에 배치하고 800줄 아래로 내려가면 레이어를 풉니다.
 
