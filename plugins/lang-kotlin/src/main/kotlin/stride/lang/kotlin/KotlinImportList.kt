@@ -92,6 +92,12 @@ internal fun usedIdentifiersIn(text: String, parsed: KotlinImportList): Set<Stri
     return used
 }
 
+/** The imports the file never uses, by the one rule the quick fix, the optimizer and the provider share. */
+internal fun unusedImports(text: String, parsed: KotlinImportList): List<KotlinImport> {
+    val used = usedIdentifiersIn(text, parsed)
+    return parsed.imports.filter { !it.star && it.boundName !in used && it.boundName !in ALWAYS_USED }
+}
+
 internal fun isOnPackageOrImportLine(offset: Int, parsed: KotlinImportList): Boolean {
     val packageStart = parsed.packageLineStart
     val packageEnd = parsed.packageLineEnd

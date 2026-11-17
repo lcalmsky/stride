@@ -33,6 +33,14 @@ class LangPluginIntegrationTest {
                 "stride.core",
             )
         )
+        area.registerExtensionPoint(
+            ExtensionPointDescriptor(
+                ProblemProvider.EP_NAME,
+                null,
+                ProblemProviderBean::class.java.name,
+                "stride.core",
+            )
+        )
         for (descriptor in descriptors) {
             for ((extensionPoint, element) in descriptor.extensions) {
                 area.registerExtension(extensionPoint, element)
@@ -56,6 +64,19 @@ class LangPluginIntegrationTest {
 
         assertEquals(2, providers.size)
         assertTrue(providers.all { it.second.attributes["language"] == "kotlin" })
+    }
+
+    @Test
+    fun `each language plugin registers its problem provider`() {
+        assertEquals(
+            listOf("stride.lang.kotlin.KotlinProblemProvider"),
+            ProblemProvider.forLanguage(Language("kotlin"), area).map { it::class.java.name },
+        )
+        assertEquals(
+            listOf("stride.lang.json.JsonProblemProvider"),
+            ProblemProvider.forLanguage(Language("json"), area).map { it::class.java.name },
+        )
+        assertTrue(ProblemProvider.forLanguage(Language("plain"), area).isEmpty())
     }
 
     @Test

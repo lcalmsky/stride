@@ -239,6 +239,59 @@ there is nothing to change. `forLanguage` returns a freshly created optimizer fo
 bean whose `language` attribute equals `language.id`, or `null` when no bean matches, so a
 file type without a registered optimizer reports that Optimize Imports is unavailable.
 
+### Problem providers
+
+Language plugins report brackets that do not pair up and similar text-only mistakes through the
+bean extension point `stride.lang.problemProvider`, keyed by `language` like `lang.commenter`.
+A provider reads the document text and its file name, nothing outside the file.
+
+```kotlin
+enum class ProblemSeverity { ERROR, WARNING }
+
+data class Problem(val start: Int, val end: Int, val severity: ProblemSeverity, val message: String)
+
+class ProblemContext(val text: String, val fileName: String)
+
+interface ProblemProvider {
+    fun collect(context: ProblemContext): List<Problem>
+    companion object {
+        const val EP_NAME = "stride.lang.problemProvider"
+        val EP: BeanExtensionPointName<ProblemProviderBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): List<ProblemProvider>
+        fun collect(language: Language, context: ProblemContext,
+                    area: ExtensionArea = Application.extensionArea): List<Problem>
+    }
+}
+
+class ProblemProviderBean : ExtensionBean() {
+    override val key: String?                       // attributes["language"]
+    val language: String?
+    fun provider(): ProblemProvider
+}
+
+object BracketProblems {
+    fun find(brackets: List<Pair<Int, Char>>): List<Problem>
+}
+```
+
+A provider judges from the text alone: no compiler, classpath or project index stands behind it,
+so a check that needs name or type resolution does not belong here and the build output reports
+those instead. A provider that cannot tell a real problem from code it does not understand
+reports nothing rather than guess. A problem covers `[start, end)` of the collected text; an
+empty range marks a position.
+
+`collect` runs every provider of the language in extension-point order, logs and skips a provider
+that throws, and drops a problem whose range lies outside the text (`start` must be in
+`0..end` and `end` at most the text length). The result is sorted by start, errors before
+warnings at the same start.
+
+`BracketProblems.find` matches the code brackets of a document in document order — offsets are
+already known and brackets inside strings, characters and comments are already removed — with a
+stack. A closing bracket with no opener of its kind on the stack is `Unexpected ')'`; an opener
+still on the stack when its matching closer arrives, or when the input ends, is `Unclosed '('`.
+Every message is an `ERROR` over `[offset, offset + 1)`, and the result is sorted by start.
+`<` and `>` are not brackets.
+
 ## `stride.lang.kotlin`
 
 ```kotlin
@@ -316,6 +369,28 @@ shape returns no edits.
 The limits are the intentions' limits: there is no compiler, a name used only in a KDoc link
 counts as unused, and nothing is reordered around comments.
 
+### Kotlin problems
+
+`KotlinProblemProvider` registers for `kotlin` and reports two kinds of problem, both from
+`KotlinLexer` tokens:
+
+| severity | message | range |
+|---|---|---|
+| error | `Unexpected ')'`, `Unclosed '('` | the one bracket character |
+| warning | `Unused import directive` | the import directive, without its line break |
+
+Brackets are counted only from the `BRACES`, `BRACKETS` and `PARENTHESES` tokens of
+`codeTokens`, so brackets in regular strings, raw strings, characters and nested block comments
+are never counted, while identifiers inside `${...}` templates are lexed again as code. The
+matching itself is `BracketProblems.find`.
+
+An import is unused by the same rule as the quick fix and the optimizer: `unusedImports` in
+`KotlinImportList.kt` returns the imports whose alias or last segment never appears as an
+identifier or soft keyword outside the package and import lines, star imports and
+operator-convention names always count as used, and the provider reports one warning per such
+import. The limits are the intentions' limits: there is no compiler, and a name used only in a
+KDoc link counts as unused, so its import gets a warning too.
+
 ## `stride.lang.json`
 
 ```kotlin
@@ -332,6 +407,11 @@ The lexer recognizes strings with escapes, numbers (including sign, fraction and
 `true`/`false`/`null` as `KEYWORD`, braces, brackets, colon, comma, and reports every other
 character (including an unknown word) as `BAD_CHARACTER`.
 
+`JsonProblemProvider` registers for `json` and reports `Unexpected ']'` and `Unclosed '{'` errors
+for the `BRACES` and `BRACKETS` tokens through `BracketProblems.find`. A `BAD_CHARACTER` token
+that starts with `/` — a comment — means the file is not strict JSON, so the provider reports
+nothing instead of judging a document it does not understand.
+
 ## Plugin descriptors
 
 `plugins/lang-kotlin/src/main/resources/META-INF/stride-plugin.xml`:
@@ -346,9 +426,11 @@ character (including an unknown word) as `BAD_CHARACTER`.
     <fileType extension="kts" language="kotlin" implementationClass="stride.lang.kotlin.KotlinFileType"/>
     <lang.syntaxHighlighterFactory language="kotlin"
                                    implementationClass="stride.lang.kotlin.KotlinSyntaxHighlighterFactory"/>
+    <lang.commenter language="kotlin" implementationClass="stride.lang.kotlin.KotlinCommenter"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportIntentions"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
     <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
+    <lang.problemProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinProblemProvider"/>
   </extensions>
 </stride-plugin>
 ```
@@ -364,6 +446,8 @@ character (including an unknown word) as `BAD_CHARACTER`.
     <fileType extension="json" language="json" implementationClass="stride.lang.json.JsonFileType"/>
     <lang.syntaxHighlighterFactory language="json"
                                    implementationClass="stride.lang.json.JsonSyntaxHighlighterFactory"/>
+    <lang.commenter language="json" implementationClass="stride.lang.json.JsonCommenter"/>
+    <lang.problemProvider language="json" implementationClass="stride.lang.json.JsonProblemProvider"/>
   </extensions>
 </stride-plugin>
 ```
@@ -380,6 +464,7 @@ plugin id is `stride.core`.
   <extensionPoint name="lang.commenter" beanClass="stride.lang.CommenterBean"/>
   <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
   <extensionPoint name="lang.importOptimizer" beanClass="stride.lang.ImportOptimizerBean"/>
+  <extensionPoint name="lang.problemProvider" beanClass="stride.lang.ProblemProviderBean"/>
 </extensionPoints>
 ```
 
@@ -389,12 +474,15 @@ plugin id is `stride.core`.
 |---|---|---|
 | `:lang` | `FileTypeRegistryTest` | extension key, case-insensitivity, last dot, plain-text fallback |
 | `:lang` | `ColorSchemeTest` | logo palette, light background, fallback chain |
-| `:lang` | `LangPluginIntegrationTest` | both real descriptors parsed with `PluginDescriptorParser`, extensions instantiated through a real `ExtensionArea`, file types and highlighters resolved |
+| `:lang` | `LangPluginIntegrationTest` | both real descriptors parsed with `PluginDescriptorParser`, extensions instantiated through a real `ExtensionArea`, file types, highlighters and problem providers resolved |
+| `:lang` | `BracketProblemsTest` | empty and matched input, an unexpected closer, openers above a match and left at the end reported unclosed, results sorted by start |
 | `:lang` | `IntentionProviderEpTest` | providers resolved by language key, quick fixes sorted before intentions across providers, a throwing provider skipped, unknown language empty |
 | `:lang` | `ImportOptimizerEpTest` | the Kotlin descriptor registers one import optimizer, the bean resolves through the real descriptor, an unknown language resolves to `null` |
 | `:plugins:lang-kotlin` | `KotlinLexerTest` | token kinds, per-line multi-line tokens, resume at every line start |
 | `:plugins:lang-kotlin` | `LineStateHighlighterTest` | 200 seeded random edits equal a full relex, single-line edit relexes one line |
 | `:plugins:lang-kotlin` | `KotlinImportIntentionsTest` | import insertion positions, same-package, imported, alias, star and qualified skips, caret in strings and comments, the candidate limit, unused import removal with operator names, aliases, stars and template usages |
 | `:plugins:lang-kotlin` | `KotlinImportOptimizerTest` | unused and duplicate removal, the java/javax/kotlin/alias group order, blank-line collapse, a comment inside the block keeping the order and the blank line after it, star and KDoc-link cases, an already optimized file and a file with no imports reporting no edits |
+| `:plugins:lang-kotlin` | `KotlinProblemProviderTest` | brackets in templates, raw strings, characters, strings, comments and nested comments ignored, unexpected and unclosed messages and ranges, unused import warnings and the alias, star, operator and template exceptions |
 | `:plugins:lang-kotlin` | `KotlinValVarIntentionTest` | `val`/`var` toggle, `const val` and `lateinit var` skipped, keywords in comments ignored |
 | `:plugins:lang-json` | `JsonLexerTest` | token kinds, invalid characters, resume at every line start |
+| `:plugins:lang-json` | `JsonProblemProviderTest` | valid input, an unclosed brace, an unexpected bracket, brackets inside a string, a commented file reporting nothing |

@@ -9,11 +9,11 @@ class KotlinImportOptimizer : ImportOptimizer {
         val parsed = parseImports(text)
         val imports = parsed.imports
         if (imports.isEmpty()) return emptyList()
-        val used = usedIdentifiersIn(text, parsed)
+        val unused = unusedImports(text, parsed).toHashSet()
         val kept = ArrayList<KotlinImport>()
         val seen = HashSet<String>()
         for (import in imports) {
-            if (!import.star && import.boundName !in used && import.boundName !in ALWAYS_USED) continue
+            if (import in unused) continue
             if (!seen.add(import.path + " as " + import.alias)) continue
             kept.add(import)
         }

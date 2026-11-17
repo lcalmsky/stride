@@ -8,5 +8,6 @@
     <lang.syntaxHighlighterFactory language="json"
                                    implementationClass="stride.lang.json.JsonSyntaxHighlighterFactory"/>
     <lang.commenter language="json" implementationClass="stride.lang.json.JsonCommenter"/>
+    <lang.problemProvider language="json" implementationClass="stride.lang.json.JsonProblemProvider"/>
   </extensions>
 </stride-plugin>

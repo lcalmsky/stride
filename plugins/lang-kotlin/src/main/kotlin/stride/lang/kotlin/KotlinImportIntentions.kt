@@ -46,8 +46,7 @@ class KotlinImportIntentions : IntentionProvider {
         if (imports.isEmpty()) return emptyList()
         val caret = context.caretOffset
         if (caret < imports.first().start || caret >= imports.last().end) return emptyList()
-        val used = usedIdentifiersIn(context.text, parsed)
-        val unused = imports.filter { !it.star && it.boundName !in used && it.boundName !in ALWAYS_USED }
+        val unused = unusedImports(context.text, parsed)
         if (unused.isEmpty()) return emptyList()
         val caretImport = unused.firstOrNull { caret >= it.start && caret < it.end }
         val actions = ArrayList<IntentionAction>()
