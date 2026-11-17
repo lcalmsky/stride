@@ -1,8 +1,9 @@
 package stride.app.editor
 
 /**
- * One replacement [offset, offset + oldLength) -> [newText], derived from a common prefix
- * and suffix.
+ * One replacement of the [oldLength] characters at [offset] with [newText]. The offset counts from
+ * the start of the text as it is before this replacement; a list of changes is ascending, each
+ * entry already in the coordinates left by the ones before it.
  */
 data class TextChange(val offset: Int, val oldLength: Int, val newText: String)
 

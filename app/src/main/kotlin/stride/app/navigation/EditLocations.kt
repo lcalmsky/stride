@@ -35,12 +35,21 @@ class EditLocations(private val maxPlaces: Int = MAX_PLACES) {
 
     /**
      * Records several changes of [path]'s text as [change] does for one; [changes] ascend, each in
-     * the coordinates of the text after the previous ones were applied. A recorded set adds one
-     * place, at the first range.
+     * the coordinates of the text after the previous ones were applied, so every offset is already
+     * its position in the final text. A recorded set adds one place, at [recordIndex]'s range —
+     * the caret's range by default the first.
      */
-    fun changes(path: Path, changes: List<TextChange>, lineOf: (Int) -> Int, recorded: Boolean) {
+    fun changes(
+        path: Path,
+        changes: List<TextChange>,
+        lineOf: (Int) -> Int,
+        recorded: Boolean,
+        recordIndex: Int = 0,
+    ) {
         for (change in changes) shift(path, change.offset, change.oldLength, change.newText.length)
-        if (recorded && changes.isNotEmpty()) record(path, changes.first().offset, lineOf)
+        if (recorded && changes.isNotEmpty()) {
+            record(path, changes[recordIndex.coerceIn(0, changes.lastIndex)].offset, lineOf)
+        }
     }
 
     /**

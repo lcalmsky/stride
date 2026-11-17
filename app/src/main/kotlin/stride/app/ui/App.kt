@@ -304,12 +304,13 @@ fun App(
                                     onFocusContext = { state.focus = it },
                                     onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
-                                    onTextChange = { editor, changes, recorded ->
+                                    onTextChange = { editor, changes, recorded, recordIndex ->
                                         session.editLocations.changes(
                                             path = editor.file.path.toAbsolutePath().normalize(),
                                             changes = changes,
                                             lineOf = { offset -> BookmarkManager.lineIndex(editor.value.text, offset) },
                                             recorded = recorded,
+                                            recordIndex = recordIndex,
                                         )
                                         clearUsageStatus(state)
                                     },
@@ -1310,7 +1311,7 @@ private fun EditorArea(
     onFocusContext: (KeyContext) -> Unit,
     onGoToDeclaration: (TextFileEditor, Int) -> Unit,
     onJump: (TextFileEditor) -> Unit,
-    onTextChange: (TextFileEditor, List<TextChange>, Boolean) -> Unit,
+    onTextChange: (TextFileEditor, List<TextChange>, Boolean, Int) -> Unit,
     modifier: Modifier,
     focusRequests: Int = 0,
     leftInset: Dp = 0.dp,
@@ -1348,8 +1349,8 @@ private fun EditorArea(
                     selected.onFocusContext = onFocusContext
                     selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
                     selected.onJump = { onJump(selected) }
-                    selected.onTextChange = { changes, recorded ->
-                        onTextChange(selected, changes, recorded)
+                    selected.onTextChange = { changes, recorded, recordIndex ->
+                        onTextChange(selected, changes, recorded, recordIndex)
                     }
                 }
                 if (nativeGlass) {

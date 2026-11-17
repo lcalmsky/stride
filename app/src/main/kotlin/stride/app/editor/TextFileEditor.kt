@@ -292,8 +292,10 @@ class TextFileEditor(
      * Called after the editor applied a text change: one entry per replaced range, ascending and
      * each in the coordinates of the text after the previous ones were applied, plus whether the
      * change entered the undo stack; undo, redo and every other unrecorded path report `false`.
+     * [recordIndex] points at the range the caret produced when the change has several, so an edit
+     * place records where the user was; it is 0 for a single range.
      */
-    var onTextChange: ((changes: List<TextChange>, recorded: Boolean) -> Unit)? = null
+    var onTextChange: ((changes: List<TextChange>, recorded: Boolean, recordIndex: Int) -> Unit)? = null
 
     /** Called with the caret offset of a ⌘-click; the app turns it into Go to Declaration. */
     var onGoToDeclarationAt: ((Int) -> Unit)? = null
@@ -415,6 +417,7 @@ class TextFileEditor(
                         selectionBefore = value.selection,
                         selectionAfter = newValue.selection,
                         secondaryBefore = cleared,
+                        pieces = reported?.takeIf { it.size > 1 },
                     ),
                 )
             }
@@ -428,9 +431,9 @@ class TextFileEditor(
     }
 
     /** Tells the observer about the replaced ranges and drops the usage highlights they invalidate. */
-    private fun reportTextChange(changes: List<TextChange>, recorded: Boolean) {
+    private fun reportTextChange(changes: List<TextChange>, recorded: Boolean, recordIndex: Int = 0) {
         usageHighlights = emptyList()
-        onTextChange?.invoke(changes, recorded)
+        onTextChange?.invoke(changes, recorded, recordIndex)
     }
 
     /** Applies a multi-caret result: the last caret becomes [value]'s selection. */
@@ -441,6 +444,11 @@ class TextFileEditor(
         val primary = normalized.lastOrNull() ?: value.selection
         val secondaries = if (normalized.size > 1) normalized.subList(0, normalized.size - 1).toList() else emptyList()
         val change = if (edit.text != text) computeTextChange(text, edit.text) else null
+        val reported = when {
+            change == null -> emptyList()
+            edit.changes.size > 1 -> edit.changes
+            else -> listOf(change)
+        }
         if (change != null) {
             if (record) {
                 undo.record(
@@ -453,6 +461,7 @@ class TextFileEditor(
                         secondaryBefore = secondaryCarets,
                         secondaryAfter = secondaries,
                         typing = edit.typing,
+                        pieces = reported.takeIf { it.size > 1 },
                     ),
                 )
             }
@@ -493,7 +502,10 @@ class TextFileEditor(
         secondaryCarets = secondaries
         value = TextFieldValue(edit.text, primary, edit.composition)
         reconcileFolds(change, carets)
-        if (change != null) reportTextChange(listOf(change), recorded = record)
+        if (change != null) {
+            val recordIndex = if (reported.size > 1) edit.primaryChange.coerceIn(0, reported.lastIndex) else 0
+            reportTextChange(reported, recorded = record, recordIndex = recordIndex)
+        }
     }
 
     private fun clearCaretState() {
@@ -530,7 +542,11 @@ class TextFileEditor(
         val entry = undo.undo() ?: return false
         val newText = text.substring(0, entry.offset) + entry.oldText +
             text.substring(entry.offset + entry.newText.length)
-        restoreHistory(TextFieldValue(newText, entry.selectionBefore), entry.secondaryBefore)
+        restoreHistory(
+            TextFieldValue(newText, entry.selectionBefore),
+            entry.secondaryBefore,
+            inversePieces(entry, newText),
+        )
         return true
     }
 
@@ -539,12 +555,39 @@ class TextFileEditor(
         val entry = undo.redo() ?: return false
         val newText = text.substring(0, entry.offset) + entry.newText +
             text.substring(entry.offset + entry.oldText.length)
-        restoreHistory(TextFieldValue(newText, entry.selectionAfter), entry.secondaryAfter)
+        restoreHistory(TextFieldValue(newText, entry.selectionAfter), entry.secondaryAfter, entry.pieces)
         return true
     }
 
+    /**
+     * A multi-range entry's pieces reversed, ascending: each replaces the text the change wrote at
+     * that range with the old text it removed, taken from [oldText]. Undoing walks back to the text
+     * before the change, so a piece lands where its range sat in that text.
+     */
+    private fun inversePieces(entry: UndoEntry, oldText: String): List<TextChange>? {
+        val pieces = entry.pieces ?: return null
+        val changes = ArrayList<TextChange>(pieces.size)
+        var shift = 0
+        for (piece in pieces) {
+            val start = piece.offset - shift
+            changes.add(
+                TextChange(
+                    offset = start,
+                    oldLength = piece.newText.length,
+                    newText = oldText.substring(start, start + piece.oldLength),
+                ),
+            )
+            shift += piece.newText.length - piece.oldLength
+        }
+        return changes
+    }
+
     /** Restores a history entry's text, primary caret and secondary carets as one state. */
-    private fun restoreHistory(newValue: TextFieldValue, secondaries: List<TextRange>) {
+    private fun restoreHistory(
+        newValue: TextFieldValue,
+        secondaries: List<TextRange>,
+        reported: List<TextChange>? = null,
+    ) {
         val change = if (newValue.text != text) computeTextChange(text, newValue.text) else null
         if (change != null) {
             highlighter?.edit(change.offset, change.oldLength, change.newText)
@@ -563,7 +606,7 @@ class TextFileEditor(
         hippie = null
         clearCaretState()
         reconcileFolds(change, carets)
-        if (change != null) reportTextChange(listOf(change), recorded = false)
+        if (change != null) reportTextChange(reported ?: listOf(change), recorded = false)
     }
 
     /**

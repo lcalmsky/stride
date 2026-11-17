@@ -16,7 +16,13 @@ class TextFileEditorChangeReportTest {
     @TempDir
     lateinit var temp: Path
 
-    private data class Report(val offset: Int, val oldLength: Int, val newLength: Int, val recorded: Boolean)
+    private data class Report(
+        val offset: Int,
+        val oldLength: Int,
+        val newLength: Int,
+        val recorded: Boolean,
+        val recordIndex: Int = 0,
+    )
 
     private fun editorWithReports(text: String, caret: Int = 0): Pair<TextFileEditor, MutableList<Report>> {
         val path = temp.resolve("Main.kt")
@@ -24,9 +30,9 @@ class TextFileEditorChangeReportTest {
         val editor = TextFileEditor(VFile(path))
         editor.updateValue(TextFieldValue(text, TextRange(caret)))
         val reports = mutableListOf<Report>()
-        editor.onTextChange = { changes, recorded ->
+        editor.onTextChange = { changes, recorded, recordIndex ->
             for (change in changes) {
-                reports.add(Report(change.offset, change.oldLength, change.newText.length, recorded))
+                reports.add(Report(change.offset, change.oldLength, change.newText.length, recorded, recordIndex))
             }
         }
         return editor to reports
@@ -59,16 +65,106 @@ class TextFileEditorChangeReportTest {
     }
 
     @Test
-    fun `multi caret typing reports one change as recorded`() {
-        val (editor, reports) = editorWithReports("aa", caret = 1)
-        editor.toggleCaretAt(0)
+    fun `multi caret typing reports one change per caret and points at the primary's one`() {
+        val (editor, reports) = editorWithReports("ab\ncd", caret = 0)
+        editor.toggleCaretAt(5)
         assertEquals(2, editor.carets.size)
 
-        editor.typeAtPrimary("b")
+        editor.typeAtPrimary("x")
 
-        assertEquals("baba", editor.value.text)
-        assertEquals(1, reports.size)
-        assertTrue(reports.single().recorded)
+        assertEquals("xab\ncdx", editor.value.text)
+        assertEquals(
+            listOf(
+                Report(0, 0, 1, recorded = true, recordIndex = 1),
+                Report(6, 0, 1, recorded = true, recordIndex = 1),
+            ),
+            reports,
+        )
+    }
+
+    @Test
+    fun `multi caret delete reports one change per caret`() {
+        val (editor, reports) = editorWithReports("ab\ncd", caret = 1)
+        editor.toggleCaretAt(4)
+
+        assertTrue(editor.deleteAtCarets(forward = true, word = false))
+
+        assertEquals("a\nc", editor.value.text)
+        assertEquals(
+            listOf(
+                Report(1, 1, 0, recorded = true, recordIndex = 1),
+                Report(3, 1, 0, recorded = true, recordIndex = 1),
+            ),
+            reports,
+        )
+    }
+
+    @Test
+    fun `undo and redo of a multi range edit report every range`() {
+        val (editor, reports) = editorWithReports("foo X foo Y foo", caret = 0)
+
+        assertEquals(3, editor.renameWord("foo", "quux"))
+        reports.clear()
+
+        assertTrue(editor.undo())
+        assertEquals(
+            listOf(
+                Report(0, 4, 3, recorded = false),
+                Report(6, 4, 3, recorded = false),
+                Report(12, 4, 3, recorded = false),
+            ),
+            reports,
+        )
+
+        reports.clear()
+        assertTrue(editor.redo())
+        assertEquals(
+            listOf(
+                Report(0, 3, 4, recorded = false),
+                Report(7, 3, 4, recorded = false),
+                Report(14, 3, 4, recorded = false),
+            ),
+            reports,
+        )
+    }
+
+    @Test
+    fun `undo of a multi caret typing reports one range per caret`() {
+        val (editor, reports) = editorWithReports("ab\ncd", caret = 1)
+        editor.toggleCaretAt(4)
+        editor.typeAtPrimary("x")
+        reports.clear()
+
+        assertTrue(editor.undo())
+
+        assertEquals(
+            listOf(
+                Report(1, 1, 0, recorded = false),
+                Report(4, 1, 0, recorded = false),
+            ),
+            reports,
+        )
+    }
+
+    @Test
+    fun `undo of merged multi caret typing reports one range per caret`() {
+        val (editor, reports) = editorWithReports("ab\ncd", caret = 0)
+        editor.toggleCaretAt(5)
+        editor.typeAtPrimary("x")
+        editor.typeAtPrimary("x")
+        assertEquals("xxab\ncdxx", editor.value.text)
+        reports.clear()
+
+        assertTrue(editor.undo())
+
+        assertEquals("ab\ncd", editor.value.text)
+        assertEquals(
+            listOf(
+                Report(0, 2, 0, recorded = false),
+                Report(5, 2, 0, recorded = false),
+            ),
+            reports,
+        )
     }
 
     @Test

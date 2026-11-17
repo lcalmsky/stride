@@ -11,6 +11,12 @@ data class UndoEntry(
     val secondaryBefore: List<TextRange> = emptyList(),
     val secondaryAfter: List<TextRange> = emptyList(),
     val typing: Boolean = false,
+    /**
+     * The replaced ranges of a multi-range entry, ascending and sequential; `null` for a single
+     * range. Undo reports their inverse and redo the stored ones, so a place between two ranges is
+     * not moved to the merged end.
+     */
+    val pieces: List<TextChange>? = null,
 )
 
 /** Two stacks of [UndoEntry]; consecutive single-character insertions merge within [MERGE_MILLIS]. */
@@ -94,6 +100,7 @@ class UndoManager(
                 newText = previous.newText + next.newText,
                 selectionAfter = next.selectionAfter,
                 secondaryAfter = next.secondaryAfter,
+                pieces = null,
             )
         }
         val distance = next.offset - previous.offset
@@ -103,7 +110,24 @@ class UndoManager(
             selectionAfter = next.selectionAfter,
             secondaryAfter = next.secondaryAfter,
             typing = true,
+            pieces = mergedPieces(previous.pieces, next.pieces),
         )
+    }
+
+    /**
+     * Two merged typing entries keep one piece per caret: the next keystroke sits right after the
+     * previous character the same caret wrote, so the piece takes the next entry's offset and both
+     * characters. A count mismatch drops the pieces and the merged range is reported instead.
+     */
+    private fun mergedPieces(previous: List<TextChange>?, next: List<TextChange>?): List<TextChange>? {
+        if (previous == null || next == null || previous.size != next.size) return null
+        return previous.indices.map { index ->
+            TextChange(
+                offset = next[index].offset - previous[index].newText.length,
+                oldLength = previous[index].oldLength,
+                newText = previous[index].newText + next[index].newText,
+            )
+        }
     }
 
     companion object {

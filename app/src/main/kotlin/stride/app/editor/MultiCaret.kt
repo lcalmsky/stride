@@ -2,6 +2,7 @@ package stride.app.editor
 
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import kotlin.math.abs
 
 /** The text and carets a multi-caret operation produces; the last caret is the primary one. */
 internal data class CaretEdit(
@@ -9,6 +10,10 @@ internal data class CaretEdit(
     val carets: List<TextRange>,
     val composition: TextRange? = null,
     val typing: Boolean = false,
+    /** The replaced ranges, ascending and sequential; one entry per caret whose edit was applied. */
+    val changes: List<TextChange> = emptyList(),
+    /** Index in [changes] of the piece the primary caret produced. */
+    val primaryChange: Int = 0,
 )
 
 internal enum class CaretMove { LEFT, RIGHT, UP, DOWN, WORD_LEFT, WORD_RIGHT, LINE_START, LINE_END }
@@ -110,6 +115,7 @@ internal object MultiCaret {
         var lastAppliedResult: TextRange? = null
         var primaryShift = 0
         var primaryApplied = false
+        var primaryChange = 0
         for (entry in entries) {
             val caret = entry.caret
             // Clamped, not skipped: a caret left of the primary still repeats a shorter part of
@@ -134,6 +140,7 @@ internal object MultiCaret {
             lastAppliedResult = results[entry.index]
             if (entry.primary) {
                 primaryShift = delta - (inserted.length - (rawEnd - rawStart))
+                primaryChange = applied.lastIndex
                 primaryApplied = true
             }
         }
@@ -150,6 +157,12 @@ internal object MultiCaret {
         }
         builder.append(oldText, cursor, oldText.length)
         val result = builder.toString()
+        val changes = ArrayList<TextChange>(applied.size)
+        var shift = 0
+        for (range in applied) {
+            changes.add(TextChange(range.min + shift, range.max - range.min, inserted))
+            shift += inserted.length - (range.max - range.min)
+        }
         val composition = newValue.composition?.let { comp ->
             TextRange(
                 (comp.min + primaryShift).coerceIn(0, result.length),
@@ -160,7 +173,14 @@ internal object MultiCaret {
             a == 0 && b == 0 && oldPrimary.collapsed && secondaries.all { it.collapsed } &&
             oldComposition == null && newValue.composition == null
         val carets = (0..secondaries.size).map { results[it] ?: newPrimary }
-        return CaretEdit(result, normalize(carets.map { clamp(it, result.length) }), composition, typing)
+        return CaretEdit(
+            result,
+            normalize(carets.map { clamp(it, result.length) }),
+            composition,
+            typing,
+            changes,
+            primaryChange,
+        )
     }
 
     fun move(
@@ -228,7 +248,14 @@ internal object MultiCaret {
         val merged = mergeRanges(deletions)
         val newText = removeRanges(text, merged)
         val mapped = carets.map { TextRange(mapRemoved(it.end, merged).coerceIn(0, newText.length)) }
-        return CaretEdit(newText, normalize(mapped))
+        val primary = deletions.last()
+        val primaryChange = merged.indexOfFirst { it.min <= primary.min && primary.max <= it.max }
+        return CaretEdit(
+            newText,
+            normalize(mapped),
+            changes = removals(merged),
+            primaryChange = primaryChange.coerceAtLeast(0),
+        )
     }
 
     fun paste(text: String, carets: List<TextRange>, clip: String): CaretEdit {
@@ -248,18 +275,33 @@ internal object MultiCaret {
             delta += value.length - (caret.max - caret.min)
         }
         val builder = StringBuilder(text.length)
+        val applied = ArrayList<Int>()
         var cursor = 0
         for (index in order) {
             val caret = carets[index]
             if (caret.min < cursor) continue
             builder.append(text, cursor, caret.min)
             builder.append(inserted[index] ?: clip)
+            applied.add(index)
             cursor = caret.max
         }
         builder.append(text, cursor, text.length)
         val newText = builder.toString()
         val mapped = carets.indices.map { TextRange(newPositions[it].coerceIn(0, newText.length)) }
-        return CaretEdit(newText, normalize(mapped))
+        val changes = ArrayList<TextChange>(applied.size)
+        var shift = 0
+        for (index in applied) {
+            val caret = carets[index]
+            val value = inserted[index] ?: clip
+            changes.add(TextChange(caret.min + shift, caret.max - caret.min, value))
+            shift += value.length - (caret.max - caret.min)
+        }
+        return CaretEdit(
+            newText,
+            normalize(mapped),
+            changes = changes,
+            primaryChange = applied.indexOf(carets.lastIndex).coerceAtLeast(0),
+        )
     }
 
     /** The text to copy and, for a cut, the document ranges it came from. */
@@ -285,7 +327,26 @@ internal object MultiCaret {
         val merged = mergeRanges(ranges.map { TextRange(it.first, it.last + 1) })
         val newText = removeRanges(text, merged)
         val mapped = carets.map { TextRange(mapRemoved(it.end, merged).coerceIn(0, newText.length)) }
-        return CaretEdit(newText, normalize(mapped))
+        val primary = carets.lastOrNull()?.min ?: 0
+        val primaryChange = merged.indexOfFirst { it.min <= primary && primary < it.max }
+        return CaretEdit(
+            newText,
+            normalize(mapped),
+            changes = removals(merged),
+            primaryChange = primaryChange.coerceAtLeast(0),
+        )
+    }
+
+    /** [ranges] ascending, each replaced by nothing in the coordinates after the previous ones. */
+    private fun removals(ranges: List<TextRange>): List<TextChange> {
+        val changes = ArrayList<TextChange>(ranges.size)
+        var shift = 0
+        for (range in ranges) {
+            val length = range.max - range.min
+            changes.add(TextChange(range.min + shift, length, ""))
+            shift -= length
+        }
+        return changes
     }
 
     private fun removeRanges(text: String, ranges: List<TextRange>): String {
@@ -438,6 +499,7 @@ internal object MultiCaret {
         val current = carets.toMutableList()
         var currentText = text
         var lastApplied: TextRange? = null
+        val applied = ArrayList<GroupEdit>()
         val ordered = groups.sortedByDescending { group ->
             group.maxOf { lineIndexAt(starts, carets[it].min) }
         }
@@ -464,11 +526,29 @@ internal object MultiCaret {
                 current[index] = TextRange(mapped(caret.start), mapped(caret.end))
             }
             current[representative] = newSelection
+            applied.add(GroupEdit(region, change.newText, carets.lastIndex in group))
             lastApplied = region
             currentText = result.text
         }
-        return CaretEdit(currentText, normalize(current))
+        val ascending = applied.sortedBy { it.region.min }
+        val changes = ArrayList<TextChange>(ascending.size)
+        var shift = 0
+        for (piece in ascending) {
+            changes.add(TextChange(piece.region.min + shift, piece.region.max - piece.region.min, piece.newText))
+            shift += piece.newText.length - (piece.region.max - piece.region.min)
+        }
+        val primaryOffset = carets.last().min
+        val own = ascending.indexOfFirst { it.primary }
+        val primaryChange = if (own >= 0) {
+            own
+        } else {
+            ascending.indices.minByOrNull { abs(ascending[it].region.min - primaryOffset) } ?: 0
+        }
+        return CaretEdit(currentText, normalize(current), changes = changes, primaryChange = primaryChange)
     }
+
+    /** A line group's replacement in [perCaret], with whether the primary caret's group produced it. */
+    private class GroupEdit(val region: TextRange, val newText: String, val primary: Boolean)
 
     /** The line a [column] lands on in [start]..[end], counting a code point as one column. */
     fun offsetForColumn(text: String, start: Int, end: Int, column: Int): Int {

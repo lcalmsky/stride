@@ -128,6 +128,23 @@ class UndoManagerTest {
     }
 
     @Test
+    fun `consecutive multi-caret typing merges its pieces`() {
+        manager.record(
+            typing(0, "a", TextRange(0), TextRange(1), TextRange(5), TextRange(7))
+                .copy(pieces = listOf(TextChange(0, 0, "a"), TextChange(6, 0, "a"))),
+        )
+        now += 100
+        manager.record(
+            typing(1, "b", TextRange(1), TextRange(2), TextRange(7), TextRange(8))
+                .copy(pieces = listOf(TextChange(1, 0, "b"), TextChange(8, 0, "b"))),
+        )
+
+        val entry = manager.undo()!!
+        assertEquals(listOf(TextChange(0, 0, "ab"), TextChange(7, 0, "ab")), entry.pieces)
+        assertFalse(manager.canUndo)
+    }
+
+    @Test
     fun `a broken caret continuity keeps multi-caret typing apart`() {
         manager.record(typing(0, "a", TextRange(0), TextRange(1), TextRange(5), TextRange(6)))
         manager.record(typing(1, "b", TextRange(9), TextRange(2), TextRange(6), TextRange(7)))

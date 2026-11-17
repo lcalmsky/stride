@@ -69,6 +69,13 @@ class MultiCaretTest {
     }
 
     @Test
+    fun `typing at every caret reports one change per caret, the primary's piece last`() {
+        val edit = replicate("ab\ncxd", TextRange(4), null, TextFieldValue("ab\ncyxd", TextRange(5)), listOf(caret(1)))
+        assertEquals(listOf(TextChange(1, 0, "y"), TextChange(5, 0, "y")), edit.changes)
+        assertEquals(1, edit.primaryChange)
+    }
+
+    @Test
     fun `typing where only the primary caret follows the same character`() {
         val edit = replicate(
             "foo(e) bar(x)",
@@ -228,6 +235,13 @@ class MultiCaretTest {
         val edit = MultiCaret.delete("abc def", listOf(TextRange(0, 3), caret(7)), forward = false, word = false)
         assertEquals(" de", edit.text)
         assertEquals(listOf(caret(0), caret(3)), edit.carets)
+    }
+
+    @Test
+    fun `delete reports one change per removed range, the primary's piece last`() {
+        val edit = MultiCaret.delete("abc def", listOf(TextRange(0, 3), caret(7)), forward = false, word = false)
+        assertEquals(listOf(TextChange(0, 3, ""), TextChange(3, 1, "")), edit.changes)
+        assertEquals(1, edit.primaryChange)
     }
 
     @Test
@@ -447,6 +461,15 @@ class MultiCaretTest {
             EditActions.duplicateLineOrSelection(text, range)
         }
         assertEquals("a\na\nb\nb", duplicated.text)
+    }
+
+    @Test
+    fun `a line based run reports one change per line group, the primary's group last`() {
+        val edit = perCaret("one\ntwo", listOf(caret(0), caret(4)), lineBased = true) { text, range ->
+            EditActions.toggleLineComment(text, range, "//")
+        }
+        assertEquals(listOf(TextChange(0, 0, "// "), TextChange(7, 0, "// ")), edit.changes)
+        assertEquals(1, edit.primaryChange)
     }
 
     @Test
