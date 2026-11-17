@@ -2,6 +2,7 @@ package stride.app.keys
 
 import stride.app.AppState
 import stride.app.editor.EditActions
+import stride.app.editor.MultiCaret
 import stride.app.editor.TextFileEditor
 import stride.app.editor.openCodeCompletion
 import stride.app.editor.openPasteHistory
@@ -180,10 +181,35 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
     ActionId.EDITOR_COMPLETE_STATEMENT, ActionId.EDITOR_SCROLL_TO_CENTER,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.SELECT_NEXT_OCCURRENCE -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        if (!editor.selectNextOccurrence()) state.statusMessage = "No more occurrences"
+        true
+    }
+    ActionId.UNSELECT_PREVIOUS_OCCURRENCE,
+    ActionId.SELECT_ALL_OCCURRENCES,
+    ActionId.EDITOR_CLONE_CARET_ABOVE,
+    ActionId.EDITOR_CLONE_CARET_BELOW,
+    -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.EDITOR_TOGGLE_COLUMN_MODE -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        state.statusMessage = if (editor.toggleColumnMode()) {
+            "Column selection mode on"
+        } else {
+            "Column selection mode off"
+        }
+        true
+    }
     ActionId.COPY_LINE, ActionId.CUT_LINE -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
         val selection = editor.value.selection
         val text = editor.value.text
+        if (editor.secondaryCarets.isNotEmpty()) {
+            val copied = MultiCaret.copyText(text, editor.carets).first
+            val handled = editor.applyAction(action)
+            if (handled) state.clipboardHistory.record(copied)
+            return handled
+        }
         val copied = if (!selection.collapsed) {
             text.substring(
                 selection.min.coerceIn(0, text.length),

@@ -82,4 +82,65 @@ class KeyRouterTest {
         now = 200
         assertNull(router.route(KeyEventType.UP, Key.CtrlLeft))
     }
+
+    private fun doubleTapAlt(router: KeyRouter) {
+        router.route(KeyEventType.DOWN, Key.AltLeft)
+        now = 100
+        router.route(KeyEventType.UP, Key.AltLeft)
+        now = 200
+        router.route(KeyEventType.DOWN, Key.AltLeft)
+    }
+
+    @Test
+    fun `an arrow while the second option is held clones a caret`() {
+        val router = router()
+        doubleTapAlt(router)
+
+        assertEquals(
+            ActionId.EDITOR_CLONE_CARET_ABOVE,
+            router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.EDITOR),
+        )
+        assertEquals(
+            ActionId.EDITOR_CLONE_CARET_BELOW,
+            router.route(KeyEventType.DOWN, Key.DirectionDown, alt = true, focus = KeyContext.EDITOR),
+        )
+        assertEquals(
+            ActionId.EDITOR_CLONE_CARET_ABOVE,
+            router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.EDITOR),
+        )
+    }
+
+    @Test
+    fun `a single option press keeps the arrow on select word`() {
+        val router = router()
+        router.route(KeyEventType.DOWN, Key.AltLeft)
+
+        assertEquals(
+            ActionId.EDITOR_SELECT_WORD,
+            router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.EDITOR),
+        )
+    }
+
+    @Test
+    fun `releasing option ends the clone gesture`() {
+        val router = router()
+        doubleTapAlt(router)
+        now = 300
+        router.route(KeyEventType.UP, Key.AltLeft)
+        now = 400
+        router.route(KeyEventType.DOWN, Key.AltLeft)
+
+        assertEquals(
+            ActionId.EDITOR_SELECT_WORD,
+            router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.EDITOR),
+        )
+    }
+
+    @Test
+    fun `the clone gesture needs the editor focus`() {
+        val router = router()
+        doubleTapAlt(router)
+
+        assertNull(router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.GLOBAL))
+    }
 }

@@ -194,6 +194,24 @@ class KeymapTest {
     fun `actions without a stroke stay reachable from the actions tab`() {
         assertTrue(keymap.strokesFor(ActionId.REOPEN_CLOSED_TAB).isEmpty())
         assertTrue(keymap.strokesFor(ActionId.CLOSE_OTHER_TABS).isEmpty())
+        // The clone gestures belong to KeyRouter, not the keymap.
+        assertTrue(keymap.strokesFor(ActionId.EDITOR_CLONE_CARET_ABOVE).isEmpty())
+        assertTrue(keymap.strokesFor(ActionId.EDITOR_CLONE_CARET_BELOW).isEmpty())
+    }
+
+    @Test
+    fun `the occurrence and column bindings resolve in the editor`() {
+        // SelectNextOccurrence control G
+        assertEquals(ActionId.SELECT_NEXT_OCCURRENCE, action("control G", KeyContext.EDITOR))
+        // UnselectPreviousOccurrence control shift G
+        assertEquals(ActionId.UNSELECT_PREVIOUS_OCCURRENCE, action("control shift G", KeyContext.EDITOR))
+        // SelectAllOccurrences meta control G
+        assertEquals(ActionId.SELECT_ALL_OCCURRENCES, action("meta control G", KeyContext.EDITOR))
+        // EditorToggleColumnMode shift meta 8
+        assertEquals(ActionId.EDITOR_TOGGLE_COLUMN_MODE, action("shift meta 8", KeyContext.EDITOR))
+        // FindNext and FindPrevious stay on their own strokes.
+        assertEquals(ActionId.FIND_NEXT, action("meta G", KeyContext.EDITOR))
+        assertEquals(ActionId.FIND_PREVIOUS, action("meta shift G", KeyContext.EDITOR))
     }
 
     @Test

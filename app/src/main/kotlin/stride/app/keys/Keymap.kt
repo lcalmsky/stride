@@ -19,6 +19,8 @@ enum class ActionId {
     UNWRAP, REFORMAT_CODE, EDITOR_SCROLL_TO_CENTER,
     OPTIMIZE_IMPORTS, SMART_TYPE_COMPLETION, PASTE_MULTIPLE,
     PARAMETER_INFO, QUICK_DOC, QUICK_DEFINITION, SURROUND_WITH,
+    SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
+    EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
 }
 
 enum class KeyContext {
@@ -241,5 +243,14 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control shift TAB", ActionId.SWITCHER, KeyContext.GLOBAL)
     // SelectInProjectView has no macOS default stroke; alt F1 reveals the current file
     bind("alt F1", ActionId.SELECT_IN_PROJECT_VIEW, KeyContext.GLOBAL)
+    // SelectNextOccurrence control G
+    bind("control G", ActionId.SELECT_NEXT_OCCURRENCE, KeyContext.EDITOR)
+    // UnselectPreviousOccurrence control shift G
+    bind("control shift G", ActionId.UNSELECT_PREVIOUS_OCCURRENCE, KeyContext.EDITOR)
+    // SelectAllOccurrences meta control G
+    bind("meta control G", ActionId.SELECT_ALL_OCCURRENCES, KeyContext.EDITOR)
+    // EditorToggleColumnMode shift meta 8 (last declaration)
+    bind("shift meta 8", ActionId.EDITOR_TOGGLE_COLUMN_MODE, KeyContext.EDITOR)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
+    // EditorCloneCaretAbove/Below have no stroke either: a double Option gesture in KeyRouter.
 }

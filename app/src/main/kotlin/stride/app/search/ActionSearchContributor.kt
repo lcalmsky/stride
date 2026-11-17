@@ -99,6 +99,12 @@ object ActionNames {
         ActionId.QUICK_DOC to "Quick Documentation",
         ActionId.QUICK_DEFINITION to "Quick Definition",
         ActionId.SURROUND_WITH to "Surround With",
+        ActionId.SELECT_NEXT_OCCURRENCE to "Select Next Occurrence",
+        ActionId.UNSELECT_PREVIOUS_OCCURRENCE to "Unselect Previous Occurrence",
+        ActionId.SELECT_ALL_OCCURRENCES to "Select All Occurrences",
+        ActionId.EDITOR_TOGGLE_COLUMN_MODE to "Column Selection Mode",
+        ActionId.EDITOR_CLONE_CARET_ABOVE to "Clone Caret Above",
+        ActionId.EDITOR_CLONE_CARET_BELOW to "Clone Caret Below",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */
@@ -126,7 +132,14 @@ class ActionSearchContributor(
     override val tab: SearchTab get() = SearchTab.ACTIONS
 
     private val entries: List<ActionEntry> = ActionId.entries.map { action ->
-        ActionEntry(action, ActionNames.of(action), shortcutText(keymap, action))
+        ActionEntry(action, ActionNames.of(action), shortcut(action))
+    }
+
+    /** The clone actions are gestures, so their label comes from [KeyRouter], not the keymap. */
+    private fun shortcut(action: ActionId): String = when (action) {
+        ActionId.EDITOR_CLONE_CARET_ABOVE -> KeyRouter.CLONE_CARET_ABOVE_GESTURE
+        ActionId.EDITOR_CLONE_CARET_BELOW -> KeyRouter.CLONE_CARET_BELOW_GESTURE
+        else -> shortcutText(keymap, action)
     }
 
     override fun fetch(query: String, limit: Int): List<FoundItem<ActionEntry>> {

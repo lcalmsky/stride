@@ -21,6 +21,7 @@ class KeyRouter(
     ) : this(Keymap.forPlatform(isMac), clock)
 
     private var pending: ActionId? = null
+    private var cloneWaiting = false
     private val pressed = HashSet<ModifierKey>()
     private val detector = DoubleModifierDetector(clock) { modifier ->
         if (modifier == ModifierKey.SHIFT) pending = ActionId.SEARCH_EVERYWHERE
@@ -39,14 +40,29 @@ class KeyRouter(
         val modifier = modifierOf(key)
         if (type == KeyEventType.DOWN) {
             if (modifier != null) {
-                if (pressed.add(modifier)) detector.modifierPressed(modifier)
+                if (pressed.add(modifier)) {
+                    detector.modifierPressed(modifier)
+                    if (modifier == ModifierKey.ALT && detector.isSecondPressHeld(ModifierKey.ALT)) {
+                        cloneWaiting = true
+                    }
+                }
             } else {
+                if (cloneWaiting && alt && !meta && !ctrl && !shift && focus == KeyContext.EDITOR) {
+                    // The second Option stays down after the clone key; the wait survives so
+                    // holding it and pressing the arrow again clones again.
+                    when (key) {
+                        Key.DirectionUp -> return ActionId.EDITOR_CLONE_CARET_ABOVE
+                        Key.DirectionDown -> return ActionId.EDITOR_CLONE_CARET_BELOW
+                    }
+                }
+                cloneWaiting = false
                 detector.otherKeyPressed()
                 return keymap.actionFor(KeyStroke(key, meta, ctrl, alt, shift), focus)
             }
         } else if (modifier != null) {
             pressed.remove(modifier)
             detector.modifierReleased(modifier)
+            if (modifier == ModifierKey.ALT) cloneWaiting = false
         }
         return pending
     }
@@ -54,6 +70,10 @@ class KeyRouter(
     companion object {
         /** Double Shift is the only action the keymap does not carry; the hint bar shows this. */
         const val SEARCH_EVERYWHERE_GESTURE = "⇧⇧"
+
+        /** The clone-caret gestures shown in the Actions tab; they have no keymap binding. */
+        const val CLONE_CARET_ABOVE_GESTURE = "⌥⌥↑"
+        const val CLONE_CARET_BELOW_GESTURE = "⌥⌥↓"
 
         fun modifierOf(key: Key): ModifierKey? = when (key) {
             Key.ShiftLeft, Key.ShiftRight -> ModifierKey.SHIFT

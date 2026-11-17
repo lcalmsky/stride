@@ -938,6 +938,78 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `the occurrence actions dispatch to the selected editor`() {
+        state.focus = KeyContext.EDITOR
+        assertFalse(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo bar foo", TextRange(1)))
+
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+        assertEquals(TextRange(0, 3), editor.value.selection)
+
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+        assertEquals(2, editor.carets.size)
+
+        assertTrue(dispatchAction(ActionId.UNSELECT_PREVIOUS_OCCURRENCE, state) { null })
+        assertEquals(1, editor.carets.size)
+
+        assertTrue(dispatchAction(ActionId.SELECT_ALL_OCCURRENCES, state) { null })
+        assertEquals(2, editor.carets.size)
+
+        assertTrue(dispatchAction(ActionId.EDITOR_CLONE_CARET_BELOW, state) { null })
+        assertTrue(dispatchAction(ActionId.EDITOR_CLONE_CARET_ABOVE, state) { null })
+        assertEquals(2, editor.carets.size)
+    }
+
+    @Test
+    fun `select next occurrence reports when nothing is left`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo", TextRange(1)))
+
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+
+        assertEquals("No more occurrences", state.statusMessage)
+    }
+
+    @Test
+    fun `column selection mode reports its state`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        session.editors.openFile(VFile(root.resolve("a.kt")))
+
+        assertTrue(dispatchAction(ActionId.EDITOR_TOGGLE_COLUMN_MODE, state) { null })
+        assertEquals("Column selection mode on", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.EDITOR_TOGGLE_COLUMN_MODE, state) { null })
+        assertEquals("Column selection mode off", state.statusMessage)
+    }
+
+    @Test
+    fun `copy with several carets records every caret's text in the history`() {
+        val root = temp.resolve("project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("a.kt"), "")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val clipboard = RecordingClipboard()
+        session.editors.clipboard = clipboard
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one\ntwo", TextRange(0)))
+        editor.toggleCaretAt(4)
+
+        assertTrue(dispatchAction(ActionId.COPY_LINE, state) { null })
+
+        assertEquals(listOf("one\ntwo"), state.clipboardHistory.items)
+        assertEquals("one\ntwo", clipboard.text)
+    }
+
+    @Test
     fun `copy and cut record the clipboard text in the history`() {
         val root = temp.resolve("project")
         Files.createDirectories(root)

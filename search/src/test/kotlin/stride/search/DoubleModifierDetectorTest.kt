@@ -1,6 +1,7 @@
 package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -128,5 +129,36 @@ class DoubleModifierDetectorTest {
         tap(200, 260)
         tap(300, 350)
         assertEquals(listOf(ModifierKey.SHIFT), fired)
+    }
+
+    @Test
+    fun `the second press is held until it is released`() {
+        tap(0, 10)
+        press(200)
+        assertTrue(detector.isSecondPressHeld(ModifierKey.SHIFT))
+
+        release(260)
+
+        assertFalse(detector.isSecondPressHeld(ModifierKey.SHIFT))
+        assertEquals(listOf(ModifierKey.SHIFT), fired)
+    }
+
+    @Test
+    fun `a single press is not a held second press`() {
+        press(0)
+        assertFalse(detector.isSecondPressHeld(ModifierKey.SHIFT))
+
+        release(80)
+
+        assertFalse(detector.isSecondPressHeld(ModifierKey.SHIFT))
+        assertTrue(fired.isEmpty())
+    }
+
+    @Test
+    fun `the held second press belongs to its own modifier`() {
+        tap(0, 10, ModifierKey.ALT)
+        press(200, ModifierKey.ALT)
+        assertTrue(detector.isSecondPressHeld(ModifierKey.ALT))
+        assertFalse(detector.isSecondPressHeld(ModifierKey.SHIFT))
     }
 }

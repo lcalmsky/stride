@@ -8,6 +8,9 @@ data class UndoEntry(
     val newText: String,
     val selectionBefore: TextRange,
     val selectionAfter: TextRange,
+    val secondaryBefore: List<TextRange> = emptyList(),
+    val secondaryAfter: List<TextRange> = emptyList(),
+    val typing: Boolean = false,
 )
 
 /** Two stacks of [UndoEntry]; consecutive single-character insertions merge within [MERGE_MILLIS]. */
@@ -32,13 +35,7 @@ class UndoManager(
         val merge = !breakNext && previous != null && canMerge(previous, entry, time)
         breakNext = false
         if (merge && previous != null) {
-            undoStack[undoStack.lastIndex] = Timed(
-                previous.entry.copy(
-                    newText = previous.entry.newText + entry.newText,
-                    selectionAfter = entry.selectionAfter,
-                ),
-                previous.time,
-            )
+            undoStack[undoStack.lastIndex] = Timed(merged(previous.entry, entry), previous.time)
         } else {
             undoStack.add(Timed(entry, time))
             if (undoStack.size > limit) undoStack.removeAt(0)
@@ -71,13 +68,43 @@ class UndoManager(
         breakNext = false
     }
 
-    private fun canMerge(previous: Timed, next: UndoEntry, time: Long): Boolean =
-        previous.entry.oldText.isEmpty() &&
+    private fun canMerge(previous: Timed, next: UndoEntry, time: Long): Boolean {
+        if (time - previous.time > MERGE_MILLIS) return false
+        if (previous.entry.typing && next.typing) return canMergeTyping(previous.entry, next)
+        return previous.entry.oldText.isEmpty() &&
             next.oldText.isEmpty() &&
             next.offset == previous.entry.offset + previous.entry.newText.length &&
             next.newText.length == 1 &&
-            !next.newText[0].isWhitespace() &&
-            time - previous.time <= MERGE_MILLIS
+            !next.newText[0].isWhitespace()
+    }
+
+    private fun canMergeTyping(previous: UndoEntry, next: UndoEntry): Boolean {
+        if (previous.secondaryBefore.isEmpty() || previous.secondaryAfter.isEmpty()) return false
+        if (next.secondaryBefore.isEmpty() || next.secondaryAfter.isEmpty()) return false
+        if (next.selectionBefore != previous.selectionAfter) return false
+        if (next.secondaryBefore != previous.secondaryAfter) return false
+        val start = next.offset - previous.offset
+        return start >= 0 &&
+            start + next.oldText.length <= previous.newText.length
+    }
+
+    private fun merged(previous: UndoEntry, next: UndoEntry): UndoEntry {
+        if (!(previous.typing && next.typing)) {
+            return previous.copy(
+                newText = previous.newText + next.newText,
+                selectionAfter = next.selectionAfter,
+                secondaryAfter = next.secondaryAfter,
+            )
+        }
+        val distance = next.offset - previous.offset
+        val tail = previous.newText.substring(distance + next.oldText.length)
+        return previous.copy(
+            newText = previous.newText.substring(0, distance) + next.newText + tail,
+            selectionAfter = next.selectionAfter,
+            secondaryAfter = next.secondaryAfter,
+            typing = true,
+        )
+    }
 
     companion object {
         const val MERGE_MILLIS = 500L

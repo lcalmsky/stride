@@ -226,6 +226,27 @@ class TextFileEditor(
     var value: TextFieldValue by mutableStateOf(TextFieldValue(""))
         private set
 
+    /** The carets that are not the primary one, oldest first. */
+    var secondaryCarets: List<TextRange> by mutableStateOf(emptyList())
+        private set
+
+    var columnMode: Boolean by mutableStateOf(false)
+        private set
+
+    /** Every caret in addition order; the last one is [value]'s selection, the primary caret. */
+    val carets: List<TextRange> get() = secondaryCarets + value.selection
+
+    private var caretStep = false
+    private var wholeWords = false
+    private var desiredColumns: List<Int>? = null
+    private var cloneColumn: Int? = null
+    private var cloneDirection: Boolean? = null
+    private var blockActive = false
+    private var blockAnchorLine = 0
+    private var blockAnchorCol = 0
+    private var blockLeadLine = 0
+    private var blockLeadCol = 0
+
     var spans: List<TokenSpan> by mutableStateOf(emptyList())
         private set
 
@@ -327,15 +348,20 @@ class TextFileEditor(
 
     override val isModified: Boolean get() = text != savedText
 
-    /** Applies a new text/selection, feeding only the changed range to the highlighter. */
+    /**
+     * Applies a new text/selection from a program path; the secondary carets are dropped.
+     * Anything a keystroke produces reaches [onFieldValueChange] instead.
+     */
     fun updateValue(newValue: TextFieldValue) = applyValue(newValue, record = true)
 
     private fun applyValue(newValue: TextFieldValue, record: Boolean) {
         val changed = newValue.text != text || newValue.selection != value.selection
-        if (changed && !selectionStep && !hippieStep) {
+        if (changed && !selectionStep && !hippieStep && !caretStep) {
             selectionStack.clear()
             hippie = null
         }
+        val cleared = if (!caretStep && secondaryCarets.isNotEmpty()) secondaryCarets else emptyList()
+        if (!caretStep) clearCaretState()
         if (newValue.text != text) {
             val change = computeTextChange(text, newValue.text)
             if (record) {
@@ -346,13 +372,75 @@ class TextFileEditor(
                         newText = change.newText,
                         selectionBefore = value.selection,
                         selectionAfter = newValue.selection,
+                        secondaryBefore = cleared,
                     ),
                 )
             }
             highlighter?.edit(change.offset, change.oldLength, change.newText)
             spans = highlighter?.spans() ?: emptyList()
         }
+        if (!caretStep) secondaryCarets = emptyList()
         value = newValue
+    }
+
+    /** Applies a multi-caret result: the last caret becomes [value]'s selection. */
+    private fun applyCarets(edit: CaretEdit, record: Boolean) {
+        val length = edit.text.length
+        val clamped = edit.carets.map { TextRange(it.start.coerceIn(0, length), it.end.coerceIn(0, length)) }
+        val normalized = MultiCaret.normalize(clamped)
+        val primary = normalized.lastOrNull() ?: value.selection
+        val secondaries = if (normalized.size > 1) normalized.subList(0, normalized.size - 1).toList() else emptyList()
+        if (edit.text != text) {
+            val change = computeTextChange(text, edit.text)
+            if (record) {
+                undo.record(
+                    UndoEntry(
+                        offset = change.offset,
+                        oldText = text.substring(change.offset, change.offset + change.oldLength),
+                        newText = change.newText,
+                        selectionBefore = value.selection,
+                        selectionAfter = primary,
+                        secondaryBefore = secondaryCarets,
+                        secondaryAfter = secondaries,
+                        typing = edit.typing,
+                    ),
+                )
+            }
+            highlighter?.edit(change.offset, change.oldLength, change.newText)
+            spans = highlighter?.spans() ?: emptyList()
+        }
+        if (!caretStep) {
+            selectionStack.clear()
+            hippie = null
+            clearCaretState()
+        }
+        secondaryCarets = secondaries
+        value = TextFieldValue(edit.text, primary, edit.composition)
+    }
+
+    private fun clearCaretState() {
+        wholeWords = false
+        desiredColumns = null
+        cloneColumn = null
+        cloneDirection = null
+        blockActive = false
+    }
+
+    /** A text field change: a selection-only change drops the secondary carets, a text change replicates into them. */
+    internal fun onFieldValueChange(newValue: TextFieldValue) {
+        if (newValue.text == text) {
+            when {
+                newValue.selection != value.selection -> applyValue(newValue, record = false)
+                newValue.composition != value.composition -> value = newValue
+            }
+            return
+        }
+        if (secondaryCarets.isEmpty()) {
+            applyValue(newValue, record = true)
+            return
+        }
+        val replicated = MultiCaret.replicate(text, value.selection, value.composition, newValue, secondaryCarets)
+        if (replicated != null) applyCarets(replicated, record = true) else applyValue(newValue, record = true)
     }
 
     fun setText(newText: String) {
@@ -364,7 +452,7 @@ class TextFileEditor(
         val entry = undo.undo() ?: return false
         val newText = text.substring(0, entry.offset) + entry.oldText +
             text.substring(entry.offset + entry.newText.length)
-        applyValue(TextFieldValue(newText, entry.selectionBefore), record = false)
+        restoreHistory(TextFieldValue(newText, entry.selectionBefore), entry.secondaryBefore)
         return true
     }
 
@@ -373,8 +461,29 @@ class TextFileEditor(
         val entry = undo.redo() ?: return false
         val newText = text.substring(0, entry.offset) + entry.newText +
             text.substring(entry.offset + entry.oldText.length)
-        applyValue(TextFieldValue(newText, entry.selectionAfter), record = false)
+        restoreHistory(TextFieldValue(newText, entry.selectionAfter), entry.secondaryAfter)
         return true
+    }
+
+    /** Restores a history entry's text, primary caret and secondary carets as one state. */
+    private fun restoreHistory(newValue: TextFieldValue, secondaries: List<TextRange>) {
+        if (newValue.text != text) {
+            val change = computeTextChange(text, newValue.text)
+            highlighter?.edit(change.offset, change.oldLength, change.newText)
+            spans = highlighter?.spans() ?: emptyList()
+        }
+        val length = newValue.text.length
+        val clamped = secondaries.map { TextRange(it.start.coerceIn(0, length), it.end.coerceIn(0, length)) }
+        val primary = TextRange(
+            newValue.selection.start.coerceIn(0, length),
+            newValue.selection.end.coerceIn(0, length),
+        )
+        val all = MultiCaret.normalize(clamped + primary)
+        secondaryCarets = all.dropLast(1)
+        value = TextFieldValue(newValue.text, all.last())
+        selectionStack.clear()
+        hippie = null
+        clearCaretState()
     }
 
     /** Moves the caret to `"line"` or `"line:column"` (1-based). Invalid input changes nothing. */
@@ -388,7 +497,187 @@ class TextFileEditor(
         return true
     }
 
-    fun applyAction(action: ActionId): Boolean = when (action) {
+    /** Moves every caret; `false` when there is only the primary caret the field owns. */
+    internal fun moveCarets(move: CaretMove, extend: Boolean): Boolean {
+        if (secondaryCarets.isEmpty()) return false
+        caretStep = true
+        try {
+            val (moved, columns) = MultiCaret.move(text, carets, move, extend, desiredColumns)
+            desiredColumns = columns
+            applyCarets(CaretEdit(text, moved), record = false)
+        } finally {
+            caretStep = false
+        }
+        return true
+    }
+
+    /** Deletes at every caret; `false` when there is only the primary caret. */
+    fun deleteAtCarets(forward: Boolean, word: Boolean): Boolean {
+        if (secondaryCarets.isEmpty()) return false
+        if (isReadOnly) return true
+        undo.breakMerge()
+        applyCarets(MultiCaret.delete(text, carets, forward, word), record = true)
+        undo.breakMerge()
+        return true
+    }
+
+    /** Pastes into every caret; `false` when there is only the primary caret. */
+    fun pasteAtCarets(clip: String): Boolean {
+        if (secondaryCarets.isEmpty()) return false
+        if (isReadOnly) return true
+        undo.breakMerge()
+        applyCarets(MultiCaret.paste(text, carets, clip), record = true)
+        undo.breakMerge()
+        return true
+    }
+
+    /** Grows or shrinks the rectangular selection by [dLine] lines and [dCol] columns. */
+    fun extendBlock(dLine: Int, dCol: Int): Boolean {
+        if (!columnMode) return false
+        caretStep = true
+        try {
+            if (!blockActive) {
+                val position = value.selection.end
+                blockAnchorLine = MultiCaret.lineIndexOf(text, position)
+                blockAnchorCol = MultiCaret.columnAt(text, position)
+                blockLeadLine = blockAnchorLine
+                blockLeadCol = blockAnchorCol
+                blockActive = true
+            }
+            blockLeadLine = (blockLeadLine + dLine).coerceIn(0, MultiCaret.lineCountOf(text) - 1)
+            blockLeadCol = (blockLeadCol + dCol).coerceAtLeast(0)
+            val carets = MultiCaret.block(text, blockAnchorLine, blockAnchorCol, blockLeadLine, blockLeadCol)
+            applyCarets(CaretEdit(text, carets), record = false)
+        } finally {
+            caretStep = false
+        }
+        return true
+    }
+
+    /** Starts or replaces the rectangular selection between the anchor and lead corners. */
+    fun selectBlock(anchorLine: Int, anchorCol: Int, leadLine: Int, leadCol: Int) {
+        blockActive = true
+        blockAnchorLine = anchorLine
+        blockAnchorCol = anchorCol
+        blockLeadLine = leadLine
+        blockLeadCol = leadCol
+        caretStep = true
+        try {
+            applyCarets(CaretEdit(text, MultiCaret.block(text, anchorLine, anchorCol, leadLine, leadCol)), record = false)
+        } finally {
+            caretStep = false
+        }
+    }
+
+    fun toggleCaretAt(offset: Int) {
+        applyCarets(CaretEdit(text, MultiCaret.toggleCaret(text, carets, offset)), record = false)
+    }
+
+    /** Drops the secondary carets and keeps the primary one's selection. */
+    fun removeSecondaryCarets(): Boolean {
+        if (secondaryCarets.isEmpty()) return false
+        applyCarets(CaretEdit(text, listOf(value.selection)), record = false)
+        return true
+    }
+
+    /** Selects the caret's word, else adds the next occurrence; `false` when there is none. */
+    fun selectNextOccurrence(): Boolean {
+        val result = MultiCaret.selectNextOccurrence(text, carets, wholeWords)
+        if (!result.found) return false
+        wholeWords = result.wholeWords
+        caretStep = true
+        try {
+            applyCarets(CaretEdit(text, result.carets), record = false)
+        } finally {
+            caretStep = false
+        }
+        return true
+    }
+
+    /** Selects every occurrence of the primary caret's word or selection; `false` when there is none. */
+    fun selectAllOccurrences(): Boolean {
+        val result = MultiCaret.selectAllOccurrences(text, carets, wholeWords)
+        if (!result.found) return false
+        wholeWords = result.wholeWords
+        caretStep = true
+        try {
+            applyCarets(CaretEdit(text, result.carets), record = false)
+        } finally {
+            caretStep = false
+        }
+        return true
+    }
+
+    /** Drops the primary caret, promoting the previous one; collapses a lone selection. */
+    fun unselectPreviousOccurrence() {
+        caretStep = true
+        try {
+            applyCarets(CaretEdit(text, MultiCaret.unselectOccurrence(carets)), record = false)
+        } finally {
+            caretStep = false
+        }
+    }
+
+    /** Adds an empty caret on the line above or below; `false` when nothing was added. */
+    fun cloneCaret(above: Boolean): Boolean {
+        if (secondaryCarets.isNotEmpty() && cloneDirection != null && cloneDirection != above) {
+            applyCarets(CaretEdit(text, carets.dropLast(1)), record = false)
+            cloneColumn = null
+            cloneDirection = null
+            return true
+        }
+        val column = cloneColumn ?: run {
+            val extreme = if (above) carets.minByOrNull { it.end } else carets.maxByOrNull { it.end }
+            extreme?.let { MultiCaret.columnAt(text, it.end) }
+        } ?: return false
+        val added = MultiCaret.cloneCaret(text, carets, above, column)
+        if (added.size == carets.size) return false
+        caretStep = true
+        try {
+            cloneColumn = column
+            cloneDirection = above
+            applyCarets(CaretEdit(text, added), record = false)
+        } finally {
+            caretStep = false
+        }
+        return true
+    }
+
+    /** Turns column selection mode on or off; returns the new state. */
+    fun toggleColumnMode(): Boolean {
+        columnMode = !columnMode
+        return columnMode
+    }
+
+    /** Applies [action] at every caret; the line-based ones run once per group of overlapping lines. */
+    private fun applyAtEveryCaret(action: ActionId): Boolean {
+        val prefix = commenter?.lineCommentPrefix
+        if (action == ActionId.COMMENT_LINE && prefix == null) return true
+        if (isReadOnly) return true
+        val lineBased = when (action) {
+            ActionId.EDITOR_TOGGLE_CASE -> false
+            ActionId.INDENT -> carets.any { !it.collapsed }
+            else -> true
+        }
+        val edit = MultiCaret.perCaret(text, carets, lineBased) { current, range ->
+            when (action) {
+                ActionId.COMMENT_LINE -> EditActions.toggleLineComment(current, range, requireNotNull(prefix))
+                ActionId.EDITOR_DUPLICATE -> EditActions.duplicateLineOrSelection(current, range)
+                ActionId.EDITOR_DELETE_LINE -> EditActions.deleteLines(current, range)
+                ActionId.INDENT -> EditActions.indent(current, range)
+                ActionId.UNINDENT -> EditActions.unindent(current, range)
+                else -> EditActions.toggleCase(current, range)
+            }
+        }
+        undo.breakMerge()
+        applyCarets(edit, record = true)
+        undo.breakMerge()
+        return true
+    }
+
+    fun applyAction(action: ActionId): Boolean {
+        if (secondaryCarets.isNotEmpty() && action in EVERY_CARET_ACTIONS) return applyAtEveryCaret(action)
+        return when (action) {
         ActionId.EDITOR_DUPLICATE,
         ActionId.EDITOR_DELETE_LINE,
         ActionId.MOVE_LINE_UP,
@@ -441,6 +730,10 @@ class TextFileEditor(
             gotoLineVisible -> {
                 gotoLineVisible = false
                 runCatching { focusRequester.requestFocus() }
+                true
+            }
+            secondaryCarets.isNotEmpty() -> {
+                removeSecondaryCarets()
                 true
             }
             !value.selection.collapsed -> {
@@ -530,7 +823,26 @@ class TextFileEditor(
             true
         }
         ActionId.HIPPIE_COMPLETION -> hippieComplete()
+        ActionId.SELECT_NEXT_OCCURRENCE -> selectNextOccurrence()
+        ActionId.UNSELECT_PREVIOUS_OCCURRENCE -> {
+            unselectPreviousOccurrence()
+            true
+        }
+        ActionId.SELECT_ALL_OCCURRENCES -> selectAllOccurrences()
+        ActionId.EDITOR_TOGGLE_COLUMN_MODE -> {
+            toggleColumnMode()
+            true
+        }
+        ActionId.EDITOR_CLONE_CARET_ABOVE -> {
+            cloneCaret(above = true)
+            true
+        }
+        ActionId.EDITOR_CLONE_CARET_BELOW -> {
+            cloneCaret(above = false)
+            true
+        }
         else -> false
+        }
     }
 
     /** Moves the caret to [target]; `null` leaves it where it is. */
@@ -558,6 +870,7 @@ class TextFileEditor(
 
     /** Copies the line at the caret, or cuts it when [cut]; a real selection is left to the field. */
     private fun copyLine(cut: Boolean): Boolean {
+        if (secondaryCarets.isNotEmpty()) return copyLinesAtCarets(cut)
         if (!value.selection.collapsed) return false
         val range = EditActions.wholeLine(text, value.selection.start)
         if (!clipboard.writeText(text.substring(range.min, range.max))) return false
@@ -565,6 +878,18 @@ class TextFileEditor(
             val start = range.min
             val newText = text.substring(0, range.min) + text.substring(range.max)
             applyEdit(EditResult(newText, TextRange(start.coerceAtMost(newText.length))))
+        }
+        return true
+    }
+
+    /** Copies the selections, or the whole lines, of every caret; a cut removes those ranges. */
+    private fun copyLinesAtCarets(cut: Boolean): Boolean {
+        val (copied, ranges) = MultiCaret.copyText(text, carets)
+        if (!clipboard.writeText(copied)) return false
+        if (cut && !isReadOnly) {
+            undo.breakMerge()
+            applyCarets(MultiCaret.deleteRanges(text, carets, ranges), record = true)
+            undo.breakMerge()
         }
         return true
     }
@@ -860,7 +1185,7 @@ class TextFileEditor(
                     ) {
                         BasicTextField(
                             value = currentValue,
-                            onValueChange = ::updateValue,
+                            onValueChange = ::onFieldValueChange,
                             modifier = Modifier
                                 .focusRequester(focusRequester)
                                 .widthIn(min = textMinWidth)
@@ -1277,6 +1602,16 @@ class TextFileEditor(
         const val GOTO_LINE_TAG: String = "goto-line"
         private const val MAX_SELECTION_STEPS: Int = 64
         private val BRACE_EXTENSIONS = setOf("kt", "kts", "java", "json")
+
+        /** The edit actions that run at every caret through [MultiCaret.perCaret]. */
+        private val EVERY_CARET_ACTIONS = setOf(
+            ActionId.COMMENT_LINE,
+            ActionId.EDITOR_DUPLICATE,
+            ActionId.EDITOR_DELETE_LINE,
+            ActionId.INDENT,
+            ActionId.UNINDENT,
+            ActionId.EDITOR_TOGGLE_CASE,
+        )
     }
 }
 

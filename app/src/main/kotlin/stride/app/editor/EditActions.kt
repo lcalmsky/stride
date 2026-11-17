@@ -1166,7 +1166,7 @@ object EditActions {
     private fun isIdentifierStart(character: Char): Boolean =
         character.isLetter() || character == '_' || character == '$'
 
-    private fun isIdentifierPart(character: Char): Boolean =
+    internal fun isIdentifierPart(character: Char): Boolean =
         character.isLetterOrDigit() || character == '_' || character == '$'
 
     private fun addLineComments(

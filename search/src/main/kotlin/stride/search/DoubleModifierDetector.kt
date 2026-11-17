@@ -72,6 +72,9 @@ class DoubleModifierDetector(
         reset()
     }
 
+    /** Whether the second press of [key] is still down, the state the clone-caret gesture needs. */
+    fun isSecondPressHeld(key: ModifierKey): Boolean = phase == Phase.SECOND_DOWN && modifier == key
+
     private fun start(key: ModifierKey, now: Long) {
         phase = Phase.FIRST_DOWN
         modifier = key
