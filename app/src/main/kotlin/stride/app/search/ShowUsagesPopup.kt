@@ -44,6 +44,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -83,6 +84,8 @@ class ShowUsagesRequest(
     var truncated: Boolean by mutableStateOf(false)
         internal set
 }
+
+internal const val USAGE_SELECTED_ROW_TAG = "usage-selected-row"
 
 /** Show Usages: the same whole-word case-sensitive scan Find Usages runs, listed in a popup. */
 @Composable
@@ -226,6 +229,18 @@ fun ShowUsagesPopup(
 @Composable
 private fun UsageList(hits: List<FindInPathHit>, selectedIndex: Int, onOpen: (FindInPathHit) -> Unit) {
     val listState = rememberLazyListState()
+    LaunchedEffect(selectedIndex, hits) {
+        // Wait for the layout before scrolling: scrollToItem during a measure pass leaves the
+        // lazy list's composition pending.
+        withFrameNanos { }
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return@LaunchedEffect
+        when {
+            selectedIndex < visible.first().index -> listState.scrollToItem(selectedIndex)
+            selectedIndex > visible.last().index ->
+                listState.scrollToItem((selectedIndex - visible.size + 1).coerceAtLeast(0))
+        }
+    }
     val visibleRows = hits.size.coerceAtMost(DesignTokens.popupMaxRows)
     Box(
         Modifier
@@ -254,6 +269,7 @@ private fun UsageRow(hit: FindInPathHit, selected: Boolean, onClick: () -> Unit)
             .fillMaxWidth()
             .height(DesignTokens.popupRowHeight)
             .selectionRow(selected = selected, hovered = hovered)
+            .then(if (selected) Modifier.testTag(USAGE_SELECTED_ROW_TAG) else Modifier)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = DesignTokens.space16),

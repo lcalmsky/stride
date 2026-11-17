@@ -114,15 +114,15 @@ class FindBarState {
     fun replaceAll(editor: TextFileEditor?) {
         if (editor == null) return
         val text = editor.value.text
-        val newText = if (regex && query.isNotEmpty() && error == null) {
-            val pattern = runCatching { Regex(query, regexOptions()) }.getOrNull() ?: return
-            pattern.replace(text, replacement)
-        } else {
-            applyChanges(text, FindModel.replaceAll(text, matches, replacement))
+        val changes = when {
+            regex && query.isNotEmpty() && error == null -> regexChanges(text) ?: return
+            else -> ascending(FindModel.replaceAll(text, matches, replacement))
         }
+        if (changes.isEmpty()) return
+        val newText = applyChanges(text, changes)
         if (newText == text) return
         val caret = editor.value.selection.start.coerceAtMost(newText.length)
-        editor.updateValue(TextFieldValue(newText, TextRange(caret)))
+        editor.updateValue(TextFieldValue(newText, TextRange(caret)), changes)
         refresh(editor)
         next(editor)
     }
@@ -140,6 +140,33 @@ class FindBarState {
             val tint = if (index == currentIndex) DesignTokens.neonPink else DesignTokens.neonAmber
             BackgroundSpan(match.start, match.end, tint.copy(alpha = alpha))
         }
+    }
+
+    /** The ranges a regular-expression query replaces, ascending, each after the previous ones. */
+    private fun regexChanges(text: String): List<TextChange>? {
+        val result = FindModel.search(text, query, options())
+        if (result.error != null) return null
+        val changes = ArrayList<TextChange>(result.matches.size)
+        var delta = 0
+        for (match in result.matches) {
+            val replaced = expandedReplacement(text, match)
+            val length = match.end - match.start
+            changes.add(TextChange(match.start + delta, length, replaced))
+            delta += replaced.length - length
+        }
+        return changes
+    }
+
+    /** [changes] ascending, each in the coordinates of the text after the previous ones. */
+    private fun ascending(changes: List<TextChange>): List<TextChange> {
+        val sorted = changes.sortedBy { it.offset }
+        val result = ArrayList<TextChange>(sorted.size)
+        var delta = 0
+        for (change in sorted) {
+            result.add(TextChange(change.offset + delta, change.oldLength, change.newText))
+            delta += change.newText.length - change.oldLength
+        }
+        return result
     }
 
     private fun applyChanges(text: String, changes: List<TextChange>): String {

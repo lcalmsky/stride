@@ -69,6 +69,7 @@ import stride.app.run.StartedProcess
 import stride.app.run.TestStatus
 import stride.app.search.FindTabKind
 import stride.app.search.SEARCH_SELECTED_ROW_TAG
+import stride.app.search.USAGE_SELECTED_ROW_TAG
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TerminalSession
 import stride.app.ui.App
@@ -1750,6 +1751,168 @@ class KeyFlowUiTest {
             waitUntil(timeoutMillis = 5_000) { editor.value.selection.start == 0 }
             assertNull(state.navigationBar)
             assertEquals(KeyContext.EDITOR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `typing clears the usage highlights and their status line`() = runComposeUiTest {
+        val root = temp.resolve("usages-typing-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "alpha beta\nalpha\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(1)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.ShiftLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.F7) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { editor.usageHighlights.isNotEmpty() }
+            assertEquals("2 usages of alpha · ⌘G next · ⇧⌘G previous · Esc clears", state.statusMessage)
+
+            onNode(hasSetTextAction()).performTextInput("x")
+
+            waitUntil(timeoutMillis = 5_000) { editor.usageHighlights.isEmpty() }
+            assertNull(state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the selected usage row scrolls into view`() = runComposeUiTest {
+        val root = temp.resolve("usages-scroll-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), (1..30).joinToString("\n") { "alpha $it" } + "\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.F7) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.showUsages != null }
+            val request = requireNotNull(state.showUsages)
+            waitUntil(timeoutMillis = 5_000) { !request.searching && request.hits.size == 30 }
+            waitForIdle()
+
+            onRoot().performKeyInput { repeat(15) { pressKey(Key.DirectionDown) } }
+            waitForIdle()
+
+            onNodeWithTag(USAGE_SELECTED_ROW_TAG).assertIsDisplayed()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command enter in the show usages popup opens the same find tab as option f7`() = runComposeUiTest {
+        val root = temp.resolve("usages-find-window-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Main.kt"), "fun helper() {}\n\nfun use() { helper() }\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val caret = editor.value.text.indexOf("helper") + 1
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.F7) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.showUsages != null }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.Enter) } }
+
+            waitUntil(timeoutMillis = 5_000) { state.showUsages == null }
+            val fromPopup = state.findToolWindow.tabs.single()
+            assertEquals(TextRange(caret), editor.value.selection)
+
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onRoot().performKeyInput { withKeyDown(Key.AltLeft) { pressKey(Key.F7) } }
+            waitForIdle()
+
+            val fromFindUsages = state.findToolWindow.tabs.single()
+            assertEquals(fromFindUsages.id, fromPopup.id)
+            assertEquals(fromFindUsages.kind, fromPopup.kind)
+            assertEquals(fromFindUsages.title, fromPopup.title)
+            assertEquals(fromFindUsages.query, fromPopup.query)
+            assertEquals(fromFindUsages.options, fromPopup.options)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `f4 and command down open the selected usage from the popup`() = runComposeUiTest {
+        val root = temp.resolve("usages-open-project")
+        Files.createDirectories(root)
+        val text = "fun helper() {}\n\nfun use() { helper() }\n"
+        Files.writeString(root.resolve("Main.kt"), text)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            val editor = session.editors.openFile(VFile(root.resolve("Main.kt"))) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("helper") + 1)))
+
+            fun openPopup() {
+                onRoot().performKeyInput {
+                    withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.F7) } }
+                }
+                waitUntil(timeoutMillis = 5_000) { state.showUsages != null }
+                val request = requireNotNull(state.showUsages)
+                waitUntil(timeoutMillis = 5_000) { !request.searching && request.hits.size == 2 }
+                waitForIdle()
+            }
+
+            openPopup()
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { state.showUsages == null }
+            val first = text.indexOf("helper")
+            assertEquals(TextRange(first, first + "helper".length), editor.value.selection)
+
+            openPopup()
+            onRoot().performKeyInput {
+                pressKey(Key.DirectionDown)
+                withKeyDown(Key.MetaLeft) { pressKey(Key.DirectionDown) }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.showUsages == null }
+            val second = text.lastIndexOf("helper")
+            assertEquals(TextRange(second, second + "helper".length), editor.value.selection)
         } finally {
             state.dispose()
         }

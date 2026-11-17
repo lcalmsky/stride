@@ -1723,8 +1723,8 @@ class ActionDispatcherTest {
         b.updateValue(TextFieldValue("alpha\nbeta\n", TextRange(0)))
         val aPath = a.file.path.toAbsolutePath().normalize()
         val bPath = b.file.path.toAbsolutePath().normalize()
-        session.editLocations.change(aPath, offset = 4, oldLength = 0, newLength = 0, line = 1, recorded = true)
-        session.editLocations.change(bPath, offset = 6, oldLength = 0, newLength = 0, line = 1, recorded = true)
+        session.editLocations.change(aPath, offset = 4, oldLength = 0, newLength = 0, lineOf = { 1 }, recorded = true)
+        session.editLocations.change(bPath, offset = 6, oldLength = 0, newLength = 0, lineOf = { 1 }, recorded = true)
         session.editors.openFile(VFile(root.resolve("a.kt")))
         a.updateValue(TextFieldValue("one\ntwo\n", TextRange(0)))
 
@@ -1744,7 +1744,7 @@ class ActionDispatcherTest {
         assertEquals("No edit location", state.statusMessage)
 
         val gone = temp.resolve("project/gone.kt").toAbsolutePath().normalize()
-        session.editLocations.change(gone, offset = 0, oldLength = 0, newLength = 0, line = 0, recorded = true)
+        session.editLocations.change(gone, offset = 0, oldLength = 0, newLength = 0, lineOf = { 0 }, recorded = true)
 
         assertTrue(dispatchAction(ActionId.JUMP_TO_LAST_CHANGE, state) { null })
         assertEquals("File not found: gone.kt", state.statusMessage)
@@ -1920,6 +1920,34 @@ class ActionDispatcherTest {
         state.focus = KeyContext.GLOBAL
         assertFalse(dispatchAction(ActionId.EDIT_SOURCE, state) { null })
         assertEquals(KeyContext.GLOBAL, state.focus)
+    }
+
+    @Test
+    fun `escape clears the usage highlight status along with the highlights`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\nalpha\n", TextRange(1)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+        assertEquals("2 usages of alpha · ⌘G next · ⇧⌘G previous · Esc clears", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.EDITOR_ESCAPE, state) { null })
+
+        assertTrue(editor.usageHighlights.isEmpty())
+        assertNull(state.statusMessage)
+    }
+
+    @Test
+    fun `escape keeps a status message another action wrote`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(1)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+        state.statusMessage = "Copied /project/a.kt"
+
+        assertTrue(dispatchAction(ActionId.EDITOR_ESCAPE, state) { null })
+
+        assertTrue(editor.usageHighlights.isEmpty())
+        assertEquals("Copied /project/a.kt", state.statusMessage)
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

@@ -97,6 +97,7 @@ import stride.app.editor.PasteHistoryPopup
 import stride.app.editor.RenamePopup
 import stride.app.editor.SurroundWith
 import stride.app.editor.SurroundWithPopup
+import stride.app.editor.TextChange
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyPasteHistory
 import stride.app.editor.applyRename
@@ -129,6 +130,7 @@ import stride.app.navigation.QuickDefinitionPopup
 import stride.app.navigation.QuickDocPopup
 import stride.app.navigation.RecentLocationsPopup
 import stride.app.navigation.TargetChooserPopup
+import stride.app.navigation.clearUsageStatus
 import stride.app.navigation.goToDeclaration
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
@@ -302,15 +304,14 @@ fun App(
                                     onFocusContext = { state.focus = it },
                                     onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
-                                    onTextChange = { editor, offset, oldLength, newLength, recorded ->
-                                        session.editLocations.change(
+                                    onTextChange = { editor, changes, recorded ->
+                                        session.editLocations.changes(
                                             path = editor.file.path.toAbsolutePath().normalize(),
-                                            line = BookmarkManager.lineIndex(editor.value.text, offset),
-                                            offset = offset,
-                                            oldLength = oldLength,
-                                            newLength = newLength,
+                                            changes = changes,
+                                            lineOf = { offset -> BookmarkManager.lineIndex(editor.value.text, offset) },
                                             recorded = recorded,
                                         )
+                                        clearUsageStatus(state)
                                     },
                                     modifier = Modifier.fillMaxSize(),
                                     focusRequests = state.editorFocusRequests,
@@ -1309,7 +1310,7 @@ private fun EditorArea(
     onFocusContext: (KeyContext) -> Unit,
     onGoToDeclaration: (TextFileEditor, Int) -> Unit,
     onJump: (TextFileEditor) -> Unit,
-    onTextChange: (TextFileEditor, Int, Int, Int, Boolean) -> Unit,
+    onTextChange: (TextFileEditor, List<TextChange>, Boolean) -> Unit,
     modifier: Modifier,
     focusRequests: Int = 0,
     leftInset: Dp = 0.dp,
@@ -1347,8 +1348,8 @@ private fun EditorArea(
                     selected.onFocusContext = onFocusContext
                     selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
                     selected.onJump = { onJump(selected) }
-                    selected.onTextChange = { offset, oldLength, newLength, recorded ->
-                        onTextChange(selected, offset, oldLength, newLength, recorded)
+                    selected.onTextChange = { changes, recorded ->
+                        onTextChange(selected, changes, recorded)
                     }
                 }
                 if (nativeGlass) {

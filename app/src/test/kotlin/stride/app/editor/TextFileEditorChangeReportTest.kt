@@ -24,8 +24,10 @@ class TextFileEditorChangeReportTest {
         val editor = TextFileEditor(VFile(path))
         editor.updateValue(TextFieldValue(text, TextRange(caret)))
         val reports = mutableListOf<Report>()
-        editor.onTextChange = { offset, oldLength, newLength, recorded ->
-            reports.add(Report(offset, oldLength, newLength, recorded))
+        editor.onTextChange = { changes, recorded ->
+            for (change in changes) {
+                reports.add(Report(change.offset, change.oldLength, change.newText.length, recorded))
+            }
         }
         return editor to reports
     }
@@ -81,6 +83,38 @@ class TextFileEditorChangeReportTest {
         reports.clear()
         assertTrue(editor.redo())
         assertEquals(listOf(Report(1, 0, 1, recorded = false)), reports)
+    }
+
+    @Test
+    fun `a rename reports one change per replaced word`() {
+        val (editor, reports) = editorWithReports("foo X foo Y foo", caret = 0)
+
+        assertEquals(3, editor.renameWord("foo", "bar"))
+
+        assertEquals(
+            listOf(
+                Report(0, 3, 3, recorded = true),
+                Report(6, 3, 3, recorded = true),
+                Report(12, 3, 3, recorded = true),
+            ),
+            reports,
+        )
+    }
+
+    @Test
+    fun `a reformat reports each replaced line, the later ones after the earlier insertions`() {
+        val text = "class A {\nval a = 1\nval b = 2\n}\n"
+        val (editor, reports) = editorWithReports(text, caret = 0)
+
+        assertEquals("Reformatted 2 lines", editor.reformat())
+
+        assertEquals(
+            listOf(
+                Report(10, 9, 13, recorded = true),
+                Report(24, 9, 13, recorded = true),
+            ),
+            reports,
+        )
     }
 
     @Test

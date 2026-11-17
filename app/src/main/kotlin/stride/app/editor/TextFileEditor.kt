@@ -289,10 +289,11 @@ class TextFileEditor(
     var onJump: (() -> Unit)? = null
 
     /**
-     * Called after the editor applied a text change, with the replaced range and whether the
+     * Called after the editor applied a text change: one entry per replaced range, ascending and
+     * each in the coordinates of the text after the previous ones were applied, plus whether the
      * change entered the undo stack; undo, redo and every other unrecorded path report `false`.
      */
-    var onTextChange: ((offset: Int, oldLength: Int, newLength: Int, recorded: Boolean) -> Unit)? = null
+    var onTextChange: ((changes: List<TextChange>, recorded: Boolean) -> Unit)? = null
 
     /** Called with the caret offset of a ⌘-click; the app turns it into Go to Declaration. */
     var onGoToDeclarationAt: ((Int) -> Unit)? = null
@@ -388,7 +389,14 @@ class TextFileEditor(
      */
     fun updateValue(newValue: TextFieldValue) = applyValue(newValue, record = true)
 
-    private fun applyValue(newValue: TextFieldValue, record: Boolean) {
+    /**
+     * Applies [newValue], built from [changes] (ascending, each in the coordinates after the
+     * previous ones), as one undo step; the observer hears every range instead of their merged span.
+     */
+    fun updateValue(newValue: TextFieldValue, changes: List<TextChange>) =
+        applyValue(newValue, record = true, reported = changes)
+
+    private fun applyValue(newValue: TextFieldValue, record: Boolean, reported: List<TextChange>? = null) {
         val changed = newValue.text != text || newValue.selection != value.selection
         if (changed && !selectionStep && !hippieStep && caretStep == null) {
             selectionStack.clear()
@@ -416,13 +424,13 @@ class TextFileEditor(
         if (caretStep == null) secondaryCarets = emptyList()
         value = newValue
         reconcileFolds(change, carets)
-        if (change != null) reportTextChange(change, recorded = record)
+        if (change != null) reportTextChange(reported ?: listOf(change), recorded = record)
     }
 
-    /** Tells the observer about a change and drops the usage highlights the new text invalidates. */
-    private fun reportTextChange(change: TextChange, recorded: Boolean) {
+    /** Tells the observer about the replaced ranges and drops the usage highlights they invalidate. */
+    private fun reportTextChange(changes: List<TextChange>, recorded: Boolean) {
         usageHighlights = emptyList()
-        onTextChange?.invoke(change.offset, change.oldLength, change.newText.length, recorded)
+        onTextChange?.invoke(changes, recorded)
     }
 
     /** Applies a multi-caret result: the last caret becomes [value]'s selection. */
@@ -485,7 +493,7 @@ class TextFileEditor(
         secondaryCarets = secondaries
         value = TextFieldValue(edit.text, primary, edit.composition)
         reconcileFolds(change, carets)
-        if (change != null) reportTextChange(change, recorded = record)
+        if (change != null) reportTextChange(listOf(change), recorded = record)
     }
 
     private fun clearCaretState() {
@@ -555,7 +563,7 @@ class TextFileEditor(
         hippie = null
         clearCaretState()
         reconcileFolds(change, carets)
-        if (change != null) reportTextChange(change, recorded = false)
+        if (change != null) reportTextChange(listOf(change), recorded = false)
     }
 
     /**
@@ -1237,8 +1245,15 @@ class TextFileEditor(
             }
             append(text, cursor, text.length)
         }
+        val changes = ArrayList<TextChange>(ranges.size)
+        var delta = 0
+        for (range in ranges) {
+            val length = range.last + 1 - range.first
+            changes.add(TextChange(range.first + delta, length, replacement))
+            delta += replacement.length - length
+        }
         val caret = ranges.first().first + replacement.length
-        applyEdit(EditResult(newText, TextRange(caret)))
+        applyEdit(EditResult(newText, TextRange(caret)), changes)
         return ranges.size
     }
 
@@ -1286,7 +1301,14 @@ class TextFileEditor(
         for (edit in sorted.asReversed()) {
             newText = newText.substring(0, edit.start) + edit.replacement + newText.substring(edit.end)
         }
-        applyEdit(EditResult(newText, TextRange(mappedCaret(sorted))))
+        val changes = ArrayList<TextChange>(sorted.size)
+        var delta = 0
+        for (edit in sorted) {
+            val length = edit.end - edit.start
+            changes.add(TextChange(edit.start + delta, length, edit.replacement))
+            delta += edit.replacement.length - length
+        }
+        applyEdit(EditResult(newText, TextRange(mappedCaret(sorted))), changes)
         return true
     }
 
@@ -1314,9 +1336,9 @@ class TextFileEditor(
         return true
     }
 
-    private fun applyEdit(result: EditResult) {
+    private fun applyEdit(result: EditResult, changes: List<TextChange>? = null) {
         undo.breakMerge()
-        updateValue(TextFieldValue(result.text, result.selection))
+        applyValue(TextFieldValue(result.text, result.selection), record = true, reported = changes)
         undo.breakMerge()
     }
 
@@ -1355,7 +1377,7 @@ class TextFileEditor(
         val usageSpans = if (currentUsages.isEmpty()) {
             emptyList()
         } else {
-            remember(currentUsages, nativeGlass) {
+            remember(currentUsages, nativeGlass, appearance) {
                 val alpha = if (nativeGlass) GLASS_FIND_MATCH_ALPHA else 0.55f
                 currentUsages.map { range ->
                     BackgroundSpan(range.first, range.last + 1, DesignTokens.accent.copy(alpha = alpha))

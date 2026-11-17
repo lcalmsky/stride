@@ -11,6 +11,7 @@ import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
 import stride.app.navigation.UsageMatches
 import stride.app.navigation.NavigationBarState
+import stride.app.navigation.clearUsageStatus
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
 import stride.app.navigation.goToDeclaration
@@ -249,7 +250,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
             state.parameterInfo = null
             true
         } else {
-            (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+            val editor = state.session?.editors?.selected as? TextFileEditor
+            val handled = editor?.applyAction(action) ?: false
+            if (editor != null && editor.usageHighlights.isEmpty()) clearUsageStatus(state)
+            handled
         }
     }
     ActionId.EDITOR_DUPLICATE, ActionId.EDITOR_DELETE_LINE, ActionId.COMMENT_LINE, ActionId.COMMENT_BLOCK,

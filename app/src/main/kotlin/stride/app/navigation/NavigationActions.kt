@@ -278,6 +278,18 @@ object UsageMatches {
         highlights.lastOrNull { it.first < caret } ?: highlights.lastOrNull()
 }
 
+/** The status line Highlight Usages in File leaves up while its highlights are on. */
+internal fun usageStatusMessage(count: Int, name: String): String =
+    "$count usages of $name$USAGE_STATUS_TAIL"
+
+private const val USAGE_STATUS_TAIL: String = " · ⌘G next · ⇧⌘G previous · Esc clears"
+
+/** Clears the status line when it still shows [usageStatusMessage]; a later message stays. */
+internal fun clearUsageStatus(state: AppState) {
+    val message = state.statusMessage ?: return
+    if (message.endsWith(USAGE_STATUS_TAIL)) state.statusMessage = null
+}
+
 /**
  * Highlight Usages in File: the identifier at the caret, or clears the highlights when the
  * caret already sits on one of them.
@@ -297,7 +309,7 @@ fun highlightUsagesInFile(state: AppState): Boolean {
     }
     val highlights = UsageMatches.ranges(editor.value.text, name)
     editor.usageHighlights = highlights
-    state.statusMessage = "${highlights.size} usages of $name · ⌘G next · ⇧⌘G previous · Esc clears"
+    state.statusMessage = usageStatusMessage(highlights.size, name)
     return true
 }
 
@@ -307,7 +319,8 @@ fun jumpToLastChange(state: AppState): Boolean {
     val editor = selectedTextEditor(state)
     val path = editor?.file?.path?.toAbsolutePath()?.normalize()
     val line = editor?.let { BookmarkManager.lineIndex(it.value.text, it.value.selection.start) }
-    val place = session.editLocations.next(path, line)
+    val lineOf: (Int) -> Int = { offset -> editor?.let { BookmarkManager.lineIndex(it.value.text, offset) } ?: 0 }
+    val place = session.editLocations.next(path, line, lineOf)
     if (place == null) {
         state.statusMessage = "No edit location"
         return true
