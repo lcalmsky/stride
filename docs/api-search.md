@@ -265,7 +265,9 @@ object TypeReferences {
   keywords, annotations and declaration names are not calls. The `{` of a `by <expression>` in a
   class header opens the class body, a Kotlin property accessor `get()`/`set()` after modifiers and
   annotations only is a declaration, and a Java method or constructor head is a declaration even
-  when `outline` missed it.
+  when `outline` missed it. A name is in a type position only when the scan back to its `:` passes
+  no word that cannot stand in a type (`by`, `val`, `return`, ...) and no lambda arrow `->` whose
+  left side is not a parameter list `)`, and a `fun interface` head is a class header, not a call.
 - `CallSite.inLambda` marks a Kotlin call inside a lambda literal, counted from the file start: the
   `{` of a call's trailing lambda, the `{` after a call's `)`, and a `{` after `(`, `,` or `=`. A
   declared body, a control block, a `when` branch, an accessor and a class header are not lambdas;

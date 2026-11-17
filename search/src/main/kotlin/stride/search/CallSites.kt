@@ -20,8 +20,10 @@ data class CallSite(
  * Finds calls by text in Kotlin and Java sources, outside comments, strings and characters. A call
  * is an identifier followed, after optional spaces on the same line, by `(`, by balanced type
  * arguments and `(`, or in Kotlin by a trailing lambda `{`; or an identifier after `::`. A name in
- * a type position after `:` is neither a call nor a trailing-lambda head. The `{` of a
- * `by <expression>` in a class header opens the class body, not a call. Keywords (`if`, `when`,
+ * a type position after `:` is neither a call nor a trailing-lambda head; the scan back to the `:`
+ * stops at a word that cannot stand in a type (`by`, `val`, `return`, ...) and at a lambda arrow
+ * whose left side is not a parameter list `)`. A `fun interface` head is a class header. The `{` of
+ * a `by <expression>` in a class header opens the class body, not a call. Keywords (`if`, `when`,
  * `for`, `while`, `catch`, `return`, `super`, `this`, `object`, ...), annotations (`@Name(`), Java
  * `new` and the names of declarations themselves (`fun name(`, `class Name(`, a property accessor
  * `get()`/`set()` after modifiers only, a Java method or constructor header even when the outline
@@ -199,7 +201,9 @@ object CallSites {
     /**
      * `true` when the name at [start] stands in a type position: scanning back over a type
      * expression (identifiers, `.`, `?`, spaces, balanced `<...>` and `(...)`, `->`, `,`) reaches
-     * a `:` that is neither the `:` of an elvis `?:` nor of a `::` reference.
+     * a `:` that is neither the `:` of an elvis `?:` nor of a `::` reference. The scan stops at an
+     * identifier that cannot stand in a type (`by`, `val`, `return`, ...) and at a lambda arrow
+     * whose parameter list is not a `)`.
      */
     private fun isInTypePosition(text: String, start: Int): Boolean {
         var index = start - 1
@@ -207,11 +211,17 @@ object CallSites {
             val c = text[index]
             when {
                 c == ' ' || c == '\t' -> index--
-                isIdentifierChar(c) -> while (index >= 0 && isIdentifierChar(text[index])) index--
+                isIdentifierChar(c) -> {
+                    val end = index + 1
+                    while (index >= 0 && isIdentifierChar(text[index])) index--
+                    if (text.substring(index + 1, end) in NON_TYPE_WORDS) return false
+                }
                 c == '.' || c == '?' || c == ',' -> index--
                 c == '>' -> {
                     if (index > 0 && text[index - 1] == '-') {
                         index -= 2
+                        while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
+                        if (index < 0 || text[index] != ')') return false
                     } else {
                         index = (matchingOpenAngle(text, index) ?: return false) - 1
                     }
@@ -464,6 +474,12 @@ object CallSites {
         "break", "continue", "package", "import", "val", "var", "typealias", "static",
     )
 
+    /** Words that cannot stand in a type, so a type scan back over one of them has left the type. */
+    private val NON_TYPE_WORDS = setOf(
+        "by", "is", "as", "in", "else", "return", "throw", "if", "when", "val", "var", "fun",
+        "class", "object", "interface", "get", "set", "do", "try", "catch", "finally", "where",
+    )
+
     private val FUN_AFTER = Regex("""^(?:<[^>]*>\s*)?(?:[\w$.<>?]+\s*\.\s*)?$""")
 
     private val KOTLIN_DECLARATION_PREFIX = Regex(
@@ -484,7 +500,7 @@ object CallSites {
 
     private val CLASS_HEADER = Regex(
         """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|internal|open|abstract|final|""" +
-            """sealed|data|enum|annotation|value|inner|inline|companion|expect|actual|external)\s+)*""" +
+            """sealed|data|enum|annotation|value|inner|inline|companion|expect|actual|external|fun)\s+)*""" +
             """(?:class|interface|object)\s+"""
     )
 

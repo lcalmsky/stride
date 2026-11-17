@@ -312,6 +312,37 @@ class CallSitesTest {
     }
 
     @Test
+    fun `a delegate or a typed lambda parameter does not put a call in a type position`() {
+        for ((text, call) in listOf(
+            "val x: Int by lazy { load() }" to "lazy",
+            "private val c: PointerIcon by lazy {\n    load()\n}" to "lazy",
+            "val s: State<Int> by remember { load() }" to "remember",
+            "list.map { x: Int -> build { load() } }" to "build",
+            "{ a: Int, b: String -> foo { load() } }" to "foo",
+            "{ (a, b) -> build { load() } }" to "build",
+        )) {
+            assertEquals(1, CallSites.find("Sample.kt", text, call).size, "expected a call: $text")
+            assertTrue(CallSites.find("Sample.kt", text, "load").single().inLambda, "expected a lambda: $text")
+        }
+    }
+
+    @Test
+    fun `a function type and a fun interface header open no lambda`() {
+        fun lambdas(text: String) = CallSites.find("Sample.kt", text, "load")
+
+        for ((text, type) in listOf(
+            "fun f(): (Int) -> Unit { load() }" to "Unit",
+            "fun f(): A.(B) -> C { load() }" to "C",
+            "fun f(): suspend () -> Unit { load() }" to "Unit",
+            "fun interface Handler { fun handle() { load() } }" to "Handler",
+            "fun interface Handler<T> { fun handle() { load() } }" to "Handler",
+        )) {
+            assertTrue(CallSites.find("Sample.kt", text, type).isEmpty(), "expected no call: $text")
+            assertFalse(lambdas(text).single().inLambda, "expected no lambda: $text")
+        }
+    }
+
+    @Test
     fun `other file types have no calls`() {
         assertTrue(CallSites.find("notes.md", "foo()", "foo").isEmpty())
     }
