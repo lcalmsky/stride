@@ -92,6 +92,22 @@ class DeclarationIndexTest {
     }
 
     @Test
+    fun `declarations carry the file package`() {
+        Application.resetForTests()
+        Files.writeString(tempDir.resolve("Clock.kt"), "package demo.time\n\nclass Clock\n")
+
+        val project = Project(tempDir)
+        try {
+            val index = project.service<DeclarationIndex>()
+            assertTrue(index.awaitReady(5_000), "initial scan did not finish")
+
+            assertEquals("demo.time", index.snapshot().single { it.name == "Clock" }.packageName)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
     fun `the snapshot is reused until the index changes`() {
         Application.resetForTests()
         Files.createDirectories(tempDir.resolve("src"))

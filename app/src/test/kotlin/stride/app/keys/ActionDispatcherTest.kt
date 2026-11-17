@@ -21,6 +21,7 @@ import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.run.ContextActionKind
 import stride.app.run.FakeProcess
+import stride.app.run.applyContextAction
 import stride.app.run.ProcessStarter
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
@@ -224,6 +225,42 @@ class ActionDispatcherTest {
 
         assertTrue(state.contextActionsVisible)
         assertEquals(ContextActionKind.RUN_MAIN, state.contextActions.first().kind)
+    }
+
+    @Test
+    fun `context actions import an unresolved project symbol and undo restores the text`() {
+        val root = temp.resolve("intention-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo/time"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(root.resolve("src/main/kotlin/demo/time/Clock.kt"), "package demo.time\n\nclass Clock\n")
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Main.kt"),
+            "package demo\n\nfun main() {\n    Clock()\n}\n",
+        )
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
+        val text = editor.value.text
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("Clock") + "Clock".length)))
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(dispatchAction(ActionId.SHOW_INTENTION_ACTIONS, state) { null })
+
+        assertTrue(state.contextActionsVisible)
+        val import = state.contextActions.first()
+        assertEquals(ContextActionKind.QUICK_FIX, import.kind)
+        assertEquals("Import 'demo.time.Clock'", import.label)
+        assertTrue(state.contextActions.any { it.kind == ContextActionKind.RUN_MAIN })
+
+        val original = editor.value
+        assertTrue(applyContextAction(state, import))
+        assertEquals("package demo\n\nimport demo.time.Clock\n\nfun main() {\n    Clock()\n}\n", editor.value.text)
+        assertNull(state.statusMessage)
+
+        assertTrue(editor.undo())
+        assertEquals(original.text, editor.value.text)
+        assertEquals(original.selection, editor.value.selection)
     }
 
     @Test

@@ -61,6 +61,8 @@ fun ContextActionsPopup(
     ChoicePopup(
         labels = actions.map { it.label },
         width = contextPopupWidth,
+        groups = actions.map { it.group.title },
+        confirmHint = if (actions.any { it.group != ContextActionGroup.RUN }) "↵ Apply" else "↵ Run",
         onChoose = { index -> actions.getOrNull(index)?.let(onChoose) },
         onClose = onClose,
     )
@@ -72,6 +74,8 @@ internal fun ChoicePopup(
     width: Dp = contextPopupWidth,
     title: String? = null,
     secondaryLabels: List<String> = emptyList(),
+    groups: List<String> = emptyList(),
+    confirmHint: String = "↵ Run",
     onChoose: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
@@ -138,7 +142,14 @@ internal fun ChoicePopup(
                     modifier = Modifier.padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space8),
                 )
             }
+            val grouped = groups.distinct().size >= 2
             for (index in labels.indices) {
+                if (grouped) {
+                    val group = groups.getOrNull(index)
+                    if (group != null && (index == 0 || groups.getOrNull(index - 1) != group)) {
+                        ChoiceGroupHeader(group)
+                    }
+                }
                 ChoiceRow(
                     label = labels[index],
                     secondary = secondaryLabels.getOrNull(index),
@@ -146,10 +157,23 @@ internal fun ChoicePopup(
                     onClick = { onChoose(index) },
                 )
             }
-            PopupHintBar("↑↓ Navigate", "↵ Run", "Esc Close")
+            PopupHintBar("↑↓ Navigate", confirmHint, "Esc Close")
             }
         }
     }
+}
+
+@Composable
+private fun ChoiceGroupHeader(text: String) {
+    Text(
+        text,
+        color = DesignTokens.textOnBusyGlass,
+        fontSize = DesignTokens.labelTextSize,
+        fontFamily = DesignTokens.uiFont,
+        modifier = Modifier
+            .padding(horizontal = DesignTokens.space16)
+            .padding(top = DesignTokens.space8, bottom = DesignTokens.space4),
+    )
 }
 
 @Composable

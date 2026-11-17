@@ -9,5 +9,7 @@
     <lang.syntaxHighlighterFactory language="kotlin"
                                    implementationClass="stride.lang.kotlin.KotlinSyntaxHighlighterFactory"/>
     <lang.commenter language="kotlin" implementationClass="stride.lang.kotlin.KotlinCommenter"/>
+    <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportIntentions"/>
+    <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
   </extensions>
 </stride-plugin>

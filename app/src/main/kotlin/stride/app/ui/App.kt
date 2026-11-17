@@ -125,7 +125,7 @@ import stride.app.run.ContextActionsPopup
 import stride.app.run.RunConfigurationPopup
 import stride.app.run.RunManager
 import stride.app.run.TestGutterMarkers
-import stride.app.run.runContextAction
+import stride.app.run.applyContextAction
 import stride.app.search.FindInPathPopup
 import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
@@ -553,7 +553,7 @@ fun App(
                     onChoose = { action ->
                         state.contextActionsVisible = false
                         refocusEditor(state)
-                        runContextAction(state, action.kind)
+                        applyContextAction(state, action)
                     },
                     onClose = {
                         state.contextActionsVisible = false

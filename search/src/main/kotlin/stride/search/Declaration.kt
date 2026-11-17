@@ -12,4 +12,5 @@ data class Declaration(
     val relativePath: String,
     val line: Int,
     val container: String? = null,
+    val packageName: String? = null,
 )

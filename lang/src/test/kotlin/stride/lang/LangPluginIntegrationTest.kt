@@ -50,6 +50,15 @@ class LangPluginIntegrationTest {
     }
 
     @Test
+    fun `the kotlin plugin registers both intention providers`() {
+        val kotlin = descriptors.first { it.id == "stride.lang.kotlin" }
+        val providers = kotlin.extensions.filter { it.first == IntentionProvider.EP_NAME }
+
+        assertEquals(2, providers.size)
+        assertTrue(providers.all { it.second.attributes["language"] == "kotlin" })
+    }
+
+    @Test
     fun `file types resolve through the fileType extension point`() {
         val kotlin = FileTypeRegistry.getFileType("Main.kt", area)
         assertEquals("Kotlin", kotlin.name)

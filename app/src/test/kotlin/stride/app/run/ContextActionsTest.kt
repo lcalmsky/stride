@@ -3,6 +3,9 @@ package stride.app.run
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import stride.lang.IntentionAction
+import stride.lang.IntentionCategory
+import stride.lang.TextEdit
 
 class ContextActionsTest {
     private val mainFile = """
@@ -77,6 +80,32 @@ class ContextActionsTest {
         )
         assertEquals("Rerun 'demo.DemoTest'", actions[1].label)
         assertEquals("Stop 'MainKt'", actions[2].label)
+    }
+
+    @Test
+    fun `intentions come after quick fixes and before the run entries`() {
+        val intentions = listOf(
+            IntentionAction("Change 'val' to 'var'", IntentionCategory.INTENTION, emptyList()),
+            IntentionAction("Import 'demo.time.Clock'", IntentionCategory.QUICK_FIX, listOf(TextEdit(0, 0, "x"))),
+        )
+
+        val actions = ContextActions.collect(
+            text = mainFile,
+            fileName = "Main.kt",
+            caretOffset = caretOn(mainFile, "println"),
+            intentions = intentions,
+        )
+
+        assertEquals(
+            listOf(ContextActionKind.QUICK_FIX, ContextActionKind.INTENTION, ContextActionKind.RUN_MAIN),
+            actions.map { it.kind },
+        )
+        assertEquals(
+            listOf(ContextActionGroup.QUICK_FIX, ContextActionGroup.INTENTION, ContextActionGroup.RUN),
+            actions.map { it.group },
+        )
+        assertEquals("Import 'demo.time.Clock'", actions[0].label)
+        assertEquals(1, actions[0].edits.size)
     }
 
     @Test

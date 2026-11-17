@@ -6,6 +6,7 @@
     <extensionPoint name="fileType" beanClass="stride.lang.FileTypeBean"/>
     <extensionPoint name="lang.syntaxHighlighterFactory" beanClass="stride.lang.SyntaxHighlighterFactoryBean"/>
     <extensionPoint name="lang.commenter" beanClass="stride.lang.CommenterBean"/>
+    <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
     <extensionPoint qualifiedName="stride.searchEverywhereContributor"
                     interface="stride.search.SearchEverywhereContributorFactory"/>
     <extensionPoint name="fileEditorProvider" interface="stride.app.editor.FileEditorProvider"/>

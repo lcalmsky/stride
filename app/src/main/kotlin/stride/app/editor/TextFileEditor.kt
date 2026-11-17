@@ -97,6 +97,7 @@ import stride.lang.LineStateHighlighter
 import stride.lang.SyntaxHighlighterFactory
 import stride.lang.TextAttributes
 import stride.lang.TextAttributesKey
+import stride.lang.TextEdit
 import stride.lang.TokenSpan
 import stride.search.DeclarationParser
 import stride.search.ParsedDeclaration
@@ -595,6 +596,41 @@ class TextFileEditor(
         val rangeEnd = end.coerceIn(rangeStart, text.length)
         val newText = text.substring(0, rangeStart) + replacement + text.substring(rangeEnd)
         applyEdit(EditResult(newText, TextRange(rangeStart + replacement.length)))
+    }
+
+    /** Applies [edits] as one undo step; `false` when the editor is read-only or an edit is out of range or overlaps another. */
+    fun applyEdits(edits: List<TextEdit>): Boolean {
+        if (isReadOnly || edits.isEmpty()) return false
+        val sorted = edits.sortedBy { it.start }
+        var previousEnd = -1
+        for (edit in sorted) {
+            if (edit.start < 0 || edit.end > text.length || edit.start > edit.end) return false
+            if (edit.start < previousEnd) return false
+            previousEnd = edit.end
+        }
+        var newText = text
+        for (edit in sorted.asReversed()) {
+            newText = newText.substring(0, edit.start) + edit.replacement + newText.substring(edit.end)
+        }
+        applyEdit(EditResult(newText, TextRange(mappedCaret(sorted))))
+        return true
+    }
+
+    private fun mappedCaret(edits: List<TextEdit>): Int {
+        val caret = value.selection.start
+        var mapped = caret
+        var delta = 0
+        for (edit in edits) {
+            when {
+                caret >= edit.end -> {
+                    delta += edit.replacement.length - (edit.end - edit.start)
+                    mapped = caret + delta
+                }
+                caret > edit.start -> return edit.start + delta + edit.replacement.length
+                else -> break
+            }
+        }
+        return mapped
     }
 
     private fun applyEdit(result: EditResult) {

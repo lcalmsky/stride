@@ -36,6 +36,7 @@ import stride.app.terminal.TerminalSession
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 import stride.search.SearchTab
 import stride.app.ui.theme.Appearance
@@ -382,16 +383,16 @@ class UiSnapshotTest {
     @Test
     @Order(14)
     fun `context actions over code snapshot`() {
-        val root = demoProject()
+        val root = intentionProject()
         val state = AppState()
         try {
             state.openFolder(root)
             val session = requireNotNull(state.session)
-            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
             val editor = openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
-            placeCaret(editor, "fun main()")
+            placeCaret(editor, "Clock")
             check(openContextActions(state) && state.contextActionsVisible) {
-                "no context actions for the main line"
+                "no context actions for the Clock call"
             }
             renderApp("14-context-actions.png", state, renderMillis = 800)
         } finally {
@@ -606,16 +607,16 @@ class UiSnapshotTest {
     @Order(25)
     fun `context actions over code light snapshot`() {
         AppearanceState.set(Appearance.LIGHT)
-        val root = demoProject()
+        val root = intentionProject()
         val state = AppState()
         try {
             state.openFolder(root)
             val session = requireNotNull(state.session)
-            openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
             val editor = openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
-            placeCaret(editor, "fun main()")
+            placeCaret(editor, "Clock")
             check(openContextActions(state) && state.contextActionsVisible) {
-                "no context actions for the main line"
+                "no context actions for the Clock call"
             }
             renderApp("14-context-actions-light.png", state, renderMillis = 800, appearance = Appearance.LIGHT)
         } finally {
@@ -734,6 +735,27 @@ class UiSnapshotTest {
                 }
             }
             """.trimIndent(),
+        )
+        return root
+    }
+
+    private fun intentionProject(): Path {
+        val root = temp.resolve("intention-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo/time"))
+        Files.createDirectories(root.resolve("src/main/kotlin/demo/text"))
+        Files.writeString(root.resolve("build.gradle.kts"), "plugins {\n    kotlin(\"jvm\")\n}\n")
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/time/Clock.kt"),
+            "package demo.time\n\nclass Clock {\n    fun now(): Long = 0L\n}\n",
+        )
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/text/Banner.kt"),
+            "package demo.text\n\nobject Banner {\n    fun render(value: Long): String = \"tick ${'$'}value\"\n}\n",
+        )
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Main.kt"),
+            "package demo\n\nimport demo.text.Banner\n\nfun main() {\n    val clock = Clock()\n" +
+                "    println(Banner.render(clock.now()))\n}\n",
         )
         return root
     }

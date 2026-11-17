@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.keys.ActionId
 import stride.core.services.Application
 import stride.core.vfs.VFile
+import stride.lang.TextEdit
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Collections
@@ -330,6 +331,52 @@ class TextFileEditorActionsTest {
         assertEquals(TextRange(3), editor.value.selection)
         assertTrue(editor.undo())
         assertEquals("val value = 1", editor.value.text)
+    }
+
+    @Test
+    fun `apply edits is one undo step and maps the caret`() {
+        val editor = editor("alpha\nbeta\ngamma")
+        val caret = "alpha\nbeta\ngamma".length
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(caret)))
+
+        assertTrue(editor.applyEdits(listOf(TextEdit(0, 5, "ALPHA"), TextEdit(11, 16, "G"))))
+        assertEquals("ALPHA\nbeta\nG", editor.value.text)
+        assertEquals(TextRange(12), editor.value.selection)
+
+        assertTrue(editor.undo())
+        assertEquals("alpha\nbeta\ngamma", editor.value.text)
+        assertEquals(TextRange(caret), editor.value.selection)
+    }
+
+    @Test
+    fun `a caret inside an edit lands at the end of its replacement`() {
+        val editor = editor("abcdef")
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(3)))
+
+        assertTrue(editor.applyEdits(listOf(TextEdit(1, 5, "XY"))))
+
+        assertEquals("aXYf", editor.value.text)
+        assertEquals(TextRange(3), editor.value.selection)
+    }
+
+    @Test
+    fun `overlapping edits are rejected`() {
+        val editor = editor("abcdef")
+        val before = editor.value
+
+        assertFalse(editor.applyEdits(listOf(TextEdit(0, 3, "X"), TextEdit(2, 5, "Y"))))
+
+        assertEquals(before, editor.value)
+    }
+
+    @Test
+    fun `a read-only editor rejects edits`() {
+        val editor = editor("abcdef", readOnly = true)
+        val before = editor.value
+
+        assertFalse(editor.applyEdits(listOf(TextEdit(0, 1, "X"))))
+
+        assertEquals(before, editor.value)
     }
 
     companion object {

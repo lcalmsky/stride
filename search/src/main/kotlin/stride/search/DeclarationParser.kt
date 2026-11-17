@@ -26,11 +26,61 @@ object DeclarationParser {
 
     fun isSourceFile(fileName: String): Boolean = extensionOf(fileName) in SOURCE_EXTENSIONS
 
+    /**
+     * The package declared by the first `package` statement of [text], or `null` when the file
+     * has none. Kotlin and Java share the form; a trailing `;` is ignored.
+     */
+    fun packageOf(text: String): String? {
+        var blockDepth = 0
+        for (line in text.lineSequence()) {
+            val code = StringBuilder(line.length)
+            var index = 0
+            while (index < line.length) {
+                val c = line[index]
+                when {
+                    blockDepth > 0 -> when {
+                        c == '/' && line.getOrNull(index + 1) == '*' -> {
+                            blockDepth++
+                            code.append("  ")
+                            index += 2
+                        }
+                        c == '*' && line.getOrNull(index + 1) == '/' -> {
+                            blockDepth--
+                            code.append("  ")
+                            index += 2
+                        }
+                        else -> {
+                            code.append(' ')
+                            index++
+                        }
+                    }
+                    c == '/' && line.getOrNull(index + 1) == '/' -> break
+                    c == '/' && line.getOrNull(index + 1) == '*' -> {
+                        blockDepth = 1
+                        code.append("  ")
+                        index += 2
+                    }
+                    else -> {
+                        code.append(c)
+                        index++
+                    }
+                }
+            }
+            val trimmed = code.toString().trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("@")) continue
+            val match = PACKAGE_STATEMENT.matchEntire(trimmed) ?: return null
+            return match.groupValues[1].split('.').joinToString(".") { unquote(it) }
+        }
+        return null
+    }
+
     private fun extensionOf(fileName: String): String = fileName.substringAfterLast('.', "").lowercase()
 
     internal fun unquote(name: String): String =
         if (name.length >= 2 && name.startsWith('`') && name.endsWith('`')) name.substring(1, name.length - 1) else name
 }
+
+private val PACKAGE_STATEMENT = Regex("""package\s+([^\s;]+)\s*;?""")
 
 private val SOURCE_EXTENSIONS = setOf(
     DeclarationParser.KOTLIN_EXTENSIONS,

@@ -2,6 +2,7 @@ package stride.search
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -232,6 +233,17 @@ class DeclarationParserTest {
         assertEquals(1, render.line)
         assertEquals("Sample", declarations.single { it.name == "draw" }.container)
         assertFalse(declarations.any { it.name == "id" }, "parameters are not symbols")
+    }
+
+    @Test
+    fun `packageOf finds the first package statement`() {
+        assertEquals("demo.time", DeclarationParser.packageOf("package demo.time\n\nclass Clock\n"))
+        assertEquals("demo", DeclarationParser.packageOf("package demo;\n\nclass Sample {}\n"))
+        assertEquals("demo", DeclarationParser.packageOf("// header\n/* block */\n\npackage demo\n"))
+        assertEquals("demo", DeclarationParser.packageOf("@file:JvmName(\"Main\")\npackage demo\n"))
+        assertEquals("demo.time", DeclarationParser.packageOf("package `demo`.time\n"))
+        assertNull(DeclarationParser.packageOf("class NoPackage\n"))
+        assertNull(DeclarationParser.packageOf(""))
     }
 
     @Test

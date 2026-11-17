@@ -53,6 +53,7 @@ import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.TextEdit
 import stride.search.DeclarationKind
 import stride.search.FileNameIndex
 
@@ -344,8 +345,9 @@ class PopupNativeLegibilityTest {
             ) {
                 ContextActionsPopup(
                     actions = listOf(
+                        ContextAction(ContextActionKind.QUICK_FIX, "Import 'demo.time.Clock'", listOf(TextEdit(0, 0, ""))),
+                        ContextAction(ContextActionKind.INTENTION, "Change 'val' to 'var'", listOf(TextEdit(0, 3, "var"))),
                         ContextAction(ContextActionKind.RUN_MAIN, "Run 'Main.main()'"),
-                        ContextAction(ContextActionKind.RUN_TEST, "Run 'MainTest.starts'"),
                     ),
                     onChoose = {},
                     onClose = {},

@@ -3,8 +3,10 @@ package stride.app.run
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
+import stride.app.intention.ProjectSymbolLookup
 import stride.app.keys.KeyContext
 import stride.core.services.service
+import stride.search.DeclarationIndex
 import java.nio.file.Path
 
 /** Starts the test under the selected editor's caret. Returns `false` when there is none. */
@@ -126,12 +128,17 @@ fun openContextActions(state: AppState): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected as? TextFileEditor ?: return false
     val manager = session.project.service<RunManager>()
+    val text = editor.value.text
+    val fileName = editor.file.name
+    val caret = editor.value.selection.start
+    val lookup = ProjectSymbolLookup(session.project.service<DeclarationIndex>())
     val actions = ContextActions.collect(
-        text = editor.value.text,
-        fileName = editor.file.name,
-        caretOffset = editor.value.selection.start,
+        text = text,
+        fileName = fileName,
+        caretOffset = caret,
         rerunName = manager.rerunTarget?.name,
         runningName = manager.current?.takeIf { it.isRunning }?.configuration?.name,
+        intentions = ContextActions.intentionsAt(text, fileName, caret, lookup),
     )
     if (actions.isEmpty()) {
         state.statusMessage = "No context actions here"
@@ -163,6 +170,16 @@ fun openRunConfigurationChooser(state: AppState): Boolean {
     return true
 }
 
+/** Applies [action]: an edit action rewrites the text, a run action starts the run. */
+fun applyContextAction(state: AppState, action: ContextAction): Boolean {
+    if (action.edits.isEmpty()) return runContextAction(state, action.kind)
+    val session = state.session ?: return false
+    val editor = session.editors.selected as? TextFileEditor ?: return false
+    val applied = editor.applyEdits(action.edits)
+    if (applied) state.statusMessage = null
+    return applied
+}
+
 /** Runs [kind] again by looking the target up at the caret. */
 fun runContextAction(state: AppState, kind: ContextActionKind): Boolean {
     val session = state.session ?: return false
@@ -174,6 +191,7 @@ fun runContextAction(state: AppState, kind: ContextActionKind): Boolean {
         null
     }
     val started = when (kind) {
+        ContextActionKind.QUICK_FIX, ContextActionKind.INTENTION -> false
         ContextActionKind.RUN_MAIN -> runMain(session, editor.file.path, main)
         ContextActionKind.RUN_TEST, ContextActionKind.RUN_TEST_CLASS -> {
             val found = TestLocator.locate(editor.value.text, editor.value.selection.start) ?: return false
