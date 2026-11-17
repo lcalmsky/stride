@@ -34,6 +34,7 @@ class DeclarationIndex(private val project: Project) : Disposable {
 
     private val root: Path = project.root.toAbsolutePath().normalize()
     private val byFile = ConcurrentHashMap<String, List<Declaration>>()
+    private val importsByFile = ConcurrentHashMap<String, List<SourceImport>>()
     private val ready = CountDownLatch(1)
     private val scanThread = Thread({ scan() }, "stride-declaration-index").apply { isDaemon = true }
     private val writeLocks = Array(WRITE_LOCK_STRIPES) { Any() }
@@ -72,7 +73,8 @@ class DeclarationIndex(private val project: Project) : Disposable {
     }
 
     /** The imports [DeclarationParser.imports] read from [file] when it was last indexed; empty if it is not indexed. */
-    fun imports(file: VFile): List<SourceImport> = emptyList()
+    fun imports(file: VFile): List<SourceImport> =
+        importsByFile[file.path.toAbsolutePath().normalize().toString()] ?: emptyList()
 
     override fun dispose() {
         disposed = true
@@ -143,8 +145,24 @@ class DeclarationIndex(private val project: Project) : Disposable {
             }
             val file = VFile(absolute)
             val packageName = DeclarationParser.packageOf(text)
+            importsByFile[key] = DeclarationParser.imports(fileName, text)
             byFile[key] = DeclarationParser.parse(fileName, text)
-                .map { Declaration(it.name, it.kind, file, relativePath, it.line, it.container, packageName, it.isPrivate) }
+                .map {
+                    Declaration(
+                        it.name,
+                        it.kind,
+                        file,
+                        relativePath,
+                        it.line,
+                        it.container,
+                        packageName,
+                        it.isPrivate,
+                        it.column,
+                        it.supertypes,
+                        it.isInterface,
+                        it.isOverride,
+                    )
+                }
             changed()
         }
     }
@@ -153,7 +171,10 @@ class DeclarationIndex(private val project: Project) : Disposable {
         val key = path.toAbsolutePath().normalize().toString()
         val prefix = key + File.separator
         for (target in byFile.keys.filter { it == key || it.startsWith(prefix) }) {
-            synchronized(lockFor(target)) { byFile.remove(target) }
+            synchronized(lockFor(target)) {
+                byFile.remove(target)
+                importsByFile.remove(target)
+            }
         }
         changed()
     }

@@ -24,8 +24,177 @@ data class CallSite(
  */
 object CallSites {
     /** The calls of [name] in [text], in text order. */
-    fun find(fileName: String, text: String, name: String): List<CallSite> = emptyList()
+    fun find(fileName: String, text: String, name: String): List<CallSite> =
+        inRange(fileName, text, 0, text.length).filter { it.name == name }
 
     /** Every call inside `[start, end)` of [text], in text order. */
-    fun inRange(fileName: String, text: String, start: Int, end: Int): List<CallSite> = emptyList()
+    fun inRange(fileName: String, text: String, start: Int, end: Int): List<CallSite> {
+        val extension = fileName.substringAfterLast('.', "").lowercase()
+        val kotlin = extension == DeclarationParser.KOTLIN_EXTENSIONS ||
+            extension == DeclarationParser.KOTLIN_SCRIPT_EXTENSION
+        if (!kotlin && extension != DeclarationParser.JAVA_EXTENSION) return emptyList()
+        val sanitized = sanitizeSource(text)
+        val declarationNames = if (kotlin) {
+            emptySet()
+        } else {
+            DeclarationParser.outline(fileName, text).map { it.nameStart }.toSet()
+        }
+        val calls = ArrayList<CallSite>()
+        for (match in IDENTIFIER.findAll(sanitized)) {
+            val siteStart = match.range.first
+            val siteEnd = match.range.last + 1
+            if (siteStart < start || siteEnd > end) continue
+            if (siteStart > 0 && isIdentifierChar(sanitized[siteStart - 1])) continue
+            val written = match.value
+            val name = DeclarationParser.unquote(written)
+            if (name.isEmpty() || name in KEYWORDS) continue
+            val preceding = sanitized.getOrNull(siteStart - 1)
+            if (preceding == '@') continue
+            if (preceding == ':' && sanitized.getOrNull(siteStart - 2) == ':') {
+                val receiver = receiverBefore(siteStart - 3, sanitized)
+                calls.add(CallSite(name, siteStart, siteEnd, receiver.takeUnless { it == "?" }, isReference = true))
+                continue
+            }
+            if (!isCallAt(sanitized, siteStart, siteEnd, kotlin)) continue
+            if (siteStart in declarationNames || isDeclarationName(sanitized, siteStart, kotlin)) continue
+            if (isAfterNew(sanitized, siteStart)) continue
+            calls.add(CallSite(name, siteStart, siteEnd, receiverFor(siteStart - 1, sanitized)))
+        }
+        return calls
+    }
+
+    private fun isCallAt(text: String, start: Int, end: Int, kotlin: Boolean): Boolean {
+        var i = end
+        while (i < text.length && (text[i] == ' ' || text[i] == '\t')) i++
+        if (i >= text.length) return false
+        when {
+            text[i] == '(' -> return true
+            text[i] == '<' && i == end -> {
+                val close = typeArgumentEnd(text, i) ?: return false
+                var after = close + 1
+                while (after < text.length && (text[after] == ' ' || text[after] == '\t')) after++
+                return after < text.length && text[after] == '('
+            }
+            kotlin && text[i] == '{' -> return true
+        }
+        return false
+    }
+
+    /** The index of the `>` that closes a type argument list opened at [start], on the same line. */
+    private fun typeArgumentEnd(text: String, start: Int): Int? {
+        var depth = 0
+        var i = start
+        while (i < text.length) {
+            when (text[i]) {
+                '\n' -> return null
+                '<' -> depth++
+                '>' -> {
+                    depth--
+                    if (depth == 0) return i
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    /**
+     * The receiver written before the `.` at [dot], where [dot] is the index of the `.` (or of the
+     * `?` of a `?.`).
+     */
+    private fun receiverFor(dot: Int, text: String): String? {
+        if (dot < 0 || text.getOrNull(dot) != '.') return null
+        val safeCall = text.getOrNull(dot - 1) == '?'
+        val expressionEnd = if (safeCall) dot - 2 else dot - 1
+        return receiverBefore(expressionEnd, text)
+    }
+
+    /**
+     * The receiver expression that ends at [end]: a simple identifier whose own first character is
+     * not itself preceded by `.`, `)`, `]` or another chain marker, else `"?"`.
+     */
+    private fun receiverBefore(end: Int, text: String): String {
+        if (end < 0) return "?"
+        if (!isIdentifierChar(text[end])) return "?"
+        var begin = end
+        while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
+        val token = text.substring(begin, end + 1)
+        return when (text.getOrNull(begin - 1)) {
+            '.', ')', ']', '?', '!' -> "?"
+            else -> DeclarationParser.unquote(token)
+        }
+    }
+
+    private fun isAfterNew(text: String, start: Int): Boolean {
+        var i = start - 1
+        while (i >= 0 && text[i].isWhitespace()) i--
+        var wordStart = i
+        while (wordStart >= 0 && isIdentifierChar(text[wordStart])) wordStart--
+        return text.substring(wordStart + 1, i + 1) == "new"
+    }
+
+    private fun isDeclarationName(text: String, start: Int, kotlin: Boolean): Boolean {
+        var boundary = 0
+        for (i in start - 1 downTo 0) {
+            when (text[i]) {
+                '{', '}', ';', '\n' -> {
+                    boundary = i + 1
+                    break
+                }
+            }
+        }
+        val prefix = text.substring(boundary, start)
+        if (kotlin) {
+            if (KOTLIN_DECLARATION_PREFIX.containsMatchIn(prefix.trim())) return true
+            val funIndex = lastWordIndex(prefix, "fun")
+            if (funIndex >= 0) {
+                val after = prefix.substring(funIndex + 3).trim()
+                if (FUN_AFTER.containsMatchIn(after)) return true
+            }
+        } else {
+            if (JAVA_DECLARATION_PREFIX.containsMatchIn(prefix.trim())) return true
+        }
+        return false
+    }
+
+    private fun lastWordIndex(text: String, word: String): Int {
+        var result = -1
+        var index = text.indexOf(word)
+        while (index >= 0) {
+            val before = text.getOrNull(index - 1)
+            val after = text.getOrNull(index + word.length)
+            if ((before == null || !isIdentifierChar(before)) && (after == null || !isIdentifierChar(after))) {
+                result = index
+            }
+            index = text.indexOf(word, index + 1)
+        }
+        return result
+    }
+
+    private fun isIdentifierChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
+
+    private val IDENTIFIER = Regex("""`[^`]+`|[A-Za-z_$][\w$]*""")
+
+    private val KEYWORDS = setOf(
+        "if", "when", "for", "while", "do", "catch", "try", "return", "throw", "super", "this",
+        "object", "fun", "class", "interface", "constructor", "init", "else", "in", "is", "as",
+        "typeof", "switch", "synchronized", "new", "assert", "sizeof", "case", "default", "finally",
+        "break", "continue", "package", "import", "val", "var", "typealias", "enum", "sealed", "data",
+        "companion", "annotation", "public", "private", "protected", "internal", "static", "final",
+        "abstract", "open", "override", "lateinit", "const", "inner", "inline", "value", "actual",
+        "expect", "external", "operator", "infix", "suspend", "vararg", "reified",
+    )
+
+    private val FUN_AFTER = Regex("""^(?:<[^>]*>\s*)?(?:[\w$.<>?]+\s*\.\s*)?$""")
+
+    private val KOTLIN_DECLARATION_PREFIX = Regex(
+        """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|internal|open|abstract|final|sealed|""" +
+            """data|enum|annotation|value|inner|inline|companion|expect|actual|external)\s+)*""" +
+            """(?:class|interface|object|typealias)\s*$"""
+    )
+
+    private val JAVA_DECLARATION_PREFIX = Regex(
+        """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|static|final|abstract|sealed|""" +
+            """non-sealed|strictfp)\s+)*(?:class|interface|enum|record)\s*$"""
+    )
 }
