@@ -1,6 +1,7 @@
 package stride.search
 
 import stride.core.vfs.VFile
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Where a name is written, so it can be resolved the way the compiler would without one: the file,
@@ -31,6 +32,12 @@ class TypeGraph(
     private val classes: List<Declaration> = declarations.filter { it.kind == DeclarationKind.CLASS }
     private val declarationsByFile: Map<String, List<Declaration>> = declarations.groupBy { it.file.path.toString() }
     private val classesByFile: Map<String, List<Declaration>> = classes.groupBy { it.file.path.toString() }
+    private val topLevelClassesByName: Map<String, List<Declaration>> =
+        classes.filter { it.container == null }.groupBy { it.name }
+    private val topLevelSymbolsByName: Map<String, List<Declaration>> =
+        declarations.filter { it.kind == DeclarationKind.SYMBOL && it.container == null }.groupBy { it.name }
+    private val memberSymbolsByName: Map<String, List<Declaration>> =
+        declarations.filter { it.kind == DeclarationKind.SYMBOL && it.container != null }.groupBy { it.name }
     private val qualified: Map<String, List<Declaration>> = buildQualifiedNames()
     private val supertypeRefs: Map<String, List<SupertypeRef>> = classes.associate { key(it) to resolveSupertypes(it) }
     private val supertypeIndex: Map<String, List<Declaration>> = classes.associate { type ->
@@ -38,6 +45,7 @@ class TypeGraph(
     }
     private val subtypeIndex: Map<String, List<Declaration>> = buildSubtypeIndex()
     private val membersByClass: Map<String, List<Declaration>> = buildMemberIndex()
+    private val allSubtypesCache = ConcurrentHashMap<String, List<Declaration>>()
 
     /**
      * The project classes [written] names at [context], resolved in this order, the first step that
@@ -100,14 +108,12 @@ class TypeGraph(
             return if (imported.isEmpty()) emptyList() else sort(imported)
         }
 
-        val samePackage = classes.filter {
-            it.container == null && it.name == name && samePackage(it.packageName, context.packageName)
-        }
+        val samePackage = topLevelClassesByName[name].orEmpty()
+            .filter { samePackage(it.packageName, context.packageName) }
         if (samePackage.isNotEmpty()) return sort(samePackage)
 
-        val starred = context.imports.filter { it.isStar }.flatMap { import ->
-            classes.filter { it.container == null && it.name == name && it.packageName == import.qualifiedName }
-        }
+        val starredPackages = context.imports.filter { it.isStar }.mapTo(HashSet()) { it.qualifiedName }
+        val starred = topLevelClassesByName[name].orEmpty().filter { it.packageName in starredPackages }
         return sort(starred.distinct())
     }
 
@@ -130,9 +136,8 @@ class TypeGraph(
     fun directSubtypes(type: Declaration): List<Declaration> = sort(subtypeIndex[key(type)].orEmpty())
 
     /** Every project class below [type], transitively, each once. */
-    fun allSubtypes(type: Declaration): List<Declaration> = sort(
-        walk(key(type), subtypeIndex)
-    )
+    fun allSubtypes(type: Declaration): List<Declaration> =
+        allSubtypesCache.computeIfAbsent(key(type)) { sort(walk(it, subtypeIndex)) }
 
     /**
      * What Go to Implementation lists for [target]. A CLASS: [allSubtypes] without interfaces. A
@@ -200,48 +205,57 @@ class TypeGraph(
     }
 
     /**
-     * The project declarations a call of [name] written at [context] can reach. Unqualified: members
-     * named [name] of [NameContext.enclosingClasses] and their supertypes, else visible top-level
-     * functions (same package, explicit import, star import), else a visible class (a constructor
-     * call). Qualified ([CallSite.receiver] not `null`): a receiver that [resolveType] resolves to a
-     * class limits the result to members of that class and its supertypes; any other receiver gives
-     * every non-private SYMBOL named [name] with a container, plus visible top-level ones (extension
-     * functions). Private declarations count only inside their own file.
+     * The project declarations a call of [name] written at [context] can reach. Unqualified or
+     * through `this`: members named [name] of [NameContext.enclosingClasses] and their supertypes,
+     * else visible top-level functions (same package, explicit import, star import), else a visible
+     * class (a constructor call). Through `super`: the members named [name] of the supertypes of
+     * the innermost enclosing class, transitively, and never that class's own members. Any other
+     * receiver: when [resolveType] resolves it to a class the result is limited to members of that
+     * class and its supertypes; otherwise every non-private SYMBOL named [name] with a container,
+     * plus visible top-level ones (extension functions). These two receiver paths also drop a
+     * private declaration written outside [NameContext.file].
      */
     fun resolveCallee(site: CallSite, context: NameContext): List<Declaration> {
         val receiver = site.receiver
-        if (receiver != null) {
-            val owners = resolveType(receiver, context)
-            if (owners.isNotEmpty()) {
-                val result = LinkedHashSet<Declaration>()
-                for (owner in owners) result.addAll(membersNamed(site.name, owner, includeSupertypes = true))
-                return sort(result.filter { !it.isPrivate || sameFile(it, context) })
+        if (receiver == null || receiver == "this") {
+            val members = LinkedHashSet<Declaration>()
+            for (enclosing in context.enclosingClasses) {
+                val type = classInContext(enclosing, context) ?: continue
+                members.addAll(membersNamed(site.name, type, includeSupertypes = true))
             }
+            if (members.isNotEmpty()) return sort(members)
+
+            val functions = topLevelFunctions(site.name, context)
+            if (functions.isNotEmpty()) return sort(functions)
+
+            return sort(
+                resolveType(site.name, context)
+                    .filter { it.kind == DeclarationKind.CLASS && (!it.isPrivate || sameFile(it, context)) }
+            )
+        }
+        if (receiver == "super") {
+            val innermost = context.enclosingClasses.firstOrNull() ?: return emptyList()
+            val type = classInContext(innermost, context) ?: return emptyList()
             val result = LinkedHashSet<Declaration>()
-            for (declaration in declarations) {
-                if (declaration.kind != DeclarationKind.SYMBOL || declaration.name != site.name) continue
-                if (declaration.container == null) continue
-                if (declaration.isPrivate && !sameFile(declaration, context)) continue
-                result.add(declaration)
+            for (supertype in walk(key(type), supertypeIndex)) {
+                result.addAll(membersOf(supertype).filter { it.name == site.name })
             }
-            result.addAll(topLevelFunctions(site.name, context))
             return sort(result)
         }
 
-        val members = LinkedHashSet<Declaration>()
-        for (enclosing in context.enclosingClasses) {
-            val type = classInContext(enclosing, context) ?: continue
-            members.addAll(membersNamed(site.name, type, includeSupertypes = true))
+        val owners = resolveType(receiver, context)
+        if (owners.isNotEmpty()) {
+            val result = LinkedHashSet<Declaration>()
+            for (owner in owners) result.addAll(membersNamed(site.name, owner, includeSupertypes = true))
+            return sort(result.filter { !it.isPrivate || sameFile(it, context) })
         }
-        if (members.isNotEmpty()) return sort(members)
-
-        val functions = topLevelFunctions(site.name, context)
-        if (functions.isNotEmpty()) return sort(functions)
-
-        return sort(
-            resolveType(site.name, context)
-                .filter { it.kind == DeclarationKind.CLASS && (!it.isPrivate || sameFile(it, context)) }
-        )
+        val result = LinkedHashSet<Declaration>()
+        for (declaration in memberSymbolsByName[site.name].orEmpty()) {
+            if (declaration.isPrivate && !sameFile(declaration, context)) continue
+            result.add(declaration)
+        }
+        result.addAll(topLevelFunctions(site.name, context))
+        return sort(result)
     }
 
     /**
@@ -342,9 +356,7 @@ class TypeGraph(
 
     private fun topLevelFunctions(name: String, context: NameContext): List<Declaration> {
         val result = ArrayList<Declaration>()
-        for (declaration in declarations) {
-            if (declaration.kind != DeclarationKind.SYMBOL || declaration.container != null) continue
-            if (declaration.name != name) continue
+        for (declaration in topLevelSymbolsByName[name].orEmpty()) {
             if (declaration.isPrivate && !sameFile(declaration, context)) continue
             if (topLevelVisible(declaration, context)) result.add(declaration)
         }

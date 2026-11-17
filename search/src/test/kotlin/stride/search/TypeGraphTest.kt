@@ -264,6 +264,28 @@ class TypeGraphTest {
     }
 
     @Test
+    fun `this and super receivers stay inside the enclosing class family`() {
+        val baseMember = declaration("area", path = "src/Base.kt", kind = DeclarationKind.SYMBOL, container = "Base", line = 2)
+        val base = declaration("Base", path = "src/Base.kt", line = 1)
+        val childMember = declaration("area", path = "src/Child.kt", kind = DeclarationKind.SYMBOL, container = "Child", line = 2)
+        val child = declaration("Child", path = "src/Child.kt", line = 1, supertypes = listOf("Base"))
+        val otherMember = declaration("area", path = "src/Other.kt", kind = DeclarationKind.SYMBOL, container = "Other", line = 2)
+        val other = declaration("Other", path = "src/Other.kt", line = 1)
+        val topLevel = declaration("area", path = "src/Top.kt", kind = DeclarationKind.SYMBOL)
+        val typeGraph = graph(listOf(baseMember, base, childMember, child, otherMember, other, topLevel))
+
+        val inside = context(path = "src/Child.kt", enclosing = listOf("Child"))
+        assertEquals(
+            listOf(baseMember, childMember),
+            typeGraph.resolveCallee(CallSite("area", 0, 4, receiver = "this"), inside),
+        )
+        assertEquals(
+            listOf(baseMember),
+            typeGraph.resolveCallee(CallSite("area", 0, 4, receiver = "super"), inside),
+        )
+    }
+
+    @Test
     fun `mayCall applies the visibility and receiver rules`() {
         val privateMember = declaration(
             "secret", path = "src/Base.kt", kind = DeclarationKind.SYMBOL, container = "Base", line = 2, isPrivate = true,

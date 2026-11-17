@@ -226,6 +226,11 @@ object TypeReferences {
   (an import that names no project class ends the search: the name is outside the project), same
   package, star import. Empty means outside project sources. KDoc in `TypeGraph.kt` is the full
   contract of every query.
+- `TypeGraph.resolveCallee` receiver rules: no receiver and `this` share one path (members of the
+  enclosing classes and their supertypes, then visible top-level functions, then a visible class);
+  `super` gives only the members of the innermost enclosing class's supertypes, transitively;
+  any other receiver limits the result to the class it resolves to, and an unresolved receiver
+  gives every visible member or top-level function of that name.
 - `CallSites` finds calls by text only: an identifier followed by `(`, by type arguments and `(`,
   or in Kotlin by a trailing lambda `{`, or a `::name` reference, outside comments and strings;
   keywords, annotations and declaration names are not calls.
