@@ -511,6 +511,59 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `an argument used after a marker inside the first if condition is refused`() {
+        val text = "private fun f(a: Boolean, p: Boolean) = if (a && p) 1 else 2\n\n" +
+            "fun g(c: Boolean) {\n    println(f(c, check()))\n}\n"
+        assertEquals(
+            "The argument check() would run 1 times or only in some cases",
+            refused(caretAt(text, "f(c, check())")),
+        )
+    }
+
+    @Test
+    fun `a whole first if condition still takes an argument`() {
+        val text = "private fun f(a: Boolean, p: Boolean) = if (p) 1 else 2\n\n" +
+            "fun g(c: Boolean) {\n    println(f(c, check()))\n}\n"
+        val applied = apply(choose(caretAt(text, "f(c, check())"), 0), text)
+        assertEquals(
+            "private fun f(a: Boolean, p: Boolean) = if (p) 1 else 2\n\n" +
+                "fun g(c: Boolean) {\n    println(if (check()) 1 else 2)\n}\n",
+            applied.text,
+        )
+    }
+
+
+    @Test
+    fun `an unused function is never used`() {
+        val text = "private fun twice(v: Int) = v * 2\n"
+        assertEquals("twice is never used", refused(caretAt(text, "fun twice", delta = 4)))
+    }
+
+    @Test
+    fun `a return to the function name is refused`() {
+        val text = "private fun f(v: Int) = list.map { return@f v }\n"
+        assertEquals("f returns from inside its body", refused(caretAt(text, "fun f", delta = 4)))
+    }
+
+    @Test
+    fun `a return to a label outside the body is refused`() {
+        val text = "private fun f(v: Int) = list.map { return@outer v }\n"
+        assertEquals("f returns from inside its body", refused(caretAt(text, "fun f", delta = 4)))
+    }
+
+    @Test
+    fun `a return to a label written in the body is allowed`() {
+        val text = "private fun f(v: Int) = list.map lit@ { return@lit v }\n\nfun g() {\n    println(f(2))\n}\n"
+        val applied = apply(choose(caretAt(text, "f(2)"), 0), text)
+        assertEquals(
+            "private fun f(v: Int) = list.map lit@ { return@lit v }\n\n" +
+                "fun g() {\n    println(list.map lit@ { return@lit 2 })\n}\n",
+            applied.text,
+        )
+    }
+
+
+    @Test
     fun `unbalanced brackets are refused`() {
         val text = "fun f() {\n    val a = Foo(1\n    println(a)\n}\n"
         assertEquals("Brackets do not match in this file", refused(caretAt(text, "a", 1)))

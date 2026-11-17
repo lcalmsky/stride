@@ -91,6 +91,7 @@ internal object KotlinInlineFunction {
         }
         if (uses.references.isNotEmpty()) return "$name is used as a reference"
         if (uses.otherObjects.isNotEmpty()) return "$name is also called on other objects"
+        if (uses.calls.isEmpty()) return "$name is never used"
         return null
     }
 
@@ -136,7 +137,7 @@ internal object KotlinInlineFunction {
         if (function.receiver != null) return "$name is an extension function"
         if (function.parameters.any { it.vararg }) return "$name has a vararg parameter"
         if (bodyCalls(code, body.range, name)) return "$name is recursive"
-        if (returnsInsideBody(code, body.range)) return "$name returns from inside its body"
+        if (returnsInsideBody(code, body.range, name)) return "$name returns from inside its body"
         val returnType = function.returnType
         if (returnType != null && returnType != "Unit" &&
             !KotlinInline.fitsDeclaredType(code, returnType, body.range) &&
@@ -165,15 +166,34 @@ internal object KotlinInlineFunction {
         return false
     }
 
-    private fun returnsInsideBody(code: KotlinCode, range: KtRange): Boolean {
+    private fun returnsInsideBody(code: KotlinCode, range: KtRange, name: String): Boolean {
+        val labels = lambdaLabels(code, range)
         for (index in code.code.indices) {
             val token = code.code[index]
             if (token.start < range.start || token.end > range.end) continue
             if (token.type != KotlinTokenTypes.KEYWORD || token.text != "return") continue
-            val next = code.code.getOrNull(index + 1)
-            if (next == null || next.text != "@") return true
+            val at = code.code.getOrNull(index + 1)
+            if (at == null || at.text != "@") return true
+            val label = code.code.getOrNull(index + 2)
+            if (label == null || !isNameToken(label)) return true
+            val written = label.text.removeSurrounding("`")
+            if (written == name || written !in labels) return true
         }
         return false
+    }
+
+    /** The labels of lambdas written in [range]; `return@label` may only name one of them. */
+    private fun lambdaLabels(code: KotlinCode, range: KtRange): Set<String> {
+        val labels = HashSet<String>()
+        for (index in code.code.indices) {
+            val token = code.code[index]
+            if (token.start < range.start || token.end > range.end) continue
+            if (!isNameToken(token)) continue
+            if (code.code.getOrNull(index + 1)?.text != "@") continue
+            val block = code.blocks.firstOrNull { it.open.index == index + 2 } ?: continue
+            if (block.kind == BlockKind.LAMBDA) labels.add(token.text.removeSurrounding("`"))
+        }
+        return labels
     }
 
     private fun scanUses(code: KotlinCode, function: KtFunction): Uses {
@@ -448,77 +468,10 @@ internal object KotlinInlineFunction {
         code.functions.any { it.body === block && it.container == FunctionContainer.LOCAL }
 
     private fun conditionalInBody(code: KotlinCode, from: Int, to: Int): Boolean {
-        if (conditionHolds(code, from, to, "if")) return false
-        if (conditionHolds(code, from, to, "when")) return false
-        if (iterableHolds(code, from, to)) return false
-        var index = code.code.indexOfFirst { it.start >= from }
-        while (index < code.code.size) {
-            val token = code.code[index]
-            if (token.start >= to) break
-            when {
-                token.text == "&&" || token.text == "||" || token.text == "?:" || token.text == "else" ||
-                    token.text == "->" -> return true
-                token.text == "?" && code.code.getOrNull(index + 1)?.type == KotlinTokenTypes.DOT -> return true
-                token.text == "{" && code.blocks.firstOrNull { it.open.index == token.index }?.kind == BlockKind.WHEN_BODY -> return true
-                token.type == KotlinTokenTypes.KEYWORD &&
-                    token.text in setOf("if", "while", "for", "do", "try", "catch", "finally") -> return true
-                code.isOpener(token) -> {
-                    val close = code.matchingIndex(index)
-                    if (close >= 0 && code.code[close].start < to) {
-                        index = close + 1
-                        continue
-                    }
-                }
-            }
-            index++
-        }
-        return false
-    }
-
-    private fun conditionHolds(code: KotlinCode, from: Int, to: Int, keyword: String): Boolean {
-        for (index in code.code.indices) {
-            val token = code.code[index]
-            if (token.start < from) continue
-            if (token.type != KotlinTokenTypes.KEYWORD || token.text != keyword) continue
-            val open = code.code.getOrNull(index + 1) ?: return false
-            if (open.text != "(") return false
-            val close = code.matching(open.index) ?: return false
-            return to > open.end && to < close.start
-        }
-        return false
-    }
-
-    private fun iterableHolds(code: KotlinCode, from: Int, to: Int): Boolean {
-        for (index in code.code.indices) {
-            val token = code.code[index]
-            if (token.start < from) continue
-            if (token.type != KotlinTokenTypes.KEYWORD || token.text != "for") continue
-            val open = code.code.getOrNull(index + 1) ?: return false
-            if (open.text != "(") return false
-            val closeIndex = code.matchingIndex(open.index)
-            if (closeIndex < 0) return false
-            val close = code.code[closeIndex]
-            if (to <= open.end || to >= close.start) return false
-            var inIndex = -1
-            var cursor = index + 2
-            while (cursor < closeIndex) {
-                val candidate = code.code[cursor]
-                if (candidate.text == "in") {
-                    inIndex = cursor
-                    break
-                }
-                if (code.isOpener(candidate)) {
-                    val partner = code.matchingIndex(cursor)
-                    if (partner in (cursor + 1) until closeIndex) {
-                        cursor = partner + 1
-                        continue
-                    }
-                }
-                cursor++
-            }
-            return inIndex >= 0 && to > code.code[inIndex].end
-        }
-        return false
+        val fromIndex = code.code.indexOfFirst { it.start >= from }
+        if (fromIndex < 0) return false
+        val endIndex = code.code.indexOfLast { it.start < to }.coerceAtLeast(fromIndex)
+        return code.conditionalFrom(fromIndex, endIndex, to)
     }
 
     private fun bodyNameCapture(code: KotlinCode, body: Body, site: CallSite): String? {
