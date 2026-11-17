@@ -10,6 +10,7 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `run.png` Run 창 (`11-run-window.png`)
 - `glass.png` 코드 위에 뜬 Search Everywhere 유리 팝업 (`13-search-over-code.png`)
 - `multi-caret.png` 여러 캐럿으로 같은 단어를 고른 Kotlin 에디터 (`15-multi-caret.png`)
+- `folding.png` 함수 본문을 `{...}` 로 접은 Kotlin 에디터 (`16-folding.png`)
 
 한국어판과 영어판 README 가 같은 그림을 씁니다. `UiSnapshotTest` 의 시나리오가 바뀌면 `app/build/ui-snapshots/` 의 PNG 를 이 디렉터리로 다시 복사합니다.
 

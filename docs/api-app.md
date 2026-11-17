@@ -371,6 +371,7 @@ enum class ActionId {
     PARAMETER_INFO, QUICK_DOC, QUICK_DEFINITION, SURROUND_WITH,
     SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
     EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
+    EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
 }
 
 enum class KeyContext {
@@ -507,6 +508,10 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :253 |
 | `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
 | `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
+| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :256, :257 |
+| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :259, :260 |
+| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :262, :263 |
+| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :265, :266 |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -952,6 +957,7 @@ carets and records them in the undo entry.
 | every caret | typing, Enter, IME composition, ⌫/⌦ (with ⌥), arrows with their ⌥, ⌘, ⇧ forms, ⌘C ⌘X ⌘V, undo/redo, Esc, the six caret actions below |
 | every caret through `perCaret` | `COMMENT_LINE`, `EDITOR_DUPLICATE`, `EDITOR_DELETE_LINE`, `UNINDENT`, `INDENT` (line-based only when a caret has a selection), `EDITOR_TOGGLE_CASE` |
 | primary caret only | everything else (line moves, statement moves, join, start new line, complete statement, unwrap, reformat, surround, block comment, ⌥↑/⌥↓, declaration moves, completion, rename, ⌥↩, paste history, find and replace, go to line) |
+| view only, every caret kept | `EDITOR_SCROLL_TO_CENTER` and the four folding actions (see Code folding): they never set the value through the single-selection path; the primary caret picks the fold, and a caret the new fold would hide moves to its start |
 
 `perCaret` applies the function bottom-up; for a line-based action it calls it once per group of
 carets whose touched lines overlap, through the group's latest-added caret, and maps the other
@@ -1042,7 +1048,97 @@ The vertical scrollbar's adapter subtracts the chrome insets from its track, so 
 the track's end at `maxValue` instead of stopping short by the inset height.
 The gutter (line numbers) follows only the vertical scroll and stays outside the horizontal
 scroll, which wraps the text body alone. The following effect watches only the primary caret;
-secondary carets do not pull the viewport.
+secondary carets do not pull the viewport. With something folded, both read the caret rectangle
+through `FoldView.toView`, so they follow the caret's row in the folded text.
+
+### Code folding
+
+`EXPAND_REGION` (⌘= and numpad ⌘+), `COLLAPSE_REGION` (⌘- and numpad ⌘-),
+`EXPAND_ALL_REGIONS` (⇧⌘=) and `COLLAPSE_ALL_REGIONS` (⇧⌘-) fold the editor the way IntelliJ's
+`ExpandRegion`, `CollapseRegion`, `ExpandAllRegions` and `CollapseAllRegions` do. The dispatcher
+forwards them to `TextFileEditor.applyAction`, which consumes the key whenever an editor is
+selected, also when nothing changes and also in a read-only editor.
+
+**Representation.** The document stays the field's `TextFieldValue.text`; folding is a view.
+`TextFileEditor.foldedRegions` holds the collapsed ranges as `FoldRegion(hiddenStart, hiddenEnd)`
+in document offsets, outer ranges first. A range nested in a collapsed range stays collapsed when
+the outer one opens; only the maximal ranges (`effectiveFolds`, always disjoint) are drawn.
+`FoldView` turns them into the folded text: every effective range becomes the placeholder `...`,
+so a function body shows as `{...}`. `FoldView` is the `OffsetMapping` the
+`HighlightingVisualTransformation` returns, and it also maps document lines to rows
+(`rowOf`, `visibleRowOf`, `lineOfRow`, `visibleLines`, `rowCount`). An offset inside a hidden
+range maps to the placeholder's start; the first two placeholder positions map back to
+`hiddenStart` and the last to `hiddenEnd`. With nothing folded `filter` takes the old path and
+returns `OffsetMapping.Identity`, `Content` adds no modifier and every row computation is the
+identity, so the unfolded editor keeps its frame cost. Fold state belongs to the editor
+instance: it survives tab switches, is not saved across restarts and is not part of undo.
+
+Two alternatives were rejected. Making the folded text the field's value would force every
+editing path (`applyValue`, `onFieldValueChange`, `MultiCaret`, `EditActions`, undo, find,
+navigation, intentions, highlighter edits) to translate offsets — the rejected caret-model
+option C again. Hiding lines with zero-size styling under the identity mapping would keep the
+hidden newlines breaking rows, and the fixed `codeLineHeight` would give each hidden line its
+full height, so `{...}` could not share one row.
+
+**Where regions come from.** There is no parse tree. `FoldRegions.candidates` runs only when one
+of the four actions runs and reads `CodeScan`, the string and comment scan the brace actions
+already use: every `{}` and `[]` pair whose ends are on different lines (hidden between the
+brackets), every terminated multi-line block comment and KDoc (hidden between `/*` or `/**` and
+`*/`), and a run of two or more `import` lines with only blank lines between them (hidden after
+the first `import `, up to the end of the last import line, `\r` excluded). Only `kt`, `kts`,
+`java` and `json` files have candidates; a candidate that partially overlaps an earlier one is
+dropped, so the set is nested or disjoint. A region's start line is the line of its
+`hiddenStart`.
+
+**Actions.** The regions are the candidates plus `foldedRegions`; the primary caret
+(`value.selection.end`) picks the target, and a region contains it when
+`hiddenStart <= caret <= hiddenEnd`.
+
+| action | target |
+|---|---|
+| Collapse (⌘-) | the only region starting on the caret's line if it is expanded; otherwise the innermost expanded region containing the caret |
+| Expand (⌘=) | the only region starting on the caret's line if it is collapsed; otherwise the outermost collapsed region containing the caret |
+| Collapse All (⇧⌘-) | every region |
+| Expand All (⇧⌘=) | none stays collapsed |
+
+After a collapse every caret end that lies strictly inside an effective fold moves to its
+`hiddenStart`; the carets are normalised and the secondary carets are kept. Folding records no
+undo entry.
+
+**A fold never hides a caret.** Wherever the value changes (`applyValue`, `applyCarets`,
+`restoreHistory`) the folds follow the text change: a range entirely after the change (an
+insertion at `hiddenStart` included) shifts, a range entirely before it (an insertion at
+`hiddenEnd` included) stays, and a range the change touches opens. Then any range that strictly
+contains a caret end opens. Horizontal movement is the exception: when the field moves the
+selection without changing the text, an end that lands inside a fold snaps to `hiddenEnd` when
+it moved forward and to `hiddenStart` when it moved back, so ← and → (with ⇧ too) step over the
+placeholder; `moveCarets` does the same for every caret on its horizontal moves. The field's
+own vertical, word, line-start/end and mouse movement go through the layout, and the mapping
+never returns an offset inside a fold. Consequently go to line, navigation and ⌘-click targets,
+find-bar stepping, occurrence selection, undo/redo and any other path that puts a caret inside a
+fold open it; typing or deleting that touches hidden text opens it; and replacing a selection
+that covers a whole fold removes it.
+
+**Drawing and input.** `Content` builds the `FoldView` from the text and `foldedRegions`. Caret
+following and Scroll to Center read the caret rectangle through `toView`; the background canvas
+and the gutter paint the current-line glow on rows; the gutter has one number per row (the row's
+first document line), so the numbers of hidden lines are skipped, and bookmarks and run markers
+on hidden lines are not drawn; the gutter height counts rows. Secondary carets are mapped into
+the folded text before they are drawn, and ⌘-click and ⌥⇧-click map the pressed offset back with
+`toDoc`. On a folded row the column-selection corner is taken from the document offset under the
+pointer, so pressing the placeholder yields `hiddenStart` rather than an offset inside the fold.
+Each visible placeholder is drawn in the gutter colour (the line numbers' contrast guarantee)
+inside a 1 dp rounded outline of `accent2` at 55% alpha, drawn by a modifier that exists only
+while something is folded; no token or search style reaches the placeholder. A plain click on a
+placeholder opens that fold and puts the caret at its `hiddenStart`.
+
+**Known differences.** No gutter fold markers, Expand/Collapse to Level, Fold Selection ⌘.,
+`//region` folding, collapsed-by-default settings or placeholder preview popup; fold state is
+not saved; a placeholder is always `...` (IntelliJ shows, for example, the first KDoc line);
+containment uses the hidden range, so a caret right after `}` is not inside the block; secondary
+carets move ↑/↓ by document line and open a fold they land in; line actions (delete, duplicate,
+move, comment) act on document lines and open a fold their edit touches; and an edit right at a
+fold edge can be diffed into the hidden text, which opens the fold.
 
 ## Tool windows
 
@@ -2531,7 +2627,7 @@ fun glassGutterColor(appearance: Appearance = AppearanceState.appearance): Color
 `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
 `12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`,
-`15-multi-caret.png`).
+`15-multi-caret.png`, `16-folding.png`).
 The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-light.png`,
 `04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
 `11-run-window-light.png`, `12-editor-scrolled-light.png`,
@@ -2571,11 +2667,11 @@ Maven Central alone does not carry it.
 | `TextChangeTest` | common prefix/suffix insert/delete/replace and empty edges; incremental highlighter equals a fresh one |
 | `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
 | `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
-| `KeymapTest` | every macOS binding in its context (including ⌃G, ⌃⇧G, ⌃⌘G and ⇧⌘8), context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
+| `KeymapTest` | every macOS binding in its context (including ⌃G, ⌃⇧G, ⌃⌘G, ⇧⌘8 and both strokes of each folding action), context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
 | `KeyStrokeTextTest` | macOS glyph formatting and order, platform modifier labels (`Ctrl+S`, `Shift+Ctrl+O`) for non-macOS keymaps, first bound stroke per action |
 | `WelcomeHintsTest` | hints read from the keymap, Double Shift as the literal gesture, and platform modifier labels on a non-macOS keymap |
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, the double-Option clone wait (surviving repeated arrows, ended by another modifier), platform shortcuts |
-| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone, occurrence and column-mode status messages including clearing a stale failure |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone, occurrence and column-mode status messages including clearing a stale failure, the four folding actions reaching the selected editor |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
 | `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
@@ -2594,11 +2690,14 @@ Maven Central alone does not carry it.
 | `SearchSelectionPillTest` | the Search Everywhere popup on the Skia path in both palettes and on the native path for structure only: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and on Skia the pill reads at least 1.15 against the panel (the offscreen native render has no panel, so its contrast rests on the token model) |
 | `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
-| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line and a Kotlin editor with several carets selecting the same word |
+| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line, a Kotlin editor with several carets selecting the same word and a Kotlin editor with one function body folded (asserted folded before rendering) |
 | `MultiCaretTest` | normalization folding overlaps, shared ends and enclosed collapsed carets; typing replication through repeated characters, selections and out-of-document ranges; movement, word and line ends, deletion, paste distribution and copy ranges; occurrence selection and whole-word matching; caret cloning, blocks, toggling and the per-caret runner; thousands of carets staying under a second |
 | `TextFileEditorMultiCaretTest` | field-change replication and undo, consecutive typing merging into one step, selection-only changes dropping the carets and composition-only changes keeping them, program edits and rename restoring them through undo, Esc order, every-caret actions, multi-caret copy/cut/paste, column mode and cloning, read-only behaviour |
 | `MultiCaretUiTest` | typing and delete keys through the real composition at every caret, Esc, clipboard paste, column mode typing, the double-Option clone gesture, ⌥⇧-click and ⌥-drag, and a plain click on the primary caret dropping the secondary ones |
 | `CaretKeysTest` | which strokes become caret commands with and without secondary carets or column mode and which stay with the field, the virtual column right of a line, and the sorted distinct secondary caret lines |
+| `CodeFoldingTest` | fold candidates (imports, block comments and KDoc, multi-line `{}`/`[]` pairs, single-line and string/comment braces skipped, unterminated comments, CRLF import ends, a laminar set, brace extensions only), `FoldView` offsets and rows around one, two, adjacent and nested folds and a fold reaching an unterminated last line, effective folds without partial overlaps, twenty thousand sibling folds under a second, the folded text with no token or search style on a placeholder, and the identity mapping without folds and through the three-argument constructor |
+| `TextFileEditorFoldingTest` | Collapse/Expand targets on a function line and the class line, Collapse All keeping nested folds, Expand All, carets moved out of a new fold with the secondary ones kept and no composition lost when nothing moves, folds opened by go to line, program selections and vertical secondary-caret moves, shifted by edits before them (typing, `replaceRange`, `applyEdits`, `renameWord`) and opened by edits inside, removed by typing over them, horizontal snapping for the field and for every caret, read-only folding, and files without candidates |
+| `FoldingUiTest` | the field laying out `{...}` with a caret at every fold boundary, the gutter skipping hidden numbers, → at a fold start landing on its end, a placeholder click expanding the fold, ⌘-/⌘= through the window keymap, a fold change not re-running an old Scroll to Center request, an ⌥-drag from a placeholder keeping the fold, and caret following by row below a large fold |
 | `VisibleCaretRangesTest` | carets outside the visible lines dropped, spanning selections clipped to the window, collapsed carets contributing only a bar, and a visible bar keeping its clipped range |
 | `PopupPlateContrastTest` | every popup text role clears 4.5:1 on the plate over a white and a black desktop in both palettes, the selected and hovered labels on their pills over the plate, and the plate floor is the desktop worse for the palette's polarity |
 | `PopupNativeLegibilityTest` | each popup rendered offscreen on the native path over a white and a black desktop in both palettes: every text role the popup can draw clears 4.5:1 on a glyph-free block of its plate and the selected row's label on its pill, and the hole and glass piece leave nothing behind when the scene closes |
