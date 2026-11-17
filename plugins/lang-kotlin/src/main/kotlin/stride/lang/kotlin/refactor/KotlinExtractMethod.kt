@@ -16,6 +16,7 @@ internal object KotlinExtractMethod {
     private const val LOCAL_FUNCTION = "The selection is inside a local function"
     private const val NOT_IN_FUNCTION = "Extract Method works inside a function body"
     private const val EXPRESSION_BODY = "Expression body: convert it to a block body first"
+    private const val BLOCK_VALUE = "The selection is the block's value; extract one expression"
     private const val RETURN = "The selection contains return"
     private const val LOOP = "The selection contains break or continue for a loop outside it"
     private const val NOT_A_NAME = "Not a valid name"
@@ -39,7 +40,15 @@ internal object KotlinExtractMethod {
         val enclosing = place.enclosing!!
 
         val statements = statementsCovering(code, selection)
-        if (statements != null) return statementsStep(code, selection, statements, enclosing)
+        if (statements != null) {
+            if (valueBlock(code, statements.first().block) && includesBlockValue(code, statements)) {
+                if (statements.size == 1 && code.checkExpression(selection) == null) {
+                    return expressionStep(code, selection, enclosing)
+                }
+                return RefactoringStep.Refused(BLOCK_VALUE)
+            }
+            return statementsStep(code, selection, statements, enclosing)
+        }
         if (code.checkExpression(selection) != null) {
             if (enclosing.body == null && code.statementAt(selection.start) == null) {
                 return RefactoringStep.Refused(EXPRESSION_BODY)
@@ -130,6 +139,91 @@ internal object KotlinExtractMethod {
         return null
     }
 
+    /** True when the control construct owning [block] stands in an expression position and yields a value. */
+    private fun valueBlock(code: KotlinCode, block: KtBlock): Boolean {
+        if (block.kind != BlockKind.CONTROL_BODY) return false
+        val keyword = valueKeyword(code, block) ?: return false
+        return keywordInExpressionPosition(code, keyword)
+    }
+
+    private fun keywordInExpressionPosition(code: KotlinCode, keyword: KtToken): Boolean {
+        val statement = code.statements.firstOrNull {
+            it.startTokenIndex >= 0 && code.code[it.startTokenIndex].index == keyword.index
+        } ?: return true
+        return usesStatementValue(code, statement)
+    }
+
+    /** A statement's value is used when it ends a block whose own value is used. */
+    private fun usesStatementValue(code: KotlinCode, statement: KtStatement): Boolean {
+        val block = statement.block
+        val last = code.statements.filter { it.block === block }.maxByOrNull { it.start } ?: return false
+        if (last.start != statement.start) return false
+        return when (block.kind) {
+            BlockKind.LAMBDA -> true
+            BlockKind.CONTROL_BODY -> valueBlock(code, block)
+            else -> false
+        }
+    }
+
+    private fun valueKeyword(code: KotlinCode, block: KtBlock): KtToken? {
+        var keyword = owningKeyword(code, block) ?: return null
+        var guard = 0
+        while (guard++ < 100) {
+            val before = code.code.getOrNull(keyword.index - 1) ?: return keyword
+            if (before.text != "else") return keyword
+            keyword = scanBackFor(code, before.index, "if") ?: return keyword
+        }
+        return keyword
+    }
+
+    private fun owningKeyword(code: KotlinCode, block: KtBlock): KtToken? = when (block.headerKeyword) {
+        "if" -> headerKeywordBefore(code, block)
+        "when" -> whenKeyword(code, block)
+        "else" -> scanBackFor(code, block.open.index, "if")
+        "catch", "finally" -> scanBackFor(code, block.open.index, "try")
+        "try" -> code.code.getOrNull(block.open.index - 1)?.takeIf { it.text == "try" }
+        else -> null
+    }
+
+    private fun whenKeyword(code: KotlinCode, block: KtBlock): KtToken? {
+        val body = block.parent ?: return null
+        if (body.kind != BlockKind.WHEN_BODY) return null
+        val previous = code.code.getOrNull(body.open.index - 1) ?: return null
+        if (previous.text == "when") return previous
+        return headerKeywordBefore(code, body)?.takeIf { it.text == "when" }
+    }
+
+    private fun headerKeywordBefore(code: KotlinCode, block: KtBlock): KtToken? {
+        val close = code.code.getOrNull(block.open.index - 1) ?: return null
+        if (close.text != ")") return null
+        val open = code.matchingIndex(close.index)
+        if (open < 0) return null
+        return code.code.getOrNull(open - 1)
+    }
+
+    /** The nearest [word] keyword before [index], skipping every balanced bracket group. */
+    private fun scanBackFor(code: KotlinCode, index: Int, word: String): KtToken? {
+        var cursor = index - 1
+        while (cursor >= 0) {
+            val token = code.code[cursor]
+            if (code.isCloser(token)) {
+                val open = code.matchingIndex(cursor)
+                if (open < 0) return null
+                cursor = open - 1
+                continue
+            }
+            if (token.type == KotlinTokenTypes.KEYWORD && token.text == word) return token
+            cursor--
+        }
+        return null
+    }
+
+    private fun includesBlockValue(code: KotlinCode, statements: List<KtStatement>): Boolean {
+        val last = code.statements.filter { it.block === statements.first().block }.maxByOrNull { it.start }
+            ?: return false
+        return statements.last().start == last.start
+    }
+
     // --- the two shapes -----------------------------------------------------------------------
 
     private fun statementsStep(
@@ -174,9 +268,40 @@ internal object KotlinExtractMethod {
             )
         }
         exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
+        if (!selfTyped(code, selection)) {
+            return RefactoringStep.Refused(
+                "Cannot infer the type of ${writtenExpression(code, selection)} without a compiler",
+            )
+        }
         return nameStep(code) { name ->
             expressionEdit(code, selection, enclosing, inputs, name)
         }
+    }
+
+    /**
+     * False when the expression holds a call without a receiver whose type arguments are not
+     * written: its result type may come from the caller's expected type, which a new function
+     * does not have. A member call is bound by its receiver's type and a constructor by its name.
+     */
+    private fun selfTyped(code: KotlinCode, range: KtRange): Boolean {
+        for (call in code.callsIn(range)) {
+            if (call.kind == CallKind.INDEX) continue
+            val callee = code.tokenBefore(call.open.start) ?: continue
+            if (!isNameToken(callee)) continue
+            val before = code.tokenBefore(callee.start)
+            if (before != null && before.type == KotlinTokenTypes.DOT) continue
+            val raw = callee.text.removeSurrounding("`")
+            val hasArguments = call.kind == CallKind.LAMBDA ||
+                (call.close != null && call.close!!.index > call.open.index + 1)
+            if (raw.isNotEmpty() && raw.first().isUpperCase() && hasArguments) continue
+            return false
+        }
+        return true
+    }
+
+    private fun writtenExpression(code: KotlinCode, range: KtRange): String {
+        val text = code.text.substring(range.start, range.end).replace(Regex("\\s+"), " ").trim()
+        return if (text.length <= 40) text else text.substring(0, 37) + "..."
     }
 
     // --- inputs -------------------------------------------------------------------------------
@@ -335,7 +460,8 @@ internal object KotlinExtractMethod {
             val target = assignmentTarget(code, token) ?: continue
             val reference = code.references.firstOrNull { it.token.index == target } ?: continue
             val local = reference.resolved ?: continue
-            if (local.nameToken.start >= selection.start && local.nameToken.end <= selection.end) continue
+            // `val x += y` is `x.plusAssign(y)`, not an assignment; only a var can be assigned.
+            if (local.kind != LocalKind.VAR) continue
             if (local.nameToken.start >= selection.start) continue
             if (seen.add(local)) assigned.add(local to token.start)
         }

@@ -36,7 +36,10 @@ class KotlinExtractMethodTest {
 
     private fun finish(text: String, question: RefactoringStep.AskName, name: String = "extracted"): Applied {
         val valid = question.complete(name) as NameCheck.Valid
-        return Applied(apply(text, valid.edit.edits), valid.edit.caret, valid.edit.message)
+        val edited = apply(text, valid.edit.edits)
+        val caret = valid.edit.caret
+        assertEquals(name, edited.substring(caret, caret + name.length))
+        return Applied(edited, caret, valid.edit.message)
     }
 
     private fun extract(text: String, snippet: String, name: String = "extracted"): Applied =
@@ -113,11 +116,11 @@ class KotlinExtractMethodTest {
 
     @Test
     fun `a multi-line expression keeps its relative indentation`() {
-        val text = "fun f() {\n    println(foo(\n        1,\n        2,\n    ))\n}\n"
-        val applied = extract(text, "foo(\n        1,\n        2,\n    )")
+        val text = "fun f(a: A) {\n    println(a.foo(\n        1,\n        2,\n    ))\n}\n"
+        val applied = extract(text, "a.foo(\n        1,\n        2,\n    )")
         assertEquals(
-            "fun f() {\n    println(extracted())\n}\n\n" +
-                "private fun extracted() = foo(\n        1,\n        2,\n    )\n",
+            "fun f(a: A) {\n    println(extracted(a))\n}\n\n" +
+                "private fun extracted(a: A) = a.foo(\n        1,\n        2,\n    )\n",
             applied.text,
         )
     }
@@ -234,6 +237,39 @@ class KotlinExtractMethodTest {
         assertEquals(
             "fun f() {\n    var x = 0\n    x = extracted(x)\n}\n\n" +
                 "private fun extracted(x: Int): Int {\n    var x = x\n    x = compute(x)\n    return x\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a compound assignment to a var is an output`() {
+        val text = "fun f() {\n    var total = 0\n    total += 1\n}\n"
+        val applied = extract(text, "total += 1")
+        assertEquals(
+            "fun f() {\n    var total = 0\n    total = extracted(total)\n}\n\n" +
+                "private fun extracted(total: Int): Int {\n    var total = total\n    total += 1\n    return total\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an increment of a var is an output`() {
+        val text = "fun f() {\n    var count = 0\n    count++\n}\n"
+        val applied = extract(text, "count++")
+        assertEquals(
+            "fun f() {\n    var count = 0\n    count = extracted(count)\n}\n\n" +
+                "private fun extracted(count: Int): Int {\n    var count = count\n    count++\n    return count\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a compound assignment to a val is only plusAssign`() {
+        val text = "fun f() {\n    val result = ArrayList<Int>()\n    result += 1\n    println(result)\n}\n"
+        val applied = extract(text, "result += 1")
+        assertEquals(
+            "fun f() {\n    val result = ArrayList<Int>()\n    extracted(result)\n    println(result)\n}\n\n" +
+                "private fun extracted(result: ArrayList<Int>) {\n    result += 1\n}\n",
             applied.text,
         )
     }
@@ -411,6 +447,84 @@ class KotlinExtractMethodTest {
         assertEquals(
             "Extract Method works inside a function body",
             refused(select("val x = 1\n", "1")),
+        )
+    }
+
+    @Test
+    fun `the value of an expression-position branch becomes an expression function`() {
+        val text = "fun f(flag: Boolean): Int =\n    if (flag) {\n        a.value\n    } else {\n        0\n    }\n"
+        val applied = extract(text, "a.value")
+        assertEquals(
+            "fun f(flag: Boolean): Int =\n    if (flag) {\n        extracted()\n    } else {\n        0\n    }\n\n" +
+                "private fun extracted() = a.value\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `statements that include the block's value are refused`() {
+        val text = "fun f(flag: Boolean): Int =\n    if (flag) {\n        println(1)\n        2\n    } else {\n        0\n    }\n"
+        assertEquals(
+            "The selection is the block's value; extract one expression",
+            refused(select(text, "println(1)\n        2")),
+        )
+    }
+
+    @Test
+    fun `a try block that is a branch value keeps its value`() {
+        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
+            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+        val applied = extract(text, "a + 1")
+        assertEquals(
+            "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        extracted(a)\n" +
+                "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n\n" +
+                "private fun extracted(a: Int) = a + 1\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `statements including a try block's value are refused`() {
+        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
+            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+        assertEquals(
+            "The selection is the block's value; extract one expression",
+            refused(select(text, "val a = 1\n        a + 1")),
+        )
+    }
+
+    @Test
+    fun `an else-if branch of a statement if is extracted`() {
+        val text = "fun f(a: Boolean, b: Boolean) {\n    if (a) {\n        println(1)\n    } else if (b) {\n" +
+            "        println(2)\n    }\n}\n"
+        val applied = extract(text, "println(2)")
+        assertEquals(
+            "fun f(a: Boolean, b: Boolean) {\n    if (a) {\n        println(1)\n    } else if (b) {\n" +
+                "        extracted()\n    }\n}\n\nprivate fun extracted() {\n    println(2)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a bare empty-argument call is refused as an expression function`() {
+        val text = "fun f(flag: Boolean) {\n    val items = if (flag) list() else emptyList()\n}\n"
+        assertEquals(
+            "Cannot infer the type of emptyList() without a compiler",
+            refused(select(text, "emptyList()")),
+        )
+        assertEquals(
+            "Cannot infer the type of list() without a compiler",
+            refused(select(text, "list()")),
+        )
+    }
+
+    @Test
+    fun `a call on a receiver keeps its type`() {
+        val text = "fun f(a: A) {\n    val x = a.total()\n}\n"
+        val applied = extract(text, "a.total()")
+        assertEquals(
+            "fun f(a: A) {\n    val x = extracted(a)\n}\n\nprivate fun extracted(a: A) = a.total()\n",
+            applied.text,
         )
     }
 
