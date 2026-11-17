@@ -7,6 +7,7 @@ import stride.app.editor.find.FindOptions
 import stride.core.vfs.VFile
 import stride.lang.TextEdit
 import stride.search.IndexedFile
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.regex.Pattern
@@ -31,27 +32,33 @@ data class ReplaceFilePlan(
         }
 }
 
-/** Every file a Replace All would change; the totals drive the confirmation and the status. */
-data class ReplacePlan(val files: List<ReplaceFilePlan>) {
+/**
+ * Every file a Replace All would change; the totals drive the confirmation and the status.
+ * [error] is set instead of [files] when the replacement string is not valid for the regex, so
+ * the UIs report it and never offer the confirmation.
+ */
+data class ReplacePlan(val files: List<ReplaceFilePlan>, val error: String? = null) {
     val occurrences: Int get() = files.sumOf { it.edits.size }
 
     /** Planned files that would be written to disk, so they cannot be undone in stride. */
     val diskFiles: Int get() = files.count { it.source == ReplaceSource.DISK }
 }
 
-/** What [ReplaceInPath.apply] did; the skipped counts are occurrences, not files. */
+/** What [ReplaceInPath.apply] did; the skipped and failed counts are occurrences, not files. */
 data class ReplaceOutcome(
     val replaced: Int = 0,
     val files: Int = 0,
     val skippedReadOnly: Int = 0,
     val skippedChanged: Int = 0,
     val unsavedFiles: Int = 0,
+    val failed: Int = 0,
 ) {
     val message: String
         get() = buildString {
             append("Replaced ${counted(replaced, "occurrence")} in ${counted(files, "file")}")
             if (skippedReadOnly > 0) append(", $skippedReadOnly skipped (read-only)")
             if (skippedChanged > 0) append(", $skippedChanged skipped (changed)")
+            if (failed > 0) append(", $failed failed")
             if (unsavedFiles > 0) append("; ${counted(unsavedFiles, "open file")} not saved")
         }
 }
@@ -73,8 +80,16 @@ object ReplaceInPath {
         query: String,
         options: FindOptions,
         replacement: String,
-    ): List<TextEdit> {
-        if (query.isEmpty()) return emptyList()
+    ): List<TextEdit> = computed(text, query, options, replacement).edits
+
+    /** The edits for [text], or the reason a regex [replacement] could not be expanded. */
+    private fun computed(
+        text: String,
+        query: String,
+        options: FindOptions,
+        replacement: String,
+    ): Computed {
+        if (query.isEmpty()) return Computed(emptyList())
         val matches = ArrayList<FindMatch>()
         var lastEnd = 0
         for (match in FindModel.search(text, query, options).matches) {
@@ -82,10 +97,10 @@ object ReplaceInPath {
             matches.add(match)
             lastEnd = match.end
         }
-        if (matches.isEmpty()) return emptyList()
-        if (!options.regex) return matches.map { TextEdit(it.start, it.end, replacement) }
+        if (matches.isEmpty()) return Computed(emptyList())
+        if (!options.regex) return Computed(matches.map { TextEdit(it.start, it.end, replacement) })
         val pattern = runCatching { Pattern.compile(query, patternFlags(options.caseSensitive)) }.getOrNull()
-            ?: return matches.map { TextEdit(it.start, it.end, replacement) }
+            ?: return Computed(matches.map { TextEdit(it.start, it.end, replacement) })
         val matcher = pattern.matcher(text)
         val buffer = StringBuffer()
         val edits = ArrayList<TextEdit>(matches.size)
@@ -98,13 +113,21 @@ object ReplaceInPath {
                 continue
             }
             buffer.setLength(0)
-            matcher.appendReplacement(buffer, replacement)
+            try {
+                matcher.appendReplacement(buffer, replacement)
+            } catch (e: IllegalArgumentException) {
+                return Computed(emptyList(), e.message ?: "invalid replacement")
+            } catch (e: IndexOutOfBoundsException) {
+                return Computed(emptyList(), e.message ?: "invalid replacement")
+            }
             // appendReplacement writes the text between matches first; only the tail is expanded.
             edits.add(TextEdit(match.start, match.end, buffer.substring(match.start - appendPosition)))
             appendPosition = match.end
         }
-        return edits
+        return Computed(edits)
     }
+
+    private data class Computed(val edits: List<TextEdit>, val error: String? = null)
 
     /** Plans every file that has at least one match; files without an edit are left out. */
     fun plan(
@@ -121,7 +144,9 @@ object ReplaceInPath {
             if (shouldStop()) break
             val overlay = textOf(indexed.file.path)
             val text = overlay ?: FindInPathScanner.readText(indexed.file) ?: continue
-            val edits = replacementsFor(text, query, options, replacement)
+            val computed = computed(text, query, options, replacement)
+            computed.error?.let { return ReplacePlan(emptyList(), error = "Invalid replacement: $it") }
+            val edits = computed.edits
             if (edits.isEmpty()) continue
             planned.add(
                 ReplaceFilePlan(
@@ -161,14 +186,23 @@ object ReplaceInPath {
     /**
      * Writes [plan] on the caller's (UI) thread. An open editor takes the edits as one undo step
      * and stays unsaved; a disk file is re-read first and left alone when it changed after the
-     * plan. A read-only file or editor is skipped in both paths.
+     * plan. A read-only file or editor is skipped in both paths; a disk write that throws counts
+     * as failed and the remaining files are still written.
      */
-    fun apply(plan: ReplacePlan, openEditors: List<TextFileEditor>): ReplaceOutcome {
+    fun apply(plan: ReplacePlan, openEditors: List<TextFileEditor>): ReplaceOutcome =
+        apply(plan, openEditors) { it.file.writeText(it.newText) }
+
+    internal fun apply(
+        plan: ReplacePlan,
+        openEditors: List<TextFileEditor>,
+        write: (ReplaceFilePlan) -> Unit,
+    ): ReplaceOutcome {
         var replaced = 0
         var files = 0
         var readOnly = 0
         var changed = 0
         var unsaved = 0
+        var failed = 0
         for (planned in plan.files) {
             val path = planned.file.path.toAbsolutePath().normalize()
             val editor = openEditors.firstOrNull { it.file.path.toAbsolutePath().normalize() == path }
@@ -187,15 +221,17 @@ object ReplaceInPath {
                 when {
                     !Files.isWritable(planned.file.path) -> readOnly += planned.edits.size
                     FindInPathScanner.readText(planned.file) != planned.originalText -> changed += planned.edits.size
-                    else -> {
-                        planned.file.writeText(planned.newText)
+                    else -> try {
+                        write(planned)
                         replaced += planned.edits.size
                         files++
+                    } catch (e: IOException) {
+                        failed += planned.edits.size
                     }
                 }
             }
         }
-        return ReplaceOutcome(replaced, files, readOnly, changed, unsaved)
+        return ReplaceOutcome(replaced, files, readOnly, changed, unsaved, failed)
     }
 
     /** IntelliJ's Replace All wording, including the disk warning when any file is not open. */
@@ -226,4 +262,17 @@ class FindReplaceController(
         ReplaceInPath.planHit(hit, tab.query, tab.options, tab.replacement.orEmpty(), textOf)
 
     fun apply(plan: ReplacePlan): ReplaceOutcome = ReplaceInPath.apply(plan, openEditors())
+
+    /**
+     * Scans [hit]'s file again with the tab's query, options and overlay, so a Replace Selected
+     * leaves that file's rows on the offsets the current text actually has.
+     */
+    fun scanFile(tab: FindTab, hit: FindInPathHit): List<FindInPathHit> =
+        FindInPathScanner.scan(
+            files = listOf(IndexedFile(hit.file, hit.relativePath)),
+            query = tab.query,
+            options = tab.options,
+            limit = FIND_WINDOW_MAX_HITS,
+            textOf = textOf,
+        )
 }

@@ -4,6 +4,9 @@ import stride.app.editor.find.FindModel
 import stride.app.editor.find.FindOptions
 import stride.core.vfs.VFile
 import stride.search.IndexedFile
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -54,7 +57,12 @@ object FindInPathScanner {
         return hits
     }
 
-    /** The disk text of [file] under the scan rules; `null` for binary, oversized or unreadable files. */
+    /**
+     * The disk text of [file] under the scan rules; `null` for binary, oversized, unreadable or
+     * non-UTF-8 files. Decoding is strict, like [stride.app.editor.TextFileEditor] reads a file:
+     * a file whose bytes are not valid UTF-8 is left out instead of being rewritten with U+FFFD
+     * replacement characters by Replace in Path.
+     */
     internal fun readText(file: VFile): String? {
         if (file.length() > MAX_FILE_SIZE) return null
         val bytes = try {
@@ -64,7 +72,17 @@ object FindInPathScanner {
         }
         if (bytes.size > MAX_FILE_SIZE) return null
         if (containsNul(bytes)) return null
-        return String(bytes, Charsets.UTF_8)
+        return decodeStrictUtf8(bytes)
+    }
+
+    private fun decodeStrictUtf8(bytes: ByteArray): String? = try {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
+    } catch (e: CharacterCodingException) {
+        null
     }
 
     private fun containsNul(bytes: ByteArray): Boolean {

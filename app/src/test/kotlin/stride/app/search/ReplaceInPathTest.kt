@@ -1,8 +1,10 @@
 package stride.app.search
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -69,6 +71,73 @@ class ReplaceInPathTest {
             listOf(TextEdit(0, 11, "alpha -> name"), TextEdit(13, 24, "beta -> other")),
             edits,
         )
+    }
+
+    @Test
+    fun `an invalid regex replacement returns the error instead of edits`() {
+        val path = temp.resolve("A.kt")
+        Files.writeString(path, "alpha\n")
+
+        val plan = ReplaceInPath.plan(
+            files = listOf(IndexedFile(VFile(path), "A.kt")),
+            query = """(\w+)""",
+            options = FindOptions(regex = true),
+            replacement = "\$2",
+        )
+
+        assertEquals("Invalid replacement: No group 2", plan.error)
+        assertTrue(plan.files.isEmpty())
+        assertEquals("alpha\n", Files.readString(path))
+    }
+
+    @Test
+    fun `a file that is not valid UTF-8 is neither planned nor replaced`() {
+        val path = temp.resolve("Legacy.kt")
+        val original = "alpha café\n".toByteArray(Charsets.ISO_8859_1)
+        Files.write(path, original)
+        val files = listOf(IndexedFile(VFile(path), "Legacy.kt"))
+
+        val plan = ReplaceInPath.plan(files, "alpha", FindOptions(), "beta")
+        val outcome = ReplaceInPath.apply(plan, emptyList())
+
+        assertTrue(plan.files.isEmpty())
+        assertEquals(0, outcome.replaced)
+        assertArrayEquals(original, Files.readAllBytes(path))
+    }
+
+    @Test
+    fun `a UTF-8 file with a BOM and CRLF endings keeps both after a replace`() {
+        val path = temp.resolve("A.kt")
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+        Files.write(path, bom + "alpha one\r\nalpha two\r\n".toByteArray(Charsets.UTF_8))
+        val plan = ReplaceInPath.plan(listOf(IndexedFile(VFile(path), "A.kt")), "alpha", FindOptions(), "beta")
+
+        assertEquals(2, plan.occurrences)
+        ReplaceInPath.apply(plan, emptyList())
+
+        assertArrayEquals(
+            bom + "beta one\r\nbeta two\r\n".toByteArray(Charsets.UTF_8),
+            Files.readAllBytes(path),
+        )
+    }
+
+    @Test
+    fun `a failed disk write is counted and the other files are still written`() {
+        val a = indexed("A.kt", "alpha\n")
+        val b = indexed("B.kt", "alpha\n")
+        val plan = ReplaceInPath.plan(listOf(a, b), "alpha", FindOptions(), "beta")
+
+        val outcome = ReplaceInPath.apply(plan, emptyList()) { planned ->
+            if (planned.relativePath == "A.kt") throw IOException("disk full")
+            planned.file.writeText(planned.newText)
+        }
+
+        assertEquals(1, outcome.failed)
+        assertEquals(1, outcome.replaced)
+        assertEquals(1, outcome.files)
+        assertEquals("Replaced 1 occurrence in 1 file, 1 failed", outcome.message)
+        assertEquals("alpha\n", Files.readString(a.file.path))
+        assertEquals("beta\n", Files.readString(b.file.path))
     }
 
     @Test

@@ -66,6 +66,7 @@ import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 import stride.search.FileNameIndex
 import java.nio.file.Path
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -147,17 +148,31 @@ fun FindInPathPopup(
         counting = true
         replaceMessage = null
         scope.launch {
-            val plan = withContext(Dispatchers.Default) {
-                ReplaceInPath.plan(index.snapshot(), plannedQuery, plannedOptions, plannedReplacement, textOf)
-            }
-            counting = false
-            // The query or replacement changed while counting: the plan no longer matches.
-            if (plannedQuery != query || plannedReplacement != replacement) return@launch
-            if (plan.occurrences == 0) {
-                replaceMessage = "No occurrences to replace"
-            } else {
-                pendingPlan = plan
-                confirmation = ReplaceInPath.confirmation(plan, plannedQuery, plannedReplacement)
+            try {
+                val plan = withContext(Dispatchers.Default) {
+                    ReplaceInPath.plan(index.snapshot(), plannedQuery, plannedOptions, plannedReplacement, textOf)
+                }
+                // The query, replacement or options changed while counting: the plan no longer
+                // matches what the popup shows.
+                if (plannedQuery != query || plannedReplacement != replacement ||
+                    plannedOptions != FindOptions(caseSensitive, regex, wholeWord)
+                ) {
+                    return@launch
+                }
+                when {
+                    plan.error != null -> replaceMessage = plan.error
+                    plan.occurrences == 0 -> replaceMessage = "No occurrences to replace"
+                    else -> {
+                        pendingPlan = plan
+                        confirmation = ReplaceInPath.confirmation(plan, plannedQuery, plannedReplacement)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                replaceMessage = "Replace failed: ${t.message ?: t::class.simpleName}"
+            } finally {
+                counting = false
             }
         }
     }

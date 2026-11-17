@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,47 +64,41 @@ fun FindToolWindow(
     val tab = state.selectedTab
     val scope = rememberCoroutineScope()
     var selectedRow by remember(tab?.id) { mutableStateOf(0) }
-    var pendingPlan by remember(tab?.id) { mutableStateOf<ReplacePlan?>(null) }
-    var confirmation by remember(tab?.id) { mutableStateOf<String?>(null) }
-    var replaceBusy by remember(tab?.id) { mutableStateOf(false) }
+    val replaceState = remember(tab) { tab?.let(state::replaceState) }
     var focusedEmptyStates by remember(tab?.id) { mutableStateOf(0) }
     var listFocusTicks by remember(tab?.id) { mutableStateOf(0) }
     val effectiveFocusRequests = focusRequests + focusedEmptyStates
 
-    fun startReplaceAll(current: FindTab, controller: FindReplaceController) {
-        if (replaceBusy) return
-        replaceBusy = true
-        scope.launch {
-            val plan = withContext(Dispatchers.Default) { controller.planAll(current) }
-            replaceBusy = false
-            if (plan.occurrences == 0) {
-                state.showMessage(current, "No occurrences to replace")
-            } else {
-                state.showMessage(current, null)
-                pendingPlan = plan
-                confirmation = ReplaceInPath.confirmation(plan, current.query, current.replacement.orEmpty())
-            }
-        }
-    }
-
-    fun applyPending(current: FindTab, controller: FindReplaceController) {
-        val plan = pendingPlan ?: return
-        pendingPlan = null
-        confirmation = null
+    fun applyPending(current: FindTab, controller: FindReplaceController, tabState: ReplaceTabState) {
+        val plan = tabState.pendingPlan ?: return
+        tabState.pendingPlan = null
+        tabState.confirmation = null
         state.finishReplace(current, controller.apply(plan).message)
         focusedEmptyStates++
     }
 
-    fun replaceSelected(current: FindTab, controller: FindReplaceController) {
+    fun replaceSelected(current: FindTab, controller: FindReplaceController, tabState: ReplaceTabState) {
+        if (tabState.busy) return
         val hit = current.hits.getOrNull(selectedRow) ?: return
-        val planned = controller.planHit(current, hit)
-        if (planned == null) {
-            state.showMessage(current, ReplaceOutcome(skippedChanged = 1).message)
-            return
+        tabState.busy = true
+        scope.launch {
+            try {
+                val planned = withContext(Dispatchers.Default) { controller.planHit(current, hit) }
+                val outcome = if (planned == null) {
+                    ReplaceOutcome(skippedChanged = 1)
+                } else {
+                    controller.apply(ReplacePlan(listOf(planned)))
+                }
+                val fresh = withContext(Dispatchers.Default) { controller.scanFile(current, hit) }
+                state.finishReplaceSelected(current, hit.file, outcome, fresh)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                state.showMessage(current, "Replace failed: ${t.message ?: t::class.simpleName}")
+            } finally {
+                tabState.busy = false
+            }
         }
-        val outcome = controller.apply(ReplacePlan(listOf(planned)))
-        state.removeHit(current, hit)
-        state.showMessage(current, outcome.message)
     }
 
     Column(modifier) {
@@ -128,23 +123,31 @@ fun FindToolWindow(
         )
         if (tab.kind == FindTabKind.REPLACE && replace != null) {
             ReplaceTabHeader(
-                enabled = !replaceBusy && confirmation == null,
-                onReplaceSelected = { replaceSelected(tab, replace) },
-                onReplaceAll = { startReplaceAll(tab, replace) },
+                enabled = replaceState != null && !replaceState.busy && replaceState.confirmation == null,
+                onReplaceSelected = {
+                    if (replaceState != null) replaceSelected(tab, replace, replaceState)
+                },
+                onReplaceAll = { state.startReplaceAll(tab, replace) },
             )
         }
-        if (replaceBusy) {
+        if (replaceState?.busy == true) {
             TabMessage("counting…")
         } else if (tab.hits.isNotEmpty()) {
             tab.message?.let { message -> TabMessage(message) }
         }
-        confirmation?.let { text ->
+        replaceState?.confirmation?.let { text ->
             ReplaceConfirmationRow(
                 text = text,
-                onConfirm = { replace?.let { applyPending(tab, it) } },
+                onConfirm = {
+                    replace?.let { controller ->
+                        replaceState?.let { applyPending(tab, controller, it) }
+                    }
+                },
                 onCancel = {
-                    pendingPlan = null
-                    confirmation = null
+                    replaceState?.let {
+                        it.pendingPlan = null
+                        it.confirmation = null
+                    }
                     listFocusTicks++
                 },
                 modifier = Modifier.padding(horizontal = DesignTokens.space12),

@@ -2,16 +2,22 @@ package stride.app.search
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
+import stride.core.services.Application
 import stride.core.vfs.VFile
 import stride.search.IndexedFile
 
@@ -179,9 +185,107 @@ class FindToolWindowStateTest {
         assertTrue(original.searching)
     }
 
+    @Test
+    fun `a replace plan that finishes on another tab keeps its confirmation`() {
+        val state = state()
+        val files = listOf(indexed("A.kt", "alpha\n"))
+        val first = state.addTab(
+            kind = FindTabKind.REPLACE,
+            query = "alpha",
+            options = FindOptions(),
+            title = "replace",
+            files = files,
+            replacement = "beta",
+        )
+        val second = state.addTab(
+            kind = FindTabKind.OCCURRENCES,
+            query = "alpha",
+            options = FindOptions(),
+            title = "other",
+            files = files,
+        )
+        val gate = CountDownLatch(1)
+        val controller = FindReplaceController(
+            files = {
+                gate.await()
+                files
+            },
+            textOf = { null },
+            openEditors = { emptyList() },
+        )
+
+        state.select(first)
+        state.startReplaceAll(first, controller)
+        state.select(second)
+        gate.countDown()
+        awaitReplacePlan(state.replaceState(first))
+
+        val replace = state.replaceState(first)
+        assertFalse(replace.busy)
+        assertNotNull(replace.pendingPlan)
+        assertEquals(
+            "Replace 1 occurrence of 'alpha' across 1 file with 'beta'? " +
+                "1 file is written to disk and cannot be undone.",
+            replace.confirmation,
+        )
+        assertSame(second, state.selectedTab)
+    }
+
+    @Test
+    fun `a replace selected that changed nothing keeps its row`() {
+        val path = temp.resolve("A.kt")
+        Files.writeString(path, "alpha\n")
+        val editor = TextFileEditor(VFile(path), readOnly = true)
+        val files = listOf(IndexedFile(VFile(path), "A.kt"))
+        val state = state()
+        val tab = state.addTab(
+            kind = FindTabKind.REPLACE,
+            query = "alpha",
+            options = FindOptions(),
+            title = "replace",
+            files = files,
+            replacement = "beta",
+        )
+        val controller = FindReplaceController(
+            files = { files },
+            textOf = { null },
+            openEditors = { listOf(editor) },
+        )
+        val hit = tab.hits.single()
+        val planned = requireNotNull(controller.planHit(tab, hit))
+        val outcome = controller.apply(ReplacePlan(listOf(planned)))
+
+        state.finishReplaceSelected(tab, hit.file, outcome, emptyList())
+
+        assertEquals(1, outcome.skippedReadOnly)
+        assertSame(hit, tab.hits.single())
+        assertEquals("Replaced 0 occurrences in 0 files, 1 skipped (read-only)", tab.message)
+    }
+
+    private fun awaitReplacePlan(replace: ReplaceTabState) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (replace.busy && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertFalse(replace.busy, "the replace plan did not finish")
+    }
+
     private fun indexed(name: String, content: String): IndexedFile {
         val path = temp.resolve(name)
         Files.writeString(path, content)
         return IndexedFile(VFile(path), name)
+    }
+
+    companion object {
+        @BeforeAll
+        @JvmStatic
+        fun loadPlugins() {
+            Application.resetForTests()
+            Application.init(FindToolWindowStateTest::class.java.classLoader)
+        }
+
+        @AfterAll
+        @JvmStatic
+        fun resetPlugins() {
+            Application.resetForTests()
+        }
     }
 }

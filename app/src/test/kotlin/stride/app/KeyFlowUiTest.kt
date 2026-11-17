@@ -729,6 +729,103 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `replace selected twice in the same file replaces both hits`() = runComposeUiTest {
+        val root = temp.resolve("replace-selected-twice-project")
+        Files.createDirectories(root)
+        val file = root.resolve("A.kt")
+        Files.writeString(file, "alpha one\nalpha two\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+            state.openFindResults(
+                kind = FindTabKind.REPLACE,
+                title = "Replace 'alpha' with 'beta'",
+                query = "alpha",
+                options = FindOptions(),
+                replacement = "beta",
+            )
+            val tab = state.findToolWindow.tabs.single()
+            waitUntil(timeoutMillis = 5_000) { !tab.searching }
+            state.toolWindows.activate("find")
+
+            setContent { KeyFlowHarness(state) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Replace Selected").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Replace Selected").performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                tab.hits.size == 1 && !state.findToolWindow.replaceState(tab).busy
+            }
+            assertEquals("beta one\nalpha two\n", Files.readString(file))
+
+            onNodeWithText("Replace Selected").performClick()
+            waitUntil(timeoutMillis = 5_000) { tab.hits.isEmpty() }
+            assertEquals("beta one\nbeta two\n", Files.readString(file))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an invalid regex replacement shows the message and a fixed one confirms`() = runComposeUiTest {
+        val root = temp.resolve("invalid-replacement-project")
+        Files.createDirectories(root)
+        val file = root.resolve("A.kt")
+        Files.writeString(file, "alpha one\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            assertTrue(session.project.service<FileNameIndex>().awaitReady(5_000), "file index did not finish")
+
+            setContent { KeyFlowHarness(state) }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.R) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.findInPathVisible && state.findInPathReplace }
+
+            onNodeWithTag("find-in-path-query").performTextInput("(alpha)")
+            onNodeWithText(".*").performClick()
+            onNodeWithTag("find-in-path-replacement").performTextInput("\$2")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("A.kt:1").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.Enter) } }
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Invalid replacement:", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertTrue(
+                onAllNodesWithText("Replace 1 occurrence", substring = true).fetchSemanticsNodes().isEmpty(),
+            )
+            assertEquals("alpha one\n", Files.readString(file))
+
+            onNodeWithTag("find-in-path-replacement").performTextClearance()
+            onNodeWithTag("find-in-path-replacement").performTextInput("beta")
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.Enter) } }
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("with 'beta'?", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { !state.findInPathVisible }
+            assertEquals("beta one\n", Files.readString(file))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `terminal tool window takes focus and keeps global shortcuts`() = runComposeUiTest {
         val root = temp.resolve("terminal-project")
         Files.createDirectories(root)

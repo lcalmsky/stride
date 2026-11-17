@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -14,7 +15,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import stride.app.editor.find.FindOptions
+import stride.core.vfs.VFile
 import stride.search.IndexedFile
 
 /** The most hits one Find window tab keeps; the Find in Path popup keeps [FindInPathScanner.MAX_HITS]. */
@@ -55,6 +58,23 @@ class FindTab(
 }
 
 /**
+ * The Replace in Path state of one Find window tab: whether a plan is running, the plan waiting
+ * for the confirmation and the confirmation text. It lives in [FindToolWindowState] instead of
+ * composition, so switching tabs while a plan runs neither drops its confirmation nor re-enables
+ * the buttons.
+ */
+class ReplaceTabState {
+    var busy: Boolean by mutableStateOf(false)
+        internal set
+
+    var pendingPlan: ReplacePlan? by mutableStateOf(null)
+        internal set
+
+    var confirmation: String? by mutableStateOf(null)
+        internal set
+}
+
+/**
  * The Find tool window's tabs and their scans. Scans run on [scope], which the state owns, so
  * hiding the window leaves no tab stuck searching; [clear] cancels them and drops every tab.
  */
@@ -63,6 +83,8 @@ class FindToolWindowState(
 ) {
     private val items = mutableStateListOf<FindTab>()
     private val jobs = ConcurrentHashMap<Long, Job>()
+    private val replaceStates = ConcurrentHashMap<Long, ReplaceTabState>()
+    private val replaceJobs = ConcurrentHashMap<Long, Job>()
     private var nextId = 1L
 
     val tabs: List<FindTab> get() = items
@@ -101,11 +123,15 @@ class FindToolWindowState(
         )
         if (existing >= 0) {
             jobs.remove(tab.id)?.cancel()
+            replaceJobs.remove(tab.id)?.cancel()
+            replaceStates.remove(tab.id)
             items[existing] = tab
         } else {
             if (items.size >= MAX_TABS) {
                 val oldest = items.removeAt(0)
                 jobs.remove(oldest.id)?.cancel()
+                replaceJobs.remove(oldest.id)?.cancel()
+                replaceStates.remove(oldest.id)
             }
             items.add(tab)
         }
@@ -119,6 +145,8 @@ class FindToolWindowState(
         if (index < 0) return
         items.removeAt(index)
         jobs.remove(tab.id)?.cancel()
+        replaceJobs.remove(tab.id)?.cancel()
+        replaceStates.remove(tab.id)
         if (selectedTabId == tab.id) {
             selectedTabId = items.getOrNull(index)?.id ?: items.lastOrNull()?.id
         }
@@ -141,6 +169,67 @@ class FindToolWindowState(
         tab.hits = tab.hits.filterNot { it === hit }
     }
 
+    /** The replace state of [tab]; kept here so it outlives the composition that started a plan. */
+    fun replaceState(tab: FindTab): ReplaceTabState =
+        replaceStates.computeIfAbsent(tab.id) { ReplaceTabState() }
+
+    /**
+     * Plans Replace All for [tab] on [scope] and stores the confirmation on its replace state.
+     * A plan that finishes while another tab is shown still reaches this tab's state.
+     */
+    fun startReplaceAll(tab: FindTab, controller: FindReplaceController) {
+        val current = replaceState(tab)
+        if (current.busy) return
+        current.busy = true
+        tab.message = null
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val plan = withContext(Dispatchers.Default) { controller.planAll(tab) }
+                Snapshot.withMutableSnapshot {
+                    when {
+                        plan.error != null -> tab.message = plan.error
+                        plan.occurrences == 0 -> tab.message = "No occurrences to replace"
+                        else -> {
+                            current.pendingPlan = plan
+                            current.confirmation = ReplaceInPath.confirmation(
+                                plan,
+                                tab.query,
+                                tab.replacement.orEmpty(),
+                            )
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                Snapshot.withMutableSnapshot {
+                    tab.message = "Replace failed: ${t.message ?: t::class.simpleName}"
+                }
+            } finally {
+                Snapshot.withMutableSnapshot { current.busy = false }
+                coroutineContext[Job]?.let { replaceJobs.remove(tab.id, it) }
+            }
+        }
+        replaceJobs[tab.id] = job
+        job.start()
+    }
+
+    /**
+     * Records the outcome of a Replace Selected on [file]: the file's rows are replaced with
+     * [hits] only when something was replaced, so a skipped row stays in the list for a retry.
+     */
+    fun finishReplaceSelected(tab: FindTab, file: VFile, outcome: ReplaceOutcome, hits: List<FindInPathHit>) {
+        tab.message = outcome.message
+        if (outcome.replaced > 0) refreshFileHits(tab, file, hits)
+    }
+
+    /** Replaces [tab]'s hits of [file] with [hits] from a fresh scan of just that file. */
+    fun refreshFileHits(tab: FindTab, file: VFile, hits: List<FindInPathHit>) {
+        val target = file.path.toAbsolutePath().normalize()
+        val others = tab.hits.filterNot { it.file.path.toAbsolutePath().normalize() == target }
+        tab.hits = (others + hits).sortedWith(compareBy({ it.relativePath }, { it.start }))
+    }
+
     /** Ends a Replace All: the tab keeps the outcome line and no rows. */
     fun finishReplace(tab: FindTab, message: String) {
         tab.hits = emptyList()
@@ -148,10 +237,13 @@ class FindToolWindowState(
         tab.message = message
     }
 
-    /** Cancels the running scans and drops every tab. */
+    /** Cancels the running scans and replace plans and drops every tab. */
     fun clear() {
         for (job in jobs.values) job.cancel()
         jobs.clear()
+        for (job in replaceJobs.values) job.cancel()
+        replaceJobs.clear()
+        replaceStates.clear()
         items.clear()
         selectedTabId = null
     }
