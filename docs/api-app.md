@@ -373,11 +373,14 @@ enum class ActionId {
     SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
     EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
     EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
+    ACTIVATE_PROBLEMS_TOOL_WINDOW, GOTO_NEXT_ERROR, GOTO_PREVIOUS_ERROR, SHOW_ERROR_DESCRIPTION,
+    JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
+    RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
 }
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
-    LIST_WINDOW,
+    LIST_WINDOW, NAV_BAR,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -425,103 +428,109 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :85 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :87 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :89 |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :91, :92 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :94, :95 |
-| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :97 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :105 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :107 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :109 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :111 |
-| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :113 |
-| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :115 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :117 |
-| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :119 |
-| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :287 |
-| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :289 |
-| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :291 |
-| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :121 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :123 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :125 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :127, :128 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :130 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :132 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :134 |
-| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :136 |
-| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :138 |
-| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :140 |
-| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :142 |
-| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :144 |
-| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :146 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :148 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :150 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :152 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :154 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :156 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :158 |
-| `FIND` | EDITOR | ⌘F | `Find` | :160 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :162 |
-| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :164 |
-| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :166 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :168 |
-| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :170 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :172 |
-| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :174 |
-| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :176 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :178 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :180 |
-| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :182 |
-| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :184 |
-| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :186 |
-| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :188 |
-| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :190 |
-| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :192 |
-| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :194 |
-| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :196 |
-| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :198 |
-| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :200 |
-| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :202 |
-| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :204 |
-| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :206 |
-| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :208 |
-| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :210 |
-| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :213, :214 |
-| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :216 |
-| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :218 |
-| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :220 |
-| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :222 |
-| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :224, :225 |
-| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :227 |
-| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :229 |
-| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :231 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :233 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :234 |
-| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :236 |
-| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :238, :239 |
-| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :241, :242 |
-| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :244 |
-| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :246 |
-| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :248 |
-| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :250 |
-| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :252 |
-| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :254 |
-| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :256 |
-| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :258 |
-| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :260 |
-| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :262, :263 |
-| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :265 |
-| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :267 |
-| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :269 |
-| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :271 |
-| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :273 |
+| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :87 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :89 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :91 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :93, :94 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :96, :97 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :99 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :107 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :109 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :111 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :113 |
+| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :115 |
+| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :117 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :119 |
+| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :121 |
+| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :289 |
+| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :291 |
+| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :293 |
+| `RECENT_LOCATIONS` | GLOBAL | ⌘⇧E | `RecentLocations` | :295 |
+| `SHOW_NAV_BAR` | GLOBAL, LIST_WINDOW | ⌥Home (GLOBAL), ⌘↑ (LIST_WINDOW only; the editor keeps ⌘↑ for the document start) | `ShowNavBar` | :297, :298 |
+| `EDIT_SOURCE` | GLOBAL, LIST_WINDOW | F4 (GLOBAL), ⌘↓ (LIST_WINDOW only; the editor keeps ⌘↓ for the document end) | `EditSource` | :302, :303 |
+| `JUMP_TO_LAST_CHANGE` | GLOBAL | ⌘⇧⌫ | `JumpToLastChange` | :307 |
+| `SHOW_USAGES` | EDITOR | ⌘⌥F7 | `ShowUsages` | :309 |
+| `HIGHLIGHT_USAGES_IN_FILE` | EDITOR | ⌘⇧F7 | `HighlightUsagesInFile` | :311 |
+| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :123 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :125 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :127 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :129, :130 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :132 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :134 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :136 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :138 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :140 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :142 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :144 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :146 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :148 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :150 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :152 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :154 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :156 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :158 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :160 |
+| `FIND` | EDITOR | ⌘F | `Find` | :162 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :164 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :166 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :168 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :170 |
+| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :172 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :174 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :176 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :178 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :180 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :182 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :184 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :186 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :188 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :190 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :192 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :194 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :196 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :198 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :200 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :202 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :204 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :206 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :208 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :210 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :212 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :215, :216 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :218 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :220 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :222 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :224 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :226, :227 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :229 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :231 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :233 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :235 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :236 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :238 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :240, :241 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :243, :244 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :246 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :248 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :250 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :252 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :254 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :256 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :258 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :260 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :262 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :264, :265 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :267 |
+| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :269 |
+| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :271 |
+| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :273 |
+| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :275 |
 | `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
 | `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
-| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :275, :276 |
-| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :278, :279 |
-| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :281, :282 |
-| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :284, :285 |
+| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :277, :278 |
+| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :280, :281 |
+| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :283, :284 |
+| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :286, :287 |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -1811,6 +1820,91 @@ are not part of this set.
 None of the six strokes had a binding before. `⌘⌫` (`EDITOR_DELETE_LINE`) is a different stroke
 from `⇧⌘⌫`.
 
+```kotlin
+package stride.app.navigation
+
+data class EditPlace(val path: Path, val offset: Int)
+class EditLocations(maxPlaces: Int = MAX_PLACES) {        // ProjectSession.editLocations
+    val places: List<EditPlace>                            // newest first
+    fun change(path: Path, offset: Int, oldLength: Int, newLength: Int,
+               lineOf: (Int) -> Int, recorded: Boolean)
+    fun changes(path: Path, changes: List<TextChange>, lineOf: (Int) -> Int,
+                recorded: Boolean, recordIndex: Int = 0)
+    fun next(currentPath: Path?, caretLine: Int?, lineOf: (Int) -> Int): EditPlace?
+    fun drop(path: Path)
+    companion object { const val MAX_PLACES: Int = 50 }
+}
+
+fun openFileAtOffset(state: AppState, session: ProjectSession, path: Path, offset: Int): Boolean
+fun jumpToLastChange(state: AppState): Boolean
+fun showUsages(state: AppState): Boolean
+fun openUsagesFindWindow(state: AppState, name: String)   // the tab ⌥F7 opens
+fun highlightUsagesInFile(state: AppState): Boolean
+object UsageMatches {
+    fun ranges(text: String, name: String): List<IntRange>
+    fun next(highlights: List<IntRange>, caret: Int): IntRange?
+    fun previous(highlights: List<IntRange>, caret: Int): IntRange?
+}
+
+data class RecentLocationCodeLine(val number: Int, val text: String, val place: Boolean)
+data class RecentLocationRow(val location: NavigationLocation, val fileName: String,
+                             val directory: String, val relativePath: String, val line: Int?,
+                             val code: List<RecentLocationCodeLine> = emptyList())
+fun recentLocationRows(locations: List<NavigationLocation>, root: Path, caret: NavigationLocation?,
+                       textOf: (Path) -> String?): List<RecentLocationRow>
+fun recentLocationIndex(rows: List<RecentLocationRow>, selected: NavigationLocation?): Int
+fun codeAround(text: String, line: Int): List<RecentLocationCodeLine>
+@Composable fun RecentLocationsPopup(...)
+
+data class NavigationBarSegment(val name: String, val path: Path, val isDirectory: Boolean)
+data class NavigationBarList(val folder: Path, val children: List<VFile>, val selected: Int = 0)
+data class NavigationBarState(val segments: List<NavigationBarSegment>, val selected: Int,
+                              val list: NavigationBarList? = null) {
+    val segment: NavigationBarSegment
+    val selectedChild: VFile?
+    fun previous(): NavigationBarState
+    fun next(): NavigationBarState
+    fun openList(children: (Path) -> List<VFile>): NavigationBarState
+    fun moveInList(step: Int): NavigationBarState
+    fun closeList(): NavigationBarState
+    fun descend(folder: VFile, children: (Path) -> List<VFile>): NavigationBarState
+    companion object { fun forFile(root: Path, file: Path?): NavigationBarState }
+}
+fun openNavigationBarFile(state: AppState, session: ProjectSession, file: VFile): Boolean
+fun navigationBarListLeft(segmentLeft: Dp, windowWidth: Dp): Dp
+@Composable fun NavigationBar(...)
+@Composable fun NavigationBarChildrenPopup(...)
+
+package stride.app.search
+class ShowUsagesRequest(val id: Long, val name: String, val files: List<IndexedFile>,
+                        val textOf: (Path) -> String? = { null }) {
+    val hits: List<FindInPathHit>; val searching: Boolean; val truncated: Boolean
+}
+@Composable fun ShowUsagesPopup(request: ShowUsagesRequest, onOpen: (FindInPathHit) -> Unit,
+                                onOpenInFindWindow: () -> Unit, onClose: () -> Unit)
+
+package stride.app.editor
+data class TextChange(val offset: Int, val oldLength: Int, val newText: String)  // now documented
+class TextFileEditor {
+    var usageHighlights: List<IntRange>
+    var onTextChange: ((changes: List<TextChange>, recorded: Boolean, recordIndex: Int) -> Unit)?
+    fun updateValue(newValue: TextFieldValue, changes: List<TextChange>)  // one undo entry, pieces reported
+}
+data class UndoEntry(..., val pieces: List<TextChange>? = null)      // trailing, defaulted
+
+package stride.app
+class AppState {
+    var showUsages: ShowUsagesRequest?; val showUsagesGeneration: Long
+    fun openShowUsagesPopup(name: String): ShowUsagesRequest?
+    var recentLocationsVisible: Boolean; val recentLocationsGeneration: Int
+    val recentLocationsCaret: NavigationLocation?
+    fun openRecentLocations()
+    var navigationBar: NavigationBarState?
+    fun focusSelectedEditor(): Boolean
+}
+enum class KeyContext { ..., NAV_BAR }                        // modal, focus chip "Navigation"
+```
+
 Decision N1: Recent Locations is a `popupPanel` popup over the navigation history in which every
 row carries the code around its place.
 
@@ -1841,17 +1935,26 @@ change callback on `TextFileEditor`.
 | B (adopted) | `TextFileEditor.onTextChange(offset, oldLength, newLength, recorded)` → `ProjectSession.editLocations` | yes | editor + new store + wiring |
 | C (rejected) | flag edit entries inside `NavigationHistory` | yes | history; an edit after `⌘[` would drop the forward entries |
 
-`onTextChange` runs for every text change the editor applies; `recorded` is true for an edit that
-enters the undo stack (typing, actions, paste, multi-caret edits) and false for undo, redo and a
-reload. A recorded change adds `(path, offset)`; a change on the same file and the same line as
-the newest place replaces that place, so typing a word is one place. At most 50 places are kept,
+`onTextChange(changes, recorded, recordIndex)` runs once for every text change the editor applies;
+`recorded` is true for an edit that enters the undo stack (typing, actions, paste, multi-caret
+edits) and false for undo and redo (stride has no reload path). `changes` holds one piece per
+replaced range, ascending, each in the coordinates left by the ones before it: a multi-range edit
+(rename in file, Replace All, `applyEdits` for Reformat, Optimize Imports, intentions and Replace
+in Path, multi-caret typing and the per-caret line actions) reports every piece instead of one
+range from its first to its last piece, which would push every place in between to the end. The
+undo entry of such an edit keeps the pieces (`UndoEntry.pieces`), so undo reports the inverse
+pieces and redo the pieces again; a single-range entry reports as before. A recorded change adds
+one place at piece `recordIndex` (the primary caret's piece; 0 for a non-caret edit). A change on
+the same file and the same line as the newest place replaces that place, so typing a word is one
+place; lines are computed from the file's current text when they are compared, never stored, so
+inserting lines above a place does not break the rule. At most 50 places are kept,
 the oldest dropped. Every change, recorded or not, shifts the places of that file: a place after
 the replaced range moves by `newLength - oldLength`, a place inside it moves to the range's new
 end. `⇧⌘⌫` goes to the newest place, or to the one before it when the caret is already on that
 file and line; pressing it again keeps walking back, and a new recorded edit starts the walk from
-the newest place again. The jump opens the file, puts the caret at the place (one history entry,
+the newest place again; walking past the oldest place shows `No edit location` and starts over. The jump opens the file, puts the caret at the place (one history entry,
 so `⌘[` comes back) and hands the editor the keyboard. A file that no longer exists shows
-`File not found: <relative path>` and its places are dropped; with no place the status shows
+`File not found: <relative path>`, its places are dropped and the walk stops there; with no place the status shows
 `No edit location`. Differences: IntelliJ also has Next Edit Location; places do not survive a
 restart.
 
@@ -1864,7 +1967,8 @@ the navigation popups) has a header `Usages of <name>` with the count (`200+` wh
 while it runs), and one row per hit: the trimmed line with the match in `accentOnPopupPlate` and
 `File.kt:line` at the right. ↑/↓ move, ↵ / `F4` / `⌘↓` open the hit like a Find window row (one
 history entry, keyboard to the editor), `⌘↵` closes the popup and opens the same `Usages of <name>`
-tab `⌥F7` opens, Esc closes. With no identifier at the caret the status shows
+tab `⌥F7` opens (`openUsagesFindWindow`, which `findUsages` itself calls), Esc closes. The list
+scrolls the selected row into view like Search Everywhere. With no identifier at the caret the status shows
 `No identifier at the caret`. Differences: the popup sits at the top, not at the caret; no scope
 or filter settings, no grouping, no "show more" past 200 (the Find window keeps 1000).
 
@@ -1883,7 +1987,9 @@ match alpha; the status shows `N usages of <name> · ⌘G next · ⇧⌘G previo
 editor has highlights, `⌘G` / `⇧⌘G` move the caret to the next / previous highlight start, wrapping
 at the ends (`jumpTo`, one jump each), before the find bar's own `⌘G`. Esc clears them along with
 what it cleared before; any text change clears them; `⇧⌘F7` with the caret on a highlighted match
-of the same name clears them. Differences: IntelliJ tells read and write usages apart by colour;
+of the same name, or right after one, clears them. Clearing also clears the usages status line, unless another action
+has written a status since. The colour follows the appearance (it is recomputed after a light/dark
+switch). With no identifier at the caret the status shows `No identifier at the caret`. Differences: IntelliJ tells read and write usages apart by colour;
 the matches are textual, so a same-named local in another scope is highlighted too.
 
 Decision N5: the navigation bar is the bottom path capsule, made keyboard-driven.
@@ -1902,15 +2008,24 @@ that segment; ↵ / `F4` / `⌘↓` on the file segment hands the keyboard to it
 ↑/↓ move; ↵, → , `F4` or `⌘↓` on a file opens it, closes the bar and hands the editor the keyboard;
 on a folder it becomes the next segment (deeper segments dropped) and its children open; ← or Esc
 closes the list. Esc on the segments closes the bar and hands the keyboard back to the editor.
-With no file open the bar starts with the root segment. A click on a segment selects it and opens
-its list; a click outside closes the bar. Differences: no file actions in the bar's menus, no
+With no file open the bar starts with the root segment. A click on a folder segment selects it and opens
+its list (a file segment is only selected); a click outside closes the bar, and so does a change of
+the selected editor (a tab click), which then gets the keyboard. While active the capsule never
+grows past the room the row leaves beside the status capsules: its segments scroll sideways and
+the selected one is kept in view. Every segment's position is recorded by path, and the list sits
+at the selected segment's on-screen x, pulled left to stay inside the window. The list does not
+take focus; the capsule keeps the keyboard and the list takes clicks. Differences: no file actions in the bar's menus, no
 member segments for the file, and a click on the inactive capsule does nothing.
 
 Decision N6: keys and Edit Source by context. Edit Source in the editor goes to the declaration at
-the caret (`goToDeclaration`, like `⌘B`); in a list tool window it opens the selected row like ↵;
-in the new popups and the navigation bar it is ↵'s alias; with the tree or nothing focused it hands
-the keyboard to the selected editor. `F4` and `⌥Home` are not taken from the terminal: their
-dispatch returns `false` when the terminal has focus, so the key reaches the shell. In the editor
+the caret (`goToDeclaration`, like `⌘B`); in a list tool window it opens the selected row like ↵
+(the dispatch returns `false` there and `ListToolWindow` handles `F4` and `⌘↓`, so `⌘↓` no longer
+moves the selection down); in the new popups and the navigation bar it is ↵'s alias; with the tree
+or nothing focused it hands the keyboard to the selected editor. Chosen from the Search Everywhere
+Actions tab (focus still `SEARCH_POPUP`), Edit Source goes to the declaration and the navigation
+bar opens. `F4` and `⌥Home` are not taken from the terminal, the Run window or a text field: the
+dispatch returns `false` in `TERMINAL`, `RUN_WINDOW`, `FIND_BAR` and `EDITOR_FIELD`, so the key
+reaches the focused component. The three new popups and the bar are part of `popupOwnsFocus`. In the editor
 `⌘↑` / `⌘↓` keep moving the caret to the document start / end (Compose's macOS text mapping), so
 `SHOW_NAV_BAR` and `EDIT_SOURCE` are bound to `⌘↑` / `⌘↓` only in `LIST_WINDOW`, and the editor uses
 `⌥Home` / `F4`. Binding them in GLOBAL as IntelliJ does would replace the caret move in the editor

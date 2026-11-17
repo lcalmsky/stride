@@ -14,6 +14,9 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `multi-caret.png` 여러 캐럿으로 같은 단어를 고른 Kotlin 에디터 (`15-multi-caret.png`)
 - `folding.png` 함수 본문을 `{...}` 로 접은 Kotlin 에디터 (`16-folding.png`)
 - `problems.png` 오류·경고 물결 밑줄과 Problems 창 (`19-problems.png`)
+- `show-usages.png` 커서 단어의 사용처 팝업 (`20-show-usages.png`)
+- `recent-locations.png` 자리마다 코드 세 줄을 보여 주는 최근 위치 팝업 (`21-recent-locations.png`)
+- `navigation-bar.png` 하단 경로 캡슐이 바뀐 탐색 막대와 폴더 하위 항목 목록 (`22-navigation-bar.png`)
 
 한국어판과 영어판 README 가 같은 그림을 씁니다. `UiSnapshotTest` 의 시나리오가 바뀌면 `app/build/ui-snapshots/` 의 PNG 를 이 디렉터리로 다시 복사합니다.
 

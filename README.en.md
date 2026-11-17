@@ -37,7 +37,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"><br><br><img src="docs/images/problems.png" alt="Wavy underlines and the Problems window" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"><br><br><img src="docs/images/problems.png" alt="Wavy underlines and the Problems window" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="The bottom path capsule turned into a navigation bar with a folder's children listed" width="480"></td>
 <td valign="top">
 
 - **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
@@ -50,7 +50,8 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, `⌃⇧Space` narrows the candidates to classes in a type position and to symbols in an expression position, and `⇧F6` renames within the file
 - **Multiple carets** `⌃G` adds the next match to the selection (or selects the word at the caret when there is none), `⌃⇧G` drops the last added one, and `⌃⌘G` selects every match. `⌥⇧`-click adds or removes a caret, and holding the second `⌥` while pressing `↑`·`↓` clones a caret; `⌥`-drag or the `⌘⇧8` column selection mode builds a rectangular selection. Typing, deleting, pasting, arrow movement, and line comment, duplicate, delete, indent and case apply at every caret; any other action drops the secondary carets and works at the primary one. `Esc` drops the secondary carets
 - **Code folding** `⌘-` collapses the block that starts on the caret line or encloses the caret into `{...}`, and `⌘=` expands it again. `⌘⇧-`·`⌘⇧=` collapse and expand every block in the file, and the numeric keypad `⌘+`·`⌘-` work too. Multi-line `{}`·`[]` blocks, block comments and KDoc, and the import list fold (Kotlin, Java, JSON). `←`·`→` step over a folded range, and clicking the placeholder or moving the caret into a fold by going to a line, find or navigation expands it. The numbers of folded lines drop out of the gutter
-- **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure and `⌘⇧T` goes to the test; `⌥F7` lists usages in a Find window tab, the `⌘2` Bookmarks window and the `⌘7` Structure window list bookmarks and declarations, and `F3`·`⌘F3` handle bookmarks
+- **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure and `⌘⇧T` goes to the test; `⌥F7` lists usages in a Find window tab, the `⌘2` Bookmarks window and the `⌘7` Structure window list bookmarks and declarations, and `F3`·`⌘F3` handle bookmarks. `⌘⇧F7` highlights the usages of the word at the caret in the current file; while they are highlighted `⌘G`·`⌘⇧G` move between them, and `Esc` or an edit clears them. `⌘⇧⌫` goes to the last place you edited, and pressing it again goes to the place edited before that (the last 50 places, across files). `F4` goes to the declaration at the caret, and in a list window `F4`·`⌘↓` open the selected row and hand the keyboard to the editor
+- **Navigation bar** `⌥Home` (and `⌘↑` in a list window) splits the bottom path capsule into project, folder and file segments. `←`·`→` pick a segment and `↓`·`Enter` list that folder's children above the capsule. Choosing a file in the list opens it, choosing a folder steps into it, and `Esc` closes. In the editor `⌘↑`·`⌘↓` still move to the document start and end
 - **Problems** problems judged from the text alone, without a compiler, are shown together with the compiler messages of the last Gradle run. Kotlin and JSON report unbalanced brackets as errors and Kotlin reports unused imports as warnings, recomputed once typing pauses for 300 ms. Errors get a pink and warnings an amber wavy underline. `F2`·`⇧F2` go to the next and previous problem in the current file (errors only when there are any, wrapping around at the ends), and `⌘F1` shows the description of the problem at the caret in a popup. The `⌘6` Problems window splits the current file's problems (File) and the project's errors (Project Errors) into tabs, and `⌘⇧]`·`⌘⇧[` switch them while the window has the keyboard. A build message is shown only while its line can still be matched with certainty after later edits
 - **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
@@ -62,7 +63,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/search.png" alt="Search Everywhere results" width="480"><br><br><img src="docs/images/find-window.png" alt="The Find window with an Usages of greet tab" width="480"><br><br><img src="docs/images/replace-in-path.png" alt="The Replace in Path popup with replacement previews" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/search.png" alt="Search Everywhere results" width="480"><br><br><img src="docs/images/find-window.png" alt="The Find window with an Usages of greet tab" width="480"><br><br><img src="docs/images/replace-in-path.png" alt="The Replace in Path popup with replacement previews" width="480"><br><br><img src="docs/images/show-usages.png" alt="The Show Usages popup listing four usages of greet" width="480"><br><br><img src="docs/images/recent-locations.png" alt="The Recent Locations popup with three code lines per place" width="480"></td>
 <td valign="top">
 
 - **Search Everywhere** press `Shift` twice to open the All tab. It groups file, class, symbol, and action results (`Files`, `Classes`, and so on, up to 4 per contributor and 50 overall); `Tab`·`⇧Tab` cycle through the All·Classes·Files·Symbols·Actions tabs. Move with `↑`·`↓` and open with `Enter`
@@ -71,8 +72,10 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Actions** `⌘⇧A` lists every action with its name and shortcut and runs the chosen one
 - **Find in path** `⌘⇧F` searches the text of every project file. It skips files over 2 MB and binary files and shows up to 200 results. `W` turns on whole-word matching. Each row reads `path:line` with the line body, and the matched characters are highlighted. `Enter` opens the file and selects the match
 - **Find window** `⌘3` opens the results window. `⌥F7` find usages and `⌘↵` in the find-in-path popup add result tabs, and up to 10 tabs are kept. Rows are not grouped by file: each reads `path:line` with the line body, `↑`·`↓` move, `Enter` opens, and while the Find window has the keyboard `⌘W` closes the selected result tab instead of the editor tab
+- **Show Usages** `⌘⌥F7` shows the same search as `⌥F7` (whole word, case-sensitive) in a popup. It lists up to 200 results, each with the line (match highlighted) and `file:line`. `Enter` opens one, and `⌘↵` moves on to the same Find window tab `⌥F7` opens
 - **Replace in path** `⇧⌘R` replaces text across the project. A row shows the removed text struck through next to the replacement; `⌥⌘↵` goes through a confirmation row and replaces everything, and `⌘↵` opens the replacement preview as a Find window tab. Files open in an editor are edited without saving and one `⌘Z` per file undoes the change, while files written to the disk cannot be undone and the confirmation row states how many there are. Files that are not UTF-8 are skipped
 - **Recent files** `⌘E` lists the most recently opened files, newest first, up to 50. Closed files stay in the list
+- **Recent locations** `⌘⇧E` lists the places in the navigation history, newest first, each with three code lines: its line and one on each side. The same line of the same file appears once, and the caret's line is left out. Open files are read with their unsaved edits
 
 </td>
 </tr>
@@ -190,7 +193,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘/` · `⌘⌥/` | Toggle line comment · toggle block comment |
 | `Tab` / `⇧Tab` | Indent / unindent |
 | `⌘L` | Go to line |
-| `Esc` | Close Go to Line, drop the secondary carets, collapse the selection to the caret |
+| `Esc` | Close Go to Line, drop the secondary carets, clear usage highlights, collapse the selection to the caret |
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `⌥↑` / `⌥↓` | Grow / shrink the selection |
 | `⌘⇧U` | Toggle case |
@@ -235,6 +238,12 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘F12` | File structure |
 | `⌘⇧T` | Go to test |
 | `⌥F7` | Find usages (adds a Find window tab) |
+| `⌘⌥F7` | Show usages popup (`⌘↵` opens it in the Find window) |
+| `⌘⇧F7` | Highlight usages in file (`⌘G` / `⌘⇧G` move between them) |
+| `⌘⇧E` | Recent locations |
+| `⌘⇧⌫` | Last edit location |
+| `⌥Home` · `⌘↑` (list window) | Navigation bar |
+| `F4` · `⌘↓` (list window) | Edit source (declaration in the editor, the selected row in a list window) |
 | `⌘2` / `⌘3` / `⌘6` / `⌘7` | Bookmarks / Find / Problems / Structure window |
 | `F3` / `⌘F3` | Toggle bookmark / show bookmarks |
 | `F2` / `⇧F2` | Next problem / previous problem |
