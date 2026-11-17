@@ -92,6 +92,9 @@ object ActionNames {
         ActionId.UNWRAP to "Unwrap/Remove",
         ActionId.REFORMAT_CODE to "Reformat Code",
         ActionId.EDITOR_SCROLL_TO_CENTER to "Scroll to Center",
+        ActionId.OPTIMIZE_IMPORTS to "Optimize Imports",
+        ActionId.SMART_TYPE_COMPLETION to "Type-Matching Completion",
+        ActionId.PASTE_MULTIPLE to "Paste from History",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

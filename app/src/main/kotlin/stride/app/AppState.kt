@@ -5,7 +5,9 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import stride.app.editor.ClipboardHistory
 import stride.app.editor.CompletionRequest
+import stride.app.editor.PasteHistoryRequest
 import stride.app.editor.FileEditorManager
 import stride.app.editor.RenameRequest
 import stride.app.editor.SystemTextClipboard
@@ -133,8 +135,14 @@ class AppState {
     var revealRequests by mutableStateOf(0)
         private set
 
-    /** Clipboard for Copy Path and Copy Reference; replaced in tests. */
+    /** Clipboard for Copy Path, Copy Reference and Paste from History; replaced in tests. */
     var clipboard: TextClipboard = SystemTextClipboard
+
+    /** Recently copied texts for Paste from History, newest first. */
+    val clipboardHistory = ClipboardHistory()
+
+    /** The open Paste from History popup; `null` when it is closed. */
+    var pasteHistory by mutableStateOf<PasteHistoryRequest?>(null)
 
     private var treeBeforeHide: Boolean? = null
     private var toolWindowBeforeHide: Boolean? = null
@@ -297,6 +305,7 @@ class AppState {
         runConfigurationsVisible = false
         completion = null
         rename = null
+        pasteHistory = null
         statusMessage = null
         projectTreeVisible = true
         treeBeforeHide = null

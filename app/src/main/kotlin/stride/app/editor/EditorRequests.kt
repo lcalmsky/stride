@@ -1,9 +1,11 @@
 package stride.app.editor
 
 import stride.app.AppState
+import stride.app.ProjectSession
 import stride.app.keys.KeyContext
 import stride.core.services.service
 import stride.search.DeclarationIndex
+import stride.search.DeclarationKind
 
 /** An open completion popup: the range to replace and where the names it can show come from. */
 class CompletionRequest(
@@ -11,6 +13,7 @@ class CompletionRequest(
     val prefixStart: Int,
     val prefixLength: Int,
     val prefix: String,
+    val title: String = "Completion",
     private val nameSource: (checkCancelled: () -> Unit) -> List<String>,
 ) {
     /**
@@ -24,8 +27,8 @@ class CompletionRequest(
 /** An open rename popup and the identifier it started from. */
 data class RenameRequest(val editor: TextFileEditor, val original: String)
 
-/** Opens the completion popup from the caret's identifier prefix. */
-fun openCodeCompletion(state: AppState): Boolean {
+/** Opens the completion popup from the caret's identifier prefix; [smart] keeps names the position can use. */
+fun openCodeCompletion(state: AppState, smart: Boolean = false): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected as? TextFileEditor ?: return false
     if (editor.isReadOnly) {
@@ -36,9 +39,38 @@ fun openCodeCompletion(state: AppState): Boolean {
     val caret = editor.value.selection.start
     val prefixRange = EditActions.identifierPrefix(text, caret)
     val prefix = if (prefixRange.isEmpty()) "" else text.substring(prefixRange.first, prefixRange.last + 1)
-    val request = CompletionRequest(editor, prefixRange.first, prefix.length, prefix) { checkCancelled ->
-        buildList {
-            // The identifier under the caret is the one being completed, not a candidate.
+    val position = if (smart) SmartCompletion.positionAt(text, caret) else null
+    val request = CompletionRequest(
+        editor = editor,
+        prefixStart = prefixRange.first,
+        prefixLength = prefix.length,
+        prefix = prefix,
+        title = if (smart) "Smart completion" else "Completion",
+    ) { checkCancelled ->
+        completionNames(session, editor, prefixRange, position, checkCancelled)
+    }
+    state.completion = request
+    state.focus = KeyContext.CONTEXT_POPUP
+    state.statusMessage = null
+    return true
+}
+
+/**
+ * Every name the popup may offer, from the current file, the other open files and the
+ * declaration index. A [position] narrows that to the names a type or an expression can be,
+ * and leaves keywords out.
+ */
+private fun completionNames(
+    session: ProjectSession,
+    editor: TextFileEditor,
+    prefixRange: IntRange,
+    position: CompletionPosition?,
+    checkCancelled: () -> Unit,
+): List<String> = buildList {
+    val declarations = session.project.service<DeclarationIndex>().snapshot()
+    // The identifier under the caret is the one being completed, not a candidate.
+    when (position) {
+        null -> {
             addAll(editor.identifiers(prefixRange, checkCancelled))
             for (other in session.editors.openFiles) {
                 if (other === editor) continue
@@ -46,15 +78,30 @@ fun openCodeCompletion(state: AppState): Boolean {
                 (other as? TextFileEditor)?.let { addAll(it.identifiers(checkCancelled = checkCancelled)) }
             }
             checkCancelled()
-            addAll(session.project.service<DeclarationIndex>().snapshot().map { it.name })
+            addAll(declarations.map { it.name })
             addAll(CodeCompletion.keywordsFor(editor.file.name))
         }
+        CompletionPosition.TYPE -> {
+            addAll(editor.identifiers(prefixRange, checkCancelled).filter(::startsUpperCase))
+            for (other in session.editors.openFiles) {
+                if (other === editor) continue
+                checkCancelled()
+                (other as? TextFileEditor)?.let { file ->
+                    addAll(file.identifiers(checkCancelled = checkCancelled).filter(::startsUpperCase))
+                }
+            }
+            checkCancelled()
+            addAll(declarations.filter { it.kind == DeclarationKind.CLASS }.map { it.name })
+        }
+        CompletionPosition.EXPRESSION -> {
+            addAll(editor.identifiers(prefixRange, checkCancelled))
+            checkCancelled()
+            addAll(declarations.filter { it.kind == DeclarationKind.SYMBOL }.map { it.name })
+        }
     }
-    state.completion = request
-    state.focus = KeyContext.CONTEXT_POPUP
-    state.statusMessage = null
-    return true
 }
+
+private fun startsUpperCase(name: String): Boolean = name.isNotEmpty() && name.first().isUpperCase()
 
 /** Replaces the prefix the popup was opened on with [item]. */
 fun insertCompletion(request: CompletionRequest, item: String) {

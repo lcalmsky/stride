@@ -14,8 +14,10 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.editor.SystemTextClipboard
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
+import stride.app.editor.applyPasteHistory
 import stride.app.editor.applyRename
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
@@ -936,6 +938,193 @@ class ActionDispatcherTest {
         assertEquals(KeyContext.SEARCH_POPUP, state.focus)
     }
 
+    @Test
+    fun `copy and cut record the clipboard text in the history`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one\ntwo\n", TextRange(1)))
+        val previous = SystemTextClipboard.readText()
+        try {
+            assertTrue(dispatchAction(ActionId.COPY_LINE, state) { null })
+            assertEquals(listOf("one\n"), state.clipboardHistory.items)
+
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(4)))
+            assertTrue(dispatchAction(ActionId.CUT_LINE, state) { null })
+            assertEquals(listOf("two\n", "one\n"), state.clipboardHistory.items)
+            assertEquals("one\n", editor.value.text)
+        } finally {
+            previous?.let(SystemTextClipboard::writeText)
+        }
+    }
+
+    @Test
+    fun `copying a selection records it even though the key is left to the field`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("one two", TextRange(0, 3)))
+
+        assertFalse(dispatchAction(ActionId.COPY_LINE, state) { null })
+
+        assertEquals(listOf("one"), state.clipboardHistory.items)
+    }
+
+    @Test
+    fun `paste from history replaces the selection and one undo restores it`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta", TextRange(0, 5)))
+        val clipboard = RecordingClipboard().apply { text = "gamma" }
+        state.clipboard = clipboard
+        state.clipboardHistory.record("delta")
+
+        assertTrue(dispatchAction(ActionId.PASTE_MULTIPLE, state) { null })
+        val request = requireNotNull(state.pasteHistory)
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+        assertEquals(listOf("gamma", "delta"), state.clipboardHistory.items)
+
+        applyPasteHistory(state, request, "delta")
+        assertEquals("delta beta", editor.value.text)
+        assertEquals("delta", clipboard.text)
+        assertEquals(listOf("delta", "gamma"), state.clipboardHistory.items)
+
+        assertTrue(editor.undo())
+        assertEquals("alpha beta", editor.value.text)
+    }
+
+    @Test
+    fun `paste from history without anything to paste reports it`() {
+        openProjectWith("a.kt")
+        state.clipboard = RecordingClipboard()
+
+        assertTrue(dispatchAction(ActionId.PASTE_MULTIPLE, state) { null })
+
+        assertNull(state.pasteHistory)
+        assertEquals("Clipboard history is empty", state.statusMessage)
+    }
+
+    @Test
+    fun `paste from history refuses a read-only editor`() {
+        val root = temp.resolve("read-only-paste-project")
+        Files.createDirectories(root)
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val editor = session.editors.openFile(VFile(root.resolve("missing.kt"))) as TextFileEditor
+        state.clipboardHistory.record("delta")
+
+        assertTrue(dispatchAction(ActionId.PASTE_MULTIPLE, state) { null })
+
+        assertNull(state.pasteHistory)
+        assertEquals("File is read-only", state.statusMessage)
+        assertTrue(editor.isReadOnly)
+    }
+
+    @Test
+    fun `optimize imports reports the removed count and sorts the block`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(
+            TextFieldValue(
+                "package demo\n\nimport demo.b.Beta\nimport demo.a.Alpha\n\nfun main() {\n    Alpha()\n}\n",
+                TextRange(0),
+            ),
+        )
+
+        assertTrue(dispatchAction(ActionId.OPTIMIZE_IMPORTS, state) { null })
+
+        assertEquals(
+            "package demo\n\nimport demo.a.Alpha\n\nfun main() {\n    Alpha()\n}\n",
+            editor.value.text,
+        )
+        assertEquals("Removed 1 unused import", state.statusMessage)
+    }
+
+    @Test
+    fun `optimize imports tells sorting from no work`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(
+            TextFieldValue(
+                "package demo\n\nimport demo.b.Beta\nimport demo.a.Alpha\n\nfun main() { Alpha(); Beta() }\n",
+                TextRange(0),
+            ),
+        )
+
+        assertTrue(dispatchAction(ActionId.OPTIMIZE_IMPORTS, state) { null })
+        assertEquals("Imports optimized", state.statusMessage)
+
+        assertTrue(dispatchAction(ActionId.OPTIMIZE_IMPORTS, state) { null })
+        assertEquals("Imports are already optimized", state.statusMessage)
+    }
+
+    @Test
+    fun `optimize imports is unavailable without an optimizer and on a read-only file`() {
+        val session = openProjectWith("a.txt")
+        val root = temp.resolve("project")
+        session.editors.openFile(VFile(root.resolve("a.txt")))
+
+        assertTrue(dispatchAction(ActionId.OPTIMIZE_IMPORTS, state) { null })
+        assertEquals("Optimize Imports is not available for this file", state.statusMessage)
+
+        val readOnly = session.editors.openFile(VFile(root.resolve("missing.kt"))) as TextFileEditor
+        assertTrue(readOnly.isReadOnly)
+        assertTrue(dispatchAction(ActionId.OPTIMIZE_IMPORTS, state) { null })
+        assertEquals("File is read-only", state.statusMessage)
+    }
+
+    @Test
+    fun `smart completion keeps only the names the caret position can use`() {
+        val root = temp.resolve("smart-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("Clock.kt"), "package demo\n\nclass Clock\n")
+        Files.writeString(root.resolve("Helpers.kt"), "package demo\n\nfun helper() {}\n")
+        val main = root.resolve("Main.kt")
+        Files.writeString(main, "package demo\n\nval time: Clo\n")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val editor = session.editors.openFile(VFile(main)) as TextFileEditor
+        state.focus = KeyContext.EDITOR
+
+        val typeText = "package demo\n\nval time: \n"
+        editor.updateValue(TextFieldValue(typeText, TextRange(typeText.length)))
+        assertTrue(dispatchAction(ActionId.SMART_TYPE_COMPLETION, state) { null })
+
+        val typeRequest = requireNotNull(state.completion)
+        assertEquals("Smart completion", typeRequest.title)
+        val typeNames = typeRequest.candidates()
+        assertTrue("Clock" in typeNames)
+        assertFalse("helper" in typeNames)
+        assertFalse("time" in typeNames)
+        assertFalse("class" in typeNames)
+
+        state.completion = null
+        val expressionText = "package demo\n\nval clock = \n"
+        editor.updateValue(TextFieldValue(expressionText, TextRange(expressionText.length)))
+        assertTrue(dispatchAction(ActionId.SMART_TYPE_COMPLETION, state) { null })
+
+        val expressionNames = requireNotNull(state.completion).candidates()
+        assertTrue("helper" in expressionNames)
+        assertFalse("Clock" in expressionNames)
+        assertFalse("fun" in expressionNames)
+    }
+
+    @Test
+    fun `plain code completion keeps its title`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("val value = 1", TextRange(3)))
+
+        assertTrue(dispatchAction(ActionId.CODE_COMPLETION, state) { null })
+
+        assertEquals("Completion", requireNotNull(state.completion).title)
+    }
+
     private fun openProjectWith(vararg names: String): ProjectSession {
         val root = temp.resolve("project")
         Files.createDirectories(root)
@@ -971,4 +1160,6 @@ private class RecordingClipboard : TextClipboard {
         this.text = text
         return true
     }
+
+    override fun readText(): String? = text
 }

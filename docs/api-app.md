@@ -161,6 +161,39 @@ beanClass="stride.lang.CommenterBean"/>`; because its id is `stride.core` the po
 Both register `//`, `/*` and `*/`. A language without a commenter (plain text) resolves to
 `null`; the editor then consumes the comment actions without changing the text.
 
+### Import optimizers
+
+`OPTIMIZE_IMPORTS` (⌃⌥O) asks the selected file's language for an import optimizer:
+
+```kotlin
+package stride.lang
+
+interface ImportOptimizer {
+    fun optimize(text: String): List<TextEdit>   // an empty list means nothing to change
+    companion object {
+        const val EP_NAME = "stride.lang.importOptimizer"
+        val EP: BeanExtensionPointName<ImportOptimizerBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): ImportOptimizer?
+    }
+}
+
+class ImportOptimizerBean : ExtensionBean() {
+    override val key: String?                 // attributes["language"]
+    fun optimizer(): ImportOptimizer
+}
+```
+
+The app descriptor declares `<extensionPoint name="lang.importOptimizer"
+beanClass="stride.lang.ImportOptimizerBean"/>`. Edits use the offsets of the original text and
+must not overlap; the editor applies them as one undo step. The Kotlin plugin registers
+`KotlinImportOptimizer`, which drops unused imports with the same rules as the ⌥↩ quick fix
+(star imports and operator convention names kept), removes duplicates, and sorts the rest into
+the default layout — everything else, `java.*`, `javax.*`, `kotlin.*`, then alias imports. A
+block with a comment between its imports keeps its order and only loses whole lines; with no
+import left the block and one following blank line go. The status bar reports
+`Removed N unused imports`, `Imports optimized`, `Imports are already optimized`,
+`Optimize Imports is not available for this file` or `File is read-only`.
+
 ### Intentions and the ⌥↩ menu
 
 ⌥↩ (`SHOW_INTENTION_ACTIONS`) opens one popup with three groups in this order: quick fixes,
@@ -433,6 +466,9 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :160 |
 | `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :162 |
 | `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :164 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :193 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :195 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :197 |
 | `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :166 |
 | `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :168 |
 | `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :169 |
@@ -600,6 +636,23 @@ visible viewport without moving the caret or the selection. The content reads th
 `CodeCompletion.candidates(prefix, names, limit)` ranks names with `NameMatcher`;
 `CodeCompletion.identifiers(text, excluded)` lists a file's identifiers (leaving out the range
 that is exactly the one being completed) and `keywordsFor(fileName)` the Kotlin or Java keywords.
+
+`SMART_TYPE_COMPLETION` (⌃⇧Space) opens the same completion popup under the `Smart completion`
+header. `SmartCompletion.positionAt` judges the position from the code before the identifier
+prefix, skipping whitespace and strings and comments through `CodeScan`: a type after `:`
+(not `::`), `as`, `as?`, `is`, `<`, or a `,` inside still-open angle brackets, an expression
+anywhere else. A type position offers the current and other open files' upper-case identifiers
+and the declaration index's `CLASS` names; an expression position offers the current file's
+identifiers and the `SYMBOL` names. Neither adds language keywords, and the identifier being
+completed stays excluded as in the plain popup.
+
+`PASTE_MULTIPLE` (⇧⌘V) opens the Paste from History popup over `AppState.clipboardHistory`:
+newest first, at most 20 entries, a repeated text moves to the front, and blank texts are
+ignored. Opening records the system clipboard's current text through `TextClipboard.readText`.
+Enter replaces the selection captured when the popup opened with the chosen entry in one undo
+step, writes it back to the system clipboard and moves it to the front. `COPY_LINE` and
+`CUT_LINE` record the text they copy — the selection when there is one, the whole line
+otherwise. An empty history reports `Clipboard history is empty` without opening the popup.
 
 `stride.app.editor.UndoManager` keeps the undo and redo stacks:
 

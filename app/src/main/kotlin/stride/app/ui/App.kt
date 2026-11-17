@@ -93,8 +93,10 @@ import stride.app.editor.CompletionPopup
 import stride.app.editor.FileEditor
 import stride.app.editor.FileEditorManager
 import stride.app.editor.LocalEditorScrollState
+import stride.app.editor.PasteHistoryPopup
 import stride.app.editor.RenamePopup
 import stride.app.editor.TextFileEditor
+import stride.app.editor.applyPasteHistory
 import stride.app.editor.applyRename
 import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
@@ -611,6 +613,29 @@ fun App(
                 )
             }
         }
+        val pasteHistory = state.pasteHistory
+        if (pasteHistory != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                PasteHistoryPopup(
+                    items = state.clipboardHistory.items.toList(),
+                    onChoose = { text ->
+                        state.pasteHistory = null
+                        applyPasteHistory(state, pasteHistory, text)
+                        refocusEditor(state)
+                    },
+                    onClose = {
+                        state.pasteHistory = null
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
         val rename = state.rename
         if (rename != null && session != null) {
             Box(
@@ -673,7 +698,8 @@ private fun popupOwnsFocus(state: AppState): Boolean =
     state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
         state.declarationChooserVisible || state.testChooserVisible || state.fileStructureVisible ||
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
-        state.completion != null || state.rename != null || state.findBar.visible
+        state.completion != null || state.rename != null || state.pasteHistory != null ||
+        state.findBar.visible
 
 private fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR

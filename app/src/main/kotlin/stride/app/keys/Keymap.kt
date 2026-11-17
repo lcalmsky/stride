@@ -17,6 +17,7 @@ enum class ActionId {
     COPY_PATHS, COPY_REFERENCE, SWITCHER, SELECT_IN_PROJECT_VIEW, REOPEN_CLOSED_TAB, CLOSE_OTHER_TABS,
     TOGGLE_UI_FONT, MOVE_STATEMENT_UP, MOVE_STATEMENT_DOWN, EDITOR_COMPLETE_STATEMENT,
     UNWRAP, REFORMAT_CODE, EDITOR_SCROLL_TO_CENTER,
+    OPTIMIZE_IMPORTS, SMART_TYPE_COMPLETION, PASTE_MULTIPLE,
 }
 
 enum class KeyContext {
@@ -188,6 +189,12 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     // so control alt SPACE is the same action for keyboards with more than one input source.
     bind("control SPACE", ActionId.CODE_COMPLETION, KeyContext.EDITOR)
     bind("control alt SPACE", ActionId.CODE_COMPLETION, KeyContext.EDITOR)
+    // SmartTypeCompletion control shift SPACE
+    bind("control shift SPACE", ActionId.SMART_TYPE_COMPLETION, KeyContext.EDITOR)
+    // OptimizeImports control alt O
+    bind("control alt O", ActionId.OPTIMIZE_IMPORTS, KeyContext.EDITOR)
+    // PasteMultiple meta shift V
+    bind("meta shift V", ActionId.PASTE_MULTIPLE, KeyContext.EDITOR)
     // RenameElement shift F6
     bind("shift F6", ActionId.RENAME_ELEMENT, KeyContext.EDITOR)
     // $Copy and $Cut with an empty selection take the whole line

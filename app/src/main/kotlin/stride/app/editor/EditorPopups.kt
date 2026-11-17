@@ -2,6 +2,7 @@ package stride.app.editor
 
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -9,6 +10,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,15 +54,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
+import stride.app.glass.GlassHoles
+import stride.app.glass.LocalNativeGlass
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.popupPanel
+import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 
 private val completionPopupWidth = 360.dp
 private val renamePopupWidth = 320.dp
+private val pasteHistoryPopupWidth = 360.dp
 private const val COMPLETION_VISIBLE_ROWS = 8
 
 /** Test tags the UI tests find the popups by. */
@@ -69,6 +75,8 @@ const val COMPLETION_FIELD_TAG: String = "completion-field"
 const val COMPLETION_SELECTED_ROW_TAG: String = "completion-selected-row"
 const val RENAME_POPUP_TAG: String = "rename-popup"
 const val RENAME_FIELD_TAG: String = "rename-field"
+const val PASTE_HISTORY_POPUP_TAG: String = "paste-history-popup"
+const val PASTE_HISTORY_SELECTED_ROW_TAG: String = "paste-history-selected-row"
 
 /**
  * The completion popup. It keeps its own field so typing filters while the caret stays where
@@ -158,7 +166,7 @@ fun CompletionPopup(
                 },
         ) {
             CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
-            CompletionHeader(input, focusRequester) { input = it }
+            CompletionHeader(request.title, input, focusRequester) { input = it }
             if (items.isEmpty()) {
                 Text(
                     if (candidates == null) "Loading…" else "No matching names",
@@ -189,6 +197,7 @@ fun CompletionPopup(
 
 @Composable
 private fun CompletionHeader(
+    title: String,
     input: TextFieldValue,
     focusRequester: FocusRequester,
     onQueryChange: (TextFieldValue) -> Unit,
@@ -201,7 +210,7 @@ private fun CompletionHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "Completion",
+            title,
             color = DesignTokens.textOnBusyGlass,
             fontSize = DesignTokens.labelTextSize,
             fontFamily = DesignTokens.uiFont,
@@ -363,6 +372,150 @@ fun RenamePopup(
             }
             PopupHintBar("↵ Rename", "Esc Cancel")
             }
+        }
+    }
+}
+
+/**
+ * The clipboard history: Enter pastes the selected text, ↑↓ move the selection and Escape
+ * closes the popup. Rows show the first line and how many more the entry has.
+ */
+@Composable
+fun PasteHistoryPopup(
+    items: List<String>,
+    onChoose: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var selectedIndex by remember(items) { mutableStateOf(0) }
+    val index = selectedIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+    val focusRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    val shape = RoundedCornerShape(DesignTokens.radiusPopup)
+    val fade = rememberPopupFadeAlpha()
+    val contentFade = popupContentFade(fade)
+    val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
+    val height = DesignTokens.popupRowHeight * items.size.coerceAtMost(COMPLETION_VISIBLE_ROWS)
+
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+    }
+    LaunchedEffect(index) {
+        withFrameNanos { }
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty() || items.isEmpty()) return@LaunchedEffect
+        when {
+            index < visible.first().index -> listState.scrollToItem(index)
+            index > visible.last().index -> listState.scrollToItem(index)
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .testTag(PASTE_HISTORY_POPUP_TAG)
+            .scrimSurface(DesignTokens.scrim.alpha * fade, holes)
+            .pointerInput(Unit) { detectTapGestures { onClose() } },
+    ) {
+        Column(
+            Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = DesignTokens.popupTop)
+                .width(pasteHistoryPopupWidth)
+                .popupPanel("popup-paste-history", shape)
+                .then(contentFade)
+                .focusRequester(focusRequester)
+                .focusable()
+                .pointerInput(Unit) { detectTapGestures { } }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) {
+                        false
+                    } else {
+                        when (event.key) {
+                            Key.Escape -> {
+                                onClose()
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                if (items.isNotEmpty()) selectedIndex = (index + 1).coerceAtMost(items.lastIndex)
+                                true
+                            }
+                            Key.DirectionUp -> {
+                                if (items.isNotEmpty()) selectedIndex = (index - 1).coerceAtLeast(0)
+                                true
+                            }
+                            Key.Enter, Key.NumPadEnter -> {
+                                items.getOrNull(index)?.let(onChoose)
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                },
+        ) {
+            CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            Text(
+                "Paste from History",
+                color = DesignTokens.textOnBusyGlass,
+                fontSize = DesignTokens.labelTextSize,
+                fontFamily = DesignTokens.uiFont,
+                modifier = Modifier.padding(
+                    horizontal = DesignTokens.space16,
+                    vertical = DesignTokens.space8,
+                ),
+            )
+            Box(Modifier.fillMaxWidth().height(height)) {
+                LazyColumn(state = listState) {
+                    itemsIndexed(items) { row, item ->
+                        PasteHistoryRow(item, row == index) { onChoose(item) }
+                    }
+                }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(listState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    style = DesignTokens.scrollbarStyle,
+                )
+            }
+            PopupHintBar("↑↓ Navigate", "↵ Paste", "Esc Close")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PasteHistoryRow(item: String, selected: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    val lines = item.trim().lines()
+    val extra = lines.size - 1
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(DesignTokens.popupRowHeight)
+            .selectionRow(selected = selected, hovered = hovered)
+            .then(if (selected) Modifier.testTag(PASTE_HISTORY_SELECTED_ROW_TAG) else Modifier)
+            .hoverable(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = DesignTokens.space16),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            lines.first(),
+            color = if (selected) DesignTokens.selectedText else DesignTokens.text,
+            fontSize = DesignTokens.uiTextSize,
+            fontFamily = DesignTokens.uiFont,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (extra > 0) {
+            Spacer(Modifier.width(DesignTokens.space8))
+            Text(
+                "+$extra lines",
+                color = if (selected) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
+                fontSize = DesignTokens.labelTextSize,
+                fontFamily = DesignTokens.uiFont,
+            )
         }
     }
 }

@@ -128,6 +128,12 @@ class KeymapTest {
         // CodeCompletion control SPACE; control alt SPACE avoids the system input-source switch
         assertEquals(ActionId.CODE_COMPLETION, action("control SPACE", KeyContext.EDITOR))
         assertEquals(ActionId.CODE_COMPLETION, action("control alt SPACE", KeyContext.EDITOR))
+        // SmartTypeCompletion control shift SPACE
+        assertEquals(ActionId.SMART_TYPE_COMPLETION, action("control shift SPACE", KeyContext.EDITOR))
+        // OptimizeImports control alt O
+        assertEquals(ActionId.OPTIMIZE_IMPORTS, action("control alt O", KeyContext.EDITOR))
+        // PasteMultiple meta shift V
+        assertEquals(ActionId.PASTE_MULTIPLE, action("meta shift V", KeyContext.EDITOR))
         // RenameElement shift F6
         assertEquals(ActionId.RENAME_ELEMENT, action("shift F6", KeyContext.EDITOR))
         // $Copy and $Cut take the whole line when nothing is selected

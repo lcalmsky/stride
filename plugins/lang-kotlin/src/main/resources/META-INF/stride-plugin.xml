@@ -11,5 +11,6 @@
     <lang.commenter language="kotlin" implementationClass="stride.lang.kotlin.KotlinCommenter"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportIntentions"/>
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
+    <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
   </extensions>
 </stride-plugin>

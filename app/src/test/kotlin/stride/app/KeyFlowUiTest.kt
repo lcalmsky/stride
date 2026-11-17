@@ -49,7 +49,9 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.editor.COMPLETION_FIELD_TAG
 import stride.app.editor.COMPLETION_SELECTED_ROW_TAG
+import stride.app.editor.PASTE_HISTORY_SELECTED_ROW_TAG
 import stride.app.editor.RENAME_FIELD_TAG
+import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
@@ -1092,6 +1094,61 @@ class KeyFlowUiTest {
 
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { state.rename == null }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `paste from history replaces the selection and escape closes it`() = runComposeUiTest {
+        val root = temp.resolve("paste-history-ui-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "alpha beta\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+            state.clipboard = object : TextClipboard {
+                var text: String? = null
+
+                override fun writeText(text: String): Boolean {
+                    this.text = text
+                    return true
+                }
+
+                override fun readText(): String? = text
+            }
+            state.clipboardHistory.record("gamma")
+            state.clipboardHistory.record("delta\ndelta two")
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0, 5)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.V) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.pasteHistory != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+            onNodeWithTag(PASTE_HISTORY_SELECTED_ROW_TAG).assertExists()
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.pasteHistory == null }
+            assertEquals("delta\ndelta two beta\n", editor.value.text)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.V) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.pasteHistory != null }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.pasteHistory == null }
+            assertEquals("delta\ndelta two beta\n", editor.value.text)
         } finally {
             state.dispose()
         }

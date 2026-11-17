@@ -22,7 +22,7 @@ class KotlinImportIntentions : IntentionProvider {
         }
         if (index < 0) return emptyList()
         val token = tokens[index]
-        if (onPackageOrImportLine(token.start, parsed)) return emptyList()
+        if (isOnPackageOrImportLine(token.start, parsed)) return emptyList()
         if (tokens.getOrNull(index - 1)?.type == KotlinTokenTypes.DOT) return emptyList()
         val name = unquoteIdentifier(token.text)
         if (name.isEmpty() || name == "*") return emptyList()
@@ -46,7 +46,7 @@ class KotlinImportIntentions : IntentionProvider {
         if (imports.isEmpty()) return emptyList()
         val caret = context.caretOffset
         if (caret < imports.first().start || caret >= imports.last().end) return emptyList()
-        val used = usedIdentifiers(context.text, parsed)
+        val used = usedIdentifiersIn(context.text, parsed)
         val unused = imports.filter { !it.star && it.boundName !in used && it.boundName !in ALWAYS_USED }
         if (unused.isEmpty()) return emptyList()
         val caretImport = unused.firstOrNull { caret >= it.start && caret < it.end }
@@ -70,28 +70,6 @@ class KotlinImportIntentions : IntentionProvider {
             )
         }
         return actions
-    }
-
-    private fun usedIdentifiers(text: String, parsed: KotlinImportList): Set<String> {
-        val used = HashSet<String>()
-        for (token in codeTokens(text)) {
-            val identifier = when (token.type) {
-                KotlinTokenTypes.IDENTIFIER -> true
-                KotlinTokenTypes.KEYWORD -> token.text !in HARD_KEYWORDS
-                else -> false
-            }
-            if (!identifier) continue
-            if (onPackageOrImportLine(token.start, parsed)) continue
-            used.add(unquoteIdentifier(token.text))
-        }
-        return used
-    }
-
-    private fun onPackageOrImportLine(offset: Int, parsed: KotlinImportList): Boolean {
-        val packageStart = parsed.packageLineStart
-        val packageEnd = parsed.packageLineEnd
-        if (packageStart != null && packageEnd != null && offset in packageStart..packageEnd) return true
-        return parsed.imports.any { offset >= it.start && offset < it.end }
     }
 
     private fun importEdit(fqn: String, parsed: KotlinImportList): TextEdit {
@@ -122,12 +100,6 @@ class KotlinImportIntentions : IntentionProvider {
         }
     }
 
-    private fun collapseBlankLine(text: String, offset: Int): Int = when {
-        text.startsWith("\r\n", offset) -> offset + 2
-        text.startsWith("\n", offset) -> offset + 1
-        else -> offset
-    }
-
     private fun declaredInFile(text: String, name: String): Boolean {
         val escaped = Regex.escape(name)
         val declaration = Regex("""\b(?:class|interface|object|typealias|val|var)\s+`?$escaped`?(?![\w`])""")
@@ -143,20 +115,5 @@ class KotlinImportIntentions : IntentionProvider {
 
     private companion object {
         const val MAX_CANDIDATES = 6
-
-        val ALWAYS_USED: Set<String> = setOf(
-            "getValue", "setValue", "provideDelegate", "get", "set", "invoke", "contains", "iterator",
-            "next", "hasNext", "compareTo", "equals", "plus", "minus", "times", "div", "rem", "rangeTo",
-            "rangeUntil", "unaryPlus", "unaryMinus", "not", "inc", "dec", "plusAssign", "minusAssign",
-            "timesAssign", "divAssign", "remAssign",
-            "component1", "component2", "component3", "component4", "component5", "component6",
-            "component7", "component8", "component9", "assign",
-        )
-
-        val HARD_KEYWORDS: Set<String> = setOf(
-            "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
-            "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
-            "true", "try", "typealias", "typeof", "val", "var", "when", "while",
-        )
     }
 }

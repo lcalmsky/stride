@@ -73,6 +73,53 @@ internal fun parseImports(text: String): KotlinImportList {
 internal fun unquoteIdentifier(name: String): String =
     if (name.length >= 2 && name.startsWith('`') && name.endsWith('`')) name.substring(1, name.length - 1) else name
 
+/** Names used by code, outside the package line, the import lines and comments and strings. */
+internal fun usedIdentifiersIn(text: String, parsed: KotlinImportList): Set<String> {
+    val used = HashSet<String>()
+    for (token in codeTokens(text)) {
+        val identifier = when (token.type) {
+            KotlinTokenTypes.IDENTIFIER -> true
+            KotlinTokenTypes.KEYWORD -> token.text !in HARD_KEYWORDS
+            else -> false
+        }
+        if (!identifier) continue
+        if (isOnPackageOrImportLine(token.start, parsed)) continue
+        used.add(unquoteIdentifier(token.text))
+    }
+    return used
+}
+
+internal fun isOnPackageOrImportLine(offset: Int, parsed: KotlinImportList): Boolean {
+    val packageStart = parsed.packageLineStart
+    val packageEnd = parsed.packageLineEnd
+    if (packageStart != null && packageEnd != null && offset in packageStart..packageEnd) return true
+    return parsed.imports.any { offset >= it.start && offset < it.end }
+}
+
+/** The offset just past the newline following [offset], so a deleted line does not leave a double blank line. */
+internal fun collapseBlankLine(text: String, offset: Int): Int = when {
+    text.startsWith("\r\n", offset) -> offset + 2
+    text.startsWith("\n", offset) -> offset + 1
+    else -> offset
+}
+
+/** Names whose imports never count as unused: operator and delegation conventions resolved by the compiler. */
+internal val ALWAYS_USED: Set<String> = setOf(
+    "getValue", "setValue", "provideDelegate", "get", "set", "invoke", "contains", "iterator",
+    "next", "hasNext", "compareTo", "equals", "plus", "minus", "times", "div", "rem", "rangeTo",
+    "rangeUntil", "unaryPlus", "unaryMinus", "not", "inc", "dec", "plusAssign", "minusAssign",
+    "timesAssign", "divAssign", "remAssign",
+    "component1", "component2", "component3", "component4", "component5", "component6",
+    "component7", "component8", "component9", "assign",
+)
+
+/** Keywords the lexer may report as identifiers (`data`, `value`), so they never count as use. */
+internal val HARD_KEYWORDS: Set<String> = setOf(
+    "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
+    "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
+    "true", "try", "typealias", "typeof", "val", "var", "when", "while",
+)
+
 private fun unquotePath(path: String): String = path.split('.').joinToString(".") { unquoteIdentifier(it) }
 
 private fun stripComments(line: String, state: CommentState): String {

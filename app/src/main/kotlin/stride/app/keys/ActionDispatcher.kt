@@ -1,9 +1,12 @@
 package stride.app.keys
 
 import stride.app.AppState
+import stride.app.editor.EditActions
 import stride.app.editor.TextFileEditor
 import stride.app.editor.openCodeCompletion
+import stride.app.editor.openPasteHistory
 import stride.app.editor.openRename
+import stride.app.editor.optimizeImports
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
 import stride.app.navigation.goToDeclaration
@@ -160,10 +163,25 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.EDITOR_ESCAPE, ActionId.EDITOR_SELECT_WORD, ActionId.EDITOR_UNSELECT_WORD,
     ActionId.EDITOR_TOGGLE_CASE, ActionId.EDITOR_JOIN_LINES, ActionId.EDITOR_START_NEW_LINE,
     ActionId.EDITOR_START_NEW_LINE_BEFORE, ActionId.EDITOR_MATCH_BRACE, ActionId.EDITOR_CODE_BLOCK_START,
-    ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN, ActionId.COPY_LINE,
-    ActionId.CUT_LINE, ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
+    ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN,
+    ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
     ActionId.EDITOR_COMPLETE_STATEMENT, ActionId.EDITOR_SCROLL_TO_CENTER,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.COPY_LINE, ActionId.CUT_LINE -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        val selection = editor.value.selection
+        val text = editor.value.text
+        val copied = if (!selection.collapsed) {
+            text.substring(selection.min, selection.max)
+        } else {
+            val range = EditActions.wholeLine(text, selection.start)
+            text.substring(range.min, range.max)
+        }
+        val handled = editor.applyAction(action)
+        // A real selection is copied by BasicTextField itself, so the key is not consumed here.
+        if (handled || !selection.collapsed) state.clipboardHistory.record(copied)
+        handled
+    }
     ActionId.UNWRAP -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
         state.statusMessage = when {
@@ -187,6 +205,13 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         editor.hippieComplete(others)
     }
     ActionId.CODE_COMPLETION -> openCodeCompletion(state)
+    ActionId.SMART_TYPE_COMPLETION -> openCodeCompletion(state, smart = true)
+    ActionId.OPTIMIZE_IMPORTS -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        state.statusMessage = optimizeImports(editor)
+        true
+    }
+    ActionId.PASTE_MULTIPLE -> openPasteHistory(state)
     ActionId.RENAME_ELEMENT -> openRename(state)
     ActionId.RUN -> {
         val session = state.session ?: return false

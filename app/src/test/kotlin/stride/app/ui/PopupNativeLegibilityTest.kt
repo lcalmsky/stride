@@ -27,6 +27,7 @@ import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.extension.ExtendWith
 import stride.app.editor.CompletionPopup
 import stride.app.editor.CompletionRequest
+import stride.app.editor.PasteHistoryPopup
 import stride.app.editor.RenamePopup
 import stride.app.editor.TextFileEditor
 import stride.app.glass.GlassHoles
@@ -369,6 +370,21 @@ class PopupNativeLegibilityTest {
                 selectionPill = false,
             ) {
                 RenamePopup(initialName = "alphaOne", onRename = {}, onClose = {})
+            },
+            PopupCase(
+                name = "paste-history",
+                key = "popup-paste-history",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY),
+                renderMillis = 600,
+            ) {
+                PasteHistoryPopup(
+                    items = listOf(
+                        "val alpha = 1",
+                        "val beta = 2\nval gamma = 3\nval delta = 4",
+                    ),
+                    onChoose = {},
+                    onClose = {},
+                )
             },
             PopupCase(
                 name = "goto-line",
