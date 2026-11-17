@@ -1273,7 +1273,11 @@ so a hung `defaults` cannot stall the poller, and `stop()` interrupts the thread
 content starts it once it is composed, i.e. after AWT installed `NSApplicationAWT`; the native
 query never creates an application object (`NativeAppearanceOrderTest` proves a fresh JVM that
 queries first still ends up with `NSApplicationAWT`). The window follows the system live
-without a restart.
+without a restart. `main()` first calls `SystemAppearance.prepareProcess()`, which sets
+`apple.awt.application.appearance` to `system` unless the process already set it, lifting JDK
+21's pin of NSApp to Aqua; `GlassRuntime.applyAppearance` then sets the attached window's
+`NSAppearance` from `AppearanceState`, so the glass material and the palette take the same
+appearance.
 
 **Dark palette** (`DarkPalette`, v1.3.0 values, unchanged): a cool graphite with a very low
 blue-violet chroma: `background` #13141A with `backgroundLift` #1A1B23 at the top of the
@@ -1375,7 +1379,8 @@ enum class NeonEdge { TOP, BOTTOM }
 fun Modifier.neonGlow(color: Color, radius: Dp = DesignTokens.glowRadius,
                       shape: Shape = RectangleShape, alpha: Float = 1f): Modifier
 fun Modifier.neonBorder(color: Color, shape: Shape,
-                        radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f): Modifier
+                        radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f,
+                        overContent: Boolean = false): Modifier
 fun Modifier.neonUnderline(color: Color, thickness: Dp = 2.dp,
                            radius: Dp = DesignTokens.glowRadius, alpha: Float = 1f,
                            edge: NeonEdge = NeonEdge.BOTTOM): Modifier
@@ -1384,6 +1389,9 @@ fun Modifier.focusHalo(active: Boolean, color: Color = DesignTokens.accent2): Mo
 ```
 
 A glow color is multiplied by `0.8f * alpha` before drawing, so `alpha = 0f` draws nothing.
+`neonBorder` draws behind the content by default; `overContent` keeps the same glow and stroke
+but draws them after the content, so a fill the content paints above the border cannot hide it
+(the Go to Line popup uses it for its native-path plate).
 
 ### Selection signal language
 
@@ -1786,9 +1794,11 @@ out on that density at all.
 The gutter overlay keeps the editor tint (`contentTint`), redraws the current-line glow, and
 draws a 1 dp `glassBorderSide` separator; its line numbers are `muted`, which clears 4.5:1 on
 the worst content tint (5.86:1). The go-to-line popup is `backdropGlass(shape)` with
-`textSecondaryOnGlass` text, placed below the top band; `TreeEditorGlassTest` measures the
-backdrop as real (dense document, adjacent-pixel difference under the blur limit) with the
-faint document still visible behind the fill.
+`textSecondaryOnGlass` text on the Skia path, placed below the top band; `TreeEditorGlassTest`
+measures the backdrop as real (dense document, adjacent-pixel difference under the blur limit)
+with the faint document still visible behind the fill. On the native path `popupPanel` paints
+the palette plate over the popup's glass, and the popup's neon border is drawn above that plate
+(`neonBorder(..., overContent = true)`).
 
 ### Applied surfaces: popups and find bar
 
@@ -1843,9 +1853,12 @@ precondition passed, and the layer flags and backgrounds it changes are remember
 (and a failed attach) restores the window's opaque flag and background and every remembered
 layer, so a fallback never leaves a transparent window behind. The library reports
 `supported`, `attach`, `sync`, `detach`, `state` (window opaque flag, window count, base view,
-piece frames with their read-back style and tint, and the transparency block), `layerClass`,
-`layerTree`, `setDragRects`/`hitTestDragRegion`/`dragMonitorCount`, and the appearance
-query/observer/application-class query. The appearance query never asks for the shared
+piece frames with their read-back style, tint and z index, and the transparency block with the
+window and glass appearances), `layerClass`, `layerTree`,
+`setDragRects`/`hitTestDragRegion`/`dragMonitorCount`, `setAppearance`, and the appearance
+query/observer/application-class query, including `appAppearanceName` (`NSApp.appearance`'s
+name). `setAppearance` only enqueues; `appAppearanceName` is a synchronous query bounded to one
+second like the others. The appearance query never asks for the shared
 application: it reads `NSApp` and returns "unknown" while it is nil, so calling it before AWT
 cannot create a plain `NSApplication` and steal the `NSApplicationAWT` install.
 
@@ -1858,17 +1871,17 @@ for the main queue — that was the 1.4.0 launch deadlock (EDT in `nativeSupport
 
 - `supported` needs only the OS version and the `NSGlassEffectView` class, both thread-safe. It
   never touches the AppKit thread and caches the answer for the process.
-- Mutations (`attach`, `sync`, `setDragRects`, `detach`, the appearance observer install and
-  remove) are scheduled with `CFRunLoopPerformBlock` for the default, modal-panel,
-  event-tracking and `AWTRunLoopMode` modes and return immediately. Blocks run in the order
-  they were added, so a sync follows its attach and a detach follows the last sync.
+- Mutations (`attach`, `sync`, `setDragRects`, `detach`, `setAppearance`, the appearance
+  observer install and remove) are scheduled with `CFRunLoopPerformBlock` for the default,
+  modal-panel, event-tracking and `AWTRunLoopMode` modes and return immediately. Blocks run in
+  the order they were added, so a sync follows its attach and a detach follows the last sync.
 - Window handles are generated in Java and passed into `attach`, so it needs no answer from the
   AppKit thread. Only the JAWT window lookup stays on the calling thread: JAWT requires its
   lock there, and that lookup never waits for the AppKit thread.
 - Queries that must answer synchronously (`state`, `stateKeys`, `layerClass`, `layerTree`,
-  `hitTestDragRegion`, `dragMonitorCount`, the appearance and application-class queries) wait
-  on the same run loop for at most one second. On timeout they log one line and return the
-  fallback instead of joining the deadlock.
+  `hitTestDragRegion`, `dragMonitorCount`, `appAppearanceName`, the appearance and
+  application-class queries) wait on the same run loop for at most one second. On timeout they
+  log one line and return the fallback instead of joining the deadlock.
 
 `NativeGlassDeadlockTest` reproduces the shape: a test hook holds the AppKit thread in the
 `AWTRunLoopMode` nested loop (as AWT does while it waits for the EDT), then every entry is
@@ -1918,11 +1931,17 @@ number of attempts) and the reason is logged once when the path is given up.
   the desktop shows through under the code, the gutter, the console and the terminal. The run
   window's tab strip is a native piece too (`run-tabs`), and `capsuleGlass` has no
   `forceSkia` escape because no opaque panel is left.
-- A popup floats on system glass: `nativeGlass(..., hole = true, shadow = true)` reports its
-  window rectangle to `GlassHoles` and asks the native side for its drop shadow. Every popup
-  is composed outside the clipped content it casts a hole into; `EditorArea` hosts the Go to
-  Line popup for that reason (inside `TextFileEditor.Content` it was clipped away by its own
-  hole). Compose still clips the editor and console drawing to the surface minus those holes
+- Every popup is drawn by one modifier, `popupPanel(key, shape, skiaShadow)`. On the native path
+  that is the popup's own glass piece — `nativeGlass(..., hole = true, shadow = true)` reports
+  its window rectangle to `GlassHoles`, asks the native side for its drop shadow, and marks the
+  piece as an overlay — under a palette plate: the panel draws `glassBase` at
+  `POPUP_PLATE_ALPHA` (0.90) over the glass. The native material's brightness is decided by the
+  desktop and AppKit, so popup text contrast rests on the plate instead; the alpha keeps every
+  popup text role at 4.5:1 over a white and a black desktop, and `popupPlateFloor(palette)` is
+  the worse desktop for the palette's polarity. Every popup is composed outside the clipped
+  content it casts a hole into; `EditorArea` hosts the Go to Line popup for that reason (inside
+  `TextFileEditor.Content` it was clipped away by its own hole).
+  Compose still clips the editor and console drawing to the surface minus those holes
   (`contentClip(shape, holes)`), because native glass is always below Compose drawing and code
   under a popup would otherwise show through the popup's own material.
 - The modal scrim uses `scrimSurface(alpha, holes)`: on the native path it cuts every
@@ -1954,9 +1973,12 @@ title bar and the v1.3.0 `chromeInset` layout.
 **Pieces.** `Modifier.nativeGlass(key, shape, style, tint = nativeGlassTint, hole = false,
 shadow = false)`
 reports the element's window-relative bounds, its shape's corner radius, the style
-(`regular`/`clear`) and the tint to `GlassRegistry`. The registry diffs by key
+(`regular`/`clear`), the tint and the overlay flag to `GlassRegistry`. The registry diffs by key
 (`sameGlassPiece`, `diffGlassPieces`) and `App` flushes at most once per changed frame through
 `snapshotFlow { revision }` + `withFrameNanos`; unchanged frames never cross the bridge. The
+flushed list order is the native z order, overlays (every `hole` piece, i.e. a popup) last, and
+the state query reports each view's `zIndex` plus the transparency block's `windowAppearance`
+and `glassAppearance` (0 unknown, 1 light, 2 dark). The
 reported surfaces are the sidebar, the editor and tool-window bodies, the three top
 capsules, the bottom path/status capsules, the find bar, the tool-window switcher, the run
 tab strip, the open-folder button and every popup. A piece with `shadow = true` gets a sibling
@@ -1975,15 +1997,16 @@ registry. On flush the reported rows are cut by every glass piece on that band
 sent to `nativeSetDragRects`. The native side stores the rectangles in top-left points and
 tests them with `hitTestDragRegion`.
 
-`nativeGlassTint` (#14151B at 78% dark, #F5F6F9 at 80% light) is the floor over the system
-material: in both palettes the primary text and selected text keep 4.5:1 over a white and a
-black desktop, and `textSecondaryOnGlass` keeps it under its opaque `chromeTextStyle` shadow
-(black on dark, white on light). This is asserted in `DesignTokensContrastTest`; the dark
-palette's accent labels are included, while the light accents are opaque-surface roles. The
-smoke test also reads the style and the tint back from every material view, so a silently
-swallowed KVC write cannot pass unnoticed. The system material itself (`NSGlassEffectView`)
-follows the macOS appearance automatically; switching the palette only changes the tint and
-the Compose labels.
+`nativeGlassTint` (#14151B at 78% dark, #F5F6F9 at 80% light) is the chrome pieces' floor over
+the system material: in both palettes the primary text and selected text on the chrome keep
+4.5:1 over a white and a black desktop, and `textSecondaryOnGlass` keeps it under its opaque
+`chromeTextStyle` shadow (black on dark, white on light). This is asserted in
+`DesignTokensContrastTest`; the dark palette's accent labels are included, while the light
+accents are opaque-surface roles. Popup text is measured against the plate instead (see
+`POPUP_PLATE_ALPHA`), not against this tint. The smoke test also reads the style and the tint
+back from every material view, so a silently swallowed KVC write cannot pass unnoticed. The
+window's `NSAppearance` is set from `AppearanceState` through `GlassRuntime.applyAppearance`, so
+the system material and the palette switch appearance together.
 
 **Title row.** The window is created with `create = { ComposeWindow() }`; when the native path
 is eligible `GlassRuntime.prepareTitleBar` sets the root pane client properties
@@ -2010,7 +2033,7 @@ val LocalNativeGlass: ProvidableCompositionLocal<Boolean>
 data class GlassPiece(val key: String, val x: Float, val y: Float, val width: Float,
                       val height: Float, val cornerRadius: Float,
                       val style: GlassStyle = GlassStyle.REGULAR, val tint: Int? = null,
-                      val shadow: Boolean = false)
+                      val shadow: Boolean = false, val overlay: Boolean = false)
 enum class GlassStyle { REGULAR, CLEAR }
 fun sameGlassPiece(first: GlassPiece, second: GlassPiece): Boolean
 fun diffGlassPieces(previous: List<GlassPiece>, next: List<GlassPiece>): GlassPieceDiff
@@ -2024,7 +2047,7 @@ data class NativeGlassView(val key: String, val x: Double, val y: Double, val wi
                            val height: Double, val cornerRadius: Double, val style: Int,
                            val tint: Int?, val shadowOpacity: Double,
                            val shadowPathWidth: Double, val shadowPathHeight: Double,
-                           val shadowBelow: Boolean)
+                           val shadowBelow: Boolean, val zIndex: Int)
 data class NativeGlassState(val opaque: Boolean, val windowCount: Int, val baseView: Boolean,
                             val views: List<NativeGlassView>, val layer: NativeLayerState?)
 data class NativeLayerState(val drawingLayer: Boolean, val className: String, val opaque: Boolean,
@@ -2032,10 +2055,12 @@ data class NativeLayerState(val drawingLayer: Boolean, val className: String, va
                             val ancestorCount: Int, val windowBackgroundAlpha: Double,
                             val containerBelowContent: Boolean, val contentViewOpaque: Boolean,
                             val containerOpaque: Boolean, val restoredLayers: Int,
-                            val shadowViewCount: Int)
+                            val shadowViewCount: Int, val windowAppearance: Int,
+                            val glassAppearance: Int)
 object GlassRuntime { val active: State<Boolean>; fun prepareTitleBar(window: Window)
-                      fun prepare(window: Window); fun attach(window: Window); fun detach() }
-object SystemAppearance { fun start(); fun stop() }
+                      fun prepare(window: Window); fun attach(window: Window); fun detach()
+                      fun applyAppearance(appearance: Appearance) }
+object SystemAppearance { fun prepareProcess(); fun start(); fun stop() }
 object GlassHoles
 fun Modifier.nativeGlass(key: String, shape: Shape, style: GlassStyle = GlassStyle.REGULAR,
                          tint: Int? = null, hole: Boolean = false,
@@ -2047,7 +2072,9 @@ object AppearanceState { var appearance: Appearance; fun set(value: Appearance) 
 val DarkPalette: Palette
 val LightPalette: Palette
 fun paletteOf(appearance: Appearance): Palette
+object DesignTokens { val popupPlate: Color }
 fun Modifier.contentClip(shape: Shape, holes: List<Rect>): Modifier
+fun Modifier.popupPanel(key: String, shape: Shape, skiaShadow: Boolean = true): Modifier
 fun Modifier.popupShadow(shape: Shape, elevation: Dp = 24.dp): Modifier
 fun Modifier.scrimSurface(alpha: Float, holes: List<Rect>): Modifier
 fun Modifier.capsuleGlass(shape: Shape): Modifier
@@ -2055,6 +2082,8 @@ fun editorGlassPlates(palette: Palette): List<Color>
 fun editorGlassFloor(palette: Palette): Color
 fun editorGlassBase(palette: Palette): Color
 fun readableOn(color: Color, background: Color, ratio: Double = 4.5): Color
+fun popupPlateFloor(palette: Palette): Color
+val POPUP_PLATE_ALPHA: Float
 val GLASS_FIND_MATCH_ALPHA: Float
 // stride.app.editor
 fun activeColorScheme(): ColorScheme
@@ -2074,8 +2103,9 @@ fun glassGutterColor(appearance: Appearance = AppearanceState.appearance): Color
 `12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`).
 The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-light.png`,
 `04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
-`11-run-window-light.png`, `12-editor-scrolled-light.png` and
-`13-search-over-code-light.png` render the same scenes on the light palette.
+`11-run-window-light.png`, `12-editor-scrolled-light.png`,
+`13-search-over-code-light.png` and `14-context-actions-light.png` render the same scenes on
+the light palette.
 `UiSnapshotTest` switches AWT to headless before it initialises, and AWT cannot become headful
 again in that JVM, so the native tests that need a real AWT peer run in the separate
 `nativeTest` task: a fresh JVM with `java.awt.headless=false`. `tasks.test` excludes the
@@ -2134,7 +2164,10 @@ Maven Central alone does not carry it.
 | `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
 | `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
-| `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup draws no Compose pixel inside its reported glass piece (the regression that produced the opaque box), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor, tool window and popups carry no Compose fill, the Go to Line popup draws its text outside the editor clip, and the editor clip removes code from under an open popup |
+| `PopupPlateContrastTest` | every popup text role clears 4.5:1 on the plate over a white and a black desktop in both palettes, the selected and hovered labels on their pills over the plate, and the plate floor is the desktop worse for the palette's polarity |
+| `PopupNativeLegibilityTest` | each popup rendered offscreen on the native path over a white and a black desktop in both palettes: every text role the popup can draw clears 4.5:1 on a glyph-free block of its plate and the selected row's label on its pill, and the hole and glass piece leave nothing behind when the scene closes |
+| `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup carries the palette plate in every sampled pixel of its reported glass piece (only glyph ink may differ, and ink stays a minority of the filled samples), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor and tool window carry no Compose fill, the Go to Line popup's non-glyph samples are the plate or an accent decoration rather than a foreign fill and its text draws outside the editor clip, and the editor clip removes code from under an open popup |
+| `NativeGlassOverlayTest` | on a real unshown window: the native side stacks pieces in the registry's list order with overlays last, a surface reported later still stays below a popup, the popup's shadow sits below its own view, and `setAppearance` moves the window's and the glass base view's appearance |
 | `SnapshotFrameTimingTest` | the twelve snapshot scenes' frame times under `baseline × factor + 1.0 ms` (1.5 for content, 2.0 for popups) |
 | `EditorScrollUiTest` | `EditorScrollState` viewports: caret moved past the right and bottom edges scrolls each axis and returning to `1:1` scrolls back, the gutter keeps its position while the text scrolls horizontally, and a small document stays layer-free while a large one layers and shrinks back across the hysteresis |
 | `EditorScrollStateTest` | sub-pixel wheel deltas accumulate, an edge-clamped delta is dropped, the scrollbar adapter excludes the chrome insets from its track, and the layer threshold has hysteresis |
