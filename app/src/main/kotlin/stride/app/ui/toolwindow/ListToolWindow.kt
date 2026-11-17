@@ -63,7 +63,10 @@ data class ListWindowRow(
  * the window visible; a click selects, a double click opens, and Delete/Backspace removes when
  * [onDelete] is set. [selectOnFocus] runs when the window takes the keyboard and once more when
  * rows first arrive, so a list parsed off the UI thread can still start on the requested row.
- * [onSelectionChange] reports the selected row so a header button can act on it.
+ * [onSelectionChange] reports the selected row so a header button can act on it. [onRight] and
+ * [onLeft] handle → and ← when they are set: each receives the selected index and returns the new
+ * index (the key is consumed) or `null` (the key is left alone). Without them the horizontal keys
+ * are not consumed.
  */
 @Composable
 fun ListToolWindow(
@@ -75,6 +78,8 @@ fun ListToolWindow(
     onDelete: ((Int) -> Unit)? = null,
     selectOnFocus: (() -> Int)? = null,
     onSelectionChange: ((Int) -> Unit)? = null,
+    onRight: ((Int) -> Int?)? = null,
+    onLeft: ((Int) -> Int?)? = null,
 ) {
     var selectedIndex by remember { mutableStateOf(0) }
     var pendingSelection by remember { mutableStateOf(false) }
@@ -138,6 +143,24 @@ fun ListToolWindow(
                         Key.DirectionUp -> {
                             if (rows.isNotEmpty()) selectedIndex = (index - 1).coerceAtLeast(0)
                             true
+                        }
+                        Key.DirectionRight -> {
+                            val next = onRight?.invoke(index)
+                            if (next == null) {
+                                false
+                            } else {
+                                selectedIndex = next.coerceIn(0, rows.lastIndex.coerceAtLeast(0))
+                                true
+                            }
+                        }
+                        Key.DirectionLeft -> {
+                            val next = onLeft?.invoke(index)
+                            if (next == null) {
+                                false
+                            } else {
+                                selectedIndex = next.coerceIn(0, rows.lastIndex.coerceAtLeast(0))
+                                true
+                            }
                         }
                         Key.Delete, Key.Backspace -> {
                             if (onDelete == null || rows.isEmpty()) {

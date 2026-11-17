@@ -20,6 +20,8 @@ import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
+import stride.app.hierarchy.HierarchyToolWindow
+import stride.app.hierarchy.HierarchyToolWindowState
 import stride.app.hierarchy.HierarchyTree
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
@@ -34,6 +36,7 @@ import stride.app.navigation.StructureToolWindow
 import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openFileAtColumn
+import stride.app.navigation.openFileAtOffset
 import stride.app.problems.ErrorDescriptionRequest
 import stride.app.problems.FileProblem
 import stride.app.problems.ProblemsModel
@@ -242,6 +245,9 @@ class AppState {
     val toolWindows = ToolWindowManager()
 
     val findToolWindow = FindToolWindowState()
+
+    /** The Hierarchy window's tree and expansion state, kept while the window is hidden. */
+    val hierarchyToolWindow = HierarchyToolWindowState()
 
     /** The Problems window's selected range, kept while the window is hidden. */
     val problemsToolWindow = ProblemsToolWindowState()
@@ -457,7 +463,28 @@ class AppState {
      * first use, after the other tool windows, so it has no tab until a hierarchy is opened.
      */
     fun openHierarchy(tree: HierarchyTree) {
+        if (toolWindows.windows.none { it.id == "hierarchy" }) {
+            toolWindows.register(
+                ToolWindow("hierarchy", "Hierarchy", KeyContext.LIST_WINDOW) { modifier ->
+                    HierarchyToolWindow(
+                        state = hierarchyToolWindow,
+                        focusRequests = toolWindows.focusRequests,
+                        onOpen = { node ->
+                            val location = node.location
+                            val current = session
+                            if (location != null && current != null) {
+                                openFileAtOffset(this@AppState, current, location.path, location.offset)
+                            }
+                        },
+                        onEscape = { handFocusToEditor() },
+                        modifier = modifier,
+                    )
+                },
+            )
+        }
         hierarchyTree = tree
+        hierarchyToolWindow.show(tree)
+        toolWindows.activate("hierarchy")
     }
 
     fun openShowUsagesPopup(name: String): ShowUsagesRequest? {
@@ -603,6 +630,8 @@ class AppState {
         toolWindowBeforeHide = null
         findToolWindow.clear()
         problemsToolWindow.reset()
+        hierarchyToolWindow.clear()
+        hierarchyTree = null
         recentLocationsVisible = false
         recentLocationsCaret = null
         navigationBar = null

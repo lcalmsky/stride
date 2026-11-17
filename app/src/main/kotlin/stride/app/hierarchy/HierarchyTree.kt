@@ -7,8 +7,12 @@ data class HierarchyLocation(val path: Path, val offset: Int)
 
 /**
  * One node of a hierarchy tree. [children] runs on a background dispatcher the first time the node
- * is expanded and its result is kept; `null` makes the node a leaf. A node with [expanded] opens as
- * soon as its parent is shown. [detail] is the secondary text (a path and line, a call count) and
+ * is expanded and its result is kept, so collapsing and expanding again does not call it twice;
+ * `null` makes the node a leaf, and a result with no children makes it a leaf too. A node with
+ * [expanded] opens as soon as its parent is shown, and its children that also set [expanded] open
+ * in turn. While [children] runs the row list shows `Searching…` under the node; a throw shows
+ * `Could not load: <message>`. [location] is where the row opens; a node without one flips its
+ * expansion on Enter. [detail] is the secondary text (a path and line, a call count) and
  * [iconName] a file name whose icon the row shows.
  */
 class HierarchyNode(
