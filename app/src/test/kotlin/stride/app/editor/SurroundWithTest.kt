@@ -126,6 +126,16 @@ class SurroundWithTest {
     }
 
     @Test
+    fun `a crlf file keeps its line endings`() {
+        val text = "val x = 1\r\nval y = 2\r\n"
+
+        val result = SurroundWith.surround(text, TextRange(0), kotlinTemplate("if"))
+
+        assertEquals("if () {\r\n    val x = 1\r\n}\r\nval y = 2\r\n", result.text)
+        assertEquals("if (".length, result.selection.start)
+    }
+
+    @Test
     fun `synchronized and block templates place the caret and the body`() {
         val synchronized = SurroundWith.surround("int x = 1;", TextRange(0), javaTemplate("synchronized"))
         assertEquals("synchronized () {\n    int x = 1;\n}", synchronized.text)

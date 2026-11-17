@@ -249,7 +249,7 @@ object DesignTokens {
     val popupPlate: Color get() = palette.glassBase.copy(alpha = POPUP_PLATE_ALPHA)
 
     /** [accent] for popup text, moved just far enough to clear [contrastText] on the plate. */
-    val accentOnPopupPlate: Color get() = readableOn(palette.accent, popupPlateFloor(palette))
+    val accentOnPopupPlate: Color get() = accentOnPopupPlate(palette)
 
     /**
      * Shadow under chrome and popup text. On thin glass the text is read against this plate, so

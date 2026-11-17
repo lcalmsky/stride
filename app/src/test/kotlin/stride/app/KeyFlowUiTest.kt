@@ -1354,6 +1354,75 @@ class KeyFlowUiTest {
             state.dispose()
         }
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a modified shortcut key does not apply a surround template`() = runComposeUiTest {
+        val root = temp.resolve("surround-modifier-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, "val x = 1\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.T) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.surround != null }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.One) } }
+            waitForIdle()
+
+            assertEquals("val x = 1\n", editor.value.text)
+            assertTrue(state.surround != null)
+
+            onRoot().performKeyInput { pressKey(Key.One) }
+            waitUntil(timeoutMillis = 5_000) { state.surround == null }
+            assertEquals("if () {\n    val x = 1\n}\n", editor.value.text)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `parameter info closes when go to line takes the focus`() = runComposeUiTest {
+        val root = temp.resolve("parameter-info-focus-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Main.kt")
+        val text = "fun greet(name: String) {}\n\nfun main() {\n    greet(1)\n}\n"
+        Files.writeString(file, text)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("greet(1)") + "greet(".length)))
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.P) } }
+            waitUntil(timeoutMillis = 5_000) { state.parameterInfo != null }
+            assertEquals(KeyContext.EDITOR, state.focus)
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.L) } }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR_FIELD }
+            waitUntil(timeoutMillis = 5_000) { state.parameterInfo == null }
+        } finally {
+            state.dispose()
+        }
+    }
 }
 
 @Composable

@@ -32,6 +32,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -123,7 +126,8 @@ fun SurroundWithPopup(
                                 true
                             }
                             else -> {
-                                val shortcut = shortcutKeys[event.key]
+                                val modified = event.isMetaPressed || event.isCtrlPressed || event.isAltPressed
+                                val shortcut = if (modified) null else shortcutKeys[event.key]
                                 val template = shortcut?.let { templates.getOrNull(it) }
                                 if (template != null) {
                                     onChoose(template)

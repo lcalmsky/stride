@@ -89,6 +89,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.editor.CodeScan
 import stride.app.editor.CompletionPopup
 import stride.app.editor.FileEditor
 import stride.app.editor.FileEditorManager
@@ -780,17 +781,19 @@ private fun ParameterInfoHost(state: AppState, session: ProjectSession) {
     val request = state.parameterInfo ?: return
     val editor = request.editor
     val value = editor.value
-    val active = CallText.activeIndex(value.text, request.openOffset, value.selection.start)
+    val scan = remember(value.text) { CodeScan(value.text) }
+    val active = CallText.activeIndex(value.text, request.openOffset, value.selection.start, scan)
     val selected = session.editors.selected
     val otherPopup = popupOwnsFocus(state)
-    val valid = active != null && selected === editor && !otherPopup
-    LaunchedEffect(request, value.text, value.selection.start, selected, otherPopup) {
+    val valid = active != null && selected === editor && !otherPopup && state.focus == KeyContext.EDITOR
+    LaunchedEffect(request, value.text, value.selection.start, selected, otherPopup, state.focus) {
         if (!valid) state.parameterInfo = null
     }
     if (!valid) return
     Box(Modifier.fillMaxSize()) {
         ParameterInfoPanel(
             request = request,
+            scan = scan,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
         )
     }

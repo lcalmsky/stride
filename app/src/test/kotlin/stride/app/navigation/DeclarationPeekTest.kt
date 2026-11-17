@@ -114,6 +114,29 @@ class DeclarationPeekTest {
     }
 
     @Test
+    fun `comments in a parameter list stay out of the signature`() {
+        val text = """
+            fun f(
+                a: Int, // first
+                /* second */ b: String,
+            ) {}
+        """.trimIndent()
+
+        val signature = DeclarationSource.signature(text, 0)
+
+        assertEquals("fun f( a: Int, b: String, )", signature)
+        assertEquals(listOf("a: Int", "b: String"), CallText.parameters(signature))
+    }
+
+    @Test
+    fun `a comparison in a default value does not join parameters`() {
+        assertEquals(
+            listOf("a: Boolean = 1 < 2", "b: Int"),
+            CallText.parameters("fun f(a: Boolean = 1 < 2, b: Int)"),
+        )
+    }
+
+    @Test
     fun `the call scan finds the innermost unclosed paren`() {
         val text = "foo(1, bar(2, 3"
         assertEquals(text.lastIndexOf('('), CallText.openParen(text, text.length))
@@ -144,6 +167,8 @@ class DeclarationPeekTest {
         val text = "foo(1, bar(2), "
         val open = CallText.openParen(text, text.length)
         assertEquals(2, CallText.activeIndex(text, requireNotNull(open), text.length))
+        val generic = "foo(Map<String, Int>, b"
+        assertEquals(1, CallText.activeIndex(generic, generic.indexOf('('), generic.length))
         assertNull(CallText.activeIndex("foo(1)", 3, 6))
         assertNull(CallText.activeIndex("foo()", 3, 3))
         assertNull(CallText.activeIndex("foo()", 3, 100))

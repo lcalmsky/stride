@@ -279,3 +279,6 @@ fun popupPlateFloor(palette: Palette): Color {
         blendOver(plate, Color.Black)
     }
 }
+
+/** [palette]'s accent moved just far enough to clear the popup plate floor's text contrast. */
+fun accentOnPopupPlate(palette: Palette): Color = readableOn(palette.accent, popupPlateFloor(palette))

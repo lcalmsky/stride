@@ -46,6 +46,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import stride.app.editor.CodeScan
 import stride.app.glass.GlassHoles
 import stride.app.glass.LocalNativeGlass
 import stride.app.search.popupContentFade
@@ -335,8 +336,19 @@ fun QuickDefinitionPopup(
  */
 @Composable
 fun ParameterInfoPanel(request: ParameterInfoRequest, modifier: Modifier = Modifier) {
+    val text = request.editor.value.text
+    val scan = remember(text) { CodeScan(text) }
+    ParameterInfoPanel(request = request, scan = scan, modifier = modifier)
+}
+
+/** The panel with the host's scan, so the fade frames of the same text do not scan it again. */
+@Composable
+internal fun ParameterInfoPanel(request: ParameterInfoRequest, scan: CodeScan, modifier: Modifier) {
     val value = request.editor.value
-    val active = CallText.activeIndex(value.text, request.openOffset, value.selection.start)
+    val active = CallText.activeIndex(value.text, request.openOffset, value.selection.start, scan)
+    val parameterLists = remember(request.signatures) {
+        request.signatures.map { CallText.parameters(it).orEmpty() }
+    }
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     Column(
@@ -345,12 +357,13 @@ fun ParameterInfoPanel(request: ParameterInfoRequest, modifier: Modifier = Modif
             .popupPanel("popup-parameter-info", shape)
             .then(popupContentFade(fade))
             .padding(horizontal = DesignTokens.space16, vertical = DesignTokens.space8)
-            .testTag(PARAMETER_INFO_PANEL_TAG),
+            .testTag(PARAMETER_INFO_PANEL_TAG)
+            .pointerInput(Unit) { detectTapGestures { } },
         verticalArrangement = Arrangement.spacedBy(DesignTokens.space4),
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
-            for (signature in request.signatures) {
-                ParameterInfoRow(CallText.parameters(signature).orEmpty(), active)
+            for (parameters in parameterLists) {
+                ParameterInfoRow(parameters, active)
             }
         }
     }

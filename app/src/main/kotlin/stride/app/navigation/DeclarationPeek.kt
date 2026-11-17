@@ -89,8 +89,8 @@ object DeclarationPeek {
         )
         val merged = (local + ranked)
             .distinctBy { it.file.path.toAbsolutePath().normalize() to it.line }
-            .take(limit)
             .mapNotNull { candidate(session, it) }
+            .take(limit)
         return if (merged.isEmpty()) PeekLookup.Unavailable(NO_DECLARATION_MESSAGE) else PeekLookup.Found(name, merged)
     }
 
@@ -277,11 +277,17 @@ internal object DeclarationSource {
                 if (cut >= 0) break
                 index++
             }
-            pieces += text.substring(from, if (cut >= 0) cut else to).trim()
+            pieces += codeWithoutComments(text, from, if (cut >= 0) cut else to, scan).trim()
             endLine = current
             if (cut >= 0 || depth == 0) break
         }
         return SignatureScan(pieces.filter { it.isNotEmpty() }.joinToString(" ").trim(), endLine, braceOffset)
+    }
+
+    private fun codeWithoutComments(text: String, from: Int, to: Int, scan: CodeScan): String {
+        val builder = StringBuilder(to - from)
+        for (index in from until to) if (!scan.isComment(index)) builder.append(text[index])
+        return builder.toString()
     }
 
     private fun isAssignment(text: String, index: Int): Boolean {
@@ -419,13 +425,16 @@ object CallText {
         val innerScan = CodeScan(inner)
         val parts = ArrayList<String>()
         var start = 0
-        var nested = 0
+        var brackets = 0
+        var angles = 0
         for (position in inner.indices) {
             if (!innerScan.isCode(position)) continue
-            when (inner[position]) {
-                '(', '[', '<' -> nested++
-                ')', ']', '>' -> if (nested > 0) nested--
-                ',' -> if (nested == 0) {
+            when {
+                inner[position] == '(' || inner[position] == '[' -> brackets++
+                inner[position] == ')' || inner[position] == ']' -> if (brackets > 0) brackets--
+                inner[position] == '<' && opensAngleBrackets(inner, position) -> angles++
+                inner[position] == '>' -> if (angles > 0) angles--
+                inner[position] == ',' && brackets == 0 && angles == 0 -> {
                     parts += inner.substring(start, position).trim()
                     start = position + 1
                 }
@@ -440,23 +449,35 @@ object CallText {
      * The zero-based parameter index at [caret], or `null` when the caret is no longer inside the
      * call's parentheses (also covering a `(` that has since moved).
      */
-    fun activeIndex(text: String, openOffset: Int, caret: Int): Int? {
+    fun activeIndex(text: String, openOffset: Int, caret: Int): Int? =
+        activeIndex(text, openOffset, caret, CodeScan(text))
+
+    /** [activeIndex] over a scan the caller already holds for [text]. */
+    internal fun activeIndex(text: String, openOffset: Int, caret: Int, scan: CodeScan): Int? {
         if (openOffset !in text.indices || text[openOffset] != '(') return null
         if (caret < openOffset + 1) return null
-        val scan = CodeScan(text)
         val close = scan.match(openOffset)
         if (close != null && caret > close) return null
-        var depth = 0
+        var brackets = 0
+        var angles = 0
         var commas = 0
         for (index in openOffset + 1 until caret.coerceAtMost(text.length)) {
             if (!scan.isCode(index)) continue
-            when (text[index]) {
-                '(', '[' -> depth++
-                ')', ']' -> if (depth > 0) depth--
-                ',' -> if (depth == 0) commas++
+            when {
+                text[index] == '(' || text[index] == '[' -> brackets++
+                text[index] == ')' || text[index] == ']' -> if (brackets > 0) brackets--
+                text[index] == '<' && opensAngleBrackets(text, index) -> angles++
+                text[index] == '>' -> if (angles > 0) angles--
+                text[index] == ',' && brackets == 0 && angles == 0 -> commas++
             }
         }
         return commas
+    }
+
+    /** A `<` opens generic arguments only when it follows an identifier character. */
+    private fun opensAngleBrackets(text: String, index: Int): Boolean {
+        val before = text.getOrNull(index - 1) ?: return false
+        return before.isLetterOrDigit() || before == '_' || before == '$'
     }
 }
 

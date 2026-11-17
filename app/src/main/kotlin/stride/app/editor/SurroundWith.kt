@@ -68,7 +68,8 @@ object SurroundWith {
         var last = lineIndex(text, selection.max)
         if (selection.max > selection.min && last > first && selection.max == starts[last]) last--
         val rangeStart = starts[first]
-        val rangeEnd = lineEnd(text, starts, last)
+        val rangeEnd = if (last + 1 < starts.size) starts[last + 1] else text.length
+        val separator = lineSeparator(text, starts, first)
         val target = (first..last).map { lineText(text, starts, it) }
         val base = target.first().takeWhile { it == ' ' || it == '\t' }
         val keepBody = template.kind == SurroundKind.RUN || template.kind == SurroundKind.BLOCK
@@ -168,11 +169,13 @@ object SurroundWith {
             }
         }
 
-        val block = out.joinToString("\n")
+        val block = out.joinToString(separator)
         val blockStarts = starts(block)
-        val newText = text.substring(0, rangeStart) + block + text.substring(rangeEnd)
+        // The range now consumes the last line's terminator, so the block supplies its own.
+        val terminator = if (last + 1 < starts.size) separator else ""
+        val newText = text.substring(0, rangeStart) + block + terminator + text.substring(rangeEnd)
         val selectionInBlock = if (template.kind == SurroundKind.RUN || template.kind == SurroundKind.BLOCK) {
-            val shift = out.first().length + 1
+            val shift = out.first().length + separator.length
             TextRange(
                 (selection.min + shift).coerceIn(0, newText.length),
                 (selection.max + shift).coerceIn(0, newText.length),
@@ -220,6 +223,12 @@ object SurroundWith {
 
     private fun lineEnd(text: String, starts: IntArray, line: Int): Int =
         if (line + 1 < starts.size) starts[line + 1] - 1 else text.length
+
+    private fun lineSeparator(text: String, starts: IntArray, line: Int): String {
+        if (line + 1 >= starts.size) return "\n"
+        val carriageReturn = starts[line + 1] - 2
+        return if (carriageReturn >= starts[line] && text[carriageReturn] == '\r') "\r\n" else "\n"
+    }
 
     private fun lineText(text: String, starts: IntArray, line: Int): String =
         if (line in starts.indices) text.substring(starts[line], lineEnd(text, starts, line)).trimEnd('\r') else ""

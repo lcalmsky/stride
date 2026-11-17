@@ -1233,6 +1233,44 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `the index path drops other files' private declarations and merges a file's own`() {
+        val root = temp.resolve("peek-index-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Main.kt"),
+            """
+                package demo
+
+                fun helper(a: Int) {}
+
+                fun helper(a: String, b: Int) {}
+
+                fun main() {
+                    helper(1)
+                }
+            """.trimIndent() + "\n",
+        )
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Other.kt"),
+            "package demo\n\nprivate fun helper(a: Long) {}\n",
+        )
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        assertTrue(session.project.service<DeclarationIndex>().awaitReady(5_000))
+        val editor = session.editors.openFile(VFile(root.resolve("src/main/kotlin/demo/Main.kt"))) as TextFileEditor
+        val text = editor.value.text
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("helper(1)") + 1)))
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(dispatchAction(ActionId.QUICK_DOC, state) { null })
+
+        val candidates = requireNotNull(state.quickDoc).candidates
+        assertEquals(listOf(4, 2), candidates.map { it.declaration.line })
+        assertTrue(candidates.all { it.declaration.relativePath == "src/main/kotlin/demo/Main.kt" })
+    }
+
+    @Test
     fun `surround with opens the templates of the file type and reports the rest`() {
         state.focus = KeyContext.EDITOR
         val session = openProjectWith("a.kt", "a.txt")
