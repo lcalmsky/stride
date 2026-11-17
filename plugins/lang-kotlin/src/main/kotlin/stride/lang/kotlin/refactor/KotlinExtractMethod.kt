@@ -29,7 +29,7 @@ internal object KotlinExtractMethod {
         setOf("class", "object", "interface", "fun", "val", "var", "typealias", "constructor", "init")
 
     fun prepare(context: RefactoringContext): RefactoringStep =
-        prepare(KotlinCode(context.text), context.selectionStart, context.selectionEnd)
+        prepare(kotlinCodeFor(context.text), context.selectionStart, context.selectionEnd)
 
     fun prepare(code: KotlinCode, selectionStart: Int, selectionEnd: Int): RefactoringStep {
         if (!code.bracketsMatch) return RefactoringStep.Refused(BRACKETS)
