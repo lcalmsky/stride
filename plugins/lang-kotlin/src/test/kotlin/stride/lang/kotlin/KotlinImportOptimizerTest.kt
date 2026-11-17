@@ -89,6 +89,13 @@ class KotlinImportOptimizerTest {
     }
 
     @Test
+    fun `removing every import keeps the blank line when a comment stays in the block`() {
+        val text = "package demo\n\nimport demo.a.Alpha\n// note\nimport demo.b.Beta\n\nfun main() {\n}\n"
+
+        assertEquals("package demo\n\n// note\n\nfun main() {\n}\n", optimize(text))
+    }
+
+    @Test
     fun `an optimized file reports no edits`() {
         val text = "package demo\n\nimport demo.a.Alpha\n\nfun main() {\n    Alpha()\n}\n"
 

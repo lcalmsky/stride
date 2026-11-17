@@ -172,7 +172,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         val selection = editor.value.selection
         val text = editor.value.text
         val copied = if (!selection.collapsed) {
-            text.substring(selection.min, selection.max)
+            text.substring(
+                selection.min.coerceIn(0, text.length),
+                selection.max.coerceIn(0, text.length),
+            )
         } else {
             val range = EditActions.wholeLine(text, selection.start)
             text.substring(range.min, range.max)

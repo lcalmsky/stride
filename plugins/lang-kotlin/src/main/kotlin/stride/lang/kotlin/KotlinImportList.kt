@@ -1,6 +1,9 @@
 package stride.lang.kotlin
 
-/** One `import` line of a Kotlin file; [start] and [end] span the whole line including its `\n`. */
+/**
+ * One `import` line of a Kotlin file; [start] and [end] span the whole line including its
+ * newline when there is one.
+ */
 internal data class KotlinImport(
     val start: Int,
     val end: Int,
@@ -113,7 +116,7 @@ internal val ALWAYS_USED: Set<String> = setOf(
     "component7", "component8", "component9", "assign",
 )
 
-/** Keywords the lexer may report as identifiers (`data`, `value`), so they never count as use. */
+/** Hard keywords: a `KEYWORD` token in this set never counts as use. */
 internal val HARD_KEYWORDS: Set<String> = setOf(
     "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
     "interface", "is", "null", "object", "package", "return", "super", "this", "throw",

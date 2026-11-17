@@ -602,8 +602,10 @@ object EditActions {
         }
         for (line in deletions) {
             val info = infos[line]
-            if (info.end < text.length) {
-                edits.add(TextEdit(info.start, info.end + 1, ""))
+            when {
+                info.end < text.length -> edits.add(TextEdit(info.start, info.end + 1, ""))
+                // A last blank line without a newline has none to take with it.
+                info.start < info.end -> edits.add(TextEdit(info.start, info.end, ""))
             }
         }
         return edits
@@ -826,19 +828,12 @@ object EditActions {
         return null
     }
 
-    /** Where the line's code ends, before trailing whitespace and a line or block comment. */
+    /** Where the line's code ends: just past its last character that [scan] counts as code. */
     private fun codeEndInLine(text: String, start: Int, end: Int, scan: CodeScan): Int {
-        var visibleEnd = commentStartInLine(text, start, end, scan) ?: end
-        while (visibleEnd > start && text[visibleEnd - 1].isWhitespace()) visibleEnd--
-        return visibleEnd
-    }
-
-    private fun commentStartInLine(text: String, start: Int, end: Int, scan: CodeScan): Int? {
-        for (i in start until end - 1) {
-            if (text[i] != '/' || !scan.isComment(i)) continue
-            if (text[i + 1] == '/' || text[i + 1] == '*') return i
+        for (i in end - 1 downTo start) {
+            if (scan.isCode(i) && !text[i].isWhitespace()) return i + 1
         }
-        return null
+        return start
     }
 
     private fun unclosedClosers(text: String, start: Int, end: Int, scan: CodeScan): String {

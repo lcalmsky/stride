@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
-import stride.app.editor.SystemTextClipboard
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.applyPasteHistory
@@ -940,22 +939,25 @@ class ActionDispatcherTest {
 
     @Test
     fun `copy and cut record the clipboard text in the history`() {
-        val session = openProjectWith("a.kt")
         val root = temp.resolve("project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("a.kt"), "")
+        state.openFolder(root)
+        val session = requireNotNull(state.session)
+        val clipboard = RecordingClipboard()
+        session.editors.clipboard = clipboard
         val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
         editor.updateValue(TextFieldValue("one\ntwo\n", TextRange(1)))
-        val previous = SystemTextClipboard.readText()
-        try {
-            assertTrue(dispatchAction(ActionId.COPY_LINE, state) { null })
-            assertEquals(listOf("one\n"), state.clipboardHistory.items)
 
-            editor.updateValue(TextFieldValue(editor.value.text, TextRange(4)))
-            assertTrue(dispatchAction(ActionId.CUT_LINE, state) { null })
-            assertEquals(listOf("two\n", "one\n"), state.clipboardHistory.items)
-            assertEquals("one\n", editor.value.text)
-        } finally {
-            previous?.let(SystemTextClipboard::writeText)
-        }
+        assertTrue(dispatchAction(ActionId.COPY_LINE, state) { null })
+        assertEquals(listOf("one\n"), state.clipboardHistory.items)
+        assertEquals("one\n", clipboard.text)
+
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(4)))
+        assertTrue(dispatchAction(ActionId.CUT_LINE, state) { null })
+        assertEquals(listOf("two\n", "one\n"), state.clipboardHistory.items)
+        assertEquals("two\n", clipboard.text)
+        assertEquals("one\n", editor.value.text)
     }
 
     @Test
@@ -1039,7 +1041,7 @@ class ActionDispatcherTest {
             "package demo\n\nimport demo.a.Alpha\n\nfun main() {\n    Alpha()\n}\n",
             editor.value.text,
         )
-        assertEquals("Removed 1 unused import", state.statusMessage)
+        assertEquals("Removed 1 import", state.statusMessage)
     }
 
     @Test

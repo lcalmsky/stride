@@ -190,9 +190,15 @@ must not overlap; the editor applies them as one undo step. The Kotlin plugin re
 (star imports and operator convention names kept), removes duplicates, and sorts the rest into
 the default layout — everything else, `java.*`, `javax.*`, `kotlin.*`, then alias imports. A
 block with a comment between its imports keeps its order and only loses whole lines; with no
-import left the block and one following blank line go. The status bar reports
-`Removed N unused imports`, `Imports optimized`, `Imports are already optimized`,
-`Optimize Imports is not available for this file` or `File is read-only`.
+import left the block goes, and the blank line after it goes too unless a comment stays in the
+block. The status bar reports `Removed N imports` (`import` for one, duplicates included),
+`Imports optimized`, `Imports are already optimized`, `Optimize Imports could not apply its
+edits`, `Optimize Imports is not available for this file` or `File is read-only`.
+
+`parseImports` reads only the package line, single-line `@file:` annotations and import lines,
+so imports after a shebang line in a `.kts` script or after a multi-line `@file:` annotation are
+never parsed; the action then reports `Imports are already optimized` even when unused imports
+remain.
 
 ### Intentions and the ⌥↩ menu
 
@@ -649,11 +655,13 @@ that is exactly the one being completed) and `keywordsFor(fileName)` the Kotlin 
 `SMART_TYPE_COMPLETION` (⌃⇧Space) opens the same completion popup under the `Smart completion`
 header. `SmartCompletion.positionAt` judges the position from the code before the identifier
 prefix, skipping whitespace and strings and comments through `CodeScan`: a type after `:`
-(not `::`), `as`, `as?`, `is`, `<`, or a `,` inside still-open angle brackets, an expression
-anywhere else. A type position offers the current and other open files' upper-case identifiers
-and the declaration index's `CLASS` names; an expression position offers the current file's
-identifiers and the `SYMBOL` names. Neither adds language keywords, and the identifier being
-completed stays excluded as in the plain popup.
+(not `::` or `?:`), `as`, `as?`, `is`, a `<` that directly follows an identifier character or
+`>`, or a `,` inside still-open angle brackets, an expression anywhere else. A `<` after
+whitespace is read as a comparison, and a `->` is not recognized at all, so the position after a
+function type is treated as an expression. A type position offers the current and other open
+files' upper-case identifiers and the declaration index's `CLASS` names; an expression position
+offers the current file's identifiers and the `SYMBOL` names. Neither adds language keywords,
+and the identifier being completed stays excluded as in the plain popup.
 
 `PASTE_MULTIPLE` (⇧⌘V) opens the Paste from History popup over `AppState.clipboardHistory`:
 newest first, at most 20 entries, a repeated text moves to the front, and blank texts are

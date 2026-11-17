@@ -15,9 +15,13 @@ internal object SmartCompletion {
         while (index >= 0 && text[index].isWhitespace()) index--
         if (index < 0 || !scan.isCode(index)) return CompletionPosition.EXPRESSION
         return when (text[index]) {
-            '<' -> CompletionPosition.TYPE
+            '<' -> if (isGenericOpen(text, index)) CompletionPosition.TYPE else CompletionPosition.EXPRESSION
             ',' -> if (insideOpenAngle(text, index, scan)) CompletionPosition.TYPE else CompletionPosition.EXPRESSION
-            ':' -> if (index > 0 && text[index - 1] == ':') CompletionPosition.EXPRESSION else CompletionPosition.TYPE
+            ':' -> if (index > 0 && text[index - 1] in "?:") {
+                CompletionPosition.EXPRESSION
+            } else {
+                CompletionPosition.TYPE
+            }
             '?' -> if (wordBefore(text, index) == "as") CompletionPosition.TYPE else CompletionPosition.EXPRESSION
             else -> if (wordBefore(text, index + 1) in TYPE_WORDS) CompletionPosition.TYPE else CompletionPosition.EXPRESSION
         }
@@ -42,7 +46,7 @@ internal object SmartCompletion {
             if (scan.isCode(i)) {
                 when (text[i]) {
                     '>' -> if (i == 0 || text[i - 1] != '-') depth++
-                    '<' -> if (depth == 0) return true else depth--
+                    '<' -> if (depth > 0) depth-- else return isGenericOpen(text, i)
                     '(', ')', '{', '}', ';' -> return false
                 }
             }
@@ -50,6 +54,10 @@ internal object SmartCompletion {
         }
         return false
     }
+
+    /** A `<` right after an identifier character or `>` opens generic arguments; after a space it compares. */
+    private fun isGenericOpen(text: String, index: Int): Boolean =
+        index > 0 && (isIdentifierPart(text[index - 1]) || text[index - 1] == '>')
 
     private fun isIdentifierPart(c: Char): Boolean = c == '_' || c.isLetterOrDigit()
 }

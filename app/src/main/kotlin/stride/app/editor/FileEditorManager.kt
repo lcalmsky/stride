@@ -30,6 +30,9 @@ class FileEditorManager(private val project: Project) : Disposable {
     var selected by mutableStateOf<FileEditor?>(null)
         private set
 
+    /** Clipboard the text editors this manager opens use; replaced in tests. */
+    internal var clipboard: TextClipboard = SystemTextClipboard
+
     /** Called whenever a different editor becomes selected; used by the navigation history. */
     var onSelectionChanged: (FileEditor) -> Unit = {}
 
@@ -51,6 +54,7 @@ class FileEditorManager(private val project: Project) : Disposable {
         }
         val provider = providers.firstOrNull { it.accept(project, file) } ?: return null
         val editor = provider.createEditor(project, file)
+        if (editor is TextFileEditor) editor.clipboard = clipboard
         openFilesState.add(editor)
         select(editor)
         touchRecent(file)

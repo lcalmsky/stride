@@ -649,6 +649,14 @@ class EditActionsTest {
     }
 
     @Test
+    fun `complete statement closes after the code that follows a block comment`() {
+        assertEquals(
+            EditResult("foo(a /* x // y */ , b)\n", TextRange(24)),
+            EditActions.completeStatement("foo(a /* x // y */ , b", TextRange(22), semicolons = false),
+        )
+    }
+
+    @Test
     fun `complete statement opens the block of an if line`() {
         assertEquals(
             EditResult("if (x > 0) {\n    \n}", TextRange(17)),
@@ -894,6 +902,12 @@ class EditActionsTest {
     fun `reformat reduces a long run of blank lines to two`() {
         val text = "a\n\n\n\n\nb"
         assertEquals("a\n\n\nb", applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = false)))
+    }
+
+    @Test
+    fun `reformat reduces a blank run at the end of the file to two lines`() {
+        val text = "a\n\n\n\n   "
+        assertEquals("a\n\n\n", applied(text, EditActions.reformat(text, TextRange(0), braceLanguage = false)))
     }
 
     @Test

@@ -25,6 +25,7 @@ class SmartCompletionTest {
     fun `a generic argument list expects a type`() {
         assertEquals(CompletionPosition.TYPE, positionOf("val a: List<Str"))
         assertEquals(CompletionPosition.TYPE, positionOf("val a: Map<Int, Str"))
+        assertEquals(CompletionPosition.TYPE, positionOf("val a: Map<String, In"))
     }
 
     @Test
@@ -32,6 +33,13 @@ class SmartCompletionTest {
         assertEquals(CompletionPosition.EXPRESSION, positionOf("val a = Str"))
         assertEquals(CompletionPosition.EXPRESSION, positionOf("foo(Str"))
         assertEquals(CompletionPosition.EXPRESSION, positionOf("val a = b::Str"))
+        assertEquals(CompletionPosition.EXPRESSION, positionOf("val a = b ?: Str"))
+    }
+
+    @Test
+    fun `a comparison rather than a generic list expects an expression`() {
+        assertEquals(CompletionPosition.EXPRESSION, positionOf("if (count < Te"))
+        assertEquals(CompletionPosition.EXPRESSION, positionOf("foo(a < b, c"))
     }
 
     @Test

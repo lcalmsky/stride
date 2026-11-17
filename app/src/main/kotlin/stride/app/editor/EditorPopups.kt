@@ -54,14 +54,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
-import stride.app.glass.GlassHoles
 import stride.app.glass.LocalNativeGlass
 import stride.app.search.popupContentFade
 import stride.app.search.rememberPopupFadeAlpha
 import stride.app.ui.PopupHintBar
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.popupPanel
-import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 
 private val completionPopupWidth = 360.dp
@@ -393,7 +391,6 @@ fun PasteHistoryPopup(
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
-    val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
     val height = DesignTokens.popupRowHeight * items.size.coerceAtMost(COMPLETION_VISIBLE_ROWS)
 
     LaunchedEffect(Unit) {
@@ -414,7 +411,6 @@ fun PasteHistoryPopup(
         Modifier
             .fillMaxSize()
             .testTag(PASTE_HISTORY_POPUP_TAG)
-            .scrimSurface(DesignTokens.scrim.alpha * fade, holes)
             .pointerInput(Unit) { detectTapGestures { onClose() } },
     ) {
         Column(

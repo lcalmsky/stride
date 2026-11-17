@@ -200,7 +200,7 @@ private data class BandKey(
 class TextFileEditor(
     override val file: VFile,
     val readOnly: Boolean = false,
-    private val clipboard: TextClipboard = SystemTextClipboard,
+    internal var clipboard: TextClipboard = SystemTextClipboard,
 ) : FileEditor {
     private val log = Logger.getLogger("stride.app.editor")
 

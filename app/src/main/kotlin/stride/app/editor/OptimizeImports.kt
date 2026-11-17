@@ -13,10 +13,11 @@ fun optimizeImports(editor: TextFileEditor): String {
         ?: return "Optimize Imports is not available for this file"
     val text = editor.value.text
     val edits = optimizer.optimize(text)
-    if (edits.isEmpty() || !editor.applyEdits(edits)) return "Imports are already optimized"
+    if (edits.isEmpty()) return "Imports are already optimized"
+    if (!editor.applyEdits(edits)) return "Optimize Imports could not apply its edits"
     val removed = removedLines(text, edits)
     if (removed == 0) return "Imports optimized"
-    return if (removed == 1) "Removed 1 unused import" else "Removed $removed unused imports"
+    return if (removed == 1) "Removed 1 import" else "Removed $removed imports"
 }
 
 /** Lines the [edits] take out of [text], so a rewrite that only reorders them counts none. */

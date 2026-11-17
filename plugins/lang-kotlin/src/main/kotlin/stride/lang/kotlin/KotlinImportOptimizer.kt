@@ -20,13 +20,10 @@ class KotlinImportOptimizer : ImportOptimizer {
         val first = imports.first()
         val last = imports.last()
         // A comment inside the block keeps its position relative to its import, so only whole
-        // lines are deleted and the remaining order is left alone.
+        // lines are deleted and the remaining order is left alone. The comment also keeps the
+        // blank line after the block, so nothing is collapsed here.
         if (hasNonImportLines(text, imports)) {
-            val removeAll = kept.isEmpty()
-            return imports.filter { it !in kept }.map { import ->
-                val end = if (removeAll && import === last) collapseBlankLine(text, import.end) else import.end
-                TextEdit(import.start, end, "")
-            }
+            return imports.filter { it !in kept }.map { import -> TextEdit(import.start, import.end, "") }
         }
         val sorted = kept.sortedWith(IMPORT_ORDER)
         if (sorted.isEmpty()) {
