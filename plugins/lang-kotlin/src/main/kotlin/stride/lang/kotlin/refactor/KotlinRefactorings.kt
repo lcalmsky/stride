@@ -9,7 +9,7 @@ import stride.lang.RefactoringStep
 class KotlinRefactorings : RefactoringProvider {
     override fun prepare(kind: RefactoringKind, context: RefactoringContext): RefactoringStep? = when (kind) {
         RefactoringKind.INTRODUCE_VARIABLE -> KotlinIntroduceVariable.prepare(context)
+        RefactoringKind.EXTRACT_METHOD -> KotlinExtractMethod.prepare(context)
         RefactoringKind.INLINE -> KotlinInline.prepare(context)
-        RefactoringKind.EXTRACT_METHOD -> null
     }
 }

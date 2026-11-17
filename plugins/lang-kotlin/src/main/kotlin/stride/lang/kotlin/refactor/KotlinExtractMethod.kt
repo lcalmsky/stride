@@ -1,0 +1,643 @@
+package stride.lang.kotlin.refactor
+
+import stride.lang.NameCheck
+import stride.lang.RefactoringContext
+import stride.lang.RefactoringEdit
+import stride.lang.RefactoringStep
+import stride.lang.TextEdit
+import stride.lang.kotlin.KotlinTokenTypes
+
+/** R4 Extract Method; the rules and messages are in `docs/api-app.md` 「Refactorings」 R4. */
+internal object KotlinExtractMethod {
+    private const val BRACKETS = "Brackets do not match in this file"
+    private const val NO_SELECTION = "Select the code to extract"
+    private const val SHAPE = "Select whole statements or one expression"
+    private const val LAMBDA = "The selection is inside a lambda; this and it may mean something else"
+    private const val LOCAL_FUNCTION = "The selection is inside a local function"
+    private const val NOT_IN_FUNCTION = "Extract Method works inside a function body"
+    private const val EXPRESSION_BODY = "Expression body: convert it to a block body first"
+    private const val RETURN = "The selection contains return"
+    private const val LOOP = "The selection contains break or continue for a loop outside it"
+    private const val NOT_A_NAME = "Not a valid name"
+    private const val FOUR_SPACES = "    "
+    private val LINE_BREAK = Regex("\r\n|\n|\r")
+    private val ASSIGNMENTS = setOf("=", "+=", "-=", "*=", "/=", "%=")
+
+    fun prepare(context: RefactoringContext): RefactoringStep =
+        prepare(KotlinCode(context.text), context.selectionStart, context.selectionEnd)
+
+    fun prepare(code: KotlinCode, selectionStart: Int, selectionEnd: Int): RefactoringStep {
+        if (!code.bracketsMatch) return RefactoringStep.Refused(BRACKETS)
+        val start = minOf(selectionStart, selectionEnd).coerceIn(0, code.text.length)
+        val end = maxOf(selectionStart, selectionEnd).coerceIn(0, code.text.length)
+        val selection = trim(code, KtRange(start, end))
+        if (selection.isEmpty) return RefactoringStep.Refused(NO_SELECTION)
+        if (code.isInsideOpaqueText(selection.start)) return RefactoringStep.Refused(SHAPE)
+
+        val place = enclosing(code, selection.start)
+        place.refusal?.let { return RefactoringStep.Refused(it) }
+        val enclosing = place.enclosing!!
+
+        val statements = statementsCovering(code, selection)
+        if (statements != null) return statementsStep(code, selection, statements, enclosing)
+        if (code.checkExpression(selection) != null) {
+            if (enclosing.body == null && code.statementAt(selection.start) == null) {
+                return RefactoringStep.Refused(EXPRESSION_BODY)
+            }
+            return RefactoringStep.Refused(SHAPE)
+        }
+        return expressionStep(code, selection, enclosing)
+    }
+
+    private fun trim(code: KotlinCode, range: KtRange): KtRange {
+        var start = range.start
+        var end = range.end
+        while (start < end && code.text[start].isWhitespace()) start++
+        while (end > start && code.text[end - 1].isWhitespace()) end--
+        return KtRange(start, end)
+    }
+
+    // --- where the selection sits -------------------------------------------------------------
+
+    private class Enclosing(val function: KtFunction, val body: KtBlock?, val indent: String, val unit: String)
+
+    private class Place(val enclosing: Enclosing? = null, val refusal: String? = null)
+
+    private fun enclosing(code: KotlinCode, offset: Int): Place {
+        val chain = code.blockChain(offset)
+        val functionBlock = chain.lastOrNull { it.kind == BlockKind.FUNCTION_BODY }
+        if (functionBlock != null) {
+            val function = code.functions.firstOrNull { it.body === functionBlock }
+                ?: return Place(refusal = NOT_IN_FUNCTION)
+            if (function.container == FunctionContainer.LOCAL) return Place(refusal = LOCAL_FUNCTION)
+            betweenRefusal(chain.filter { it.open.start > functionBlock.open.start })?.let {
+                return Place(refusal = it)
+            }
+            return Place(enclosing = bound(code, function, functionBlock))
+        }
+        val expressionFunction = code.functions
+            .filter { it.expressionRange?.contains(offset) == true }
+            .minByOrNull { it.expressionRange!!.length }
+            ?: return Place(refusal = NOT_IN_FUNCTION)
+        if (expressionFunction.container == FunctionContainer.LOCAL) return Place(refusal = LOCAL_FUNCTION)
+        betweenRefusal(chain.filter { it.open.start > expressionFunction.funToken.start })?.let {
+            return Place(refusal = it)
+        }
+        return Place(enclosing = bound(code, expressionFunction, null))
+    }
+
+    private fun betweenRefusal(between: List<KtBlock>): String? {
+        for (block in between.sortedByDescending { it.open.start }) {
+            when (block.kind) {
+                BlockKind.LAMBDA -> return LAMBDA
+                BlockKind.INITIALIZER, BlockKind.CLASS_BODY -> return NOT_IN_FUNCTION
+                BlockKind.FUNCTION_BODY -> return LOCAL_FUNCTION
+                BlockKind.CONTROL_BODY, BlockKind.WHEN_BODY -> Unit
+            }
+        }
+        return null
+    }
+
+    private fun bound(code: KotlinCode, function: KtFunction, body: KtBlock?): Enclosing {
+        val indent = code.indentation(function.funToken.start)
+        return Enclosing(function, body, indent, indentUnit(code, function, body, indent))
+    }
+
+    /** The first body line's indentation beyond the function's own, four spaces when unknown. */
+    private fun indentUnit(code: KotlinCode, function: KtFunction, body: KtBlock?, indent: String): String {
+        if (body == null) return FOUR_SPACES
+        val first = code.code.firstOrNull { it.start > body.open.start && it.start < body.end } ?: return FOUR_SPACES
+        if (code.lineStart(first.start) <= body.open.start) return FOUR_SPACES
+        val bodyIndent = code.indentation(first.start)
+        if (bodyIndent.length > indent.length && bodyIndent.startsWith(indent)) {
+            val unit = bodyIndent.substring(indent.length)
+            if (unit.isNotEmpty()) return unit
+        }
+        return FOUR_SPACES
+    }
+
+    private fun statementsCovering(code: KotlinCode, selection: KtRange): List<KtStatement>? {
+        for (block in code.blocks) {
+            if (!block.isStatementBlock) continue
+            val blockStatements = code.statements.filter { it.block === block }.sortedBy { it.start }
+            val first = blockStatements.indexOfFirst { it.start == selection.start }
+            if (first < 0) continue
+            var last = first
+            while (last + 1 < blockStatements.size && blockStatements[last + 1].end <= selection.end) last++
+            val covered = blockStatements.subList(first, last + 1)
+            if (covered.last().end == selection.end) return covered
+        }
+        return null
+    }
+
+    // --- the two shapes -----------------------------------------------------------------------
+
+    private fun statementsStep(
+        code: KotlinCode,
+        selection: KtRange,
+        statements: List<KtStatement>,
+        enclosing: Enclosing,
+    ): RefactoringStep {
+        val inputs = when (val result = collectInputs(code, selection, enclosing.function)) {
+            is InputResult.Refused -> return RefactoringStep.Refused(result.reason)
+            is InputResult.Found -> result.parameters
+        }
+        typeParameterRefusal(code, selection, enclosing.function, inputs)?.let {
+            return RefactoringStep.Refused(it)
+        }
+        val outputs = when (val result = collectOutputs(code, selection)) {
+            is OutputResult.Refused -> return RefactoringStep.Refused(result.reason)
+            is OutputResult.Found -> result.outputs
+        }
+        exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
+        val output = outputs.singleOrNull()
+        return nameStep(code) { name ->
+            statementEdit(code, selection, statements, enclosing, inputs, output, name)
+        }
+    }
+
+    private fun expressionStep(code: KotlinCode, selection: KtRange, enclosing: Enclosing): RefactoringStep {
+        val inputs = when (val result = collectInputs(code, selection, enclosing.function)) {
+            is InputResult.Refused -> return RefactoringStep.Refused(result.reason)
+            is InputResult.Found -> result.parameters
+        }
+        typeParameterRefusal(code, selection, enclosing.function, inputs)?.let {
+            return RefactoringStep.Refused(it)
+        }
+        val outputs = when (val result = collectOutputs(code, selection)) {
+            is OutputResult.Refused -> return RefactoringStep.Refused(result.reason)
+            is OutputResult.Found -> result.outputs
+        }
+        if (outputs.isNotEmpty()) {
+            return RefactoringStep.Refused(
+                "The selection changes ${outputs.single().name}; extract whole statements instead",
+            )
+        }
+        exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
+        return nameStep(code) { name ->
+            expressionEdit(code, selection, enclosing, inputs, name)
+        }
+    }
+
+    // --- inputs -------------------------------------------------------------------------------
+
+    private class Parameter(val name: String, val type: String)
+
+    private sealed interface InputResult {
+        class Refused(val reason: String) : InputResult
+
+        class Found(val parameters: List<Parameter>) : InputResult
+    }
+
+    private fun collectInputs(code: KotlinCode, selection: KtRange, function: KtFunction): InputResult {
+        val references = code.references
+            .filter { it.token.start >= selection.start && it.token.end <= selection.end }
+            .sortedBy { it.token.start }
+        val seen = LinkedHashSet<KtLocal>()
+        val parameters = ArrayList<Parameter>()
+        for (reference in references) {
+            val local = reference.resolved ?: continue
+            if (local.nameToken.start >= selection.start && local.nameToken.end <= selection.end) continue
+            if (local.kind == LocalKind.LOCAL_FUN || local.kind == LocalKind.LOCAL_CLASS) {
+                return InputResult.Refused("The selection uses local ${local.name}")
+            }
+            if (!seen.add(local)) continue
+            val declared = function.parameters.firstOrNull { it.nameToken.index == local.nameToken.index }
+            if (declared != null && declared.vararg) {
+                return InputResult.Refused("${local.name} is a vararg parameter")
+            }
+            val type = typeOf(code, local) ?: return InputResult.Refused(inferMessage(local.name))
+            parameters.add(Parameter(local.nameToken.text, type))
+        }
+        return InputResult.Found(parameters)
+    }
+
+    private fun typeOf(code: KotlinCode, local: KtLocal): String? {
+        // A destructured local's written type is the whole tuple's, not this name's type.
+        if (local.destructured) return null
+        local.writtenType?.let { return it }
+        val initializer = local.initializer ?: return null
+        return literalType(code, initializer) ?: constructorType(code, initializer)
+    }
+
+    private fun literalType(code: KotlinCode, range: KtRange): String? {
+        val tokens = code.tokens.filter {
+            !it.isComment && (it.isCode || it.isStringBody) && it.start >= range.start && it.end <= range.end
+        }
+        if (tokens.isEmpty()) return null
+        if (tokens.first().isStringBody && tokens.first().text.startsWith("\"") && tokens.last().isStringBody) {
+            return "String"
+        }
+        val token = tokens.singleOrNull() ?: return null
+        return when {
+            token.type == KotlinTokenTypes.CHARACTER -> "Char"
+            token.type == KotlinTokenTypes.NUMBER -> numberType(token.text)
+            token.type == KotlinTokenTypes.KEYWORD && (token.text == "true" || token.text == "false") -> "Boolean"
+            else -> null
+        }
+    }
+
+    private fun numberType(text: String): String? {
+        when {
+            text.endsWith("u") || text.endsWith("U") -> return null
+            text.endsWith("L") || text.endsWith("l") -> return "Long"
+            text.endsWith("F") || text.endsWith("f") -> return "Float"
+            text.startsWith("0x") || text.startsWith("0X") || text.startsWith("0b") || text.startsWith("0B") -> return "Int"
+            text.contains('.') || text.contains('e') || text.contains('E') -> return "Double"
+        }
+        return "Int"
+    }
+
+    private fun constructorType(code: KotlinCode, range: KtRange): String? {
+        val start = code.code.indexOfFirst { it.start == range.start }.takeIf { it >= 0 } ?: return null
+        val name = code.code[start]
+        if (!isNameToken(name)) return null
+        val raw = name.text.removeSurrounding("`")
+        if (raw.isEmpty() || !raw.first().isUpperCase()) return null
+        var typeEnd = name.end
+        var next = start + 1
+        if (code.code.getOrNull(next)?.text == "<") {
+            val close = angleClose(code, next)
+            if (close < 0) return null
+            typeEnd = code.code[close].end
+            next = close + 1
+        }
+        val open = code.code.getOrNull(next) ?: return null
+        if (open.text != "(") return null
+        val close = code.matchingIndex(open.index)
+        if (close < 0) return null
+        if (code.code[close].end != range.end) return null
+        return code.text.substring(name.start, typeEnd)
+    }
+
+    private fun inferMessage(name: String) =
+        "Cannot infer the type of $name without a compiler; declare it explicitly"
+
+    // --- type parameters ----------------------------------------------------------------------
+
+    private fun typeParameterRefusal(
+        code: KotlinCode,
+        selection: KtRange,
+        function: KtFunction,
+        inputs: List<Parameter>,
+    ): String? {
+        if (function.typeParameters.isEmpty()) return null
+        for (name in function.typeParameters) {
+            val used = code.code.any {
+                it.start >= selection.start && it.end <= selection.end &&
+                    isNameToken(it) && it.text.removeSurrounding("`") == name
+            } || inputs.any { namesWord(it.type, name) } || (function.receiver?.let { namesWord(it, name) } == true)
+            if (used) return "The selection uses the type parameter $name"
+        }
+        return null
+    }
+
+    private fun namesWord(text: String, word: String): Boolean {
+        var index = 0
+        while (index < text.length) {
+            if (text[index] == '_' || text[index].isLetter()) {
+                var end = index + 1
+                while (end < text.length && (text[end] == '_' || text[end].isLetterOrDigit())) end++
+                if (text.substring(index, end) == word) return true
+                index = end
+            } else {
+                index++
+            }
+        }
+        return false
+    }
+
+    // --- outputs ------------------------------------------------------------------------------
+
+    private class Output(val local: KtLocal, val type: String, val declared: Boolean, val offset: Int) {
+        val name: String get() = local.nameToken.text
+    }
+
+    private sealed interface OutputResult {
+        class Refused(val reason: String) : OutputResult
+
+        class Found(val outputs: List<Output>) : OutputResult
+    }
+
+    private fun collectOutputs(code: KotlinCode, selection: KtRange): OutputResult {
+        val declared = ArrayList<Pair<KtLocal, Int>>()
+        for (local in code.locals) {
+            if (local.kind != LocalKind.VAL && local.kind != LocalKind.VAR) continue
+            if (local.nameToken.start < selection.start || local.nameToken.end > selection.end) continue
+            if (code.references.any { it.resolved === local && it.token.start >= selection.end }) {
+                declared.add(local to local.nameToken.start)
+            }
+        }
+        val assigned = ArrayList<Pair<KtLocal, Int>>()
+        val seen = HashSet<KtLocal>()
+        for (token in code.code) {
+            if (token.start < selection.start || token.end > selection.end) continue
+            val target = assignmentTarget(code, token) ?: continue
+            val reference = code.references.firstOrNull { it.token.index == target } ?: continue
+            val local = reference.resolved ?: continue
+            if (local.nameToken.start >= selection.start && local.nameToken.end <= selection.end) continue
+            if (local.nameToken.start >= selection.start) continue
+            if (seen.add(local)) assigned.add(local to token.start)
+        }
+        val all = (declared + assigned).sortedBy { it.second }
+        if (all.size >= 2) {
+            return OutputResult.Refused(changedMessage(all.map { it.first.name }))
+        }
+        for (local in code.locals) {
+            if (local.kind != LocalKind.LOCAL_FUN && local.kind != LocalKind.LOCAL_CLASS) continue
+            if (local.nameToken.start < selection.start || local.nameToken.end > selection.end) continue
+            if (code.references.any { it.resolved === local && it.token.start >= selection.end }) {
+                return OutputResult.Refused("${local.name} is declared in the selection and used after it")
+            }
+        }
+        val pair = all.minByOrNull { it.second } ?: return OutputResult.Found(emptyList())
+        val local = pair.first
+        val type = typeOf(code, local) ?: return OutputResult.Refused(inferMessage(local.name))
+        val isDeclared = declared.any { it.first === local }
+        return OutputResult.Found(listOf(Output(local, type, isDeclared, pair.second)))
+    }
+
+    private fun assignmentTarget(code: KotlinCode, token: KtToken): Int? {
+        if (token.type != KotlinTokenTypes.OPERATION_SIGN) return null
+        if (token.text in ASSIGNMENTS) return token.index - 1
+        if (token.text != "++" && token.text != "--") return null
+        val before = code.code.getOrNull(token.index - 1)
+        val after = code.code.getOrNull(token.index + 1)
+        return when {
+            before != null && isNameToken(before) -> before.index
+            after != null && isNameToken(after) -> after.index
+            else -> null
+        }
+    }
+
+    private fun changedMessage(names: List<String>): String {
+        val shown = names.take(3)
+        val joined = if (shown.size == 2) {
+            "${shown[0]} and ${shown[1]}"
+        } else {
+            shown.dropLast(1).joinToString(", ") + " and " + shown.last()
+        }
+        return "The selection changes $joined, which are used later"
+    }
+
+    // --- exits --------------------------------------------------------------------------------
+
+    private fun exitsRefusal(code: KotlinCode, selection: KtRange): String? {
+        val loops = loops(code)
+        for (token in code.code) {
+            if (token.start < selection.start || token.end > selection.end) continue
+            when (token.text) {
+                "return" -> if (!returnAllowed(code, selection, token)) return RETURN
+                "break", "continue" -> if (!loopAllowed(code, selection, token, loops)) return LOOP
+            }
+        }
+        return null
+    }
+
+    private fun returnAllowed(code: KotlinCode, selection: KtRange, token: KtToken): Boolean {
+        val block = code.blockChain(token.start)
+            .filter {
+                it.open.start >= selection.start &&
+                    (it.kind == BlockKind.FUNCTION_BODY || it.kind == BlockKind.LAMBDA)
+            }
+            .maxByOrNull { it.open.start } ?: return false
+        return when (block.kind) {
+            BlockKind.FUNCTION_BODY -> true
+            BlockKind.LAMBDA -> code.code.getOrNull(token.index + 1)?.text == "@"
+            else -> false
+        }
+    }
+
+    private class Loop(val keywordIndex: Int, val start: Int, val bodyStart: Int, val bodyEnd: Int)
+
+    private fun loops(code: KotlinCode): List<Loop> {
+        val result = ArrayList<Loop>()
+        for (index in code.code.indices) {
+            val token = code.code[index]
+            if (token.type != KotlinTokenTypes.KEYWORD) continue
+            if (token.text != "for" && token.text != "while" && token.text != "do") continue
+            if (token.text == "while" && trailingWhile(code, token)) continue
+            val bodyIndex = if (token.text == "do") {
+                index + 1
+            } else {
+                val open = code.code.getOrNull(index + 1) ?: continue
+                if (open.text != "(") continue
+                val close = code.matchingIndex(open.index)
+                if (close < 0) continue
+                close + 1
+            }
+            val body = code.code.getOrNull(bodyIndex) ?: continue
+            val bodyStart: Int
+            val bodyEnd: Int
+            if (body.text == "{") {
+                val block = code.blocks.firstOrNull { it.open.index == body.index && it.kind == BlockKind.CONTROL_BODY }
+                    ?: continue
+                bodyStart = block.open.start
+                bodyEnd = block.close?.end ?: body.end
+            } else {
+                bodyStart = body.start
+                bodyEnd = maxOf(code.statementAt(body.start)?.end ?: body.end, body.end)
+            }
+            result.add(Loop(index, token.start, bodyStart, bodyEnd))
+        }
+        return result
+    }
+
+    private fun trailingWhile(code: KotlinCode, token: KtToken): Boolean {
+        val statement = code.statementAt(token.start)
+        val first = statement?.let { code.code.getOrNull(it.startTokenIndex) }
+        if (first?.text == "do") return true
+        val previous = code.code.getOrNull(token.index - 1) ?: return false
+        if (previous.text != "}") return false
+        val open = code.matchingIndex(previous.index)
+        if (open < 0) return false
+        val block = code.blocks.firstOrNull { it.open.index == open }
+        return block?.kind == BlockKind.CONTROL_BODY && block.headerKeyword == "do"
+    }
+
+    private fun loopAllowed(code: KotlinCode, selection: KtRange, token: KtToken, loops: List<Loop>): Boolean {
+        if (code.code.getOrNull(token.index + 1)?.text == "@") {
+            val label = code.code.getOrNull(token.index + 2)?.text ?: return false
+            val loop = labeledLoop(code, selection, label, loops) ?: return false
+            return loop.start >= selection.start && loop.bodyEnd <= selection.end && loop.bodyStart <= token.start
+        }
+        val loop = loops.filter { it.bodyStart <= token.start && token.start <= it.bodyEnd }
+            .maxByOrNull { it.start } ?: return false
+        return loop.start >= selection.start && loop.bodyEnd <= selection.end
+    }
+
+    private fun labeledLoop(code: KotlinCode, selection: KtRange, label: String, loops: List<Loop>): Loop? {
+        for (index in code.code.indices) {
+            val token = code.code[index]
+            if (!isNameToken(token) || token.text.removeSurrounding("`") != label) continue
+            if (token.start < selection.start || token.end > selection.end) continue
+            if (code.code.getOrNull(index + 1)?.text != "@") continue
+            val keyword = code.code.getOrNull(index + 2) ?: continue
+            if (keyword.text != "for" && keyword.text != "while" && keyword.text != "do") continue
+            return loops.firstOrNull { it.keywordIndex == keyword.index }
+        }
+        return null
+    }
+
+    // --- name ---------------------------------------------------------------------------------
+
+    private fun nameStep(code: KotlinCode, build: (String) -> RefactoringEdit): RefactoringStep =
+        RefactoringStep.AskName("Extract Method", suggestedName(code)) { name ->
+            when {
+                !isValidKotlinIdentifier(name) || isHardKeyword(name) -> NameCheck.Invalid(NOT_A_NAME)
+                isNameUsedInFile(code, name) -> NameCheck.Invalid("'$name' is already used in this file")
+                else -> NameCheck.Valid(build(name))
+            }
+        }
+
+    private fun suggestedName(code: KotlinCode): String {
+        if (!isNameUsedInFile(code, "extracted")) return "extracted"
+        var counter = 2
+        while (isNameUsedInFile(code, "extracted$counter")) counter++
+        return "extracted$counter"
+    }
+
+    private fun isNameUsedInFile(code: KotlinCode, name: String): Boolean =
+        code.code.any { isNameToken(it) && it.text.removeSurrounding("`") == name }
+
+    // --- edits --------------------------------------------------------------------------------
+
+    private fun statementEdit(
+        code: KotlinCode,
+        selection: KtRange,
+        statements: List<KtStatement>,
+        enclosing: Enclosing,
+        inputs: List<Parameter>,
+        output: Output?,
+        name: String,
+    ): RefactoringEdit {
+        val lineBreak = code.lineBreak(enclosing.function.declarationEnd)
+        val insertAt = code.lineEnd(enclosing.function.declarationEnd)
+        val replacement = callText(name, inputs, output)
+        val functionText = statementFunction(code, enclosing, name, inputs, output, statements, lineBreak)
+        val edits = listOf(
+            TextEdit(selection.start, selection.end, replacement),
+            TextEdit(insertAt, insertAt, lineBreak + lineBreak + functionText),
+        )
+        val caret = selection.start + replacement.indexOf("$name(")
+        return RefactoringEdit(edits, caret, "Extracted method $name")
+    }
+
+    private fun expressionEdit(
+        code: KotlinCode,
+        selection: KtRange,
+        enclosing: Enclosing,
+        inputs: List<Parameter>,
+        name: String,
+    ): RefactoringEdit {
+        val lineBreak = code.lineBreak(enclosing.function.declarationEnd)
+        val insertAt = code.lineEnd(enclosing.function.declarationEnd)
+        val replacement = "$name(${inputs.joinToString(", ") { it.name }})"
+        val functionText = expressionFunction(code, enclosing, name, inputs, selection, lineBreak)
+        val edits = listOf(
+            TextEdit(selection.start, selection.end, replacement),
+            TextEdit(insertAt, insertAt, lineBreak + lineBreak + functionText),
+        )
+        return RefactoringEdit(edits, selection.start, "Extracted method $name")
+    }
+
+    private fun callText(name: String, inputs: List<Parameter>, output: Output?): String {
+        val call = "$name(${inputs.joinToString(", ") { it.name }})"
+        return when {
+            output == null -> call
+            output.declared -> "${if (output.local.kind == LocalKind.VAR) "var" else "val"} ${output.name} = $call"
+            else -> "${output.name} = $call"
+        }
+    }
+
+    private fun statementFunction(
+        code: KotlinCode,
+        enclosing: Enclosing,
+        name: String,
+        inputs: List<Parameter>,
+        output: Output?,
+        statements: List<KtStatement>,
+        lineBreak: String,
+    ): String {
+        val base = enclosing.indent + enclosing.unit
+        val body = ArrayList<String>()
+        if (output != null && !output.declared) body.add(base + "var ${output.name} = ${output.name}")
+        body.addAll(reindented(code, statements.first().start, statements.last().end, base))
+        if (output != null) body.add(base + "return ${output.name}")
+        val returnPart = if (output != null) ": ${output.type}" else ""
+        val lines = ArrayList<String>()
+        lines.addAll(annotationLines(enclosing))
+        lines.add(declaration(enclosing, name, inputs) + returnPart + " {")
+        lines.addAll(body)
+        lines.add(enclosing.indent + "}")
+        return lines.joinToString(lineBreak)
+    }
+
+    private fun expressionFunction(
+        code: KotlinCode,
+        enclosing: Enclosing,
+        name: String,
+        inputs: List<Parameter>,
+        selection: KtRange,
+        lineBreak: String,
+    ): String {
+        val base = enclosing.indent + enclosing.unit
+        val lines = code.text.substring(selection.start, selection.end).split(LINE_BREAK)
+        val continuation = lines.drop(1)
+        val common = sharedPrefix(
+            continuation.filter { it.isNotBlank() }.map { it.takeWhile { char -> char == ' ' || char == '\t' } },
+        )
+        val result = ArrayList<String>()
+        result.addAll(annotationLines(enclosing))
+        result.add(declaration(enclosing, name, inputs) + " = " + lines.first())
+        for (line in continuation) {
+            result.add(if (line.isBlank()) "" else base + line.removePrefix(common))
+        }
+        return result.joinToString(lineBreak)
+    }
+
+    private fun declaration(enclosing: Enclosing, name: String, inputs: List<Parameter>): String {
+        val function = enclosing.function
+        val suspend = if ("suspend" in function.modifiers) "suspend " else ""
+        val receiver = function.receiver?.let { "$it." } ?: ""
+        val parameters = inputs.joinToString(", ") { "${it.name}: ${it.type}" }
+        return enclosing.indent + "private " + suspend + "fun " + receiver + name + "(" + parameters + ")"
+    }
+
+    private fun annotationLines(enclosing: Enclosing): List<String> =
+        enclosing.function.annotations.filter { isComposable(it) }.map { enclosing.indent + it }
+
+    private fun isComposable(annotation: String): Boolean {
+        val name = annotation.removePrefix("@").substringBefore('(').substringBefore(':')
+        return name.substringAfterLast('.') == "Composable"
+    }
+
+    private fun reindented(code: KotlinCode, start: Int, end: Int, base: String): List<String> {
+        val lines = code.text.substring(start, end).split(LINE_BREAK)
+        val indents = ArrayList<String>()
+        indents.add(code.indentation(start))
+        for (line in lines.drop(1)) {
+            if (line.isBlank()) continue
+            indents.add(line.takeWhile { it == ' ' || it == '\t' })
+        }
+        val common = sharedPrefix(indents)
+        return lines.mapIndexed { index, line ->
+            when {
+                index == 0 -> base + line
+                line.isBlank() -> ""
+                else -> base + line.removePrefix(common)
+            }
+        }
+    }
+
+    private fun sharedPrefix(values: List<String>): String {
+        if (values.isEmpty()) return ""
+        var prefix = values.first()
+        for (value in values.drop(1)) {
+            var index = 0
+            while (index < prefix.length && index < value.length && prefix[index] == value[index]) index++
+            prefix = prefix.substring(0, index)
+        }
+        return prefix
+    }
+}
