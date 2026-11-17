@@ -155,11 +155,20 @@ class KotlinIntroduceVariableTest {
     }
 
     @Test
-    fun `a first if condition is allowed`() {
+    fun `a marker inside the first if condition is refused`() {
         val text = "fun f(a: Int, b: Int) {\n    if (a > 0 && b > 0) {\n        foo()\n    }\n}\n"
+        assertEquals(
+            "b > 0 runs only in some cases here; a variable would run it every time",
+            refused(select(text, "b > 0")),
+        )
+    }
+
+    @Test
+    fun `a whole first if condition is allowed`() {
+        val text = "fun f(b: Int) {\n    if (b > 0) {\n        foo()\n    }\n}\n"
         val applied = finish(text, ask(select(text, "b > 0")), "positive")
         assertEquals(
-            "fun f(a: Int, b: Int) {\n    val positive = b > 0\n    if (a > 0 && positive) {\n        foo()\n    }\n}\n",
+            "fun f(b: Int) {\n    val positive = b > 0\n    if (positive) {\n        foo()\n    }\n}\n",
             applied.text,
         )
     }
@@ -235,6 +244,197 @@ class KotlinIntroduceVariableTest {
         assertEquals("b", question.suggested)
         val applied = finish(text, question, "result")
         assertEquals("fun f() {\n    val result = a.b()\n    println(result)\n    println(a.b())\n}\n", applied.text)
+    }
+
+
+    @Test
+    fun `a read-only occurrence inside a lambda is not replaced`() {
+        val text = "fun f() {\n    var v = 1\n    val a = v + 1\n    val task = { use(v + 1) }\n    v = 2\n    task()\n}\n"
+        val applied = finish(text, ask(select(text, "v + 1")), "value")
+        assertEquals(
+            "fun f() {\n    var v = 1\n    val value = v + 1\n    val a = value\n" +
+                "    val task = { use(v + 1) }\n    v = 2\n    task()\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a read-only occurrence inside a loop body is not replaced`() {
+        val text = "fun f() {\n    var v = 1\n    val a = v + 1\n    for (i in 1..3) {\n        use(v + 1)\n        v += 1\n    }\n}\n"
+        val applied = finish(text, ask(select(text, "v + 1")), "value")
+        assertEquals(
+            "fun f() {\n    var v = 1\n    val value = v + 1\n    val a = value\n" +
+                "    for (i in 1..3) {\n        use(v + 1)\n        v += 1\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a read-only occurrence inside a local function is not replaced`() {
+        val text = "fun f() {\n    var v = 1\n    val a = v + 1\n    fun g() = use(v + 1)\n    v = 2\n    g()\n}\n"
+        val applied = finish(text, ask(select(text, "v + 1")), "value")
+        assertEquals(
+            "fun f() {\n    var v = 1\n    val value = v + 1\n    val a = value\n" +
+                "    fun g() = use(v + 1)\n    v = 2\n    g()\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a read-only occurrence in a while header is not replaced`() {
+        val text = "fun f() {\n    var v = 1\n    val a = v + 1\n    while (v + 1 < 10) {\n        v += 1\n    }\n}\n"
+        val applied = finish(text, ask(select(text, "v + 1")), "value")
+        assertEquals(
+            "fun f() {\n    var v = 1\n    val value = v + 1\n    val a = value\n" +
+                "    while (v + 1 < 10) {\n        v += 1\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an occurrence resolving to another local is not replaced`() {
+        val text = "fun f(c: Boolean) {\n    var v = 1\n    val a = v + 1\n    if (c) {\n        var v = 5\n        val b = v + 1\n    }\n}\n"
+        val applied = finish(text, ask(select(text, "v + 1")), "value")
+        assertEquals(
+            "fun f(c: Boolean) {\n    var v = 1\n    val value = v + 1\n    val a = value\n" +
+                "    if (c) {\n        var v = 5\n        val b = v + 1\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a stable occurrence resolving to another local is not replaced`() {
+        val text = "fun f(c: Boolean) {\n    val w = 1\n    val x = w\n    if (c) {\n        val w = 5\n        use(w)\n    }\n}\n"
+        val start = text.indexOf("= w") + 2
+        val applied = finish(text, ask(startAt(text, start, start + 1)), "value")
+        assertEquals(
+            "fun f(c: Boolean) {\n    val w = 1\n    val value = w\n    val x = value\n" +
+                "    if (c) {\n        val w = 5\n        use(w)\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a parameter declaration name in a local function is not replaced`() {
+        val text = "fun f(c: Boolean) {\n    val w = 1\n    val x = w\n    if (c) {\n        fun g(w: Int) = use(w)\n        g(1)\n    }\n}\n"
+        val start = text.indexOf("= w") + 2
+        val applied = finish(text, ask(startAt(text, start, start + 1)), "value")
+        assertEquals(
+            "fun f(c: Boolean) {\n    val w = 1\n    val value = w\n    val x = value\n    if (c) {\n" +
+                "        fun g(w: Int) = use(w)\n        g(1)\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a named argument and a local function parameter are not read-only occurrences`() {
+        val text = "fun f(c: Boolean) {\n    var w = 1\n    val x = w\n    if (c) {\n        fun g(w: Int) = use(w)\n        g(w = 1)\n    }\n}\n"
+        val start = text.indexOf("= w") + 2
+        val applied = finish(text, ask(startAt(text, start, start + 1)), "value")
+        assertEquals(
+            "fun f(c: Boolean) {\n    var w = 1\n    val value = w\n    val x = value\n    if (c) {\n" +
+                "        fun g(w: Int) = use(w)\n        g(w = 1)\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+
+    @Test
+    fun `a marker inside the when subject is refused`() {
+        val text = "fun f(a: Boolean) {\n    when (a && foo()) {\n        else -> use(1)\n    }\n}\n"
+        assertEquals(
+            "foo() runs only in some cases here; a variable would run it every time",
+            refused(select(text, "foo()")),
+        )
+    }
+
+    @Test
+    fun `a marker inside the for iterable is refused`() {
+        val text = "fun f(c: Boolean) {\n    for (i in if (c) foo() else bar()) {\n        use(i)\n    }\n}\n"
+        assertEquals(
+            "foo() runs only in some cases here; a variable would run it every time",
+            refused(select(text, "foo()")),
+        )
+    }
+
+    @Test
+    fun `a marker inside a grouped first if condition is refused`() {
+        val text = "fun f(a: Boolean, b: Boolean) {\n    if ((a || b) && foo()) {\n        use(1)\n    }\n}\n"
+        assertEquals(
+            "foo() runs only in some cases here; a variable would run it every time",
+            refused(select(text, "foo()")),
+        )
+    }
+
+
+    @Test
+    fun `a selection starting or ending with a keyword operator is refused`() {
+        assertEquals("Select an expression", refused(select("fun f(a: Any) {\n    val x = a as String\n}\n", "a as")))
+        assertEquals("Select an expression", refused(select("fun f(a: Any) {\n    val x = a is String\n}\n", "a is")))
+        assertEquals("Select an expression", refused(select("fun f() {\n    val x = a in list\n}\n", "a in")))
+        assertEquals("Select an expression", refused(select("fun f(a: Any) {\n    val x = a as String\n}\n", "as String")))
+    }
+
+
+    @Test
+    fun `a whole loop statement is refused and left out of the candidates`() {
+        val whileText = "fun f(c: Boolean) {\n    while (c) use(1)\n}\n"
+        assertEquals("Select an expression", refused(select(whileText, "while (c) use(1)")))
+        val whileCaret = whileText.indexOf("(c)") + 1
+        val whileChooser = startAt(whileText, whileCaret, whileCaret) as RefactoringStep.Choose
+        assertEquals(listOf("c", "(c)"), whileChooser.options.map { it.text })
+
+        val forText = "fun f() {\n    for (i in list) use(i)\n}\n"
+        assertEquals("Select an expression", refused(select(forText, "for (i in list) use(i)")))
+        val forCaret = forText.indexOf("(i in list)") + 6
+        val forQuestion = startAt(forText, forCaret, forCaret) as RefactoringStep.AskName
+        assertEquals("value", forQuestion.suggested)
+    }
+
+    @Test
+    fun `a caret on an if statement keyword has no candidate`() {
+        val text = "fun f(c: Boolean) {\n    if (c) use(1)\n}\n"
+        assertEquals("Select an expression", refused(caret(text, "if")))
+    }
+
+
+    @Test
+    fun `an underscore name is refused`() {
+        val text = "fun f() {\n    val total = a + b\n}\n"
+        val question = ask(select(text, "a + b"))
+        assertEquals(NameCheck.Invalid("Not a valid name"), question.complete("_"))
+        assertEquals(NameCheck.Invalid("Not a valid name"), question.complete("__"))
+    }
+
+    @Test
+    fun `a character literal suggests value`() {
+        assertEquals("value", ask(select("fun f() {\n    println('a')\n}\n", "'a'")).suggested)
+    }
+
+    @Test
+    fun `a call argument list is not an expression`() {
+        assertEquals("Select an expression", refused(select("fun f() {\n    draw(1)\n}\n", "(1)")))
+        assertEquals("Select an expression", refused(select("fun f() {\n    val x = list[0]\n}\n", "[0]")))
+        assertEquals("Select an expression", refused(select("fun f() {\n    val y = f<Int>(1)\n}\n", "(1)")))
+    }
+
+    @Test
+    fun `a declared name is not an expression`() {
+        val delegated = "fun f() {\n    val hovered by lazy { 1 }\n    println(hovered)\n}\n"
+        assertEquals("Select an expression", refused(select(delegated, "hovered")))
+        val parameter = "fun f() {\n    fun g(w: Int) = use(w)\n    g(1)\n}\n"
+        val parameterStart = parameter.indexOf("w: Int")
+        assertEquals("Select an expression", refused(startAt(parameter, parameterStart, parameterStart + 1)))
+        val loop = "fun f() {\n    for (i in list) use(i)\n}\n"
+        assertEquals("Select an expression", refused(select(loop, "i")))
+    }
+
+    @Test
+    fun `a selection crossing a string or template boundary is refused`() {
+        val text = "fun f(a: A, b: A) {\n    val s = \"\${a.b}c\"\n    val t = \"\${a} and \${b}\"\n}\n"
+        assertEquals("Select an expression", refused(select(text, "a.b}c")))
+        assertEquals("Select an expression", refused(select(text, "\"\${a.b")))
+        assertEquals("Select an expression", refused(select(text, "a} and \${b")))
     }
 
 

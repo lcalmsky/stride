@@ -185,7 +185,13 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
     if (range.isEmpty) return ExpressionProblem.BOUNDARY
     if (isInsideOpaqueText(range.start)) return ExpressionProblem.BOUNDARY
     val first = tokenStartingAt(range.start) ?: return ExpressionProblem.BOUNDARY
-    tokenEndingAt(range.end) ?: return ExpressionProblem.BOUNDARY
+    val endToken = tokenEndingAt(range.end) ?: return ExpressionProblem.BOUNDARY
+    val startTemplate = templateRangeOf(first)
+    val endTemplate = templateRangeOf(endToken)
+    if ((startTemplate == null) != (endTemplate == null)) return ExpressionProblem.BOUNDARY
+    if (startTemplate != null && endTemplate != null && startTemplate.start != endTemplate.start) {
+        return ExpressionProblem.BOUNDARY
+    }
     val atoms = expressionAtoms(range) ?: return ExpressionProblem.BOUNDARY
 
     val statement = statementAt(range.start) ?: return ExpressionProblem.STATEMENT
@@ -227,6 +233,26 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
         }
     }
 
+    for (token in code) {
+        if (token.start < range.start || token.end > range.end) continue
+        if (token.index in declarationTokens) return ExpressionProblem.DECLARATION
+    }
+
+    if (first.text == "(" || first.text == "[") {
+        val beforeGroup = tokenBefore(range.start)
+        if (beforeGroup != null && (isNameToken(beforeGroup) || beforeGroup.text == ")" ||
+                beforeGroup.text == "]" || beforeGroup.text == ">")
+        ) {
+            return ExpressionProblem.CALL_CONTINUATION
+        }
+    }
+    if (first.type == KotlinTokenTypes.KEYWORD && first.text in NON_EXPRESSION_STARTS) {
+        return ExpressionProblem.STATEMENT
+    }
+    if (first.type == KotlinTokenTypes.KEYWORD && first.text == "if" && !hasTopLevelElse(atoms)) {
+        return ExpressionProblem.STATEMENT
+    }
+
     if (first.type == KotlinTokenTypes.OPERATION_SIGN && first.text !in PREFIX_OPERATORS) {
         return ExpressionProblem.OPERATOR_EDGE
     }
@@ -235,11 +261,23 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
     ) {
         return ExpressionProblem.OPERATOR_EDGE
     }
+    if (first.type == KotlinTokenTypes.KEYWORD && first.text in KEYWORD_OPERATORS) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    if (first.text == "!" && atoms.size > 1 && atoms[1].text in KEYWORD_OPERATORS) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
     val last = atoms.lastOrNull() ?: return ExpressionProblem.BOUNDARY
     if (last.token.type == KotlinTokenTypes.OPERATION_SIGN && last.text !in POSTFIX_OPERATORS) {
         return ExpressionProblem.OPERATOR_EDGE
     }
     if (last.token.type == KotlinTokenTypes.DOT || last.token.type == KotlinTokenTypes.COMMA) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    if (last.kind == AtomKind.KEYWORD && last.text in KEYWORD_OPERATORS) {
+        return ExpressionProblem.OPERATOR_EDGE
+    }
+    if (last.text == "?" && atoms.size > 1 && atoms[atoms.size - 2].text == "as") {
         return ExpressionProblem.OPERATOR_EDGE
     }
 
@@ -283,6 +321,12 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
         if (atom.text in setOf("return", "break", "continue", "throw")) return ExpressionProblem.CONTROL
     }
     return null
+}
+
+/** The `${…}` template whose code holds [token], or `null` outside template code. */
+private fun KotlinCode.templateRangeOf(token: KtToken): KtRange? {
+    if (!token.isCode) return null
+    return templateExpressionRanges.firstOrNull { it.contains(token.start) }
 }
 
 private fun KotlinCode.isLabelReturnInsideLambda(token: KtToken, range: KtRange): Boolean {
@@ -404,6 +448,24 @@ private fun KotlinCode.expressionAtoms(range: KtRange): List<ExprAtom>? {
 private val PREFIX_OPERATORS = setOf("!", "-", "+", "~")
 
 private val POSTFIX_OPERATORS = setOf("!!", "++", "--")
+
+/** Keywords that act as operators, so an expression may not start or end with them. */
+private val KEYWORD_OPERATORS = setOf("as", "is", "in")
+
+/** Keywords that start a statement rather than an expression. */
+private val NON_EXPRESSION_STARTS = setOf("while", "for", "do")
+
+private fun hasTopLevelElse(atoms: List<ExprAtom>): Boolean {
+    var depth = 0
+    for (atom in atoms) {
+        when (atom.text) {
+            "(", "[", "{" -> depth++
+            ")", "]", "}" -> depth--
+            "else" -> if (depth == 0) return true
+        }
+    }
+    return false
+}
 
 private val STABLE_OPERATORS = setOf(
     "+", "-", "*", "<", ">", "<=", ">=", "==", "!=", "===", "!==", "&&", "||", "!", "?:", "..",
@@ -557,7 +619,7 @@ internal fun KotlinCode.isAtomic(range: KtRange): Boolean {
 
 private fun isChainPrimary(token: KtToken): Boolean =
     isNameToken(token) || token.type == KotlinTokenTypes.NUMBER || token.type == KotlinTokenTypes.CHARACTER ||
-        (token.type == KotlinTokenTypes.KEYWORD && token.text == "this")
+        (token.type == KotlinTokenTypes.KEYWORD && token.text in setOf("this", "true", "false", "null"))
 
 /** True when every template in [range] is stable: `$name` reads a val or parameter and `${…}` is stable. */
 internal fun KotlinCode.templatesStable(range: KtRange): Boolean {
@@ -573,62 +635,81 @@ internal fun KotlinCode.templatesStable(range: KtRange): Boolean {
     return true
 }
 
-/** R2 conditional position, with the three places that are not conditional. */
+/** R2 conditional position, with the three places judged from their opening parenthesis. */
 internal fun KotlinCode.isConditional(range: KtRange): Boolean {
     val statement = statementAt(range.start) ?: return true
     if (statement.startTokenIndex < 0) return false
-    if (insideFirstIfCondition(statement, range.start)) return false
-    if (insideWhenSubject(statement, range.start)) return false
-    if (insideForIterable(statement, range.start)) return false
+    return conditionalFrom(statement.startTokenIndex, statement.endTokenIndex, range.start)
+}
 
-    var index = statement.startTokenIndex
-    while (index <= statement.endTokenIndex && code[index].end <= range.start) {
+/**
+ * True when a marker makes [offset] conditional, scanning the code tokens [fromIndex] to
+ * [endIndex]. The first `if` condition, a `when` subject and a `for` iterable are scanned from
+ * their opening parenthesis, so markers inside them still count (R2).
+ */
+internal fun KotlinCode.conditionalFrom(fromIndex: Int, endIndex: Int, offset: Int): Boolean {
+    val exception = firstIfConditionOpen(fromIndex, endIndex, offset)
+        .takeIf { it >= 0 }
+        ?: whenSubjectOpen(fromIndex, endIndex, offset).takeIf { it >= 0 }
+        ?: forIterableOpen(fromIndex, endIndex, offset).takeIf { it >= 0 }
+    return hasConditionalMarker(exception?.plus(1) ?: fromIndex, offset)
+}
+
+/** True when the code tokens from [fromIndex] up to [offset] hold a conditional marker. */
+internal fun KotlinCode.hasConditionalMarker(fromIndex: Int, offset: Int): Boolean {
+    var index = fromIndex
+    while (index < code.size) {
         val token = code[index]
+        if (token.end > offset) break
         if (isOpener(token)) {
             val close = matchingIndex(index)
-            if (close >= 0 && code[close].end <= range.start) {
+            if (close >= 0 && code[close].end <= offset) {
                 index = close + 1
                 continue
             }
         }
         when {
-            token.text in setOf("&&", "||", "?:", "else", "->") -> return true
+            token.text in CONDITIONAL_MARKERS -> return true
             token.text == "?" && code.getOrNull(index + 1)?.type == KotlinTokenTypes.DOT -> return true
             token.text == "{" && blocks.firstOrNull { it.open.index == index }?.kind == BlockKind.WHEN_BODY -> return true
-            token.type == KotlinTokenTypes.KEYWORD &&
-                token.text in setOf("if", "while", "for", "do", "try", "catch", "finally") -> return true
+            token.type == KotlinTokenTypes.KEYWORD && token.text in CONDITIONAL_KEYWORDS -> return true
         }
         index++
     }
     return false
 }
 
-private fun KotlinCode.insideFirstIfCondition(statement: KtStatement, offset: Int): Boolean {
-    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+private val CONDITIONAL_MARKERS = setOf("&&", "||", "?:", "else", "->")
+
+private val CONDITIONAL_KEYWORDS = setOf("if", "while", "for", "do", "try", "catch", "finally")
+
+/** Code token index of the `(` holding [offset] in the first `if` after [fromIndex], or `-1`. */
+private fun KotlinCode.firstIfConditionOpen(fromIndex: Int, endIndex: Int, offset: Int): Int {
+    for (index in fromIndex..endIndex) {
         val token = code[index]
         if (token.type != KotlinTokenTypes.KEYWORD || token.text != "if") continue
-        val open = code.getOrNull(index + 1) ?: return false
-        if (open.text != "(") return false
-        val close = matching(open.index) ?: return false
-        return offset > open.start && offset < close.end
+        val open = code.getOrNull(index + 1) ?: return -1
+        if (open.text != "(") return -1
+        val close = matching(open.index) ?: return -1
+        return if (offset > open.start && offset < close.end) open.index else -1
     }
-    return false
+    return -1
 }
 
-private fun KotlinCode.insideWhenSubject(statement: KtStatement, offset: Int): Boolean {
-    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+private fun KotlinCode.whenSubjectOpen(fromIndex: Int, endIndex: Int, offset: Int): Int {
+    for (index in fromIndex..endIndex) {
         val token = code[index]
         if (token.type != KotlinTokenTypes.KEYWORD || token.text != "when") continue
         val open = code.getOrNull(index + 1) ?: continue
         if (open.text != "(") continue
         val close = matching(open.index) ?: continue
-        if (offset > open.start && offset < close.end) return true
+        if (offset > open.start && offset < close.end) return open.index
     }
-    return false
+    return -1
 }
 
-private fun KotlinCode.insideForIterable(statement: KtStatement, offset: Int): Boolean {
-    for (index in statement.startTokenIndex..statement.endTokenIndex) {
+private fun KotlinCode.forIterableOpen(fromIndex: Int, endIndex: Int, offset: Int): Int {
+    for (index in fromIndex..endIndex) {
         val token = code[index]
         if (token.type != KotlinTokenTypes.KEYWORD || token.text != "for") continue
         val open = code.getOrNull(index + 1) ?: continue
@@ -651,9 +732,9 @@ private fun KotlinCode.insideForIterable(statement: KtStatement, offset: Int): B
             }
             i++
         }
-        if (inIndex >= 0 && offset > code[inIndex].end) return true
+        if (inIndex >= 0 && offset > code[inIndex].end) return open.index
     }
-    return false
+    return -1
 }
 
 /** True when two ranges hold the same code tokens, comments and whitespace ignored. */
@@ -672,7 +753,7 @@ internal fun KotlinCode.sameTokens(left: KtRange, right: KtRange): Boolean {
 }
 
 internal fun isValidKotlinIdentifier(name: String): Boolean =
-    name.isNotEmpty() && (name[0] == '_' || name[0].isLetter()) &&
+    name.isNotEmpty() && name.any { it != '_' } && (name[0] == '_' || name[0].isLetter()) &&
         name.all { it == '_' || it.isLetterOrDigit() } &&
         name.all { it.code < 128 }
 

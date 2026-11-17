@@ -123,6 +123,12 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a next line starting with a brace continues the statement`() {
+        val text = "fun f() {\n    val x = list.map\n    { it + 1 }\n}\n"
+        assertEquals(listOf("val x = list.map\n    { it + 1 }"), bodyStatements(text))
+    }
+
+    @Test
     fun `an annotation line joins the declaration below it`() {
         val text = "fun f() {\n    @Ann\n    val x = 1\n}\n"
         assertEquals(listOf("@Ann\n    val x = 1"), bodyStatements(text))
@@ -312,6 +318,61 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `keyword operators at either end fail the rules`() {
+        val text = "fun f(a: Any) {\n    val x = a as String\n    val y = a is String\n    val z = a in list\n    val w = a as? String\n    val v = a !is String\n}\n"
+        val code = model(text)
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "a as")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "as String")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "a is")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "a in")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "in list")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "a as?")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "!is String")))
+    }
+
+    @Test
+    fun `statement keywords and an if without else fail the rules`() {
+        val text = "fun f(c: Boolean) {\n    while (c) use(1)\n    if (c) use(1)\n    if (c) use(1) else use(2)\n    do use(1) while (c)\n}\n"
+        val code = model(text)
+        assertEquals(ExpressionProblem.STATEMENT, code.checkExpression(rangeOf(text, "while (c) use(1)")))
+        assertEquals(ExpressionProblem.STATEMENT, code.checkExpression(rangeOf(text, "if (c) use(1)")))
+        assertNull(code.checkExpression(rangeOf(text, "if (c) use(1) else use(2)")))
+        assertEquals(ExpressionProblem.STATEMENT, code.checkExpression(rangeOf(text, "do use(1) while (c)")))
+    }
+
+    @Test
+    fun `a group right after a name is call arguments`() {
+        val call = "fun f() {\n    draw(1)\n}\n"
+        assertEquals(ExpressionProblem.CALL_CONTINUATION, model(call).checkExpression(rangeOf(call, "(1)")))
+        val index = "fun f() {\n    val x = list[0]\n}\n"
+        assertEquals(ExpressionProblem.CALL_CONTINUATION, model(index).checkExpression(rangeOf(index, "[0]")))
+        val generic = "fun f() {\n    val y = f<Int>(1)\n}\n"
+        assertEquals(ExpressionProblem.CALL_CONTINUATION, model(generic).checkExpression(rangeOf(generic, "(1)")))
+        val group = "fun f() {\n    val z = (1)\n}\n"
+        assertNull(model(group).checkExpression(rangeOf(group, "(1)")))
+    }
+
+    @Test
+    fun `a declared name fails the rules`() {
+        val text = "fun f() {\n    val hovered = 1\n    for (i in list) use(i)\n}\n"
+        val code = model(text)
+        assertEquals(ExpressionProblem.DECLARATION, code.checkExpression(rangeOf(text, "hovered")))
+        assertEquals(ExpressionProblem.DECLARATION, code.checkExpression(rangeOf(text, "i")))
+        val call = "fun f(obj: Map<Int, Int>) {\n    val x = obj.get(1)\n}\n"
+        assertNull(model(call).checkExpression(rangeOf(call, "obj.get(1)")))
+    }
+
+    @Test
+    fun `a selection may not cross a string or template boundary`() {
+        val text = "fun f(a: A) {\n    val s = \"\${a.b}c\"\n    val t = \"\${x} and \${y}\"\n}\n"
+        val code = model(text)
+        assertNull(code.checkExpression(rangeOf(text, "a.b")))
+        assertEquals(ExpressionProblem.BOUNDARY, code.checkExpression(rangeOf(text, "a.b}c")))
+        assertEquals(ExpressionProblem.BOUNDARY, code.checkExpression(rangeOf(text, "a.b}c\"")))
+        assertEquals(ExpressionProblem.BOUNDARY, code.checkExpression(rangeOf(text, "x} and \${y")))
+    }
+
+    @Test
     fun `a return inside the expression fails the rules`() {
         val text = "fun f(): Int {\n    return 1\n}\n"
         assertEquals(ExpressionProblem.CONTROL, model(text).checkExpression(rangeOf(text, "return 1")))
@@ -358,9 +419,30 @@ class KotlinCodeModelTest {
 
 
     @Test
-    fun `the first if condition is not conditional`() {
+    fun `boolean and null literals are atomic`() {
+        val text = "fun f() {\n    val a = true\n    val b = false\n    val c = null\n}\n"
+        val code = model(text)
+        assertTrue(code.isAtomic(rangeOf(text, "true")))
+        assertTrue(code.isAtomic(rangeOf(text, "false")))
+        assertTrue(code.isAtomic(rangeOf(text, "null")))
+    }
+
+    @Test
+    fun `markers inside a when subject and a for iterable are conditional`() {
+        val whenText = "fun f(a: Boolean) {\n    when (a && foo()) {\n        else -> use(1)\n    }\n}\n"
+        assertTrue(model(whenText).isConditional(rangeOf(whenText, "foo()")))
+        val forText = "fun f(c: Boolean) {\n    for (i in if (c) foo() else bar()) {\n        use(i)\n    }\n}\n"
+        assertTrue(model(forText).isConditional(rangeOf(forText, "foo()")))
+        val groupText = "fun f(a: Boolean, b: Boolean) {\n    if ((a || b) && foo()) {\n        use(1)\n    }\n}\n"
+        assertTrue(model(groupText).isConditional(rangeOf(groupText, "foo()")))
+    }
+
+    @Test
+    fun `the first if condition is not conditional but a marker inside it is`() {
         val text = "fun f(a: Int, b: Int) {\n    if (a > 0 && b > 0) {\n        println(a)\n    }\n}\n"
-        assertFalse(model(text).isConditional(rangeOf(text, "b > 0")))
+        val code = model(text)
+        assertFalse(code.isConditional(rangeOf(text, "a > 0 && b > 0")))
+        assertTrue(code.isConditional(rangeOf(text, "b > 0")))
     }
 
     @Test
@@ -427,6 +509,8 @@ class KotlinCodeModelTest {
         assertFalse(isValidKotlinIdentifier("1x"))
         assertFalse(isValidKotlinIdentifier("a b"))
         assertFalse(isValidKotlinIdentifier(""))
+        assertFalse(isValidKotlinIdentifier("_"))
+        assertFalse(isValidKotlinIdentifier("__"))
         assertTrue(isHardKeyword("class"))
         assertFalse(isHardKeyword("value"))
     }

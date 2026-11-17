@@ -122,6 +122,9 @@ internal class KotlinCode(val text: String) {
     /** Code token indices that a reference scan must not treat as references. */
     internal val keywordTokens: MutableSet<Int> = HashSet()
 
+    /** Code token indices of declared names: locals, parameters, destructured and function names. */
+    internal val declarationTokens: MutableSet<Int> = HashSet()
+
     /** `start until end` ranges of annotations, imports and package directives. */
     internal val nonExpressionRanges: MutableList<KtRange> = ArrayList()
 
@@ -176,6 +179,8 @@ internal class KotlinCode(val text: String) {
         references = computeReferences(this)
         calls = computeCalls(this)
         effects = computeEffects(this)
+        for (local in locals) declarationTokens.add(local.nameToken.index)
+        for (function in functions) declarationTokens.add(function.nameToken.index)
     }
 
     fun tokenAt(offset: Int): KtToken? {
@@ -323,15 +328,13 @@ internal class KotlinCode(val text: String) {
         if (templateExpressionRanges.any { previous.end >= it.start && previous.end <= it.end && next.start <= it.end }) {
             return false
         }
-        if (next.text == "{" && blockOpeningAt(next.index)?.kind != BlockKind.LAMBDA) return false
+        if (next.text == "{") return false
         if (cannotEndExpression(previous)) return false
         if (continuesExpression(next)) return false
         if (lineHoldsOnlyAnnotations(previous)) return false
         if (isControlHeaderEnd(previous)) return false
         return true
     }
-
-    private fun blockOpeningAt(tokenIndex: Int): KtBlock? = blocks.firstOrNull { it.open.index == tokenIndex }
 
     private fun hasNewline(from: Int, to: Int): Boolean {
         if (to <= from) return false

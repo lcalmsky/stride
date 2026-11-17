@@ -166,9 +166,11 @@ internal object KotlinIntroduceVariable {
                 index += template.size
                 continue
             }
-            if (code.checkExpression(range) == null &&
-                (!stable || sameResolutions(code, template, window))
-            ) {
+            if (!stable && deferredOccurrence(code, range, statement)) {
+                index += template.size
+                continue
+            }
+            if (code.checkExpression(range) == null && sameResolutions(code, template, window)) {
                 result.add(range)
             }
             index += template.size
@@ -176,19 +178,65 @@ internal object KotlinIntroduceVariable {
         return result
     }
 
+    /**
+     * True when a read-only occurrence runs later or repeatedly: it sits below the statement's
+     * block in a lambda, class body, loop body or local function body, or after a `while`, `do`
+     * or `for` keyword of the statement.
+     */
+    private fun deferredOccurrence(code: KotlinCode, range: KtRange, statement: KtStatement): Boolean {
+        val chain = code.blockChain(range.start)
+        val own = chain.indexOfFirst { it === statement.block }
+        if (own >= 0) {
+            for (index in own + 1 until chain.size) {
+                val block = chain[index]
+                when {
+                    block.kind == BlockKind.LAMBDA -> return true
+                    block.kind == BlockKind.CLASS_BODY -> return true
+                    block.kind == BlockKind.CONTROL_BODY && block.loopBody -> return true
+                    block.kind == BlockKind.FUNCTION_BODY -> return true
+                }
+            }
+        }
+        for (function in code.functions) {
+            if (function.container != FunctionContainer.LOCAL) continue
+            if (function.contains(statement.start)) continue
+            if (function.body?.contains(range.start) == true ||
+                function.expressionRange?.contains(range.start) == true
+            ) {
+                return true
+            }
+        }
+        val ownStatement = code.statementAt(range.start) ?: return false
+        for (index in ownStatement.startTokenIndex..ownStatement.endTokenIndex) {
+            val token = code.code[index]
+            if (token.start >= range.start) break
+            if (token.type == stride.lang.kotlin.KotlinTokenTypes.KEYWORD &&
+                token.text in setOf("while", "do", "for")
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
     private fun tokensIn(code: KotlinCode, range: KtRange): List<KtToken> =
         code.tokens.filter {
             !it.isComment && (it.isCode || it.isStringBody) && it.start >= range.start && it.end <= range.end
         }
 
+    /** True when every name plays the same role at both positions: a reference to the same declaration, or not a reference in both. */
     private fun sameResolutions(code: KotlinCode, left: List<KtToken>, right: List<KtToken>): Boolean {
         for (index in left.indices) {
             val a = left[index]
             val b = right[index]
             if (a.index < 0 || b.index < 0) continue
             if (!isNameToken(a) || !isNameToken(b)) continue
-            val first = code.references.firstOrNull { it.token.index == a.index } ?: continue
-            val second = code.references.firstOrNull { it.token.index == b.index } ?: continue
+            val first = code.references.firstOrNull { it.token.index == a.index }
+            val second = code.references.firstOrNull { it.token.index == b.index }
+            if (first == null || second == null) {
+                if (first != null || second != null) return false
+                continue
+            }
             if (first.resolved?.nameToken?.start != second.resolved?.nameToken?.start) return false
         }
         return true
@@ -201,7 +249,6 @@ internal object KotlinIntroduceVariable {
             return when {
                 first.isStringBody -> "text"
                 first.type == stride.lang.kotlin.KotlinTokenTypes.NUMBER -> "number"
-                first.type == stride.lang.kotlin.KotlinTokenTypes.CHARACTER -> "text"
                 else -> "value"
             }
         }
