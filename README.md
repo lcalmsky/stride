@@ -37,7 +37,7 @@ brew install --cask lcalmsky/stride/stride
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="프로젝트 트리와 Kotlin 에디터" width="480"><br><br><img src="docs/images/multi-caret.png" alt="여러 캐럿으로 같은 단어를 고른 Kotlin 에디터" width="480"><br><br><img src="docs/images/folding.png" alt="함수 본문을 접은 Kotlin 에디터" width="480"><br><br><img src="docs/images/problems.png" alt="물결 밑줄과 Problems 창" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="하단 경로 캡슐이 탐색 막대로 바뀌고 폴더의 하위 항목 목록이 뜬 모습" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Polygon 의 상위 타입과 하위 타입을 펼친 Hierarchy 창" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="프로젝트 트리와 Kotlin 에디터" width="480"><br><br><img src="docs/images/multi-caret.png" alt="여러 캐럿으로 같은 단어를 고른 Kotlin 에디터" width="480"><br><br><img src="docs/images/folding.png" alt="함수 본문을 접은 Kotlin 에디터" width="480"><br><br><img src="docs/images/problems.png" alt="물결 밑줄과 Problems 창" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="하단 경로 캡슐이 탐색 막대로 바뀌고 폴더의 하위 항목 목록이 뜬 모습" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Polygon 의 상위 타입과 하위 타입을 펼친 Hierarchy 창" width="480"><br><br><img src="docs/images/refactor-this.png" alt="지역 변수 이름에서 연 Refactor This 팝업" width="480"></td>
 <td valign="top">
 
 - **프로젝트 트리** 폴더는 한 번 클릭에 펼치고 파일은 한 번 클릭에 엽니다. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, `.idea` 는 숨깁니다. 경계를 끌어 너비를 200–480 dp 사이에서 바꾸고, `⌘1` 로 트리를 여닫고 `⌥F1` 로 현재 파일을 트리에서 드러냅니다
@@ -48,6 +48,7 @@ brew install --cask lcalmsky/stride/stride
 - **코드 정리** `⌘⌥L` 은 괄호 깊이로 들여쓰기를 다시 맞추고 줄 끝 공백과 연속 빈 줄을 정리합니다(Kotlin·Java·JSON, 그 밖의 파일은 공백만). 줄바꿈 위치는 바꾸지 않습니다. `⌃⌥O` 는 Kotlin 파일의 안 쓰는 import 와 중복을 지우고 IntelliJ 기본 순서로 정렬합니다. `⌃L` 은 커서 줄을 화면 가운데로 스크롤합니다
 - **코드 정보** `⌘P` 는 커서가 있는 호출의 파라미터 목록을 현재 파라미터를 강조해 보여 주고, 입력을 계속 받으면서 커서를 따라 갱신합니다. `F1`·`⌃J` 는 선언 위의 KDoc·주석을, `⌥Space` 는 선언 원문을 팝업으로 보여 줍니다. 선언은 현재 파일과 선언 인덱스에서 찾습니다
 - **편집 도우미** `⌥↑`·`⌥↓` 는 커서에서 단어·문자열·괄호·줄 순으로 선택을 넓히고 좁힙니다. `⌘⇧U` 대소문자, `⌃⇧J` 줄 합치기, `⇧↩`·`⌘⌥↩` 새 줄, `⌃M` 짝 괄호, `⌘⌥[`·`⌘⌥]` 코드 블록, `⌃⇧↑`·`⌃⇧↓` 메서드 이동을 키보드로 합니다. `⌥/` 는 열린 편집기의 단어로, `⌃Space`·`⌃⌥Space` 는 선언 인덱스와 키워드로 자동 완성하고, `⌃⇧Space` 는 타입 자리면 클래스, 식 자리면 심볼만 후보로 거릅니다. `⇧F6` 은 파일 안에서 이름을 바꿉니다
+- **리팩터링** `⌃T` 는 커서 위치에서 적용할 수 있는 것만 `Rename…`·`Introduce Variable…`·`Extract Method…`·`Inline…` 으로 단축키와 함께 보여 줍니다. `⌥⌘V` 는 변수를 도입하는데, 선택이 없으면 후보 식 중에서 고르게 하고 같은 식의 다른 출현까지 함께 바꿀지 정합니다. `⌥⌘M` 은 선택한 문장이나 식을 `private fun` 으로 빼내며 입력과 출력을 스스로 판정하고, `⌥⌘N` 은 지역 `val` 과 같은 파일의 함수를 인라인합니다(Kotlin 파일만). 컴파일러가 없으므로 결과가 원래 코드와 같은 뜻임을 글로 증명할 수 있을 때만 실행하고, 아니면 조건에 따라 도는 식, 타입을 모르는 입력, 타입 검사로 좁혀진 변수, 수신자가 바뀌는 람다 안처럼 이유를 상태 줄에 한 줄로 알린 뒤 아무것도 바꾸지 않습니다. 적용한 변경은 실행 취소 한 번으로 되돌립니다
 - **멀티 캐럿** `⌃G` 는 다음 일치를 선택에 더하고(선택이 없으면 커서 단어를 고름) `⌃⇧G` 는 마지막에 더한 것을 빼며 `⌃⌘G` 는 모든 일치를 고릅니다. `⌥⇧`-클릭이나 `⌥` 를 두 번 누른 채 `↑`·`↓` 로 캐럿을 더하고, `⌥`-드래그나 `⌘⇧8` 열 선택 모드로 사각 선택을 만듭니다. 입력·삭제·붙여넣기·화살표 이동과 줄 주석·복제·삭제·들여쓰기·대소문자는 모든 캐럿에 적용되고, 그 밖의 액션은 보조 캐럿을 지우고 주 캐럿에서만 동작합니다. `Esc` 로 보조 캐럿을 지웁니다
 - **코드 접기** `⌘-` 는 커서 줄에서 시작하거나 커서를 감싼 블록을 `{...}` 로 접고 `⌘=` 는 다시 펼칩니다. `⌘⇧-`·`⌘⇧=` 는 파일의 모든 블록을 접고 펼치며, 숫자패드 `⌘+`·`⌘-` 도 같습니다. 여러 줄에 걸친 `{}`·`[]` 블록, 블록 주석과 KDoc, import 목록을 접을 수 있습니다(Kotlin·Java·JSON). `←`·`→` 는 접힌 영역을 건너뛰고, 자리표시를 클릭하거나 줄로 이동·찾기·탐색으로 커서가 접힌 곳에 들어가면 펼쳐집니다. 접힌 줄의 번호는 거터에서 빠집니다
 - **탐색** `⌘B` 나 `⌘`-클릭으로 선언으로 가고, `⌘[`·`⌘]` 또는 `⌘⌥←`·`⌘⌥→` 로 뒤로·앞으로 갑니다. `⌘F12` 파일 구조, `⌘⇧T` 테스트로 이동을 하고, `⌥F7` 은 사용처를 Find 창의 `Usages of` 탭으로 열며 `⌘2` 북마크 창과 `⌘7` 구조 창이 북마크와 선언을 나열합니다. `F3`·`⌘F3` 로 북마크를 다룹니다. `⌘⇧F7` 은 현재 파일에서 커서 단어의 사용처를 강조하고, 강조가 있는 동안 `⌘G`·`⌘⇧G` 로 사용처를 오가며 `Esc` 나 편집으로 지웁니다. `⌘⇧⌫` 는 마지막으로 고친 자리로 가고, 거듭 누르면 그 전에 고친 자리로 갑니다(파일을 넘나들며 최근 50곳). `F4` 는 커서 위치의 선언으로 가고, 목록 창에서는 `F4`·`⌘↓` 가 고른 항목을 열어 키보드를 에디터로 넘깁니다
@@ -218,6 +219,11 @@ brew install --cask lcalmsky/stride/stride
 | `⌃L` | 커서 줄을 가운데로 스크롤 |
 | `⌘P` | 파라미터 정보 |
 | `F1` · `⌃J` / `⌥Space` | 선언 문서 / 선언 원문 보기 |
+| **리팩터링** | |
+| `⌃T` | Refactor This (커서 위치에서 가능한 것만) |
+| `⌥⌘V` | 변수 도입 |
+| `⌥⌘M` | 메서드 추출 |
+| `⌥⌘N` | 인라인 |
 | **멀티 캐럿** | |
 | `⌃G` / `⌃⇧G` | 다음 일치 선택에 더하기 / 마지막에 더한 선택 빼기 |
 | `⌃⌘G` | 모든 일치 선택 |
@@ -306,7 +312,7 @@ JDK 21 이 필요합니다. Gradle toolchain 이 21 을 요구합니다.
 
 앱은 여섯 모듈로 나뉩니다. `core` 는 서비스·확장점·`Disposer` 를 제공하고, `lang` 은 언어와 파일 종류·하이라이터·주석 처리·인텐션·import 정리·문제 제공자 API 를 정의합니다. `search` 는 파일 이름 인덱스, Kotlin·Java 선언 인덱스, Search Everywhere 의 모델을, `app` 은 Compose Desktop UI 와 에디터·탐색·북마크·Run·터미널을 담습니다. `plugins/lang-kotlin` 과 `plugins/lang-json` 이 각각 Kotlin 과 JSON 의 렉서·하이라이터·파일 종류와 괄호 짝을 판정하는 문제 제공자를 등록하고, Kotlin 플러그인은 import 퀵픽스와 `val`·`var` 인텐션, import 정리기, 안 쓰는 import 경고도 등록합니다.
 
-모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, import 정리, 문제 제공자, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 선언 인덱스는 상위 타입과 import, 멤버 범위도 읽고, 계층 탐색 액션은 이 정보로 타입 그래프를 만듭니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
+모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, import 정리, 문제 제공자, 리팩터링 제공자, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 선언 인덱스는 상위 타입과 import, 멤버 범위도 읽고, 계층 탐색 액션은 이 정보로 타입 그래프를 만듭니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
 
 에디터는 스크롤 뷰포트와 크롬 인셋을 따로 둡니다. 내용은 창 가장자리까지 이어지고 유리 캡슐과 사이드바가 그 위에 떠 있으며, 인셋은 캐럿 스크롤·거터·스크롤바 여백에 반영됩니다. 1,000줄 이상 문서는 내용을 별도 스크롤 레이어에 배치하고 800줄 아래로 내려가면 레이어를 풉니다.
 
