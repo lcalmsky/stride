@@ -9,6 +9,7 @@
     <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
     <extensionPoint name="lang.importOptimizer" beanClass="stride.lang.ImportOptimizerBean"/>
     <extensionPoint name="lang.problemProvider" beanClass="stride.lang.ProblemProviderBean"/>
+    <extensionPoint name="lang.refactoringProvider" beanClass="stride.lang.RefactoringProviderBean"/>
     <extensionPoint qualifiedName="stride.searchEverywhereContributor"
                     interface="stride.search.SearchEverywhereContributorFactory"/>
     <extensionPoint name="fileEditorProvider" interface="stride.app.editor.FileEditorProvider"/>

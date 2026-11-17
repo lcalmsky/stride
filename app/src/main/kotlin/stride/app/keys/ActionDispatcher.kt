@@ -35,6 +35,8 @@ import stride.app.navigation.showUsages
 import stride.app.navigation.toggleBookmark
 import stride.app.problems.ErrorDescriptionRequest
 import stride.app.problems.ProblemNavigation
+import stride.app.refactor.openRefactorThis
+import stride.app.refactor.startRefactoring
 import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
@@ -45,6 +47,7 @@ import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
 import stride.app.run.runMain
 import stride.core.services.service
+import stride.lang.RefactoringKind
 import stride.search.SearchTab
 import java.nio.file.Path
 
@@ -222,6 +225,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.GOTO_SUPER_METHOD -> goToSuperMethod(state)
     ActionId.TYPE_HIERARCHY -> showTypeHierarchy(state)
     ActionId.CALL_HIERARCHY -> showCallHierarchy(state)
+    ActionId.REFACTOR_THIS -> openRefactorThis(state)
+    ActionId.INTRODUCE_VARIABLE -> startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE)
+    ActionId.EXTRACT_METHOD -> startRefactoring(state, RefactoringKind.EXTRACT_METHOD)
+    ActionId.INLINE -> startRefactoring(state, RefactoringKind.INLINE)
     ActionId.JUMP_TO_LAST_CHANGE -> jumpToLastChange(state)
     ActionId.TOGGLE_BOOKMARK -> toggleBookmark(state)
     ActionId.SHOW_BOOKMARKS -> showBookmarks(state)

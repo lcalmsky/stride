@@ -292,6 +292,68 @@ still on the stack when its matching closer arrives, or when the input ends, is 
 Every message is an `ERROR` over `[offset, offset + 1)`, and the result is sorted by start.
 `<` and `>` are not brackets.
 
+### Refactoring providers
+
+Language plugins provide Introduce Variable, Extract Method and Inline through the bean extension
+point `stride.lang.refactoringProvider`, keyed by `language` like `lang.commenter`. A provider reads
+the document text, the selection and the file name, nothing outside the file, and answers with a
+step the app shows until the user has given what the refactoring needs. Rename is not part of it.
+
+```kotlin
+enum class RefactoringKind(val title: String) {
+    INTRODUCE_VARIABLE("Introduce Variable"), EXTRACT_METHOD("Extract Method"), INLINE("Inline")
+}
+
+class RefactoringContext(val text: String, val selectionStart: Int, val selectionEnd: Int, val fileName: String)
+
+data class RefactoringEdit(val edits: List<TextEdit>, val caret: Int, val message: String? = null)
+
+sealed interface RefactoringStep {
+    data class Refused(val reason: String) : RefactoringStep
+    class Choose(val title: String, val options: List<RefactoringOption>) : RefactoringStep
+    class AskName(val title: String, val suggested: String, val complete: (String) -> NameCheck) : RefactoringStep
+    class Apply(val edit: RefactoringEdit) : RefactoringStep
+}
+
+class RefactoringOption(val text: String, val highlights: List<IntRange> = emptyList(), val next: () -> RefactoringStep)
+
+sealed interface NameCheck {
+    data class Invalid(val message: String) : NameCheck
+    class Valid(val edit: RefactoringEdit) : NameCheck
+}
+
+interface RefactoringProvider {
+    fun prepare(kind: RefactoringKind, context: RefactoringContext): RefactoringStep?
+    companion object {
+        const val EP_NAME = "stride.lang.refactoringProvider"
+        val EP: BeanExtensionPointName<RefactoringProviderBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): List<RefactoringProvider>
+        fun prepare(language: Language?, kind: RefactoringKind, context: RefactoringContext,
+                    area: ExtensionArea = Application.extensionArea): RefactoringStep
+        fun notAvailable(kind: RefactoringKind, fileName: String): String
+    }
+}
+
+class RefactoringProviderBean : ExtensionBean() {
+    override val key: String?                       // attributes["language"]
+    val language: String?
+    fun provider(): RefactoringProvider
+}
+```
+
+`prepare` returns `null` for a kind the provider does not implement and `Refused` when the text
+does not prove the result keeps the code's meaning; it does not throw for odd input. Every
+`TextEdit`, highlight range and `RefactoringEdit.caret` refers to the text the step was prepared
+on, except `caret`, which is an offset in the text after the edits. Edits of one result must not
+overlap. `Choose.options[i].next` and `AskName.complete` are pure: the app may call them again,
+and it applies the edit only when the editor still holds the prepared text.
+
+The companion `prepare` asks the language's providers in extension-point order and returns the
+first non-null step. A provider that throws is logged and the result is
+`Refused("<title> failed: <Exception>")`. With no language, no provider or no provider
+implementing the kind, the result is `Refused(notAvailable(kind, fileName))`, which reads
+`<title> is not available for .<ext> files`, or `for this file` for a name without an extension.
+
 ## `stride.lang.kotlin`
 
 ```kotlin
@@ -347,6 +409,13 @@ and an identifier that is really a local or a parameter can still get import can
 when a top-level project declaration has the same name. Private top-level declarations are
 not offered: `ParsedDeclaration` and `Declaration` carry `isPrivate`, set from the
 declaration's own modifiers.
+
+### Kotlin refactorings
+
+`stride.lang.kotlin.refactor.KotlinRefactorings` implements all three kinds for `kotlin` from
+`KotlinLexer` tokens with template code unfolded. What each refactoring accepts and refuses, the
+messages and the text it writes are the app's contract and live in `docs/api-app.md`
+「Refactorings」 R2 to R5.
 
 ### Kotlin import optimizer
 
@@ -431,6 +500,7 @@ nothing instead of judging a document it does not understand.
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
     <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
     <lang.problemProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinProblemProvider"/>
+    <lang.refactoringProvider language="kotlin" implementationClass="stride.lang.kotlin.refactor.KotlinRefactorings"/>
   </extensions>
 </stride-plugin>
 ```
@@ -465,6 +535,7 @@ plugin id is `stride.core`.
   <extensionPoint name="lang.intentionProvider" beanClass="stride.lang.IntentionProviderBean"/>
   <extensionPoint name="lang.importOptimizer" beanClass="stride.lang.ImportOptimizerBean"/>
   <extensionPoint name="lang.problemProvider" beanClass="stride.lang.ProblemProviderBean"/>
+  <extensionPoint name="lang.refactoringProvider" beanClass="stride.lang.RefactoringProviderBean"/>
 </extensionPoints>
 ```
 
@@ -478,6 +549,7 @@ plugin id is `stride.core`.
 | `:lang` | `BracketProblemsTest` | empty and matched input, an unexpected closer, openers above a match and left at the end reported unclosed, results sorted by start |
 | `:lang` | `IntentionProviderEpTest` | providers resolved by language key, quick fixes sorted before intentions across providers, a throwing provider skipped, unknown language empty |
 | `:lang` | `ImportOptimizerEpTest` | the Kotlin descriptor registers one import optimizer, the bean resolves through the real descriptor, an unknown language resolves to `null` |
+| `:lang` | `RefactoringProviderEpTest` | providers resolved by language key, the first provider implementing the kind answers, a kind or file without a provider refuses with `not available`, a throwing provider refuses with `failed`, names without an extension, name checks carrying the edit or the message |
 | `:plugins:lang-kotlin` | `KotlinLexerTest` | token kinds, per-line multi-line tokens, resume at every line start |
 | `:plugins:lang-kotlin` | `LineStateHighlighterTest` | 200 seeded random edits equal a full relex, single-line edit relexes one line |
 | `:plugins:lang-kotlin` | `KotlinImportIntentionsTest` | import insertion positions, same-package, imported, alias, star and qualified skips, caret in strings and comments, the candidate limit, unused import removal with operator names, aliases, stars and template usages |

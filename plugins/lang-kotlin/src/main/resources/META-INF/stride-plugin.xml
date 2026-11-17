@@ -13,5 +13,6 @@
     <lang.intentionProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinValVarIntention"/>
     <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
     <lang.problemProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinProblemProvider"/>
+    <lang.refactoringProvider language="kotlin" implementationClass="stride.lang.kotlin.refactor.KotlinRefactorings"/>
   </extensions>
 </stride-plugin>

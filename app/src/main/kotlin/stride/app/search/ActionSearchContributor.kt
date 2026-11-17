@@ -128,6 +128,10 @@ object ActionNames {
         ActionId.GOTO_SUPER_METHOD to "Go to Super Method",
         ActionId.TYPE_HIERARCHY to "Type Hierarchy",
         ActionId.CALL_HIERARCHY to "Call Hierarchy",
+        ActionId.REFACTOR_THIS to "Refactor This",
+        ActionId.INTRODUCE_VARIABLE to "Introduce Variable",
+        ActionId.EXTRACT_METHOD to "Extract Method",
+        ActionId.INLINE to "Inline",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

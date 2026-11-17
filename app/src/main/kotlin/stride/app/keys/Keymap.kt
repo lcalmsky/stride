@@ -27,6 +27,7 @@ enum class ActionId {
     JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
     RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
     GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
+    REFACTOR_THIS, INTRODUCE_VARIABLE, EXTRACT_METHOD, INLINE,
 }
 
 enum class KeyContext {
@@ -321,4 +322,12 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control H", ActionId.TYPE_HIERARCHY, KeyContext.EDITOR)
     // CallHierarchy control alt H
     bind("control alt H", ActionId.CALL_HIERARCHY, KeyContext.EDITOR)
+    // Refactorings.QuickListPopupAction control T
+    bind("control T", ActionId.REFACTOR_THIS, KeyContext.EDITOR)
+    // IntroduceVariable meta alt V
+    bind("meta alt V", ActionId.INTRODUCE_VARIABLE, KeyContext.EDITOR)
+    // ExtractMethod meta alt M
+    bind("meta alt M", ActionId.EXTRACT_METHOD, KeyContext.EDITOR)
+    // Inline meta alt N
+    bind("meta alt N", ActionId.INLINE, KeyContext.EDITOR)
 }

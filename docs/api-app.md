@@ -429,114 +429,118 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :88 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :90 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :92 |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :94, :95 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :97, :98 |
+| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :89 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :91 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :93 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :95, :96 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :98, :99 |
 | `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :100 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :108 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :110 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :112 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :114 |
-| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :116 |
-| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :118 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :120 |
-| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :122 |
-| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :290 |
-| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :292 |
-| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :294 |
-| `RECENT_LOCATIONS` | GLOBAL | ⌘⇧E | `RecentLocations` | :296 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :109 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :111 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :113 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :115 |
+| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :117 |
+| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :119 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :121 |
+| `ACTIVATE_PROBLEMS_TOOL_WINDOW` | GLOBAL | ⌘6 | `ActivateProblemsViewToolWindow` | :123 |
+| `GOTO_NEXT_ERROR` | EDITOR | F2 | `GotoNextError` | :291 |
+| `GOTO_PREVIOUS_ERROR` | EDITOR | ⇧F2 | `GotoPreviousError` | :293 |
+| `SHOW_ERROR_DESCRIPTION` | EDITOR | ⌘F1 | `ShowErrorDescription` | :295 |
+| `RECENT_LOCATIONS` | GLOBAL | ⌘⇧E | `RecentLocations` | :297 |
 | `SHOW_NAV_BAR` | GLOBAL, LIST_WINDOW | ⌥Home (GLOBAL), ⌘↑ (LIST_WINDOW only; the editor keeps ⌘↑ for the document start) | `ShowNavBar` | :298, :299 |
 | `EDIT_SOURCE` | GLOBAL, LIST_WINDOW | F4 (GLOBAL), ⌘↓ (LIST_WINDOW only; the editor keeps ⌘↓ for the document end) | `EditSource` | :303, :304 |
-| `JUMP_TO_LAST_CHANGE` | GLOBAL | ⌘⇧⌫ | `JumpToLastChange` | :308 |
-| `SHOW_USAGES` | EDITOR | ⌘⌥F7 | `ShowUsages` | :310 |
-| `HIGHLIGHT_USAGES_IN_FILE` | EDITOR | ⌘⇧F7 | `HighlightUsagesInFile` | :312 |
-| `GOTO_IMPLEMENTATION` | EDITOR | ⌘⌥B | `GotoImplementation` | :314 |
-| `GOTO_TYPE_DECLARATION` | EDITOR | ⌘⇧B , ⌃⇧B | `GotoTypeDeclaration` | :316, :317 |
-| `GOTO_SUPER_METHOD` | EDITOR | ⌘U | `GotoSuperMethod` | :319 |
-| `TYPE_HIERARCHY` | EDITOR | ⌃H | `TypeHierarchy` | :321 |
-| `CALL_HIERARCHY` | EDITOR | ⌃⌥H | `CallHierarchy` | :323 |
-| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :124 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :126 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :128 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :130, :131 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :133 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :135 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :137 |
-| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :139 |
-| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :141 |
-| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :143 |
-| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :145 |
-| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :147 |
-| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :149 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :151 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :153 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :155 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :157 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :159 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :161 |
-| `FIND` | EDITOR | ⌘F | `Find` | :163 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :165 |
+| `JUMP_TO_LAST_CHANGE` | GLOBAL | ⌘⇧⌫ | `JumpToLastChange` | :309 |
+| `SHOW_USAGES` | EDITOR | ⌘⌥F7 | `ShowUsages` | :311 |
+| `HIGHLIGHT_USAGES_IN_FILE` | EDITOR | ⌘⇧F7 | `HighlightUsagesInFile` | :313 |
+| `GOTO_IMPLEMENTATION` | EDITOR | ⌘⌥B | `GotoImplementation` | :315 |
+| `GOTO_TYPE_DECLARATION` | EDITOR | ⌘⇧B , ⌃⇧B | `GotoTypeDeclaration` | :317, :318 |
+| `GOTO_SUPER_METHOD` | EDITOR | ⌘U | `GotoSuperMethod` | :320 |
+| `TYPE_HIERARCHY` | EDITOR | ⌃H | `TypeHierarchy` | :322 |
+| `CALL_HIERARCHY` | EDITOR | ⌃⌥H | `CallHierarchy` | :324 |
+| `REFACTOR_THIS` | EDITOR | ⌃T | `Refactorings.QuickListPopupAction` | :326 |
+| `INTRODUCE_VARIABLE` | EDITOR | ⌥⌘V | `IntroduceVariable` | :328 |
+| `EXTRACT_METHOD` | EDITOR | ⌥⌘M | `ExtractMethod` | :330 |
+| `INLINE` | EDITOR | ⌥⌘N | `Inline` | :332 |
+| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :125 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :127 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :129 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :131, :132 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :134 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :136 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :138 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :140 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :142 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :144 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :146 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :148 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :150 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :152 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :154 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :156 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :158 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :160 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :162 |
+| `FIND` | EDITOR | ⌘F | `Find` | :164 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :166 |
 | `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :167 |
 | `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :169 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :171 |
-| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :173 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :175 |
-| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :177 |
-| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :179 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :181 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :183 |
-| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :185 |
-| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :187 |
-| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :189 |
-| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :191 |
-| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :193 |
-| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :195 |
-| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :197 |
-| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :199 |
-| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :201 |
-| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :203 |
-| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :205 |
-| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :207 |
-| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :209 |
-| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :211 |
-| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :213 |
-| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :216, :217 |
-| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :219 |
-| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :221 |
-| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :223 |
-| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :225 |
-| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :227, :228 |
-| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :230 |
-| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :232 |
-| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :234 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :236 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :237 |
-| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :239 |
-| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :241, :242 |
-| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :244, :245 |
-| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :247 |
-| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :249 |
-| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :251 |
-| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :253 |
-| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :255 |
-| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :257 |
-| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :259 |
-| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :261 |
-| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :263 |
-| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :265, :266 |
-| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :268 |
-| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :270 |
-| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :272 |
-| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :274 |
-| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :276 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :172 |
+| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :174 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :176 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :178 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :180 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :182 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :184 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :186 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :188 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :190 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :192 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :194 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :196 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :198 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :200 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :202 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :204 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :206 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :208 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :210 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :212 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :214 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :217, :218 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :220 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :222 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :224 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :226 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :228, :229 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :231 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :233 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :235 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :237 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :238 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :240 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :242, :243 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :245, :246 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :248 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :250 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :252 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :254 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :256 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :258 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :260 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :262 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :264 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :266, :267 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :269 |
+| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :271 |
+| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :273 |
+| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :275 |
+| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :277 |
 | `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
 | `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
-| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :278, :279 |
-| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :281, :282 |
-| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :284, :285 |
-| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :287, :288 |
+| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :279, :280 |
+| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :282, :283 |
+| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :285, :286 |
+| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :288, :289 |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -2241,6 +2245,236 @@ the action read, `<n>` a count and `<Type>` the type as it was written.
 | `outside project sources` | the detail of a supertype that resolves to no project class |
 | `(recursive)` | a node whose declaration is already on the path; it does not expand |
 | `… <n> more` | a level with more than 200 children, or more than 20 roots |
+
+## Refactorings
+
+Four IntelliJ refactoring actions that change code. stride has no compiler, and a wrong
+refactoring breaks code without a sign, so each refactoring runs only when the text proves the
+result means what the code meant and otherwise refuses with a one-line reason in the status bar.
+
+| Action | `ActionId` | IntelliJ id | Key | Context |
+|---|---|---|---|---|
+| Refactor This | `REFACTOR_THIS` | `Refactorings.QuickListPopupAction` | `⌃T` | EDITOR |
+| Introduce Variable | `INTRODUCE_VARIABLE` | `IntroduceVariable` | `⌥⌘V` | EDITOR |
+| Extract Method | `EXTRACT_METHOD` | `ExtractMethod` | `⌥⌘M` | EDITOR |
+| Inline | `INLINE` | `Inline` | `⌥⌘N` | EDITOR |
+
+None of the four strokes had a binding before: every `bind(` string was compared through
+`KeyStroke.parse`, which ignores modifier order, and the editor's own key handlers take `⌘V` only
+without `⌥`. Rename (`⇧F6`) stays the existing text-level rename and appears in Refactor This.
+
+```kotlin
+// stride.app.refactor
+fun openRefactorThis(state: AppState): Boolean
+fun startRefactoring(state: AppState, kind: RefactoringKind): Boolean
+
+// stride.app.editor.TextFileEditor
+fun applyEdits(edits: List<TextEdit>, caret: Int? = null): Boolean   // one undo step; caret in the edited text
+```
+
+### R1 Where refactorings live
+
+A refactoring needs a name from the user, edits at several places and one undo step. Three
+places were compared.
+
+| | A: widen `stride.lang.intentionProvider` | B: new `stride.lang.refactoringProvider` | C: app service over the `:search` scanners |
+|---|---|---|---|
+| Cost of a wrong edit | the language plugin's lexer sees every token, but ⌥↩ computes all edits when the menu opens and has no way to ask for a name | the Kotlin lexer (`codeTokens`) unfolds string templates, so `$x` and `${x}` are references and comments are never code | `sanitizeSource` blanks string templates: Inline would delete `val x` and leave `"$x"` reading another `x` without a compile error. Teaching it templates changes the scanner under every hierarchy and call judgment of the tenth round |
+| Kotlin and Java | Kotlin | Kotlin; Java refuses because no Java language plugin exists, as with intentions and problems | the declaration scanner reads Java, but neither language has a statement grammar there |
+| Files changed | `Intention.kt`, the ⌥↩ popup and its ordering, the Kotlin plugin, the app | a new `:lang` file and one descriptor line, the Kotlin plugin, the app | new `:search` files, the app |
+| Extension point contract | `IntentionAction` is a data class; a field for name-dependent edits changes its constructor (binary break, major), and ⌥↩ would list refactorings | additive, minor | unchanged, minor |
+| Frame path | unchanged | unchanged | unchanged |
+
+**B is the contract.** The tenth round rejected a language extension point for hierarchy
+navigation because hierarchy reads many files through the declaration index; a refactoring reads
+one document's tokens, which the language plugin owns. The name check lives in the provider
+because only the provider knows which names the code already uses. The contract is in
+`docs/api-lang.md` 「Refactoring providers」:
+
+```kotlin
+// stride.lang
+enum class RefactoringKind(val title: String) { INTRODUCE_VARIABLE, EXTRACT_METHOD, INLINE }
+class RefactoringContext(val text: String, val selectionStart: Int, val selectionEnd: Int, val fileName: String)
+data class RefactoringEdit(val edits: List<TextEdit>, val caret: Int, val message: String? = null)
+sealed interface RefactoringStep {
+    data class Refused(val reason: String)
+    class Choose(val title: String, val options: List<RefactoringOption>)
+    class AskName(val title: String, val suggested: String, val complete: (String) -> NameCheck)
+    class Apply(val edit: RefactoringEdit)
+}
+class RefactoringOption(val text: String, val highlights: List<IntRange> = emptyList(), val next: () -> RefactoringStep)
+sealed interface NameCheck { data class Invalid(val message: String); class Valid(val edit: RefactoringEdit) }
+interface RefactoringProvider { fun prepare(kind: RefactoringKind, context: RefactoringContext): RefactoringStep? }
+```
+
+The Kotlin plugin registers `stride.lang.kotlin.refactor.KotlinRefactorings`. A `.java`, `.json`
+or plain file refuses with `<Refactoring> is not available for .java files`.
+
+### R2 When a refactoring runs
+
+A refactoring refuses unless the text proves four things: no expression runs more often, less
+often, later or in another order when it has calls or reads that may change; no name starts
+referring to another declaration; every type it writes is written in the code; and the edited
+text has the statements and brackets it had. Types follow the tenth round's H4: a written type,
+a constructor call or a literal, never an inferred expression type. The words below are used by
+R3 to R5.
+
+- **Tokens.** Kotlin lexer tokens with string-template code unfolded. String text and comments are
+  never code. When the code brackets `()`, `[]` and `{}` of the whole file do not pair up, every
+  refactoring refuses with `Brackets do not match in this file`.
+- **Blocks.** Each `{` opens one of: a function body (after a `fun` header without `=` before the
+  brace, a `get()`/`set(…)` accessor or a secondary `constructor(…)`), an initializer (`init`), a
+  control body (after the header of `if`, `for`, `while`, `catch`, after a `when` branch `->`, or
+  after `else`, `try`, `finally`, `do`), a when body (`when (…) {`, `when {`), a class body (a
+  `class`, `object`, `interface` or `object :` header) or a lambda (every other `{`, anonymous
+  `fun (…) {` included). Function bodies, initializers, control bodies and lambdas are statement
+  blocks; `for`, `while` and `do` bodies are loop bodies.
+- **Statements.** A statement block splits at `;` and at newlines at its own depth. A newline does
+  not split when the line ends with a token that cannot end an expression (a binary operator, `.`,
+  `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`), when the next
+  line starts with `.`, `?.`, `?:`, `&&`, `||`, `else`, `catch`, `finally`, or with `while` after a
+  `do` body, or when the line holds only annotations. Newlines inside `()`, `[]` and nested `{}`
+  never split.
+- **Locals and references.** Locals are `val`/`var` (single and destructured), function
+  parameters, lambda parameters (`it` for a lambda without an arrow), `for` variables, `catch`
+  parameters, `when (val x = …)` and local `fun`, `class` and `object` names. A reference is an
+  identifier token that is not after `.`, `?.` or `::`, not a declaration name, not a named
+  argument (`name =` inside call parentheses) and not a label. It resolves to the innermost local
+  of that name whose scope holds it; otherwise it is non-local (a member, a top-level declaration
+  or an import).
+- **Calls and effects.** A call is a `(` right after an identifier, `>`, `)` or `]`, a `[` right
+  after an identifier, `)` or `]`, or a lambda `{` right after an identifier or `)`; constructor
+  calls count, operator overloads written as operators cannot be seen. Effects are calls,
+  assignments (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) and `++`/`--`. A call takes effect at its closing
+  bracket, an assignment at the end of its statement, `++`/`--` at the token.
+- **Stable and read-only expressions.** A stable expression holds only literals (strings whose
+  templates are stable), `this`, `null`, `true`, `false`, references to local `val`s and
+  parameters, the operators `+ - * < > <= >= == != === !== && || ! ?: ..` and grouping
+  parentheses. `/` and `%` can throw, so they are not stable. A read-only expression may also read
+  `var`s and members through `.`, `?.` and `this.`; it has no calls, no `!!` and no indexing.
+- **Conditional position.** A place X is conditional in its statement when the tokens from the
+  statement start to X, leaving out bracket groups closed before X, hold `&&`, `||`, `?:`, `?.`,
+  `else`, `->` or a when body `{`, or an `if`, `while`, `for`, `do`, `try`, `catch` or `finally` whose
+  header or body holds X. Three places are not conditional: the parenthesized condition of the
+  statement's first `if`, a `when (…)` subject and the iterable of `for (… in …)`. A `while`
+  condition runs on every turn and stays conditional.
+- **Runs before.** The effects in X's statement that take effect before X: calls whose closing
+  bracket comes before X and `++`/`--` before X. A call whose parentheses hold X runs after X.
+
+### R3 Introduce Variable
+
+| Case | Result |
+|---|---|
+| A selection | the trimmed selection is the expression; it must pass the expression rules below |
+| No selection | candidates from the caret token, innermost first: the postfix chains holding it (`a`, `a.b`, `a.b.c()`), each enclosing whole call argument or parenthesized expression, then the statement's whole value (right of `=`, after `return` or `throw`, or the whole expression statement); only candidates passing the rules stay. One is used directly; several open the `Expressions` chooser with the candidate highlighted |
+| Expression rules | starts and ends on token boundaries; brackets inside pair up; no statement split, `;`, top-level `=` or `:` inside; no top-level `val`, `var`, `fun`, `class`, `object`, `interface`, `typealias`; does not start or end with an operator; not after `.`, `?.` or `::`; not followed by `(`, `[`, a trailing-lambda `{`, `=`, a compound assignment, `++` or `--`; not a type (after `:`, `as`, `as?`, `is`, `!is`, or inside `<…>` type arguments); not inside an annotation, `import` or `package`; no `return`, `break`, `continue` or `throw` except `return@label` inside a lambda written within it |
+| Not in a statement block | refuse: `Introduce Variable works inside a function body`; a function written `= expression` refuses with `Expression body: convert it to a block body first` |
+| The statement shares its line | refuse: `The statement shares its line; put it on its own line first` |
+| The expression is conditional (R2) | refuse: `<expr> runs only in some cases here; a variable would run it every time` |
+| Not stable and something runs before it (R2) | refuse: `Code before <expr> in this statement would run after it` |
+| Other occurrences | the same token sequence, whitespace and comments ignored, in the rest of the statement's block from the statement start (nested blocks included), each passing the expression rules. Stable: all, except where a name in it resolves to another local. Read-only: those before the first effect after the statement start. Anything else: none. With one or more, the `Occurrences` chooser offers `Replace this occurrence only` and `Replace all <n> occurrences` with every occurrence highlighted |
+| Name | suggested from the expression: the last called or read member (`getName()` → `name`, a leading `get` before an uppercase letter dropped), a constructor call's class name with a lowercase first letter, `text` for a string literal, `number` for a number, otherwise `value`; made unique with 2, 3, … The `Introduce Variable` name popup checks it |
+| Name check | a Kotlin identifier (`[A-Za-z_][A-Za-z0-9_]*`) that is not a hard keyword (`Not a valid name`), and not a reference or declaration name anywhere in the enclosing function, initializer or outermost lambda (`'<name>' is already used in this function`), so a new local never hides a member a later line reads |
+| Result | `val <name> = <expression as written>` on a new line before the statement with its indentation; the expression and the chosen occurrences become `<name>`; the caret goes after the replaced expression; status `Introduced variable <name>` |
+
+stride always writes `val` without a type. IntelliJ's `Declare with var` and `Specify type
+explicitly` choices are not offered.
+
+### R4 Extract Method
+
+| Case | Result |
+|---|---|
+| No selection | refuse: `Select the code to extract` |
+| Shape | statements (the trimmed selection starts at a statement start and ends at a statement end of one statement block) or one expression (the R3 expression rules); otherwise `Select whole statements or one expression` |
+| Enclosing function | the innermost function body holding the selection must be a `fun` declared in a class body or at the top level, and every block between it and the selection a control body. Inside a lambda: `The selection is inside a lambda; this and it may mean something else`. Inside a local function: `The selection is inside a local function`. An initializer, accessor, constructor, class body or property initializer: `Extract Method works inside a function body` |
+| Inputs | references in the selection resolving to locals of the function declared outside the selection, parameters included, in order of first use. Each needs a written type: the parameter's or local's written type, a constructor call (`Foo(…)`, `Foo<Bar>(…)`), or an `Int`, `Long`, `Double`, `Float`, `Boolean`, `Char` or `String` literal; otherwise `Cannot infer the type of <name> without a compiler; declare it explicitly`. A `vararg` parameter: `<name> is a vararg parameter`. A local function or class: `The selection uses local <name>` |
+| Type parameters | when the function declares `<T, …>` and the selection or an input type names one: `The selection uses the type parameter <T>` |
+| Outputs | locals declared in the selection and read after it in the function, and locals declared before it that it assigns (`=`, compound, `++`, `--`). Two or more: `The selection changes <a> and <b>, which are used later` (three names at most). A local function or class declared in it and used after: `<name> is declared in the selection and used after it`. A declared output needs a written type like an input |
+| Exits | `return` anywhere in the selection, lambdas included, except `return@label` of a lambda or anonymous function written inside it and returns inside a local `fun` written inside it: `The selection contains return`. `break` or `continue` whose loop (the innermost one, or the labeled one) is outside the selection: `The selection contains break or continue for a loop outside it` |
+| New function | `private fun <name>(<p>: <Type>, …)` with the function's extension receiver repeated (`private fun Receiver.<name>(…)`), `suspend` and `@Composable` copied and nothing else. Statements: the selected text with its common indentation removed and one indent unit added (the function's first body line indentation minus its own, four spaces when unknown); an output assigned from outside starts the body with `var <x> = <x>`; an output ends it with `return <x>` and the header gets `: <Type>`. Expression: `private fun <name>(…) = <expression>`, so Kotlin infers the return type |
+| Placement | after the enclosing function's last line in the same container, with one blank line before it and the function's indentation |
+| Call | statements without output: `<name>(<args>)`; a declared output: `val` or `var` as declared, `<x> = <name>(<args>)`; an assigned output: `<x> = <name>(<args>)`; an expression: `<name>(<args>)` in its place |
+| Name | suggested `extracted`, made unique with 2, 3, …; the `Extract Method` name popup checks it is a Kotlin identifier that is not a hard keyword and not used as any identifier in the file (`'<name>' is already used in this file`), so a call never reaches another overload |
+| Result | status `Extracted method <name>`; the caret goes to the call |
+
+Smart casts do not carry over: a parameter keeps its declared type, and code that relied on a
+cast stops compiling (a visible error, not a silent change). Not offered from IntelliJ: the
+signature dialog, duplicate search, several outputs returned as a pair, and extraction inside a
+lambda.
+
+### R5 Inline
+
+| Case | Result |
+|---|---|
+| Target | the identifier at the caret, or a selection of one identifier. A local `val` when it resolves to one or is its declaration name; a function when it is the name of a `fun` declared in this file in a class body or at the top level, or the callee of an unqualified or `this.` call when exactly one function of that name is declared in this file. Otherwise `Inline works on local variables and functions declared in this file` |
+| Variable refusals | `var`: `<name> is a var; only vals are inlined`. Destructured, delegated or without an initializer: `<name> has no initializer to inline`. A written type, unless the initializer is a constructor call of exactly that type or a literal of it: `<name> declares type <T>; the inlined expression could get a different type`. No references: `<name> is never used`. A declaration of the same name in a nested scope: `<name> is declared again in a nested scope`. The declaration shares its lines: `The declaration shares its line with other code` |
+| Stable initializer | every reference is replaced. Where a name in the initializer resolves to another declaration at a reference: `Inlining would make <y> refer to another declaration` |
+| Other initializers | exactly one reference (`<name> is used <n> times and its initializer is not stable`); not inside a lambda, loop body, local function or object expression that does not also hold the declaration (`<name>'s initializer would run later or repeatedly`); not conditional in its statement and not inside a control body entered after the declaration (`<name>'s initializer would run only in some cases`); no effect between the end of the declaration and the reference (`Code between the declaration and the use of <name> would run before its initializer`) |
+| Substitution | the reference becomes the initializer as written, in parentheses unless the initializer is atomic (an identifier, a literal, `this`, a postfix chain of names, calls, indexing and `!!`, or one parenthesized group) or the reference fills a whole argument, a whole right side of `=`, a whole statement, the whole value after `return`, or a whole `if`, `when` or `while` condition. `$name` becomes `${<initializer>}` and `${name}` becomes `${<initializer>}` |
+| Variable result | the declaration's lines are removed with their line break; status `Inlined <name> (<n> uses)`; the caret goes to the first replaced use |
+| Function body | `= <expression>`, a block holding only `return <expression>`, or, for a function without a return type or with `: Unit`, a block holding one expression statement. Otherwise `<name> has a body of several statements` |
+| Function refusals | `open`, `override`, `abstract` or an interface member: `Calls of <name> may reach another implementation`. Type parameters: `<name> is generic`. An extension receiver: `<name> is an extension function`. `vararg`: `<name> has a vararg parameter`. The body calls `<name>`: `<name> is recursive`. A `return` besides the leading one, except `return@label` of a lambda in the body: `<name> returns from inside its body`. A return type other than `Unit`, unless the body is a constructor call of exactly that type, a literal of it, or a comparison or logical expression for `Boolean`: `<name> declares type <T>; the inlined expression could get a different type` |
+| Calls | `<name>(<args>)` or `this.<name>(<args>)`; named arguments map by name and a trailing lambda to the last parameter. Omitted arguments with defaults: `The call at line <n> uses default arguments`. A member function called from another class body: `The call at line <n> is in another class`. A statement-body function whose call is not a whole statement: `The call at line <n> uses the result of <name>` |
+| Arguments | a stable argument replaces every use of its parameter. Any other argument needs exactly one use that is not inside a lambda, loop body or local function of the body and not conditional in the body (`The argument <arg> would run <n> times or only in some cases`); unused: `<arg> would no longer run`; such arguments' uses must come in argument order with no body call taking effect before them (`Arguments of the call at line <n> would run in a different order`) |
+| Name capture | a body name that is not a parameter resolves to a local at the call, or a stable argument's name meets a declaration inside the body around its use: `<y> means something else at the call at line <n>` |
+| Modes | the caret on a call: the `Inline <name>` chooser offers `Inline this call only` and, when the function is `private` and every use in the file is a call that passes, `Inline all and remove <name>`; with only the first it applies directly. The caret on the declaration: all and remove, which needs `private` (`<name> is not private; other files may call it. Put the caret on a call to inline only that call`), no `::<name>` reference (`<name> is used as a reference`) and no call on another object (`<name> is also called on other objects`). In all mode every call must pass; the first failing call's message is shown. Removal deletes the declaration with its KDoc and annotation lines and one adjacent blank line |
+| Function result | each call becomes the body expression with arguments substituted and parenthesized by the variable rule; a statement-body function replaces the call statement; status `Inlined a call of <name>` or `Inlined <n> calls of <name>`; the caret goes to the first replaced call |
+
+Not offered from IntelliJ: inlining parameters, properties, classes and type aliases, functions
+declared in another file, bodies of several statements, and keeping the declaration while
+inlining every call.
+
+### R6 What the user sees
+
+- **Refactor This.** `⌃T` opens a `TargetChooserPopup` titled `Refactor This` with the entries
+  available at the caret, in this order, each showing its stroke on the right: `Rename…` (`⇧F6`,
+  when `openRename` would open its popup), `Introduce Variable…`, `Extract Method…`, `Inline…`
+  (when the provider's step is not `Refused`). An entry runs the same path as its stroke and
+  reuses the step already prepared. With no entry the status reads `No refactorings available at
+  the caret`. IntelliJ lists only applicable refactorings too; the out-of-scope ones (Change
+  Signature `⌘F6`, Move `F6`, Safe Delete `⌘⌦`, Extract Parameter, Field and Constant) are not
+  listed.
+- **Choosers.** `RefactoringStep.Choose` opens the same popup with the step's title and options; a
+  step with one option is followed without showing it. While an option is selected its ranges
+  are drawn through `TextFileEditor.usageHighlights` (spans merged only when non-empty, as in N4)
+  and cleared when the popup closes.
+- **Name input: a popup, not in-place editing.** IntelliJ edits the new name in place and checks
+  it after the fact with its compiler. In stride an in-place edit would be the refactored text
+  plus multi-caret typing on every occurrence: the code would already be changed before the name
+  could be checked, so a name that hides a member would land silently. The `RefactoringNamePopup`
+  (`popupPanel` key `popup-refactoring-name`) shows the step's title, a field with the suggestion
+  selected, and the `NameCheck.Invalid` message in `errorOnPopupPlate`; `Enter` with an empty
+  field shows `Type a name`, `Esc` cancels.
+- **Expression candidates.** Without a selection Introduce Variable offers the candidates (R3)
+  instead of taking the innermost one; IntelliJ does the same, and the innermost candidate is
+  often a bare name nobody wants as a variable.
+- Every popup takes focus as `CONTEXT_POPUP` and is part of `popupOwnsFocus`. The actions read the
+  selected editor, not `state.focus`, so they also run from the Search Everywhere Actions tab.
+
+### R7 Applying and undo
+
+`startRefactoring` refuses `File is read-only` before asking the provider. The app keeps the text
+the step was prepared on; when the editor's text differs at apply time it applies nothing and
+shows `The file changed; run <Refactoring> again`. Otherwise it calls
+`TextFileEditor.applyEdits(edits, caret)`: all edits form one undo step, `⌘Z` restores the text
+and the selection from before the refactoring, and the caret lands where the provider said.
+`Esc` in any popup changes nothing and restores the selection.
+
+The frame path does not change: providers run on the key press, and highlights reuse the N4
+spans.
+
+### Refactoring messages
+
+Messages written by the app; R3 to R5 list the provider's.
+
+| Message | When it appears |
+|---|---|
+| `No refactorings available at the caret` | Refactor This with no entry |
+| `File is read-only` | any of the four in a read-only editor |
+| `<Refactoring> is not available for .<ext> files` | a file whose language has no refactoring provider; `this file` for a name without an extension |
+| `<Refactoring> failed: <Exception>` | the provider threw; the exception is logged |
+| `The file changed; run <Refactoring> again` | the text changed between preparing and applying |
+| `Type a name` | `Enter` with an empty name field |
 
 ## Declaration navigation, tests and bookmarks
 
