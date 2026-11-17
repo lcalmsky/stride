@@ -46,7 +46,9 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.keys.KeyEventType
 import stride.app.keys.KeyRouter
+import stride.app.keys.dispatchAction
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
 import stride.app.ui.LocalAnimationsEnabled
@@ -90,6 +92,11 @@ class FoldingUiTest {
     private val funOpen: Int get() = sample.indexOf("fun greet(): String {") + "fun greet(): String ".length
     private val functionFold: FoldRegion
         get() = FoldRegion(funOpen + 1, sample.indexOf("\n    }") + 5)
+    private val importFold: FoldRegion
+        get() = FoldRegion(
+            sample.indexOf("import ") + "import ".length,
+            sample.indexOf('\n', sample.indexOf("import beta.Two")),
+        )
 
     private fun openEditor(name: String = "Main.kt", content: String = sample): TextFileEditor {
         val root = temp.resolve("folding-project")
@@ -219,6 +226,69 @@ class FoldingUiTest {
         onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.Equals) } }
         waitUntil(timeoutMillis = 5_000) { editor.foldedRegions.isEmpty() }
         assertTrue(editor.foldedRegions.isEmpty())
+    }
+
+    @Test
+    fun `a fold change does not re-run an old scroll center request`() = runComposeUiTest {
+        val body = (1..4).joinToString("\n") { "    val v$it = $it" }
+        val tail = (1..400).joinToString("\n") { "val t$it = $it" }
+        val content = "fun small() {\n$body\n}\n$tail\n"
+        val editor = openEditor(content = content)
+        setContent { FoldingHarness(state!!) }
+        waitForIdle()
+
+        editor.updateValue(TextFieldValue(content, TextRange(content.indexOf("val t300 = 300"))))
+        waitForIdle()
+        val router = KeyRouter(isMac = true)
+        val center = router.route(KeyEventType.DOWN, Key.L, ctrl = true, focus = KeyContext.EDITOR)
+        assertEquals(ActionId.EDITOR_SCROLL_TO_CENTER, center)
+        dispatchAction(requireNotNull(center), state!!) { null }
+        waitForIdle()
+        val centered = editor.verticalScroll.value
+
+        editor.verticalScroll.dispatchRawDelta(150f)
+        waitForIdle()
+        val before = editor.verticalScroll.value
+        assertTrue(before > centered, "the manual scroll did not move past $centered")
+
+        editor.applyAction(ActionId.COLLAPSE_ALL_REGIONS)
+        waitForIdle()
+        assertEquals(1, editor.foldedRegions.size)
+        assertEquals(before, editor.verticalScroll.value, "folding re-centered the view")
+    }
+
+    @Test
+    fun `an option drag from a placeholder keeps the fold and starts at its hidden start`() = runComposeUiTest {
+        val editor = openEditor()
+        setContent { FoldingHarness(state!!) }
+        val field = onNode(hasSetTextAction())
+        field.performClick()
+        waitUntil(timeoutMillis = 5_000) { state?.focus == KeyContext.EDITOR }
+
+        editor.updateValue(TextFieldValue(sample, TextRange(sample.indexOf("import alpha"))))
+        waitForIdle()
+        editor.applyAction(ActionId.COLLAPSE_REGION)
+        waitForIdle()
+        assertEquals(listOf(importFold), editor.foldedRegions)
+
+        val layout = field.textLayout()
+        val placeholder = layout.layoutInput.text.text.indexOf("...")
+        assertTrue(placeholder > 0)
+        val box = layout.getBoundingBox(placeholder)
+        val press = Offset(box.left + box.width * 0.6f, box.center.y)
+
+        onRoot().performKeyInput { keyDown(Key.AltLeft) }
+        field.performMouseInput {
+            moveTo(press)
+            press()
+            moveTo(Offset(press.x + 1f, press.y))
+            release()
+        }
+        onRoot().performKeyInput { keyUp(Key.AltLeft) }
+        waitForIdle()
+
+        assertEquals(listOf(importFold), editor.foldedRegions)
+        assertEquals(importFold.hiddenStart, editor.carets.single().start)
     }
 
     @Test

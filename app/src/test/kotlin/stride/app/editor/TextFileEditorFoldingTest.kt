@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.app.keys.ActionId
 import stride.core.vfs.VFile
+import stride.lang.TextEdit
 
 class TextFileEditorFoldingTest {
     @TempDir
@@ -211,6 +212,84 @@ class TextFileEditorFoldingTest {
             editor.carets,
         )
         assertEquals(listOf(importFold, functionFold), editor.foldedRegions)
+    }
+
+    @Test
+    fun `a vertical move into a fold expands it and keeps the other caret`() {
+        val text = "fun a() {\n    one\n    two }\nafter\n"
+        val editor = editor(text)
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf('{') + 1)))
+        assertTrue(editor.applyAction(ActionId.COLLAPSE_REGION))
+        val fold = editor.foldedRegions.single()
+
+        editor.placeCarets(text.indexOf("after"), 0)
+        assertTrue(editor.moveCarets(CaretMove.UP, extend = false))
+        assertTrue(editor.foldedRegions.isEmpty())
+        assertEquals(
+            listOf(TextRange(0), TextRange(text.indexOf("    two"))),
+            editor.carets,
+        )
+        assertTrue(fold.hiddenStart < text.indexOf("    two") && text.indexOf("    two") < fold.hiddenEnd)
+    }
+
+    @Test
+    fun `replaceRange before a fold shifts it and inside expands it`() {
+        val editor = editor()
+        editor.updateValue(TextFieldValue(sample, TextRange(funOpen)))
+        editor.applyAction(ActionId.COLLAPSE_REGION)
+        val fold = editor.foldedRegions.single()
+
+        val inserted = "// note\n"
+        editor.replaceRange(0, 0, inserted)
+        assertEquals(
+            listOf(FoldRegion(fold.hiddenStart + inserted.length, fold.hiddenEnd + inserted.length)),
+            editor.foldedRegions,
+        )
+
+        val shifted = editor.foldedRegions.single()
+        editor.replaceRange(shifted.hiddenStart + 1, shifted.hiddenStart + 2, "")
+        assertTrue(editor.foldedRegions.isEmpty())
+    }
+
+    @Test
+    fun `applyEdits before a fold shifts it and inside expands it`() {
+        val editor = editor()
+        editor.updateValue(TextFieldValue(sample, TextRange(funOpen)))
+        editor.applyAction(ActionId.COLLAPSE_REGION)
+        val fold = editor.foldedRegions.single()
+
+        assertTrue(editor.applyEdits(listOf(TextEdit(0, 0, "x"))))
+        assertEquals(listOf(FoldRegion(fold.hiddenStart + 1, fold.hiddenEnd + 1)), editor.foldedRegions)
+
+        val shifted = editor.foldedRegions.single()
+        assertTrue(editor.applyEdits(listOf(TextEdit(shifted.hiddenStart, shifted.hiddenStart + 2, ""))))
+        assertTrue(editor.foldedRegions.isEmpty())
+    }
+
+    @Test
+    fun `renameWord before a fold shifts it and inside expands it`() {
+        val editor = editor()
+        editor.updateValue(TextFieldValue(sample, TextRange(funOpen)))
+        editor.applyAction(ActionId.COLLAPSE_REGION)
+        val fold = editor.foldedRegions.single()
+
+        assertEquals(1, editor.renameWord("Greeter", "Thing"))
+        assertEquals(listOf(FoldRegion(fold.hiddenStart - 2, fold.hiddenEnd - 2)), editor.foldedRegions)
+
+        assertTrue(editor.renameWord("word", "text") > 0)
+        assertTrue(editor.foldedRegions.isEmpty())
+    }
+
+    @Test
+    fun `collapsing without moving a caret keeps the composition`() {
+        val editor = editor()
+        val composition = TextRange(funOpen, funOpen + 3)
+        editor.updateValue(TextFieldValue(sample, TextRange(funOpen), composition))
+        assertEquals(composition, editor.value.composition)
+
+        assertTrue(editor.applyAction(ActionId.COLLAPSE_REGION))
+        assertEquals(listOf(functionFold), editor.foldedRegions)
+        assertEquals(composition, editor.value.composition)
     }
 
     @Test

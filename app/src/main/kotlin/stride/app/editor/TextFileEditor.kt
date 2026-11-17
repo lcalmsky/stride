@@ -635,6 +635,8 @@ class TextFileEditor(
         val folds = effectiveFolds(foldedRegions)
         if (folds.isEmpty()) return
         val moved = carets.map { caret -> TextRange(folds.snap(caret.start), folds.snap(caret.end)) }
+        // Re-applying untouched carets would drop the IME composition and the caret-step state.
+        if (moved == carets) return
         caretStep = CaretStep.NONE
         try {
             applyCarets(CaretEdit(text, moved), record = false)
@@ -643,12 +645,27 @@ class TextFileEditor(
         }
     }
 
-    private fun List<FoldRegion>.snap(offset: Int): Int =
-        firstOrNull { it.hiddenStart < offset && offset < it.hiddenEnd }?.hiddenStart ?: offset
+    private fun List<FoldRegion>.snap(offset: Int): Int = foldAt(offset)?.hiddenStart ?: offset
 
     private fun List<FoldRegion>.snapMoved(offset: Int, old: Int): Int {
-        val fold = firstOrNull { it.hiddenStart < offset && offset < it.hiddenEnd } ?: return offset
+        val fold = foldAt(offset) ?: return offset
         return if (offset > old) fold.hiddenEnd else fold.hiddenStart
+    }
+
+    /** The fold whose hidden text strictly holds [offset]; the list is sorted and non-overlapping. */
+    private fun List<FoldRegion>.foldAt(offset: Int): FoldRegion? {
+        var low = 0
+        var high = size - 1
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            val fold = this[mid]
+            when {
+                offset <= fold.hiddenStart -> high = mid - 1
+                offset >= fold.hiddenEnd -> low = mid + 1
+                else -> return fold
+            }
+        }
+        return null
     }
 
     private fun FoldRegion.contains(offset: Int): Boolean = hiddenStart <= offset && offset <= hiddenEnd
@@ -671,15 +688,30 @@ class TextFileEditor(
                 }
             }
         }
-        if (regions.isNotEmpty()) {
+        if (regions.isNotEmpty() && carets.isNotEmpty()) {
+            val ends = IntArray(carets.size * 2)
+            for ((index, caret) in carets.withIndex()) {
+                ends[index * 2] = caret.start
+                ends[index * 2 + 1] = caret.end
+            }
+            ends.sort()
             regions = regions.filterNot { region ->
-                carets.any { caret ->
-                    (caret.start > region.hiddenStart && caret.start < region.hiddenEnd) ||
-                        (caret.end > region.hiddenStart && caret.end < region.hiddenEnd)
-                }
+                val at = firstAfter(ends, region.hiddenStart)
+                at < ends.size && ends[at] < region.hiddenEnd
             }
         }
         if (regions != foldedRegions) foldedRegions = regions
+    }
+
+    /** The first index of the sorted [ends] whose value is greater than [value], or its size. */
+    private fun firstAfter(ends: IntArray, value: Int): Int {
+        var low = 0
+        var high = ends.size
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (ends[mid] <= value) low = mid + 1 else high = mid
+        }
+        return low
     }
 
     /** Snaps a horizontal field movement out of a fold instead of letting the fold open. */
@@ -1371,12 +1403,18 @@ class TextFileEditor(
                 val targetYPx = targetY.toInt().coerceIn(0, vertical.maxValue)
                 if (targetYPx != vertical.value) vertical.scrollTo(targetYPx)
             }
-            LaunchedEffect(centerRequests, foldView) {
+            LaunchedEffect(centerRequests) {
                 if (centerRequests == 0) return@LaunchedEffect
                 val textLayout = layout ?: return@LaunchedEffect
+                val folds = latestFolds.value
                 val limit = textLayout.layoutInput.text.length
                 val caretOffset = currentValue.selection.end.coerceIn(0, limit)
-                val viewOffset = if (foldView.isEmpty) caretOffset else foldView.toView(caretOffset).coerceIn(0, limit)
+                // A mapping built for another document would make the layout offset invalid.
+                val viewOffset = if (folds.isEmpty || folds.docLength != text.length) {
+                    caretOffset
+                } else {
+                    folds.toView(caretOffset).coerceIn(0, limit)
+                }
                 val line = textLayout.getLineForOffset(viewOffset)
                 val lineCenter = topPadPx + (textLayout.getLineTop(line) + textLayout.getLineBottom(line)) / 2f
                 // The chrome insets bound the visible viewport, so its middle sits below topPad.
@@ -1521,14 +1559,18 @@ class TextFileEditor(
                                             if (textLayout.layoutInput.text.length != foldView.viewLength) return@drawBehind
                                             // Same window as the background canvas, in layout rows.
                                             val linePx = DesignTokens.codeLineHeight.toPx()
-                                            val first = ((vertical.value - topPadPx) / linePx).toInt() - 1
-                                            val last =
-                                                ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
+                                            val lastLine = (textLayout.lineCount - 1).coerceAtLeast(0)
+                                            val first = (((vertical.value - topPadPx) / linePx).toInt() - 1)
+                                                .coerceIn(0, lastLine)
+                                            val last = (((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1)
+                                                .coerceIn(0, lastLine)
                                             val inflate = 1.dp.toPx()
-                                            for (index in foldView.folds.indices) {
+                                            val folded = foldView.foldIndicesInView(
+                                                textLayout.getLineStart(first),
+                                                textLayout.getLineEnd(last),
+                                            )
+                                            for (index in folded) {
                                                 val start = foldView.placeholderStart(index)
-                                                val row = textLayout.getLineForOffset(start)
-                                                if (row < first || row > last) continue
                                                 val head = textLayout.getBoundingBox(start)
                                                 val tail = textLayout.getBoundingBox(start + FOLD_PLACEHOLDER.length - 1)
                                                 val left = minOf(head.left, tail.left) - inflate
@@ -2033,19 +2075,33 @@ class TextFileEditor(
     private fun blockCorner(layout: TextLayoutResult, position: Offset, folds: FoldView): BlockCorner {
         val source = layout.layoutInput.text
         val row = layout.getLineForVerticalPosition(position.y).coerceIn(0, layout.lineCount - 1)
-        val line = if (folds.isEmpty) row else folds.lineOfRow(row)
         val start = layout.getLineStart(row).coerceIn(0, source.length)
-        var end = start
-        while (end < source.length && source[end] != '\n') end++
+        var end = layout.getLineEnd(row).coerceIn(0, source.length)
+        if (end > start && source[end - 1] == '\n') end--
         if (end > start && source[end - 1] == '\r') end--
-        val length = end - start
         val lineRight = layout.getLineRight(row)
-        val column = if (position.x <= lineRight) {
-            (layout.getOffsetForPosition(position) - start).coerceIn(0, length)
-        } else {
-            virtualColumn(position.x, lineRight, length, asciiCharWidth(layout))
+        if (folds.isEmpty) {
+            val column = if (position.x <= lineRight) {
+                (layout.getOffsetForPosition(position) - start).coerceIn(0, end - start)
+            } else {
+                virtualColumn(position.x, lineRight, end - start, asciiCharWidth(layout))
+            }
+            return BlockCorner(row, column)
         }
-        return BlockCorner(line, column)
+        // The row is the folded text, so the corner is taken on the document offset it maps to.
+        val viewOffset: Int
+        val extra: Int
+        if (position.x <= lineRight) {
+            viewOffset = layout.getOffsetForPosition(position).coerceIn(start, end)
+            extra = 0
+        } else {
+            viewOffset = end
+            extra = virtualColumn(position.x, lineRight, 0, asciiCharWidth(layout))
+        }
+        val docOffset = folds.toDoc(viewOffset).coerceIn(0, text.length)
+        val line = lineIndexAt(text, docOffset)
+        val lineStart = if (docOffset == 0) 0 else text.lastIndexOf('\n', docOffset - 1) + 1
+        return BlockCorner(line, docOffset - lineStart + extra)
     }
 
     /** The fold whose placeholder box holds [position], or -1; the box is inflated by 1 dp. */
@@ -2056,8 +2112,13 @@ class TextFileEditor(
         inflate: Float,
     ): Int {
         if (folds.isEmpty || folds.viewLength != layout.layoutInput.text.length) return -1
-        for (index in folds.folds.indices) {
+        val offset = layout.getOffsetForPosition(position).coerceIn(0, folds.viewLength)
+        // The nearest offset can sit one past the placeholder, so the fold before it is checked too.
+        val last = folds.foldIndexStartingAtOrBefore(offset)
+        for (index in intArrayOf(last, last - 1)) {
+            if (index < 0) continue
             val start = folds.placeholderStart(index)
+            if (offset < start || offset > start + FOLD_PLACEHOLDER.length) continue
             val head = layout.getBoundingBox(start)
             val tail = layout.getBoundingBox(start + FOLD_PLACEHOLDER.length - 1)
             val left = minOf(head.left, tail.left) - inflate

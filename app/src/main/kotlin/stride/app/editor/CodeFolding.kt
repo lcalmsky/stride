@@ -41,16 +41,23 @@ internal object FoldRegions {
         return laminar(found.filter { it.hiddenEnd > it.hiddenStart })
     }
 
-    /** Keeps the candidates that are nested in or disjoint from every earlier kept one. */
+    /**
+     * Keeps the candidates that are nested in or disjoint from every earlier kept one. The stack
+     * holds the kept regions that may still overlap the next one: a region is popped once its end
+     * is at or before the next start, so a kept region on the stack can never overlap a later one.
+     */
     private fun laminar(regions: List<FoldRegion>): List<FoldRegion> {
         val sorted = regions.sortedWith(FOLD_REGION_ORDER)
         val kept = ArrayList<FoldRegion>(sorted.size)
+        val stack = ArrayList<FoldRegion>()
         for (region in sorted) {
-            val partial = kept.any { other ->
-                other.hiddenStart < region.hiddenEnd && region.hiddenStart < other.hiddenEnd &&
-                    !(contains(other, region) || contains(region, other))
+            while (stack.isNotEmpty() && stack.last().hiddenEnd <= region.hiddenStart) {
+                stack.removeAt(stack.size - 1)
             }
-            if (!partial) kept.add(region)
+            val top = stack.lastOrNull()
+            if (top != null && region.hiddenEnd > top.hiddenEnd) continue
+            kept.add(region)
+            stack.add(region)
         }
         return kept
     }
@@ -90,19 +97,20 @@ internal object FoldRegions {
         flush()
         return regions
     }
-
-    private fun contains(outer: FoldRegion, inner: FoldRegion): Boolean =
-        outer.hiddenStart <= inner.hiddenStart && inner.hiddenEnd <= outer.hiddenEnd
 }
 
-/** The folds that are not contained in another one; only these are drawn. */
+/** The folds that are not contained in another one; only these are drawn. Never overlaps. */
 internal fun effectiveFolds(folded: List<FoldRegion>): List<FoldRegion> {
     if (folded.isEmpty()) return emptyList()
     val sorted = folded.sortedWith(FOLD_REGION_ORDER)
     val kept = ArrayList<FoldRegion>(sorted.size)
+    var keptEnd = -1
     for (region in sorted) {
-        if (kept.any { outer -> outer.hiddenStart <= region.hiddenStart && region.hiddenEnd <= outer.hiddenEnd }) continue
+        // Sorted outer first: anything starting before the last kept end is contained in it or
+        // partially overlaps it, so only the maximal regions survive and none overlap.
+        if (region.hiddenStart < keptEnd) continue
         kept.add(region)
+        keptEnd = region.hiddenEnd
     }
     return kept
 }
@@ -113,9 +121,8 @@ internal fun effectiveFolds(folded: List<FoldRegion>): List<FoldRegion> {
  *
  * The field's value stays the document text; making the folded text the value instead would
  * force every editing path to translate offsets, and hiding lines under the identity mapping
- * would leave their newlines breaking rows. Unlike IntelliJ there are no gutter fold markers,
- * Fold Selection, `//region` folding, collapsed-by-default settings or preview popups, fold
- * state does not survive a restart, and a placeholder is always `...`.
+ * would leave their newlines breaking rows. The differences from IntelliJ are listed in
+ * `docs/api-app.md` under "Code folding".
  */
 internal class FoldView private constructor(
     val docLength: Int,
@@ -160,6 +167,34 @@ internal class FoldView private constructor(
 
     /** View offset where fold [index]'s placeholder starts. */
     fun placeholderStart(index: Int): Int = viewStarts[index]
+
+    /** The last fold whose placeholder starts at or before [viewOffset], or -1. */
+    internal fun foldIndexStartingAtOrBefore(viewOffset: Int): Int = lastIndexAtOrBefore(viewStarts, viewOffset)
+
+    /** The first fold whose placeholder starts at or after [viewOffset], or the fold count. */
+    internal fun firstPlaceholderAtOrAfter(viewOffset: Int): Int {
+        var low = 0
+        var high = folds.size
+        while (low < high) {
+            val mid = (low + high) / 2
+            if (viewStarts[mid] < viewOffset) low = mid + 1 else high = mid
+        }
+        return low
+    }
+
+    /** Indices of the folds whose placeholder overlaps `[viewStart, viewEnd]`, or an empty range. */
+    internal fun foldIndicesInView(viewStart: Int, viewEnd: Int): IntRange {
+        if (folds.isEmpty()) return IntRange.EMPTY
+        val first = firstPlaceholderAtOrAfter(viewStart - (FOLD_PLACEHOLDER.length - 1))
+        if (first >= folds.size || viewStarts[first] > viewEnd) return IntRange.EMPTY
+        var low = first
+        var high = folds.size - 1
+        while (low < high) {
+            val mid = (low + high + 1) / 2
+            if (viewStarts[mid] <= viewEnd) low = mid else high = mid - 1
+        }
+        return first..low
+    }
 
     /** The row a document line is drawn on; a hidden line takes its fold's row. */
     fun rowOf(docLine: Int): Int {

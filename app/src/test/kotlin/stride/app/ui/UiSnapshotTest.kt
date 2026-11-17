@@ -22,6 +22,7 @@ import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.editor.FoldRegion
 import stride.app.editor.TextFileEditor
 import stride.app.keys.ActionId
 import stride.app.run.FakeProcess
@@ -664,6 +665,12 @@ class UiSnapshotTest {
             val caret = funLine + "fun greet".length
             greeting.updateValue(TextFieldValue(text, TextRange(caret)))
             check(greeting.applyAction(ActionId.COLLAPSE_REGION)) { "the function body did not collapse" }
+            val body = funLine + "fun greet(name: String, count: Int = 3): String ".length + 1
+            assertEquals(
+                listOf(FoldRegion(body, text.indexOf("\n    }") + 5)),
+                greeting.foldedRegions,
+                "the snapshot must show one folded function body",
+            )
             // The caret stays on the folded row, which now shows `{...}`.
             greeting.updateValue(TextFieldValue(text, TextRange(caret)))
             renderApp("16-folding.png", state, renderMillis = 800)

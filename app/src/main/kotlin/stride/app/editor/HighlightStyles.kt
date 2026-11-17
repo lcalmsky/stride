@@ -11,7 +11,6 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
-import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.editorGlassFloor
 import stride.app.ui.theme.paletteOf
 import stride.app.ui.theme.readableOn
@@ -74,11 +73,17 @@ data class BackgroundSpan(val start: Int, val end: Int, val color: Color)
  */
 class HighlightingVisualTransformation internal constructor(
     private val spans: List<TokenSpan>,
-    private val backgroundSpans: List<BackgroundSpan> = emptyList(),
-    private val scheme: ColorScheme = activeColorScheme(),
-    private val folds: FoldView = FoldView.NONE,
-    private val placeholderStyle: SpanStyle = SpanStyle(color = DesignTokens.muted),
+    private val backgroundSpans: List<BackgroundSpan>,
+    private val scheme: ColorScheme,
+    private val folds: FoldView,
+    private val placeholderStyle: SpanStyle,
 ) : VisualTransformation {
+    constructor(
+        spans: List<TokenSpan>,
+        backgroundSpans: List<BackgroundSpan> = emptyList(),
+        scheme: ColorScheme = activeColorScheme(),
+    ) : this(spans, backgroundSpans, scheme, FoldView.NONE, SpanStyle())
+
     override fun filter(text: AnnotatedString): TransformedText {
         if (folds.isEmpty || text.length != folds.docLength) return identity(text)
         val folded = foldedText(text)
@@ -90,12 +95,12 @@ class HighlightingVisualTransformation internal constructor(
         for (range in spanStyles(spans, scheme)) {
             val start = mappedStart(range.start)
             val end = mappedEnd(range.end)
-            if (start < end) builder.addStyle(range.item, start, end)
+            if (start < end) builder.addMappedStyle(range.item, start, end)
         }
         for (span in backgroundSpans) {
             val start = mappedStart(span.start)
             val end = mappedEnd(span.end)
-            if (start < end) builder.addStyle(SpanStyle(background = span.color), start, end)
+            if (start < end) builder.addMappedStyle(SpanStyle(background = span.color), start, end)
         }
         for (index in folds.folds.indices) {
             val start = folds.placeholderStart(index)
@@ -143,6 +148,21 @@ class HighlightingVisualTransformation internal constructor(
         val index = folds.foldIndexEndingAt(clamped)
         if (index >= 0) return folds.placeholderStart(index)
         return folds.toView(clamped)
+    }
+
+    /** Adds [style] in the pieces of `[start, end)` that fall outside every placeholder. */
+    private fun AnnotatedString.Builder.addMappedStyle(style: SpanStyle, start: Int, end: Int) {
+        var cursor = start
+        var index = folds.firstPlaceholderAtOrAfter(start)
+        while (index < folds.folds.size) {
+            val placeholderStart = folds.placeholderStart(index)
+            val placeholderEnd = placeholderStart + FOLD_PLACEHOLDER.length
+            if (placeholderEnd > end) break
+            if (cursor < placeholderStart) addStyle(style, cursor, placeholderStart)
+            cursor = placeholderEnd
+            index++
+        }
+        if (cursor < end) addStyle(style, cursor, end)
     }
 
     override fun equals(other: Any?): Boolean =

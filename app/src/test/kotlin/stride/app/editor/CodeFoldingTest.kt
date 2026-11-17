@@ -242,4 +242,136 @@ class CodeFoldingTest {
         assertEquals(text, transformed.text.text)
         assertTrue(transformed.offsetMapping === OffsetMapping.Identity)
     }
+
+    @Test
+    fun `the three argument constructor keeps the identity mapping`() {
+        val transformation = HighlightingVisualTransformation(
+            listOf(TokenSpan(0, 3, TextAttributesKey.KEYWORD)),
+            listOf(BackgroundSpan(0, 3, Color.Red)),
+            ColorScheme.DARK,
+        )
+        val transformed = transformation.filter(AnnotatedString("val x"))
+        assertEquals("val x", transformed.text.text)
+        assertSame(OffsetMapping.Identity, transformed.offsetMapping)
+    }
+
+    @Test
+    fun `a crlf import fold ends before the carriage return`() {
+        val text = "import alpha.One\r\nimport beta.Two\r\n\r\nfun main() {\r\n    run()\r\n}\r\n"
+        val second = text.indexOf("import beta.Two")
+        val fold = FoldRegion(text.indexOf("import ") + "import ".length, text.indexOf('\r', second))
+        assertEquals(fold, FoldRegions.candidates(text).first { it.hiddenStart == fold.hiddenStart })
+
+        val view = FoldView.of(text, listOf(fold))
+        assertNull(view.visibleRowOf(1))
+        assertEquals(0, view.rowOf(1))
+        assertEquals(1, view.rowOf(2))
+        assertEquals(listOf(0, 2), view.visibleLines.take(2).toList())
+    }
+
+    @Test
+    fun `a fold reaching the last line maps the end without a trailing newline`() {
+        val text = "fun f() {\n    one\n    two\n}"
+        val fold = FoldRegion(text.indexOf('{') + 1, text.lastIndexOf('}'))
+        val view = FoldView.of(text, listOf(fold))
+
+        assertEquals(13, view.toView(text.length))
+        assertEquals(view.viewLength, view.toView(text.length))
+        assertEquals(1, view.rowCount)
+        assertEquals(listOf(0), view.visibleLines.toList())
+        assertNull(view.visibleRowOf(1))
+        assertNull(view.visibleRowOf(3))
+    }
+
+    @Test
+    fun `adjacent folds map both placeholder ends`() {
+        val text = "0123456789abcdef"
+        val first = FoldRegion(2, 5)
+        val second = FoldRegion(5, 9)
+        val view = FoldView.of(text, listOf(first, second))
+
+        assertEquals(15, view.viewLength)
+        assertEquals(2, view.placeholderStart(0))
+        assertEquals(5, view.placeholderStart(1))
+        assertEquals(2, view.toView(first.hiddenStart))
+        assertEquals(5, view.toView(second.hiddenStart))
+        assertEquals(first.hiddenEnd, view.toDoc(5))
+        assertEquals(second.hiddenEnd, view.toDoc(8))
+        assertEquals(8, view.toView(9))
+        assertEquals(9, view.toDoc(8))
+        assertEquals(15, view.toView(16))
+    }
+
+    @Test
+    fun `effective folds drop partially overlapping regions`() {
+        val kept = effectiveFolds(
+            listOf(FoldRegion(0, 10), FoldRegion(5, 15), FoldRegion(20, 30), FoldRegion(25, 28)),
+        )
+        assertEquals(listOf(FoldRegion(0, 10), FoldRegion(20, 30)), kept)
+        for (index in 1 until kept.size) {
+            assertTrue(kept[index].hiddenStart >= kept[index - 1].hiddenEnd, "folds $kept overlap")
+        }
+    }
+
+    @Test
+    fun `twenty thousand sibling folds stay under a second`() {
+        val blocks = 20_000
+        val text = buildString(blocks * 32) {
+            for (index in 0 until blocks) append("fun f$index() {\n    val value = $index\n}\n")
+        }
+
+        val candidateStart = System.nanoTime()
+        val candidates = FoldRegions.candidates(text)
+        val candidateMillis = (System.nanoTime() - candidateStart) / 1_000_000
+
+        val effectiveStart = System.nanoTime()
+        val effective = effectiveFolds(candidates)
+        val effectiveMillis = (System.nanoTime() - effectiveStart) / 1_000_000
+
+        val viewStart = System.nanoTime()
+        val view = FoldView.of(text, effective)
+        val viewMillis = (System.nanoTime() - viewStart) / 1_000_000
+
+        assertEquals(blocks, candidates.size)
+        assertEquals(blocks, effective.size)
+        assertEquals(blocks, view.folds.size)
+        assertTrue(candidateMillis < 1_000, "candidates took $candidateMillis ms")
+        assertTrue(effectiveMillis < 1_000, "effectiveFolds took $effectiveMillis ms")
+        assertTrue(viewMillis < 1_000, "FoldView.of took $viewMillis ms")
+    }
+
+    @Test
+    fun `a token or background span covering a fold leaves the placeholder unstyled`() {
+        val text = "/**\n * x\n */\nfun f() {}\n"
+        val folds = FoldView.of(text, listOf(FoldRegion(3, 10)))
+        val placeholderStyle = SpanStyle(color = Color.Red)
+        val transformation = HighlightingVisualTransformation(
+            spans = listOf(TokenSpan(1, 12, TextAttributesKey.KEYWORD)),
+            backgroundSpans = listOf(BackgroundSpan(1, 12, Color.Yellow)),
+            scheme = ColorScheme.DARK,
+            folds = folds,
+            placeholderStyle = placeholderStyle,
+        )
+
+        val transformed = transformation.filter(AnnotatedString(text))
+        assertEquals("/**...*/\nfun f() {}\n", transformed.text.text)
+        val start = folds.placeholderStart(0)
+        val scheme = ColorScheme.DARK
+        val defaultColor = textAttributesToSpanStyle(
+            requireNotNull(scheme.getAttributes(TextAttributesKey.DEFAULT_TEXT)),
+        ).color
+        for (offset in start until start + FOLD_PLACEHOLDER.length) {
+            val applied = transformed.text.spanStyles.filter { it.start <= offset && offset < it.end }
+            assertTrue(applied.isNotEmpty(), "no style at placeholder offset $offset")
+            for (range in applied) {
+                val item = range.item
+                val plain = (item.color == defaultColor || item.color == placeholderStyle.color) &&
+                    item.fontWeight == null &&
+                    item.fontStyle == null &&
+                    item.textDecoration == null &&
+                    (item.background == Color.Unspecified || item.background.alpha == 0f)
+                assertTrue(item == placeholderStyle || plain, "$range covers placeholder offset $offset")
+            }
+        }
+    }
 }
