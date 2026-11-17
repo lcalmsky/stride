@@ -137,6 +137,23 @@ class KeyRouterTest {
     }
 
     @Test
+    fun `another modifier during the clone wait ends it`() {
+        val router = router()
+        doubleTapAlt(router)
+
+        now = 300
+        router.route(KeyEventType.DOWN, Key.ShiftLeft)
+        now = 350
+        router.route(KeyEventType.UP, Key.ShiftLeft)
+
+        now = 400
+        assertEquals(
+            ActionId.EDITOR_SELECT_WORD,
+            router.route(KeyEventType.DOWN, Key.DirectionUp, alt = true, focus = KeyContext.EDITOR),
+        )
+    }
+
+    @Test
     fun `the clone gesture needs the editor focus`() {
         val router = router()
         doubleTapAlt(router)

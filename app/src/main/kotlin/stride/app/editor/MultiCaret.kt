@@ -82,7 +82,9 @@ internal object MultiCaret {
         while (prefix < maxPrefix && oldText[prefix] == newText[prefix]) prefix++
         val rs = minOf(prefix, lo)
         var suffix = 0
-        val maxSuffix = minOf(oldText.length - prefix, newText.length - prefix)
+        // Measured from the truncated prefix: the raw prefix can pass `lo`, and a suffix that
+        // overlaps it would widen the change past the caret.
+        val maxSuffix = minOf(oldText.length - rs, newText.length - rs)
         while (suffix < maxSuffix &&
             oldText[oldText.length - 1 - suffix] == newText[newText.length - 1 - suffix]
         ) {
@@ -110,12 +112,10 @@ internal object MultiCaret {
         var primaryApplied = false
         for (entry in entries) {
             val caret = entry.caret
-            val rawStart = caret.min - a
-            val rawEnd = caret.max + b
-            if (rawStart < 0 || rawEnd > oldText.length) {
-                results[entry.index] = TextRange((caret.end + delta).coerceIn(0, newText.length))
-                continue
-            }
+            // Clamped, not skipped: a caret left of the primary still repeats a shorter part of
+            // the change instead of losing it.
+            val rawStart = (caret.min - a).coerceIn(0, oldText.length)
+            val rawEnd = (caret.max + b).coerceIn(0, oldText.length)
             if (!entry.primary && rs < re && rawStart < re && rs < rawEnd) {
                 results[entry.index] = newPrimary
                 continue
@@ -139,10 +139,17 @@ internal object MultiCaret {
         }
         if (!primaryApplied) return null
 
-        var result = oldText
-        for (range in applied.sortedByDescending { it.min }) {
-            result = result.substring(0, range.min) + inserted + result.substring(range.max)
+        // `applied` is recorded in ascending order and the edits never overlap, so one pass
+        // rebuilds the document instead of one full copy per caret.
+        val builder = StringBuilder(oldText.length)
+        var cursor = 0
+        for (range in applied) {
+            builder.append(oldText, cursor, range.min)
+            builder.append(inserted)
+            cursor = range.max
         }
+        builder.append(oldText, cursor, oldText.length)
+        val result = builder.toString()
         val composition = newValue.composition?.let { comp ->
             TextRange(
                 (comp.min + primaryShift).coerceIn(0, result.length),
@@ -166,6 +173,7 @@ internal object MultiCaret {
         val vertical = move == CaretMove.UP || move == CaretMove.DOWN
         val moved = ArrayList<TextRange>(carets.size)
         val columns = if (vertical) ArrayList<Int>(carets.size) else null
+        val starts = lineStarts(text)
         carets.forEachIndexed { index, caret ->
             val saved = desiredColumns?.getOrNull(index)
             when (move) {
@@ -174,7 +182,7 @@ internal object MultiCaret {
                 CaretMove.WORD_LEFT -> moved.add(horizontal(text, caret, extend, forward = false, word = true))
                 CaretMove.WORD_RIGHT -> moved.add(horizontal(text, caret, extend, forward = true, word = true))
                 CaretMove.LINE_START -> {
-                    val target = lineStart(text, caret.end)
+                    val target = starts[lineIndexAt(starts, caret.end)]
                     moved.add(if (extend) TextRange(caret.start, target) else TextRange(target))
                 }
                 CaretMove.LINE_END -> {
@@ -184,15 +192,15 @@ internal object MultiCaret {
                 CaretMove.UP, CaretMove.DOWN -> {
                     val up = move == CaretMove.UP
                     val anchor = if (extend) caret.start else caret.end
-                    val baseStart = lineStart(text, caret.end)
-                    val baseEnd = lineEnd(text, caret.end)
+                    val line = lineIndexAt(starts, caret.end)
+                    val baseStart = starts[line]
+                    val baseEnd = lineEnd(text, baseStart)
                     val column = saved ?: codePointCount(text, baseStart, baseEnd, caret.end)
-                    val line = lineIndexOf(text, caret.end)
                     val targetLine = if (up) line - 1 else line + 1
-                    val movedCaret = if (targetLine < 0 || targetLine >= lineCountOf(text)) {
+                    val movedCaret = if (targetLine < 0 || targetLine >= starts.size) {
                         caret
                     } else {
-                        val targetStart = lineStartAt(text, targetLine)
+                        val targetStart = starts[targetLine]
                         val targetEnd = lineEnd(text, targetStart)
                         val offset = offsetForColumn(text, targetStart, targetEnd, column)
                         if (extend) TextRange(anchor, offset) else TextRange(offset)
@@ -218,10 +226,7 @@ internal object MultiCaret {
             }
         }
         val merged = mergeRanges(deletions)
-        var newText = text
-        for (range in merged.asReversed()) {
-            newText = newText.substring(0, range.min) + newText.substring(range.max)
-        }
+        val newText = removeRanges(text, merged)
         val mapped = carets.map { TextRange(mapRemoved(it.end, merged).coerceIn(0, newText.length)) }
         return CaretEdit(newText, normalize(mapped))
     }
@@ -242,12 +247,17 @@ internal object MultiCaret {
             newPositions[index] = caret.min + delta + value.length
             delta += value.length - (caret.max - caret.min)
         }
-        var newText = text
-        for (index in order.asReversed()) {
+        val builder = StringBuilder(text.length)
+        var cursor = 0
+        for (index in order) {
             val caret = carets[index]
-            val value = inserted[index] ?: clip
-            newText = newText.substring(0, caret.min) + value + newText.substring(caret.max)
+            if (caret.min < cursor) continue
+            builder.append(text, cursor, caret.min)
+            builder.append(inserted[index] ?: clip)
+            cursor = caret.max
         }
+        builder.append(text, cursor, text.length)
+        val newText = builder.toString()
         val mapped = carets.indices.map { TextRange(newPositions[it].coerceIn(0, newText.length)) }
         return CaretEdit(newText, normalize(mapped))
     }
@@ -259,23 +269,35 @@ internal object MultiCaret {
             val ranges = selected.map { it.min..(it.max - 1) }
             return ranges.joinToString("\n") { text.substring(it.first, it.last + 1) } to ranges
         }
+        val starts = lineStarts(text)
         val seen = HashSet<Int>()
         val ranges = ArrayList<IntRange>()
         for (caret in carets.sortedBy { it.min }) {
-            val line = EditActions.wholeLine(text, caret.min)
-            if (seen.add(line.min)) ranges.add(line.min until line.max)
+            val start = starts[lineIndexAt(starts, caret.min)]
+            var end = lineEnd(text, start)
+            if (end < text.length) end++
+            if (seen.add(start)) ranges.add(start until end)
         }
         return ranges.joinToString("") { text.substring(it.first, it.last + 1) } to ranges
     }
 
     fun deleteRanges(text: String, carets: List<TextRange>, ranges: List<IntRange>): CaretEdit {
         val merged = mergeRanges(ranges.map { TextRange(it.first, it.last + 1) })
-        var newText = text
-        for (range in merged.asReversed()) {
-            newText = newText.substring(0, range.min) + newText.substring(range.max)
-        }
+        val newText = removeRanges(text, merged)
         val mapped = carets.map { TextRange(mapRemoved(it.end, merged).coerceIn(0, newText.length)) }
         return CaretEdit(newText, normalize(mapped))
+    }
+
+    private fun removeRanges(text: String, ranges: List<TextRange>): String {
+        if (ranges.isEmpty()) return text
+        val builder = StringBuilder(text.length - ranges.sumOf { it.max - it.min })
+        var cursor = 0
+        for (range in ranges) {
+            builder.append(text, cursor, range.min)
+            cursor = range.max
+        }
+        builder.append(text, cursor, text.length)
+        return builder.toString()
     }
 
     fun selectNextOccurrence(text: String, carets: List<TextRange>, wholeWords: Boolean): OccurrenceResult {
@@ -323,7 +345,15 @@ internal object MultiCaret {
             index = text.indexOf(word, index + 1)
         }
         if (matches.isEmpty()) return OccurrenceResult(carets, wholeWords, false)
-        val primaryMatch = matches.firstOrNull { overlaps(it, primary) } ?: matches.first()
+        // A collapsed caret that `wordAt` read as the word sits at either boundary; the end one
+        // is not an overlap by the strict test, so it is accepted here exclusively.
+        val primaryMatch = matches.firstOrNull { match ->
+            if (primary.collapsed) {
+                match.first <= primary.end && primary.end <= match.last + 1
+            } else {
+                overlaps(match, primary)
+            }
+        } ?: matches.first()
         val ordered = matches.filter { it != primaryMatch }.map { directed(it, primary) } +
             directed(primaryMatch, primary)
         return OccurrenceResult(ordered, whole, true)
@@ -339,18 +369,24 @@ internal object MultiCaret {
         if (carets.isEmpty()) return carets
         val extreme = (if (above) carets.minByOrNull { it.end } else carets.maxByOrNull { it.end })
             ?: return carets
-        val line = lineIndexOf(text, extreme.end)
+        val starts = lineStarts(text)
+        val line = lineIndexAt(starts, extreme.end)
         val targetLine = if (above) line - 1 else line + 1
-        if (targetLine < 0 || targetLine >= lineCountOf(text)) return carets
-        val start = lineStartAt(text, targetLine)
+        if (targetLine < 0 || targetLine >= starts.size) return carets
+        val start = starts[targetLine]
         val end = lineEnd(text, start)
-        val offset = offsetForColumn(text, start, end, column ?: columnAt(text, extreme.end))
+        val targetColumn = column ?: run {
+            val extremeStart = starts[line]
+            codePointCount(text, extremeStart, lineEnd(text, extremeStart), extreme.end)
+        }
+        val offset = offsetForColumn(text, start, end, targetColumn)
         if (carets.any { it.end == offset }) return carets
         return carets + TextRange(offset)
     }
 
     fun block(text: String, anchorLine: Int, anchorCol: Int, leadLine: Int, leadCol: Int): List<TextRange> {
-        val lastLine = lineCountOf(text) - 1
+        val starts = lineStarts(text)
+        val lastLine = starts.size - 1
         val from = anchorLine.coerceIn(0, lastLine)
         val to = leadLine.coerceIn(0, lastLine)
         val step = if (to >= from) 1 else -1
@@ -359,7 +395,7 @@ internal object MultiCaret {
         val carets = ArrayList<TextRange>()
         var line = from
         while (true) {
-            val start = lineStartAt(text, line)
+            val start = starts[line]
             val end = lineEnd(text, start)
             val low = offsetForColumn(text, start, end, lowCol)
             val high = offsetForColumn(text, start, end, highCol)
@@ -397,12 +433,13 @@ internal object MultiCaret {
         fn: (String, TextRange) -> EditResult,
     ): CaretEdit {
         if (carets.isEmpty()) return CaretEdit(text, carets)
-        val groups = if (lineBased) groupByLines(text, carets) else carets.indices.map { listOf(it) }
+        val starts = lineStarts(text)
+        val groups = if (lineBased) groupByLines(starts, carets) else carets.indices.map { listOf(it) }
         val current = carets.toMutableList()
         var currentText = text
-        val applied = ArrayList<TextRange>()
+        var lastApplied: TextRange? = null
         val ordered = groups.sortedByDescending { group ->
-            group.maxOf { lineIndexOf(text, carets[it].min) }
+            group.maxOf { lineIndexAt(starts, carets[it].min) }
         }
         for (group in ordered) {
             val representative = group.max()
@@ -410,7 +447,10 @@ internal object MultiCaret {
             if (result.text == currentText) continue
             val change = computeTextChange(currentText, result.text)
             val region = TextRange(change.offset, change.offset + change.oldLength)
-            if (applied.any { maxOf(it.min, region.min) < minOf(it.max, region.max) }) continue
+            // Groups run bottom-up, so only the previous region can still be in the way.
+            if (lastApplied != null && maxOf(lastApplied.min, region.min) < minOf(lastApplied.max, region.max)) {
+                continue
+            }
             val newSelection = clamp(result.selection, result.text.length)
             val delta = change.newText.length - change.oldLength
             fun mapped(offset: Int): Int = when {
@@ -424,7 +464,7 @@ internal object MultiCaret {
                 current[index] = TextRange(mapped(caret.start), mapped(caret.end))
             }
             current[representative] = newSelection
-            applied.add(region)
+            lastApplied = region
             currentText = result.text
         }
         return CaretEdit(currentText, normalize(current))
@@ -446,11 +486,29 @@ internal object MultiCaret {
         return codePointCount(text, start, lineEnd(text, start), offset)
     }
 
-    fun lineIndexOf(text: String, offset: Int): Int {
-        var line = 0
-        val limit = offset.coerceIn(0, text.length)
-        for (i in 0 until limit) if (text[i] == '\n') line++
-        return line
+    fun lineIndexOf(text: String, offset: Int): Int = lineIndexAt(lineStarts(text), offset)
+
+    /** The offset every line starts at; one scan per operation, then binary searches. */
+    fun lineStarts(text: String): IntArray {
+        var count = 1
+        for (character in text) if (character == '\n') count++
+        val starts = IntArray(count)
+        var line = 1
+        for (index in text.indices) {
+            if (text[index] == '\n') starts[line++] = index + 1
+        }
+        return starts
+    }
+
+    /** The line holding [offset], found by binary search over [starts]. */
+    fun lineIndexAt(starts: IntArray, offset: Int): Int {
+        var low = 0
+        var high = starts.size - 1
+        while (low < high) {
+            val mid = (low + high + 1) / 2
+            if (starts[mid] <= offset) low = mid else high = mid - 1
+        }
+        return low
     }
 
     fun lineCountOf(text: String): Int {
@@ -516,14 +574,14 @@ internal object MultiCaret {
             TextRange(range.last + 1, range.first)
         }
 
-    private fun groupByLines(text: String, carets: List<TextRange>): List<List<Int>> {
+    private fun groupByLines(starts: IntArray, carets: List<TextRange>): List<List<Int>> {
         val groups = ArrayList<MutableList<Int>>()
         var groupLastLine = -1
         for (index in carets.indices.sortedBy { carets[it].min }) {
             val caret = carets[index]
-            val first = lineIndexOf(text, caret.min)
+            val first = lineIndexAt(starts, caret.min)
             val lastOffset = if (caret.max > caret.min) caret.max - 1 else caret.min
-            val last = lineIndexOf(text, lastOffset)
+            val last = lineIndexAt(starts, lastOffset)
             val current = groups.lastOrNull()
             if (current != null && first <= groupLastLine) {
                 current.add(index)
@@ -620,15 +678,6 @@ internal object MultiCaret {
         while (index < text.length && text[index] != '\n') index++
         if (index > 0 && index < text.length && text[index - 1] == '\r') index--
         return index
-    }
-
-    private fun lineStartAt(text: String, line: Int): Int {
-        if (line <= 0) return 0
-        var count = 0
-        for (index in text.indices) {
-            if (text[index] == '\n' && ++count == line) return index + 1
-        }
-        return text.length
     }
 
     private fun clipLines(clip: String): List<String> {

@@ -183,14 +183,19 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
     ActionId.SELECT_NEXT_OCCURRENCE -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
-        if (!editor.selectNextOccurrence()) state.statusMessage = "No more occurrences"
+        state.statusMessage = if (editor.selectNextOccurrence()) null else "No more occurrences"
         true
     }
     ActionId.UNSELECT_PREVIOUS_OCCURRENCE,
     ActionId.SELECT_ALL_OCCURRENCES,
     ActionId.EDITOR_CLONE_CARET_ABOVE,
     ActionId.EDITOR_CLONE_CARET_BELOW,
-    -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    -> {
+        val handled = (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action)
+            ?: return false
+        if (handled) state.statusMessage = null
+        handled
+    }
     ActionId.EDITOR_TOGGLE_COLUMN_MODE -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
         state.statusMessage = if (editor.toggleColumnMode()) {

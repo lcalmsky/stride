@@ -41,6 +41,9 @@ class KeyRouter(
         if (type == KeyEventType.DOWN) {
             if (modifier != null) {
                 if (pressed.add(modifier)) {
+                    // A modifier other than the held Option belongs to another gesture: Option
+                    // plus anything is no longer the clone wait.
+                    if (cloneWaiting && modifier != ModifierKey.ALT) cloneWaiting = false
                     detector.modifierPressed(modifier)
                     if (modifier == ModifierKey.ALT && detector.isSecondPressHeld(ModifierKey.ALT)) {
                         cloneWaiting = true

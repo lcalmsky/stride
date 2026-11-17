@@ -978,6 +978,23 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `a successful occurrence selection clears the previous failure message`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        editor.updateValue(TextFieldValue("foo", TextRange(1)))
+
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+        assertEquals("No more occurrences", state.statusMessage)
+
+        editor.updateValue(TextFieldValue("foo foo", TextRange(1)))
+        assertTrue(dispatchAction(ActionId.SELECT_NEXT_OCCURRENCE, state) { null })
+
+        assertNull(state.statusMessage)
+    }
+
+    @Test
     fun `column selection mode reports its state`() {
         val session = openProjectWith("a.kt")
         val root = temp.resolve("project")

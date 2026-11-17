@@ -69,6 +69,48 @@ class MultiCaretTest {
     }
 
     @Test
+    fun `typing where only the primary caret follows the same character`() {
+        val edit = replicate(
+            "foo(e) bar(x)",
+            TextRange(10),
+            null,
+            TextFieldValue("foo(e) bar((x)", TextRange(11)),
+            listOf(caret(4)),
+        )
+        assertEquals("foo((e) bar((x)", edit.text)
+        assertEquals(listOf(caret(5), caret(12)), edit.carets)
+        assertTrue(edit.typing)
+    }
+
+    @Test
+    fun `typing the same character after both carets keeps both copies`() {
+        val edit = replicate("a", TextRange(0), null, TextFieldValue("aa", TextRange(1)), listOf(caret(1)))
+        assertEquals("aaa", edit.text)
+        assertEquals(listOf(caret(3), caret(1)), edit.carets)
+        assertTrue(edit.typing)
+    }
+
+    @Test
+    fun `typing over a repeated character replaces every selection fully`() {
+        val edit = replicate("abb", TextRange(0, 2), null, TextFieldValue("ab", TextRange(1)), listOf(TextRange(2, 3)))
+        assertEquals("aa", edit.text)
+        assertEquals(listOf(caret(2), caret(1)), edit.carets)
+    }
+
+    @Test
+    fun `a replicated deletion left of the document start is clipped`() {
+        val edit = replicate(
+            "abc def ghi",
+            TextRange(8),
+            null,
+            TextFieldValue("abc ghi", TextRange(4)),
+            listOf(caret(1)),
+        )
+        assertEquals("bc ghi", edit.text)
+        assertEquals(listOf(caret(0), caret(3)), edit.carets)
+    }
+
+    @Test
     fun `backspace deletes before every caret`() {
         val edit = replicate("abc\ndef", TextRange(5), null, TextFieldValue("abc\nef", TextRange(4)), listOf(caret(2)))
         assertEquals("ac\nef", edit.text)
@@ -299,6 +341,13 @@ class MultiCaretTest {
     }
 
     @Test
+    fun `select all occurrences keeps a caret at the end of its word as primary`() {
+        val result = MultiCaret.selectAllOccurrences("foo bar foo", listOf(caret(11)), false)
+        assertTrue(result.found)
+        assertEquals(listOf(TextRange(0, 3), TextRange(8, 11)), result.carets)
+    }
+
+    @Test
     fun `unselect drops the primary caret then collapses a lone selection`() {
         assertEquals(listOf(TextRange(0, 3)), MultiCaret.unselectOccurrence(listOf(TextRange(0, 3), TextRange(8, 11))))
         assertEquals(listOf(caret(3)), MultiCaret.unselectOccurrence(listOf(TextRange(0, 3))))
@@ -415,5 +464,44 @@ class MultiCaretTest {
             EditActions.toggleCase(text, range)
         }
         assertEquals("ABC", edit.text)
+    }
+
+    // thousands of carets
+
+    @Test
+    fun `replicating and moving thousands of carets stays under a second`() {
+        val lines = 10_000
+        val text = (0 until lines).joinToString("\n") { "v$it = ${"x".repeat(10)}" }
+        // Every other line, so a downward move lands on free lines and keeps all carets.
+        val offsets = ArrayList<Int>()
+        var lineStart = 0
+        for (line in 0 until lines) {
+            if (line % 2 == 0) offsets.add(lineStart + 2)
+            val break_ = text.indexOf('\n', lineStart)
+            if (break_ < 0) break
+            lineStart = break_ + 1
+        }
+        val carets = offsets.map { TextRange(it) }
+        val primary = carets.last()
+        val inserted = text.substring(0, primary.end) + "z" + text.substring(primary.end)
+
+        val replicateStart = System.nanoTime()
+        val edit = MultiCaret.replicate(
+            text,
+            primary,
+            null,
+            TextFieldValue(inserted, TextRange(primary.end + 1)),
+            carets.dropLast(1),
+        )
+        val replicateMillis = (System.nanoTime() - replicateStart) / 1_000_000
+
+        val moveStart = System.nanoTime()
+        val moved = MultiCaret.move(text, carets, CaretMove.DOWN, extend = false, desiredColumns = null)
+        val moveMillis = (System.nanoTime() - moveStart) / 1_000_000
+
+        assertEquals(primary.end + 1 + carets.size - 1, edit?.carets?.last()?.end)
+        assertEquals(carets.size, moved.first.size)
+        assertTrue(replicateMillis < 1_000, "replicate took $replicateMillis ms")
+        assertTrue(moveMillis < 1_000, "move took $moveMillis ms")
     }
 }

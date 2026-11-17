@@ -236,7 +236,10 @@ class TextFileEditor(
     /** Every caret in addition order; the last one is [value]'s selection, the primary caret. */
     val carets: List<TextRange> get() = secondaryCarets + value.selection
 
-    private var caretStep = false
+    /** The caret operation in flight; each preserves only the state its next step reads. */
+    private enum class CaretStep { NONE, OCCURRENCE, CLONE, BLOCK, VERTICAL }
+
+    private var caretStep: CaretStep? = null
     private var wholeWords = false
     private var desiredColumns: List<Int>? = null
     private var cloneColumn: Int? = null
@@ -356,12 +359,12 @@ class TextFileEditor(
 
     private fun applyValue(newValue: TextFieldValue, record: Boolean) {
         val changed = newValue.text != text || newValue.selection != value.selection
-        if (changed && !selectionStep && !hippieStep && !caretStep) {
+        if (changed && !selectionStep && !hippieStep && caretStep == null) {
             selectionStack.clear()
             hippie = null
         }
-        val cleared = if (!caretStep && secondaryCarets.isNotEmpty()) secondaryCarets else emptyList()
-        if (!caretStep) clearCaretState()
+        val cleared = if (caretStep == null && secondaryCarets.isNotEmpty()) secondaryCarets else emptyList()
+        if (caretStep == null) clearCaretState()
         if (newValue.text != text) {
             val change = computeTextChange(text, newValue.text)
             if (record) {
@@ -379,7 +382,7 @@ class TextFileEditor(
             highlighter?.edit(change.offset, change.oldLength, change.newText)
             spans = highlighter?.spans() ?: emptyList()
         }
-        if (!caretStep) secondaryCarets = emptyList()
+        if (caretStep == null) secondaryCarets = emptyList()
         value = newValue
     }
 
@@ -409,10 +412,36 @@ class TextFileEditor(
             highlighter?.edit(change.offset, change.oldLength, change.newText)
             spans = highlighter?.spans() ?: emptyList()
         }
-        if (!caretStep) {
-            selectionStack.clear()
-            hippie = null
-            clearCaretState()
+        when (caretStep) {
+            null -> {
+                selectionStack.clear()
+                hippie = null
+                clearCaretState()
+            }
+            CaretStep.OCCURRENCE -> {
+                desiredColumns = null
+                cloneColumn = null
+                cloneDirection = null
+                blockActive = false
+            }
+            CaretStep.CLONE -> {
+                wholeWords = false
+                desiredColumns = null
+                blockActive = false
+            }
+            CaretStep.BLOCK -> {
+                wholeWords = false
+                desiredColumns = null
+                cloneColumn = null
+                cloneDirection = null
+            }
+            CaretStep.VERTICAL -> {
+                wholeWords = false
+                cloneColumn = null
+                cloneDirection = null
+                blockActive = false
+            }
+            CaretStep.NONE -> clearCaretState()
         }
         secondaryCarets = secondaries
         value = TextFieldValue(edit.text, primary, edit.composition)
@@ -500,13 +529,13 @@ class TextFileEditor(
     /** Moves every caret; `false` when there is only the primary caret the field owns. */
     internal fun moveCarets(move: CaretMove, extend: Boolean): Boolean {
         if (secondaryCarets.isEmpty()) return false
-        caretStep = true
+        caretStep = if (move == CaretMove.UP || move == CaretMove.DOWN) CaretStep.VERTICAL else CaretStep.NONE
         try {
             val (moved, columns) = MultiCaret.move(text, carets, move, extend, desiredColumns)
             desiredColumns = columns
             applyCarets(CaretEdit(text, moved), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
         return true
     }
@@ -534,7 +563,7 @@ class TextFileEditor(
     /** Grows or shrinks the rectangular selection by [dLine] lines and [dCol] columns. */
     fun extendBlock(dLine: Int, dCol: Int): Boolean {
         if (!columnMode) return false
-        caretStep = true
+        caretStep = CaretStep.BLOCK
         try {
             if (!blockActive) {
                 val position = value.selection.end
@@ -549,7 +578,7 @@ class TextFileEditor(
             val carets = MultiCaret.block(text, blockAnchorLine, blockAnchorCol, blockLeadLine, blockLeadCol)
             applyCarets(CaretEdit(text, carets), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
         return true
     }
@@ -561,11 +590,11 @@ class TextFileEditor(
         blockAnchorCol = anchorCol
         blockLeadLine = leadLine
         blockLeadCol = leadCol
-        caretStep = true
+        caretStep = CaretStep.BLOCK
         try {
             applyCarets(CaretEdit(text, MultiCaret.block(text, anchorLine, anchorCol, leadLine, leadCol)), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
     }
 
@@ -585,11 +614,11 @@ class TextFileEditor(
         val result = MultiCaret.selectNextOccurrence(text, carets, wholeWords)
         if (!result.found) return false
         wholeWords = result.wholeWords
-        caretStep = true
+        caretStep = CaretStep.OCCURRENCE
         try {
             applyCarets(CaretEdit(text, result.carets), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
         return true
     }
@@ -599,22 +628,22 @@ class TextFileEditor(
         val result = MultiCaret.selectAllOccurrences(text, carets, wholeWords)
         if (!result.found) return false
         wholeWords = result.wholeWords
-        caretStep = true
+        caretStep = CaretStep.OCCURRENCE
         try {
             applyCarets(CaretEdit(text, result.carets), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
         return true
     }
 
     /** Drops the primary caret, promoting the previous one; collapses a lone selection. */
     fun unselectPreviousOccurrence() {
-        caretStep = true
+        caretStep = CaretStep.OCCURRENCE
         try {
             applyCarets(CaretEdit(text, MultiCaret.unselectOccurrence(carets)), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
     }
 
@@ -632,13 +661,13 @@ class TextFileEditor(
         } ?: return false
         val added = MultiCaret.cloneCaret(text, carets, above, column)
         if (added.size == carets.size) return false
-        caretStep = true
+        caretStep = CaretStep.CLONE
         try {
             cloneColumn = column
             cloneDirection = above
             applyCarets(CaretEdit(text, added), record = false)
         } finally {
-            caretStep = false
+            caretStep = null
         }
         return true
     }

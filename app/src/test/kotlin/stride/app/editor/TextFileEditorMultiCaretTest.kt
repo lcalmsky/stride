@@ -52,6 +52,13 @@ class TextFileEditorMultiCaretTest {
         toggleCaretAt(primary)
     }
 
+    /** The field value a keystroke produces: [text] replaces the primary selection. */
+    private fun TextFileEditor.typeAtPrimary(text: String) {
+        val selection = value.selection
+        val newText = value.text.substring(0, selection.min) + text + value.text.substring(selection.max)
+        onFieldValueChange(TextFieldValue(newText, TextRange(selection.min + text.length)))
+    }
+
     @Test
     fun `a field change replicates into the secondary carets and undo restores them`() {
         val editor = editor("aa")
@@ -86,6 +93,22 @@ class TextFileEditorMultiCaretTest {
         assertTrue(editor.undo())
         assertEquals("abcd", editor.value.text)
         assertEquals(listOf(TextRange(4), TextRange(2)), editor.carets)
+        assertFalse(editor.undo())
+    }
+
+    @Test
+    fun `typing the character after every caret merges into one undo step`() {
+        val editor = editor("a a")
+        editor.placeCarets(2, 0)
+
+        editor.typeAtPrimary("a")
+        assertEquals("aa aa", editor.value.text)
+        editor.typeAtPrimary("a")
+        assertEquals("aaa aaa", editor.value.text)
+
+        assertTrue(editor.undo())
+        assertEquals("a a", editor.value.text)
+        assertEquals(listOf(TextRange(0), TextRange(2)), editor.carets)
         assertFalse(editor.undo())
     }
 
@@ -286,6 +309,36 @@ class TextFileEditorMultiCaretTest {
         assertTrue(editor.applyAction(ActionId.SELECT_NEXT_OCCURRENCE))
         assertEquals(listOf(TextRange(0, 3), TextRange(8, 11)), editor.carets)
         assertFalse(editor.applyAction(ActionId.SELECT_NEXT_OCCURRENCE))
+    }
+
+    @Test
+    fun `selecting occurrences after cloning clears the clone history`() {
+        val editor = editor("ab\ncd\nef\ngh")
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(4)))
+
+        assertTrue(editor.cloneCaret(above = false))
+        assertEquals(listOf(TextRange(4), TextRange(7)), editor.carets)
+
+        assertTrue(editor.applyAction(ActionId.SELECT_NEXT_OCCURRENCE))
+        assertEquals(listOf(TextRange(3, 5), TextRange(6, 8)), editor.carets)
+
+        assertTrue(editor.cloneCaret(above = true))
+        assertEquals(listOf(TextRange(3, 5), TextRange(6, 8), TextRange(2)), editor.carets)
+    }
+
+    @Test
+    fun `selecting occurrences during a block starts a new block afterwards`() {
+        val editor = editor("abcd\nabcd\nabcd")
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(1)))
+        assertTrue(editor.toggleColumnMode())
+        assertTrue(editor.extendBlock(1, 0))
+        assertEquals(listOf(TextRange(1), TextRange(6)), editor.carets)
+
+        assertTrue(editor.applyAction(ActionId.SELECT_NEXT_OCCURRENCE))
+        assertEquals(listOf(TextRange(0, 4), TextRange(5, 9)), editor.carets)
+
+        assertTrue(editor.extendBlock(0, -1))
+        assertEquals(listOf(TextRange(9, 8)), editor.carets)
     }
 
     @Test
