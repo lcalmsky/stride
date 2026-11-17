@@ -170,6 +170,7 @@ internal enum class ExpressionProblem {
     BRACKETS,
     STATEMENT,
     SEMICOLON,
+    COMMA,
     ASSIGNMENT,
     DECLARATION,
     OPERATOR_EDGE,
@@ -310,6 +311,7 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
         if (before.text == "is" && tokenBefore(before.start)?.text == "!") return ExpressionProblem.TYPE_POSITION
     }
     if (isInsideTypeArguments(this, range.start)) return ExpressionProblem.TYPE_POSITION
+    if (hasTopLevelComma(atoms)) return ExpressionProblem.COMMA
 
     if (nonExpressionRanges.any { it.start < range.end && range.start < it.end }) {
         return ExpressionProblem.ANNOTATION
@@ -387,10 +389,11 @@ private enum class AtomKind { NAME, LITERAL, OPERATOR, KEYWORD, OTHER }
 private class ExprAtom(val token: KtToken, val text: String, val kind: AtomKind)
 
 /**
- * The expressions tokens of [range]: string literals collapse into one atom and template code is
- * left out (it is judged on its own). `null` when a code token straddles the range boundary.
+ * The expression tokens of [range]: string literals collapse into one atom and template code is
+ * left out unless the range starts in it. `null` when a code token straddles the range boundary.
  */
 private fun KotlinCode.expressionAtoms(range: KtRange): List<ExprAtom>? {
+    val templateCode = tokenStartingAt(range.start)?.let { templateRangeOf(it) } != null
     val atoms = ArrayList<ExprAtom>()
     var index = 0
     while (index < tokens.size) {
@@ -427,7 +430,7 @@ private fun KotlinCode.expressionAtoms(range: KtRange): List<ExprAtom>? {
                 atoms.add(ExprAtom(token, "\"\"", AtomKind.LITERAL))
                 index = pieceIndex + 1
             }
-            token.index in templateTokens -> index++
+            token.index in templateTokens && !templateCode -> index++
             else -> {
                 val kind = when {
                     isNameToken(token) -> AtomKind.NAME
@@ -469,6 +472,18 @@ private fun hasTopLevelElse(atoms: List<ExprAtom>): Boolean {
         }
     }
     return ifs <= elses
+}
+
+private fun hasTopLevelComma(atoms: List<ExprAtom>): Boolean {
+    var depth = 0
+    for (atom in atoms) {
+        when (atom.text) {
+            "(", "[", "{" -> depth++
+            ")", "]", "}" -> depth--
+            "," -> if (depth <= 0) return true
+        }
+    }
+    return false
 }
 
 private val STABLE_OPERATORS = setOf(

@@ -815,6 +815,17 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `an expression in template code becomes an expression function`() {
+        val text = "fun f(a: Int, b: Int) {\n    println(\"x\${a + b}\")\n}\n"
+        val applied = extract(text, "a + b")
+        assertEquals(
+            "fun f(a: Int, b: Int) {\n    println(\"x\${extracted(a, b)}\")\n}\n\n" +
+                "private fun extracted(a: Int, b: Int) = a + b\n",
+            applied.text,
+        )
+    }
+
+    @Test
     fun `modifiers do not count as used names`() {
         val text = "value class Id(val raw: Int)\n\ninline fun f() {\n    println(1)\n}\n"
         val question = ask(select(text, "println(1)"))
@@ -860,6 +871,12 @@ class KotlinExtractMethodTest {
             "fun f() {\n    extracted()\n}\n\nprivate fun extracted() {\n    println(1) // note\n}\n",
             extract(text, "println(1) // note").text,
         )
+    }
+
+    @Test
+    fun `a comma-separated selection is refused`() {
+        val text = "fun f(a: Int, b: Int) {\n    foo(a, b)\n}\n"
+        assertEquals("Select whole statements or one expression", refused(select(text, "a, b")))
     }
 
     @Test

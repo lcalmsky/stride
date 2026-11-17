@@ -83,6 +83,19 @@ class KotlinIntroduceVariableTest {
         assertEquals("fun f(v: Int) {\n    val value = v + 1\n    println(\"v=\${value}\")\n}\n", applied.text)
     }
 
+    @Test
+    fun `a selection ending with a name inside template code is allowed`() {
+        val text = "fun f(a: Int, b: Int) {\n    println(\"x\${a + b}\")\n}\n"
+        val applied = finish(text, ask(select(text, "a + b")), "sum")
+        assertEquals("fun f(a: Int, b: Int) {\n    val sum = a + b\n    println(\"x\${sum}\")\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a comma-separated argument list is not an expression`() {
+        val text = "fun f(a: Int, b: Int) {\n    foo(a, b)\n}\n"
+        assertEquals("Select an expression", refused(select(text, "a, b")))
+    }
+
 
     @Test
     fun `an expression body is refused`() {
