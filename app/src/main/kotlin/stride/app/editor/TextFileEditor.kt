@@ -2344,6 +2344,41 @@ internal fun paintVisibleLines(
     onPainted(range.last - range.first + 1)
 }
 
+/** One line's piece of a problem range, as offsets into the text layout. */
+internal data class ProblemSegment(val line: Int, val start: Int, val end: Int)
+
+/**
+ * The per-line pieces of [from]..[to] that fall on rows [first]..[last]. A piece is empty when a
+ * range ends at a line end; on the line the range starts on it is still returned, so the caller
+ * can draw its one-character fallback width, while an empty piece on a later line is dropped.
+ * Map the layout through the [lineOf], [lineStart] and [lineEnd] functions, which keeps the rule
+ * testable without a layout.
+ */
+internal fun problemSegments(
+    from: Int,
+    to: Int,
+    limit: Int,
+    first: Int,
+    last: Int,
+    lineOf: (Int) -> Int,
+    lineStart: (Int) -> Int,
+    lineEnd: (Int) -> Int,
+): List<ProblemSegment> {
+    if (from < 0 || from >= limit) return emptyList()
+    val firstLine = lineOf(from)
+    val lastLine = lineOf((to.coerceAtLeast(from + 1) - 1).coerceAtMost(limit - 1))
+    if (lastLine < first || firstLine > last) return emptyList()
+    val segments = ArrayList<ProblemSegment>()
+    for (line in maxOf(firstLine, first)..minOf(lastLine, last)) {
+        val segmentStart = maxOf(from, lineStart(line))
+        val segmentEnd = minOf(maxOf(to, segmentStart + 1), lineEnd(line))
+        if (segmentEnd < segmentStart) continue
+        if (segmentEnd == segmentStart && line != firstLine) continue
+        segments += ProblemSegment(line, segmentStart, segmentEnd)
+    }
+    return segments
+}
+
 /**
  * Draws a squiggle under every problem that starts in the layout rows [first]..[last] and is
  * not hidden inside a fold. Offsets are mapped from the document into the folded layout, and a
@@ -2359,6 +2394,14 @@ private fun DrawScope.drawProblemUnderlines(
 ) {
     val limit = textLayout.layoutInput.text.length
     val strokeWidth = 1.dp.toPx()
+    val windowStart = textLayout.getLineStart(first)
+    val windowEnd = textLayout.getLineEnd(last)
+    val layoutText = textLayout.layoutInput.text
+    // The code font is monospaced, so one visible glyph gives the width an empty range widens to.
+    val charWidth = (windowStart until minOf(windowEnd, limit))
+        .firstOrNull { !layoutText[it].isWhitespace() }
+        ?.let { textLayout.getBoundingBox(it).width }
+        ?: (4 * strokeWidth)
     for (problem in problems) {
         if (problem.start < 0 || problem.start >= textLength) continue
         if (!folds.isEmpty && folds.docLength == textLength && folds.foldIndexContaining(problem.start) >= 0) continue
@@ -2366,21 +2409,27 @@ private fun DrawScope.drawProblemUnderlines(
         val usable = folds.isEmpty || folds.docLength != textLength
         val from = (if (usable) problem.start else folds.toView(problem.start)).coerceIn(0, limit)
         val to = (if (usable) end else folds.toView(end)).coerceIn(from, limit)
+        // The problems are start-sorted and the fold mapping is monotone, so every later one is
+        // past the window too.
+        if (from > windowEnd) break
+        if (to < windowStart) continue
         if (from >= limit) continue
-        val firstLine = textLayout.getLineForOffset(from)
-        val lastLine = textLayout.getLineForOffset((to.coerceAtLeast(from + 1) - 1).coerceAtMost(limit - 1))
-        if (lastLine < first || firstLine > last) continue
         val color = if (problem.severity == ProblemSeverity.ERROR) DesignTokens.neonPink else DesignTokens.neonAmber
-        for (line in maxOf(firstLine, first)..minOf(lastLine, last)) {
-            val lineStart = textLayout.getLineStart(line)
-            val lineEnd = textLayout.getLineEnd(line)
-            val segmentStart = maxOf(from, lineStart)
-            val segmentEnd = minOf(maxOf(to, segmentStart + 1), lineEnd)
-            if (segmentEnd <= segmentStart) continue
-            val left = textLayout.getHorizontalPosition(segmentStart, usePrimaryDirection = true)
-            var right = textLayout.getHorizontalPosition(segmentEnd, usePrimaryDirection = true)
-            if (right <= left) right = left + 4 * strokeWidth
-            drawWave(left, right, textLayout.getLineBottom(line) - 2.dp.toPx(), color, strokeWidth)
+        val segments = problemSegments(
+            from = from,
+            to = to,
+            limit = limit,
+            first = first,
+            last = last,
+            lineOf = textLayout::getLineForOffset,
+            lineStart = textLayout::getLineStart,
+            lineEnd = textLayout::getLineEnd,
+        )
+        for (segment in segments) {
+            val left = textLayout.getHorizontalPosition(segment.start, usePrimaryDirection = true)
+            var right = textLayout.getHorizontalPosition(segment.end, usePrimaryDirection = true)
+            if (right <= left) right = left + charWidth
+            drawWave(left, right, textLayout.getLineBottom(segment.line) - 2.dp.toPx(), color, strokeWidth)
         }
     }
 }

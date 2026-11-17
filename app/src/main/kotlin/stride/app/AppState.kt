@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import stride.app.editor.ClipboardHistory
 import stride.app.editor.CompletionRequest
@@ -291,7 +292,7 @@ class AppState {
                         model = current.project.service<ProblemsModel>(),
                         toolState = problemsToolWindow,
                         focusRequests = toolWindows.focusRequests,
-                        keymap = Keymap.forPlatform(KeyRouter.isMacOs()),
+                        keymap = remember { Keymap.forPlatform(KeyRouter.isMacOs()) },
                         root = current.project.root,
                         isOpen = { path ->
                             current.editors.openFiles.any { it.file.path.toAbsolutePath().normalize() == path }

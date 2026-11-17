@@ -20,13 +20,13 @@ data class CompilerMessage(
  * including a relative path, an unreadable position or an empty message, reads as `null`.
  */
 object CompilerMessageParser {
-    private val KOTLIN_URI = Regex("""^([ew]): (file:\S+?):(\d+):(\d+) (.+)$""")
+    private val KOTLIN_URI = Regex("""^([ew]): (file:.+?):(\d+):(\d+) (.+)$""")
     private val KOTLIN_LEGACY = Regex("""^([ew]): (.+?): \((\d+), (\d+)\): (.+)$""")
     private val JAVAC = Regex("""^(.+?):(\d+): (error|warning): (.+)$""")
 
     fun parse(line: String): CompilerMessage? {
         KOTLIN_URI.matchEntire(line)?.let { match ->
-            val path = runCatching { Paths.get(URI(match.groupValues[2])) }.getOrNull() ?: return null
+            val path = uriPath(match.groupValues[2]) ?: return null
             return message(
                 path = path,
                 line = match.groupValues[3],
@@ -78,6 +78,16 @@ object CompilerMessageParser {
             severity = severity,
             message = message,
         )
+    }
+
+    /**
+     * The absolute path of a `file:` URI. A URI that does not parse — an unencoded space, for
+     * one — keeps its text as written after the `file://` prefix, with `%XX` left undecoded.
+     */
+    private fun uriPath(raw: String): Path? {
+        runCatching { Paths.get(URI(raw)) }.getOrNull()?.let { return it }
+        val path = runCatching { Paths.get(raw.removePrefix("file://")) }.getOrNull() ?: return null
+        return if (path.isAbsolute) path else null
     }
 
     private fun absolutePath(raw: String): Path? {

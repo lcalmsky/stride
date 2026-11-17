@@ -42,6 +42,23 @@ class CompilerMessageParserTest {
     }
 
     @Test
+    fun `a uri path with a space parses whether or not it is encoded`() {
+        val plain = requireNotNull(
+            CompilerMessageParser.parse("e: file:///tmp/My Project/A.kt:3:5 something broke"),
+        )
+        val encoded = requireNotNull(
+            CompilerMessageParser.parse("e: file:///tmp/My%20Project/A.kt:3:5 something broke"),
+        )
+
+        assertEquals(Path.of("/tmp/My Project/A.kt"), plain.path)
+        assertEquals(Path.of("/tmp/My Project/A.kt"), encoded.path)
+        assertEquals(2, plain.line)
+        assertEquals(4, plain.column)
+        assertEquals(2, encoded.line)
+        assertEquals(4, encoded.column)
+    }
+
+    @Test
     fun `the kotlin 1_7 parenthesised form reads its absolute path`() {
         val message = requireNotNull(
             CompilerMessageParser.parse("e: /work/project/A.kt: (12, 5): Unresolved reference: foo"),

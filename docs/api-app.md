@@ -1648,7 +1648,7 @@ class ProblemsModel(private val project: Project) {
     fun publishBuild(messages: List<CompilerMessage>)
     fun compute(path: Path, fileName: String, text: String,
                 area: ExtensionArea = Application.extensionArea): List<FileProblem>
-    fun record(path: Path, problems: List<FileProblem>)
+    fun record(path: Path, problems: List<FileProblem>, version: Int = buildVersion)
     fun projectErrors(isOpen: (Path) -> Boolean): List<FileErrors>
 }
 
@@ -1679,10 +1679,10 @@ data class ErrorDescriptionRequest(val editor: TextFileEditor, val problems: Lis
 
 `RunSession` gained a trailing constructor parameter with a default,
 `onCompilerMessages: ((List<CompilerMessage>) -> Unit)? = null`. Its reader parses the console
-lines as compiler messages, keeps at most `MAX_COMPILER_MESSAGES` (1000), and calls the callback
-before `exitCode` is set; a session that was stopped never calls it. `RunManager.run` passes the
-callback only when `configuration.command == null` (a Gradle run) and publishes through the
-project's `ProblemsModel`.
+lines as compiler messages, keeps at most `MAX_COMPILER_MESSAGES` (1000) and drops the rest, and
+calls the callback before `exitCode` is set; a session that was stopped never calls it.
+`RunManager.run` passes the callback only when `configuration.command == null` (a Gradle run) and
+publishes through the project's `ProblemsModel`.
 
 The four keys are `⌘6` (`ACTIVATE_PROBLEMS_TOOL_WINDOW`, GLOBAL, `ActivateProblemsViewToolWindow`),
 `F2` (`GOTO_NEXT_ERROR`), `⇧F2` (`GOTO_PREVIOUS_ERROR`) and `⌘F1` (`SHOW_ERROR_DESCRIPTION`), the
@@ -1711,8 +1711,11 @@ problems outside the text.
 
 Decision D4: the editor source is recomputed `300 ms` after the selected editor's text goes quiet,
 on `Dispatchers.Default`, and when the selected editor changes; a hidden editor keeps its last
-result. When a Gradle run finishes without being stopped, its whole compiler message set replaces
-the previous build source (an empty set clears it); a custom command run and a stopped run do not.
+result until the next build. When the build source changes, every other open `TextFileEditor` is
+recomputed at once, without the debounce, so its record moves onto the new build version; the
+selected editor keeps the debounced path. When a Gradle run finishes without being stopped, its
+whole compiler message set replaces the previous build source (an empty set clears it); a custom
+command run and a stopped run do not.
 At the end of a build the disk text of every file that has a message is kept as the base text,
 and `LineRemap` maps a base line onto the current text in three steps:
 
@@ -1728,28 +1731,46 @@ ends after the identifier that starts there (or one character, clamped), and wit
 covers the line's first non-blank character through its last non-blank character. A file whose
 base text could not be read has no remap, so the editor source only.
 
+A record keeps the `buildVersion` it was computed on; the editor effects read the version before
+computing and pass it to `record`, so a build that lands mid-computation leaves that record
+stale instead of stamping old build lines with the new version. `publishBuild` replaces the build files and
+bumps `buildVersion` in one snapshot and keeps the records; a record older than the current
+version contributes only its editor-sourced errors, so a build message never points at a line the
+editing has moved until the file is recomputed.
+
+A compiler line's URI path may contain a space. The path is read through `URI` when it parses;
+otherwise (an unencoded space) the text after `file://` is taken as written and `%XX` is left
+undecoded. A path that is not absolute reads as no message.
+
 Decision D5: the Problems window is the existing bottom `ListToolWindow` in a `ToolWindow` named
 `problems`, registered between Run (`⌘4`) and Structure (`⌘7`). It has two capsule range tabs with
 counts, `File` and `Project Errors`, the last choice kept in `ProblemsToolWindowState`. A row's
 primary text is a severity symbol with the message — `●` in `neonPinkOnGlass` for an error, `▲` in
 `neonAmberOnGlass` for a warning — and its secondary text is the 1-based `line:column`, plus
 ` · build` for a build source. Project Errors groups the errors by file: a header row with the
-relative path and `1 error` / `N errors`, then indented error rows. An open file reports the
-recorded errors of its editor; a file without an editor reports the build messages as they are
-(line and column known, offsets unknown). ↵ or a double click moves the selected editor's caret to
-the problem start and hands it the keyboard; in Project Errors it opens the file at its line and
-column as one history entry (a header row opens that file's first error). The window stays open.
-Empty states are `No file selected`, `No problems in <file name>` and
+relative path and `1 error` / `N errors`, then indented error rows. Its files are the build
+files plus every open file that has a record. An open file reports its record's errors, the
+editor-sourced ones only when the record predates the current build; an open file without a
+record and a closed file report the build messages as they are (line and column known, offsets
+unknown). ↵ or a double click moves the selected editor's caret to the problem start and hands it
+the keyboard; in Project Errors it opens the file at its line and column as one history entry (a
+header row opens that file's first error), and a file that no longer exists is reported as
+`File not found: <relative path>` instead, opening nothing and adding no history entry. The
+window stays open. Empty states are `No file selected`, `No problems in <file name>` and
 `No errors · ⌘F9 Build Project` (the stroke from `shortcutText(keymap, BUILD_PROJECT)`).
 
 Decision D6: the editor draws a wave underline under each problem — `DesignTokens.neonPink` for an
 error, `DesignTokens.neonAmber` for a warning, a one-character width for an empty range — inside
 the same visible-row window the fold drawing uses, and skips a problem that starts inside a
-collapsed range. When the list is empty the modifier chain does not grow, so the clean editor path
-keeps its frame cost. `F2` / `⇧F2` walk the selected file only, with the IntelliJ default that
-errors are walked when the file has one and warnings otherwise: forward takes the first start
-after the caret and wraps to the top, backward takes the last start before it and wraps to the
-bottom, the caret moves to the start (`TextFileEditor.jumpTo`, which drops the secondary carets,
+collapsed range. An empty range at a line end is kept on the line the range starts on and drawn at
+that fallback width; an empty piece on a later line of a multi-line range is skipped. Because the
+problems are start-sorted and the fold mapping is monotone, the walk stops once a problem starts
+past the window's last line end and skips a problem that ends before the window. When the list is
+empty the modifier chain does not grow, so the clean editor path keeps its frame cost. `F2` /
+`⇧F2` walk the selected file only, with the IntelliJ default that errors are walked when the file
+has one and warnings otherwise: forward takes the first start after the caret and wraps to the
+top, backward takes the last start before it and wraps to the bottom, the caret moves to the
+start (`TextFileEditor.jumpTo`, which drops the secondary carets,
 unfolds through `reconcileFolds` and records one jump), and a file without a problem shows
 `No problems in this file`. `⌘F1` shows `ErrorDescriptionPopup` for the problems at the caret
 (`start ≤ caret ≤ end`); without one it shows `No problems at the caret`. The popup sits at
@@ -1765,10 +1786,11 @@ registered in `PopupNativeLegibilityTest` and `PopupPlateContrastTest`.
 Differences from IntelliJ and limits: the window docks at the bottom, not the left; there is no
 gutter icon (IntelliJ's default has none either); the editor source comes from a lexer, not from
 compilation, so it reports bracket pairs and unused imports only (whatever the language plugin
-contributes); and the Project Errors view is flat by file with no scopes. Out of scope: errors
-from a compiler running in the editor, inspection settings, apply-all quick fixes, grouping and
-filtering, scrollbar marks and the inspection widget, saving before a run, and the Problems
-navigation actions.
+contributes); an underline keeps its old offsets until the next recompute, up to `300 ms` after
+the typing stops, where IntelliJ moves a range with the edit; and the Project Errors view is flat
+by file with no scopes. Out of scope: errors from a compiler running in the editor, inspection
+settings, apply-all quick fixes, grouping and filtering, scrollbar marks and the inspection
+widget, saving before a run, and the Problems navigation actions.
 
 ## Declaration navigation, tests and bookmarks
 

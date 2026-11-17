@@ -21,6 +21,7 @@ import stride.app.editor.applyRename
 import stride.app.editor.find.FindOptions
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
+import stride.app.navigation.openFileAtColumn
 import stride.app.problems.FileProblem
 import stride.app.problems.ProblemScope
 import stride.app.problems.ProblemSource
@@ -1030,18 +1031,39 @@ class ActionDispatcherTest {
     fun `next and previous error move the caret onto the problems`() {
         val session = openProjectWith("a.kt")
         val editor = session.editors.selected as TextFileEditor
-        editor.updateValue(TextFieldValue("one\nsecond\nthird\n", TextRange(1)))
+        editor.updateValue(TextFieldValue("one\ntwo\nthree\n", TextRange(1)))
         editor.problems = listOf(
-            FileProblem(ProblemSeverity.WARNING, "warning", ProblemSource.EDITOR, 0, 0, 0, 3),
-            FileProblem(ProblemSeverity.ERROR, "error", ProblemSource.BUILD, 1, 0, 4, 10),
+            FileProblem(ProblemSeverity.ERROR, "first", ProblemSource.EDITOR, 0, 0, 0, 3),
+            FileProblem(ProblemSeverity.ERROR, "second", ProblemSource.BUILD, 1, 0, 4, 7),
+            FileProblem(ProblemSeverity.ERROR, "third", ProblemSource.BUILD, 2, 0, 8, 13),
         )
 
-        assertTrue(dispatchAction(ActionId.GOTO_NEXT_ERROR, state) { null })
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(5)))
+        assertTrue(dispatchAction(ActionId.GOTO_PREVIOUS_ERROR, state) { null })
         assertEquals(4, editor.value.selection.start)
         assertNull(state.statusMessage)
 
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
         assertTrue(dispatchAction(ActionId.GOTO_PREVIOUS_ERROR, state) { null })
-        assertEquals(4, editor.value.selection.start)
+        assertEquals(8, editor.value.selection.start)
+
+        editor.updateValue(TextFieldValue(editor.value.text, TextRange(9)))
+        assertTrue(dispatchAction(ActionId.GOTO_NEXT_ERROR, state) { null })
+        assertEquals(0, editor.value.selection.start)
+    }
+
+    @Test
+    fun `opening a project error whose file is gone reports it and keeps the tabs`() {
+        val session = openProjectWith("a.kt")
+        val tabs = session.editors.openFiles.toList()
+        val locations = session.history.locations()
+        val missing = temp.resolve("project").resolve("gone.kt")
+
+        openFileAtColumn(state, session, VFile(missing), 0, 0)
+
+        assertEquals(tabs, session.editors.openFiles)
+        assertEquals("File not found: gone.kt", state.statusMessage)
+        assertEquals(locations, session.history.locations())
     }
 
     @Test

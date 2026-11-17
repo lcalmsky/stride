@@ -38,7 +38,10 @@ import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.problems.CompilerMessage
+import stride.app.problems.ErrorDescriptionRequest
+import stride.app.problems.FileProblem
 import stride.app.problems.ProblemScope
+import stride.app.problems.ProblemSource
 import stride.app.problems.ProblemsModel
 import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
@@ -183,6 +186,71 @@ class ProblemsToolWindowUiTest {
             editor.updateValue(TextFieldValue("x\nbeta\n", TextRange(0)))
 
             waitUntil(timeoutMillis = 5_000) { editor.problems.isEmpty() }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the error description closes and returns the keyboard when another file is selected`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("error-description-project"))
+        val first = root.resolve("A.kt")
+        Files.writeString(first, "alpha\n")
+        val second = root.resolve("B.kt")
+        Files.writeString(second, "beta\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(first)) as TextFileEditor
+            val problem = FileProblem(ProblemSeverity.ERROR, "broke", ProblemSource.EDITOR, 0, 0, 0, 5)
+            state.errorDescription = ErrorDescriptionRequest(editor, listOf(problem))
+            state.focus = KeyContext.CONTEXT_POPUP
+
+            setContent { ListWindowHarness(state) }
+            waitForIdle()
+
+            session.editors.openFile(VFile(second))
+
+            waitUntil(timeoutMillis = 5_000) { state.errorDescription == null }
+            assertEquals(KeyContext.EDITOR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a build fills the problems of an open editor that is not selected`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("unselected-project"))
+        val first = root.resolve("A.kt")
+        Files.writeString(first, "alpha\n")
+        val second = root.resolve("B.kt")
+        Files.writeString(second, "beta\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val firstEditor = session.editors.openFile(VFile(first)) as TextFileEditor
+            session.editors.openFile(VFile(second))
+            val model = session.project.service<ProblemsModel>()
+            model.publishBuild(
+                listOf(
+                    CompilerMessage(
+                        first.toAbsolutePath().normalize(),
+                        0,
+                        0,
+                        ProblemSeverity.ERROR,
+                        "alpha is not defined",
+                    ),
+                ),
+            )
+
+            setContent { ListWindowHarness(state) }
+
+            waitUntil(timeoutMillis = 5_000) { firstEditor.problems.isNotEmpty() }
+            assertEquals("alpha is not defined", firstEditor.problems.single().message)
         } finally {
             state.dispose()
         }

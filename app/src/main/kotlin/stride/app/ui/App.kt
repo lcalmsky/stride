@@ -695,7 +695,10 @@ fun App(
         if (errorDescription != null && session != null) {
             val selected = session.editors.selected
             LaunchedEffect(errorDescription, selected) {
-                if (selected !== errorDescription.editor) state.errorDescription = null
+                if (selected !== errorDescription.editor) {
+                    state.errorDescription = null
+                    if (state.focus == KeyContext.CONTEXT_POPUP) refocusEditor(state)
+                }
             }
             if (selected === errorDescription.editor) {
                 Box(Modifier.fillMaxSize()) {

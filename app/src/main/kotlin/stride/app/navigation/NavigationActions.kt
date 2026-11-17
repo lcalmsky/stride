@@ -59,6 +59,10 @@ fun openFileAtLine(state: AppState, session: ProjectSession, file: VFile, line: 
 
 /** Opens [file] at [line] and [column] (0-based) and records the landing position as one history entry. */
 fun openFileAtColumn(state: AppState, session: ProjectSession, file: VFile, line: Int, column: Int) {
+    if (!Files.exists(file.path)) {
+        state.statusMessage = missingFileMessage(session, file.path)
+        return
+    }
     val editor = session.history.withoutRecording {
         session.editors.openFile(file)?.also { opened ->
             val textEditor = opened as? TextFileEditor ?: return@also

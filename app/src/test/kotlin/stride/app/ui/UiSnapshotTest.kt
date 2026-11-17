@@ -28,6 +28,7 @@ import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.problems.CompilerMessage
+import stride.app.problems.ProblemSource
 import stride.app.problems.ProblemsModel
 import stride.app.search.FindTabKind
 import stride.app.run.FakeProcess
@@ -746,7 +747,32 @@ class UiSnapshotTest {
             val session = requireNotNull(state.session)
             check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
             expand(session, root, "src", "main", "kotlin", "demo")
-            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val greetingFile = root.resolve("src/main/kotlin/demo/Greeting.kt")
+            Files.writeString(
+                greetingFile,
+                """
+                package demo
+
+                import java.time.Clock
+
+                /**
+                 * Greets one person per request.
+                 *
+                 * The prefix defaults to "Hello"; keep custom prefixes under 8 characters so the
+                 * greeting still reads well in the console.
+                 */
+                @Suppress("unused")
+                class Greeter(private val prefix: String = "Hello") {
+                    // Templates keep the wording in one place.
+                    fun greet(name: String, count: Int = 3): String {
+                        val message = "${'$'}prefix, ${'$'}name!"
+                        if (count <= 0) return ""
+                        return (1..count).joinToString(separator = ", ") { mesage }
+                    }
+                }
+                """.trimIndent(),
+            )
+            val greeting = openEditor(session, greetingFile)
             val text = greeting.value.text
             val path = greeting.file.path.toAbsolutePath().normalize()
             fun lineOf(needle: String): Int = text.substring(0, text.indexOf(needle)).count { it == '\n' }
@@ -759,25 +785,27 @@ class UiSnapshotTest {
                 listOf(
                     CompilerMessage(
                         path,
-                        lineOf("joinToString"),
-                        columnOf("joinToString"),
+                        lineOf("mesage"),
+                        columnOf("mesage"),
                         ProblemSeverity.ERROR,
-                        "Unresolved reference: joinToString",
-                    ),
-                    CompilerMessage(
-                        path,
-                        lineOf("count <= 0"),
-                        columnOf("count <= 0"),
-                        ProblemSeverity.WARNING,
-                        "Parameter 'count' is never used",
+                        "Unresolved reference 'mesage'.",
                     ),
                 ),
             )
             val problems = model.compute(path, greeting.file.name, text)
             greeting.problems = problems
-            greeting.updateValue(TextFieldValue(text, TextRange(problems.first().start)))
+            val error = problems.single { it.source == ProblemSource.BUILD }
+            greeting.updateValue(TextFieldValue(text, TextRange(error.start)))
             state.toolWindows.activate("problems")
             state.focus = KeyContext.LIST_WINDOW
+
+            assertEquals(2, problems.size)
+            val warning = problems.single { it.severity == ProblemSeverity.WARNING }
+            assertEquals(ProblemSource.EDITOR, warning.source)
+            assertEquals("Unused import directive", warning.message)
+            assertEquals("Unresolved reference 'mesage'.", error.message)
+            assertEquals(1, model.projectErrors { it == path }.sumOf { it.errors.size })
+
             renderApp("19-problems.png", state, renderMillis = 1_200)
             assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("19-problems.png")))
         } finally {

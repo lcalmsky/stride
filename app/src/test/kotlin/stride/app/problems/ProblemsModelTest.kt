@@ -185,17 +185,87 @@ class ProblemsModelTest {
     }
 
     @Test
-    fun `publishing replaces the previous build and clears the records`() = withProject { _, model ->
+    fun `a record computed before a build counts as stale even when written after it`() = withProject { _, model ->
+        val path = file("Late.kt", "text\n")
+        model.publishBuild(listOf(CompilerMessage(path, 0, 0, ProblemSeverity.ERROR, "first build")))
+        val versionBeforeCompute = model.buildVersion
+        model.publishBuild(listOf(CompilerMessage(path, 0, 0, ProblemSeverity.ERROR, "second build")))
+
+        val editorError = FileProblem(ProblemSeverity.ERROR, "editor", ProblemSource.EDITOR, 0, 0, 0, 1)
+        val staleBuildError = FileProblem(ProblemSeverity.ERROR, "first build", ProblemSource.BUILD, 0, 0, 0, 4)
+        model.record(path, listOf(editorError, staleBuildError), versionBeforeCompute)
+
+        assertEquals(listOf(editorError), model.projectErrors { true }.single().errors)
+    }
+
+    @Test
+    fun `publishing replaces the build source and keeps the older records`() = withProject { _, model ->
         val path = file("Cleared.kt", "text\n")
         model.publishBuild(listOf(CompilerMessage(path, 0, 0, ProblemSeverity.ERROR, "old")))
-        model.record(path, listOf(FileProblem(ProblemSeverity.ERROR, "record", ProblemSource.EDITOR, 0, 0, 0, 1)))
+        val recorded = FileProblem(ProblemSeverity.ERROR, "record", ProblemSource.EDITOR, 0, 0, 0, 1)
+        model.record(path, listOf(recorded))
 
         model.publishBuild(listOf(CompilerMessage(path, 0, 0, ProblemSeverity.WARNING, "new")))
 
         assertEquals(2, model.buildVersion)
-        assertTrue(model.projectErrors { true }.isEmpty())
+        assertEquals(listOf(recorded), model.projectErrors { true }.single().errors)
         val computed = model.compute(path, "Cleared.kt", "text\n", area)
         assertEquals(listOf("new"), computed.map { it.message })
+    }
+
+    @Test
+    fun `an open file that has no build message reports its editor source`() = withProject { _, model ->
+        val path = file("Edited.lisp", "first\n")
+        val problems = model.compute(path, "Edited.lisp", "first\n", area)
+        model.record(path, problems)
+
+        val errors = model.projectErrors { it == path }.single().errors
+
+        assertEquals(problems, errors)
+        assertEquals(ProblemSource.EDITOR, errors.single().source)
+    }
+
+    @Test
+    fun `a record older than the build shows only its editor errors`() = withProject { _, model ->
+        val path = file("Stale.lisp", "first\nsecond\n")
+        model.publishBuild(listOf(CompilerMessage(path, 0, 0, ProblemSeverity.ERROR, "old build")))
+        val recorded = model.compute(path, "Stale.lisp", "first\nsecond\n", area)
+        model.record(path, recorded)
+        assertEquals(setOf(ProblemSource.EDITOR, ProblemSource.BUILD), recorded.map { it.source }.toSet())
+
+        model.publishBuild(listOf(CompilerMessage(path, 1, 0, ProblemSeverity.ERROR, "new build")))
+
+        val errors = model.projectErrors { it == path }.single().errors
+        assertEquals(recorded.filter { it.source == ProblemSource.EDITOR }, errors)
+    }
+
+    @Test
+    fun `recording on the current version shows the remapped build line`() = withProject { _, model ->
+        val path = file("Remap.lisp", "a\nunique\nb\n")
+        model.publishBuild(listOf(CompilerMessage(path, 1, 0, ProblemSeverity.ERROR, "unique is not defined")))
+        val current = "x\na2\nunique\nb\n"
+        val recorded = model.compute(path, "Remap.lisp", current, area)
+        model.record(path, recorded)
+
+        val errors = model.projectErrors { it == path }.single().errors
+
+        val build = errors.single { it.source == ProblemSource.BUILD }
+        assertEquals("unique is not defined", build.message)
+        assertEquals(2, build.line)
+        assertEquals(recorded, errors)
+    }
+
+    @Test
+    fun `a closed file keeps the build message as it is`() = withProject { _, model ->
+        val path = file("Closed.lisp", "first\nsecond\n")
+        model.publishBuild(listOf(CompilerMessage(path, 1, 0, ProblemSeverity.ERROR, "closed build")))
+        model.record(path, listOf(FileProblem(ProblemSeverity.ERROR, "recorded", ProblemSource.EDITOR, 0, 0, 0, 1)))
+
+        val errors = model.projectErrors { false }.single().errors
+
+        assertEquals(listOf("closed build"), errors.map { it.message })
+        assertEquals(1, errors.single().line)
+        assertEquals(ProblemSource.BUILD, errors.single().source)
     }
 
     private class LispFileType : LanguageFileType(Language("lisp"))

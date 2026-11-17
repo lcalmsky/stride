@@ -45,17 +45,21 @@ data class FileErrors(val path: Path, val errors: List<FileProblem>)
 class ProblemsModel(private val project: Project) {
     private class BuildFile(val baseLines: List<String>?, val messages: List<CompilerMessage>)
 
+    private class Record(val version: Int, val problems: List<FileProblem>)
+
     private var buildFiles by mutableStateOf<Map<Path, BuildFile>>(emptyMap())
 
     /** Incremented when the build source is replaced; the editor effect recomputes on it. */
     var buildVersion: Int by mutableStateOf(0)
         private set
 
-    private val records = mutableStateMapOf<Path, List<FileProblem>>()
+    private val records = mutableStateMapOf<Path, Record>()
 
     /**
-     * Replaces the build source with [messages] as one state change. Runs on the build's reader
-     * thread, so the disk reads happen first and the snapshot writes happen together.
+     * Replaces the build source with [messages] as one state change. Records are kept: they carry
+     * the version they were computed on, so an open file shows only its editor source until the
+     * next recompute. Runs on the build's reader thread, so the disk reads happen first and the
+     * snapshot writes happen together.
      */
     fun publishBuild(messages: List<CompilerMessage>) {
         val files = messages.groupBy { it.path.toAbsolutePath().normalize() }.mapValues { (path, ofFile) ->
@@ -64,7 +68,6 @@ class ProblemsModel(private val project: Project) {
         }
         Snapshot.withMutableSnapshot {
             buildFiles = files
-            records.clear()
             buildVersion++
         }
     }
@@ -88,49 +91,66 @@ class ProblemsModel(private val project: Project) {
             .sortedWith(compareBy({ it.start }, { it.severity.ordinal }))
     }
 
-    /** Keeps the last merged result of a file for the Problems window and the Project Errors view. */
-    fun record(path: Path, problems: List<FileProblem>) {
-        records[path.toAbsolutePath().normalize()] = problems
+    /**
+     * Keeps the last merged result of a file for the Problems window and the Project Errors view,
+     * stamped with the build [version] it was computed on. Pass the version read before
+     * computing, so a build that lands during the computation leaves the record stale.
+     */
+    fun record(path: Path, problems: List<FileProblem>, version: Int = buildVersion) {
+        records[path.toAbsolutePath().normalize()] = Record(version, problems)
     }
 
     /**
-     * The project's errors by path. A file with an open editor reports its recorded errors; a
-     * file without one reports the build messages as they are. Files without an error are left
-     * out, and paths are sorted.
+     * The project's errors by path: every file the build reported and every open file that has a
+     * record. An open file with a record on the current build version reports its recorded
+     * errors; on an older version it reports only the editor-sourced errors, so a build result
+     * never points at a line the editing has moved. An open file without a record, and a closed
+     * file, report the build messages as they are. Files without an error are left out, and
+     * paths are sorted.
      */
     fun projectErrors(isOpen: (Path) -> Boolean): List<FileErrors> {
-        return buildFiles.keys
+        val openRecorded = records.keys.filter(isOpen)
+        return (buildFiles.keys + openRecorded)
+            .distinct()
             .sortedBy { it.toString() }
             .mapNotNull { path ->
-                val record = if (isOpen(path)) records[path] else null
-                val errors = if (record != null) {
-                    record.filter { it.severity == ProblemSeverity.ERROR }
-                } else {
-                    buildFiles[path]?.messages
-                        .orEmpty()
-                        .filter { it.severity == ProblemSeverity.ERROR }
-                        .sortedWith(compareBy({ it.line }, { it.column ?: 0 }))
-                        .map { message ->
-                            FileProblem(
-                                severity = message.severity,
-                                message = message.message,
-                                source = ProblemSource.BUILD,
-                                line = message.line,
-                                column = message.column ?: 0,
-                                start = -1,
-                                end = -1,
-                            )
-                        }
+                val open = isOpen(path)
+                val record = if (open) records[path] else null
+                val errors = when {
+                    record == null -> buildErrors(path)
+                    record.version == buildVersion ->
+                        record.problems.filter { it.severity == ProblemSeverity.ERROR }
+                    else -> record.problems.filter {
+                        it.severity == ProblemSeverity.ERROR && it.source == ProblemSource.EDITOR
+                    }
                 }
                 if (errors.isEmpty()) null else FileErrors(path, errors)
             }
     }
 
+    private fun buildErrors(path: Path): List<FileProblem> =
+        buildFiles[path]?.messages
+            .orEmpty()
+            .filter { it.severity == ProblemSeverity.ERROR }
+            .sortedWith(compareBy({ it.line }, { it.column ?: 0 }))
+            .map { message ->
+                FileProblem(
+                    severity = message.severity,
+                    message = message.message,
+                    source = ProblemSource.BUILD,
+                    line = message.line,
+                    column = message.column ?: 0,
+                    start = -1,
+                    end = -1,
+                )
+            }
+
     private fun editorProblems(fileName: String, text: String, area: ExtensionArea): List<FileProblem> {
         val language = (FileTypeRegistry.getFileType(fileName, area) as? LanguageFileType)?.language
             ?: return emptyList()
+        val starts = lineStarts(text)
         return ProblemProvider.collect(language, ProblemContext(text, fileName), area).map { problem ->
-            val position = lineColumn(text, problem.start)
+            val position = lineColumn(starts, problem.start)
             FileProblem(
                 severity = problem.severity,
                 message = problem.message,
@@ -198,8 +218,6 @@ class ProblemsModel(private val project: Project) {
         val end = if (line + 1 < starts.size) starts[line + 1] - 1 else text.length
         return if (end > starts[line] && text[end - 1] == '\r') end - 1 else end
     }
-
-    private fun lineColumn(text: String, offset: Int): Pair<Int, Int> = lineColumn(lineStarts(text), offset)
 
     private fun lineColumn(starts: IntArray, offset: Int): Pair<Int, Int> {
         val clamped = offset.coerceAtLeast(0)
