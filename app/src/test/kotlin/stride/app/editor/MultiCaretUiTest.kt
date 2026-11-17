@@ -14,7 +14,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onRoot
@@ -26,6 +28,7 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.input.TextFieldValue
 import java.nio.file.Files
 import java.nio.file.Path
@@ -70,6 +73,12 @@ class MultiCaretUiTest {
         }
 
         override fun readText(): String? = text
+    }
+
+    private fun SemanticsNodeInteraction.textLayout(): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action?.invoke(results)
+        return results.single()
     }
 
     private fun openEditor(text: String, clipboard: TextClipboard? = null): Pair<AppState, TextFileEditor> {
@@ -262,6 +271,33 @@ class MultiCaretUiTest {
             }
 
             waitUntil(timeoutMillis = 5_000) { editor.carets.size == 2 }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a plain click on the primary caret drops the secondary carets`() = runComposeUiTest {
+        val (state, editor) = openEditor("ab\ncd\nef\n")
+        try {
+            setContent { MultiCaretHarness(state) }
+            val field = onNode(hasSetTextAction())
+            field.performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+            editor.toggleCaretAt(4)
+            waitForIdle()
+            assertEquals(listOf(TextRange(0), TextRange(4)), editor.carets)
+            assertEquals(TextRange(4), editor.value.selection)
+
+            val primary = editor.value.selection.end
+            val rect = field.textLayout().getCursorRect(primary)
+            field.performMouseInput { click(Offset(rect.left + 1f, rect.center.y)) }
+
+            waitUntil(timeoutMillis = 5_000) { editor.carets.size == 1 }
+            assertTrue(editor.secondaryCarets.isEmpty())
+            assertEquals(TextRange(primary), editor.value.selection)
         } finally {
             state.dispose()
         }

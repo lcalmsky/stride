@@ -65,6 +65,7 @@ import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -1259,21 +1260,34 @@ class TextFileEditor(
                                             // The layout can still be the previous document's
                                             // for one frame after a tab switch.
                                             val limit = textLayout.layoutInput.text.length
-                                            for (caret in secondaryCarets) {
-                                                if (caret.collapsed) continue
-                                                val from = caret.min.coerceIn(0, limit)
-                                                val to = caret.max.coerceIn(0, limit)
-                                                if (from < to) {
-                                                    drawPath(
-                                                        textLayout.getPathForRange(from, to),
-                                                        DesignTokens.selection,
-                                                    )
-                                                }
+                                            // Same window as the background canvas, in layout rows.
+                                            val linePx = DesignTokens.codeLineHeight.toPx()
+                                            val first = ((vertical.value - topPadPx) / linePx).toInt() - 1
+                                            val last =
+                                                ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
+                                            val lastLine = textLayout.lineCount - 1
+                                            val visible = visibleCaretRanges(
+                                                carets = secondaryCarets,
+                                                lineOf = { offset ->
+                                                    textLayout.getLineForOffset(offset.coerceIn(0, limit))
+                                                },
+                                                lineStart = textLayout::getLineStart,
+                                                lineEnd = textLayout::getLineEnd,
+                                                first = first.coerceIn(0, lastLine),
+                                                last = last.coerceIn(0, lastLine),
+                                            )
+                                            for (caret in visible) {
+                                                val selection = caret.selection ?: continue
+                                                drawPath(
+                                                    textLayout.getPathForRange(selection.min, selection.max),
+                                                    DesignTokens.selection,
+                                                )
                                             }
                                             drawContent()
                                             val caretWidth = 2.dp.toPx()
-                                            for (caret in secondaryCarets) {
-                                                val rect = textLayout.getCursorRect(caret.end.coerceIn(0, limit))
+                                            for (caret in visible) {
+                                                val bar = caret.bar ?: continue
+                                                val rect = textLayout.getCursorRect(bar.coerceIn(0, limit))
                                                 drawRect(
                                                     DesignTokens.accent2,
                                                     topLeft = Offset(rect.left, rect.top),
@@ -1333,7 +1347,20 @@ class TextFileEditor(
                                                 alt = modifiers.isAltPressed,
                                                 shift = modifiers.isShiftPressed,
                                                 columnMode = columnMode,
-                                            ) ?: continue
+                                            )
+                                            if (gesture == null) {
+                                                // A plain press (shift allowed) moves the single
+                                                // caret where it lands, so the extra ones go.
+                                                if (event.buttons.isPrimaryPressed &&
+                                                    !modifiers.isAltPressed &&
+                                                    !modifiers.isCtrlPressed &&
+                                                    !modifiers.isMetaPressed &&
+                                                    secondaryCarets.isNotEmpty()
+                                                ) {
+                                                    removeSecondaryCarets()
+                                                }
+                                                continue
+                                            }
                                             change.consume()
                                             when (gesture) {
                                                 CaretPointerGesture.TOGGLE -> {
@@ -1818,6 +1845,48 @@ internal fun secondaryCaretLines(text: String, carets: List<TextRange>): IntArra
 internal fun firstLineAtOrAfter(lines: IntArray, line: Int): Int {
     val found = lines.binarySearch(line)
     return if (found >= 0) found else -found - 1
+}
+
+/** A secondary caret as the draw pass needs it: the selection clipped to painted lines, and its bar. */
+internal data class VisibleCaret(val selection: TextRange?, val bar: Int?)
+
+/**
+ * The secondary [carets] that reach the lines [first]..[last], with selections clipped to those
+ * lines. A caret whose bar lies outside the range still contributes a clipped selection; a
+ * collapsed caret contributes only a bar. [lineOf], [lineStart] and [lineEnd] map offsets and
+ * lines through the text layout, so the decision itself is testable without one.
+ */
+internal fun visibleCaretRanges(
+    carets: List<TextRange>,
+    lineOf: (Int) -> Int,
+    lineStart: (Int) -> Int,
+    lineEnd: (Int) -> Int,
+    first: Int,
+    last: Int,
+): List<VisibleCaret> {
+    if (carets.isEmpty() || first > last) return emptyList()
+    val windowStart = lineStart(first)
+    val windowEnd = lineEnd(last)
+    val visible = ArrayList<VisibleCaret>(carets.size)
+    for (caret in carets) {
+        val bar = if (lineOf(caret.end) in first..last) caret.end else null
+        if (caret.collapsed) {
+            if (bar != null) visible += VisibleCaret(selection = null, bar = bar)
+            continue
+        }
+        // A visible bar implies the selection touches the window; only a hidden bar needs both lines.
+        val crosses = bar != null ||
+            (lineOf(caret.max) >= first && lineOf(caret.min) <= last)
+        val selection = if (crosses) {
+            val from = maxOf(caret.min, windowStart)
+            val to = minOf(caret.max, windowEnd)
+            if (from < to) TextRange(from, to) else null
+        } else {
+            null
+        }
+        if (selection != null || bar != null) visible += VisibleCaret(selection, bar)
+    }
+    return visible
 }
 
 /**
