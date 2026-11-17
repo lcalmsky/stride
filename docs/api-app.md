@@ -1792,6 +1792,130 @@ by file with no scopes. Out of scope: errors from a compiler running in the edit
 settings, apply-all quick fixes, grouping and filtering, scrollbar marks and the inspection
 widget, saving before a run, and the Problems navigation actions.
 
+## Navigation actions
+
+Six IntelliJ navigation actions built on data stride already had: the navigation history, the
+`⌥F7` usage search, and the project tree and path. The hierarchy actions (Implementation, Type
+Declaration, Super Method, Type and Call Hierarchy) need a new source (supertypes and calls) and
+are not part of this set.
+
+| Action | `ActionId` | IntelliJ id | Key | Context |
+|---|---|---|---|---|
+| Recent Locations | `RECENT_LOCATIONS` | `RecentLocations` | `⇧⌘E` | GLOBAL |
+| Last Edit Location | `JUMP_TO_LAST_CHANGE` | `JumpToLastChange` | `⇧⌘⌫` | GLOBAL |
+| Show Usages | `SHOW_USAGES` | `ShowUsages` | `⌥⌘F7` | EDITOR |
+| Highlight Usages in File | `HIGHLIGHT_USAGES_IN_FILE` | `HighlightUsagesInFile` | `⇧⌘F7` | EDITOR |
+| Jump to Navigation Bar | `SHOW_NAV_BAR` | `ShowNavBar` | `⌥Home`; `⌘↑` (see D6) | GLOBAL; LIST_WINDOW |
+| Edit Source | `EDIT_SOURCE` | `EditSource` | `F4`; `⌘↓` (see D6) | GLOBAL; LIST_WINDOW |
+
+None of the six strokes had a binding before. `⌘⌫` (`EDITOR_DELETE_LINE`) is a different stroke
+from `⇧⌘⌫`.
+
+Decision N1: Recent Locations is a `popupPanel` popup over the navigation history in which every
+row carries the code around its place.
+
+| Option | What a row shows | Files | IntelliJ | Frame path |
+|---|---|---|---|---|
+| A (rejected) | `File.kt` and `line N` from `NavigationHistory.locations()` | one popup | IntelliJ's rows are code, so a list of file names repeats Recent Files | popup only |
+| B (adopted) | the file name, its directory, `line N` and three code lines (the place's line and one line on each side) | one popup + a text source | close: IntelliJ shows a short code fragment per place | popup only |
+| C (rejected) | B over a separate visited-places store that `⌘[` / `⌘]` cannot truncate | B + a second store fed from every jump | closest | popup only, but every jump writes two stores |
+
+The rows are `NavigationHistory.locations()` newest first. Two entries on the same file and line
+keep the newest; an entry on the selected editor's caret line is left out. The code comes from the
+open editor's text when the file is open (unsaved edits included) and otherwise from the disk
+(decoded leniently, like the Find in Path search), read on `Dispatchers.IO` after the popup shows
+its rows; the offset is clamped to the text it is read against. The place's line is drawn in
+`text`, the neighbouring lines in `textSecondaryOnGlass`, all in the code font. ↵, `F4` or `⌘↓`
+opens the place (one history entry, keyboard to the editor); a file that no longer exists shows
+`File not found: <relative path>`. Esc closes and hands the keyboard back to the editor.
+Differences: the forward entries that a new jump drops after `⌘[` are gone from the list too
+(option C's cost was not worth it); no `Show changed only` toggle (pressing `⇧⌘E` again), no
+speed search, no syntax colours in the fragment.
+
+Decision N2: the last edit places are a project-session store, `EditLocations`, fed by a text
+change callback on `TextFileEditor`.
+
+| Option | Where the place comes from | Across files | Files |
+|---|---|---|---|
+| A (rejected) | the selected editor's undo stack (`UndoEntry.offset`) | no: one file, and it is gone when the file reloads | editor |
+| B (adopted) | `TextFileEditor.onTextChange(offset, oldLength, newLength, recorded)` → `ProjectSession.editLocations` | yes | editor + new store + wiring |
+| C (rejected) | flag edit entries inside `NavigationHistory` | yes | history; an edit after `⌘[` would drop the forward entries |
+
+`onTextChange` runs for every text change the editor applies; `recorded` is true for an edit that
+enters the undo stack (typing, actions, paste, multi-caret edits) and false for undo, redo and a
+reload. A recorded change adds `(path, offset)`; a change on the same file and the same line as
+the newest place replaces that place, so typing a word is one place. At most 50 places are kept,
+the oldest dropped. Every change, recorded or not, shifts the places of that file: a place after
+the replaced range moves by `newLength - oldLength`, a place inside it moves to the range's new
+end. `⇧⌘⌫` goes to the newest place, or to the one before it when the caret is already on that
+file and line; pressing it again keeps walking back, and a new recorded edit starts the walk from
+the newest place again. The jump opens the file, puts the caret at the place (one history entry,
+so `⌘[` comes back) and hands the editor the keyboard. A file that no longer exists shows
+`File not found: <relative path>` and its places are dropped; with no place the status shows
+`No edit location`. Differences: IntelliJ also has Next Edit Location; places do not survive a
+restart.
+
+Decision N3: Show Usages is a popup over the same search `⌥F7` runs, and `⌥F7` is unchanged.
+`⌥⌘F7` takes the identifier at the caret through the same helper `findUsages` uses
+(`identifierAt`, whole word, case-sensitive) and scans with `FindInPathScanner.scan` on
+`Dispatchers.Default`, over the same files and editor texts as the Find window, up to
+`FindInPathScanner.MAX_HITS` (200). The popup (`popupPanel`, at `DesignTokens.popupTop`, scrim like
+the navigation popups) has a header `Usages of <name>` with the count (`200+` when cut, `Searching…`
+while it runs), and one row per hit: the trimmed line with the match in `accentOnPopupPlate` and
+`File.kt:line` at the right. ↑/↓ move, ↵ / `F4` / `⌘↓` open the hit like a Find window row (one
+history entry, keyboard to the editor), `⌘↵` closes the popup and opens the same `Usages of <name>`
+tab `⌥F7` opens, Esc closes. With no identifier at the caret the status shows
+`No identifier at the caret`. Differences: the popup sits at the top, not at the caret; no scope
+or filter settings, no grouping, no "show more" past 200 (the Find window keeps 1000).
+
+Decision N4: Highlight Usages in File keeps its ranges in `TextFileEditor.usageHighlights` and
+draws them as background spans merged with the find bar's spans only when there are any.
+
+| Option | How the ranges are drawn | Frame path |
+|---|---|---|
+| A (rejected) | write them into `searchSpans` | unchanged, but the find bar rewrites `searchSpans` on every query and erases them |
+| B (adopted) | a separate `usageSpans` list; the transformation receives `searchSpans` itself when it is empty and `searchSpans + usageSpans` (remembered) otherwise | unchanged while empty |
+| C (rejected) | a `drawWithContent` overlay like the problem underlines | a new modifier and its own row math |
+
+`⇧⌘F7` finds the identifier at the caret in the selected file (whole word, case-sensitive, the same
+matcher the Find window uses) and highlights every match in `DesignTokens.accent` at the find bar's
+match alpha; the status shows `N usages of <name> · ⌘G next · ⇧⌘G previous · Esc clears`. While the
+editor has highlights, `⌘G` / `⇧⌘G` move the caret to the next / previous highlight start, wrapping
+at the ends (`jumpTo`, one jump each), before the find bar's own `⌘G`. Esc clears them along with
+what it cleared before; any text change clears them; `⇧⌘F7` with the caret on a highlighted match
+of the same name clears them. Differences: IntelliJ tells read and write usages apart by colour;
+the matches are textual, so a same-named local in another scope is highlighted too.
+
+Decision N5: the navigation bar is the bottom path capsule, made keyboard-driven.
+
+| Option | Where | Files | IntelliJ | Frame path |
+|---|---|---|---|---|
+| A (adopted) | `⌘↑` / `⌥Home` turn the bottom path capsule into segments; the selected folder's children open in a popup above it | App.kt capsule + nav bar state and popup | the New UI places the navigation bar in the status bar at the bottom, the same place | the inactive capsule draws exactly as before |
+| B (rejected) | a top popup with the path and a child list | one popup | the classic toolbar look, a different place | popup only |
+| C (rejected) | a permanent top row | layout + every snapshot | the classic toolbar | every frame lays out a new row |
+
+While active the capsule shows the project root, each folder and the file as segments with the
+selected one in the selection pill, and the focus context is the new modal `KeyContext.NAV_BAR`
+(focus chip `Navigation`). ←/→ move between segments; ↓ or ↵ on a folder opens its children
+(folders first, then files, by name, the same entries the tree lists) in a `popupPanel` list above
+that segment; ↵ / `F4` / `⌘↓` on the file segment hands the keyboard to its editor. In the list,
+↑/↓ move; ↵, → , `F4` or `⌘↓` on a file opens it, closes the bar and hands the editor the keyboard;
+on a folder it becomes the next segment (deeper segments dropped) and its children open; ← or Esc
+closes the list. Esc on the segments closes the bar and hands the keyboard back to the editor.
+With no file open the bar starts with the root segment. A click on a segment selects it and opens
+its list; a click outside closes the bar. Differences: no file actions in the bar's menus, no
+member segments for the file, and a click on the inactive capsule does nothing.
+
+Decision N6: keys and Edit Source by context. Edit Source in the editor goes to the declaration at
+the caret (`goToDeclaration`, like `⌘B`); in a list tool window it opens the selected row like ↵;
+in the new popups and the navigation bar it is ↵'s alias; with the tree or nothing focused it hands
+the keyboard to the selected editor. `F4` and `⌥Home` are not taken from the terminal: their
+dispatch returns `false` when the terminal has focus, so the key reaches the shell. In the editor
+`⌘↑` / `⌘↓` keep moving the caret to the document start / end (Compose's macOS text mapping), so
+`SHOW_NAV_BAR` and `EDIT_SOURCE` are bound to `⌘↑` / `⌘↓` only in `LIST_WINDOW`, and the editor uses
+`⌥Home` / `F4`. Binding them in GLOBAL as IntelliJ does would replace the caret move in the editor
+(IntelliJ moves to the document start with `⌘Home`), which is a decision left to the user.
+
 ## Declaration navigation, tests and bookmarks
 
 ```kotlin
