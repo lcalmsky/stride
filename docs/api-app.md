@@ -2092,7 +2092,10 @@ existing scanner already reads; B has no Java at all (no Java language plugin) a
 walk; C pays the whole scan on every key press. B can still be extracted later if a third language
 needs hierarchies: it would be an additive extension point. The new parser fields must leave the
 existing ones (`name`, `kind`, `line`, `container`, `isPrivate`) unchanged for every input, since
-Search Everywhere, `⌘B`, the ⌥↩ import candidates and the Structure window read them.
+Search Everywhere, `⌘B`, the ⌥↩ import candidates and the Structure window read them. Two
+deliberate exceptions were made later: a class body `{` on a later header line, and a member written
+on the class line or after a closing brace, now yield the member with its container where the
+earlier parser lost it — added declarations, never a changed existing one.
 
 Decision H2: certainty. The same criterion that rejected unresolved-symbol problems (「Problems」)
 decides here: a judgement shown without being asked must be certain, because a wrong one

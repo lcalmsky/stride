@@ -216,9 +216,12 @@ object TypeReferences {
   for every input as before the hierarchy fields were added; Search Everywhere, `⌘B`, the ⌥↩
   import candidates and the Structure window read them. The new fields are trailing and defaulted.
 - `supertypes` are written names without type arguments, `?`, annotations, constructor arguments
-  or a `by` delegate, read across header lines (`class A(\n x: X,\n) : B(x),\n C {`). Kotlin type
-  parameter bounds (`<T : Comparable<T>>`) and primary constructor parameters are not supertypes.
-  Java reads `extends` and `implements` (an interface's `extends` list too) up to `permits` or `{`.
+  or a `by` delegate, read across header lines (`class A(\n x: X,\n) : B(x),\n C {`). Kotlin's
+  list ends at the body `{` or the `where` clause, whichever comes first, so a type parameter bound
+  is never a supertype; an item that does not clean to a single dotted name (two names separated by
+  whitespace, a bound) is dropped. Kotlin type parameter bounds (`<T : Comparable<T>>`) and primary
+  constructor parameters are not supertypes. Java reads `extends` and `implements` (an interface's
+  `extends` list too) up to `permits` or `{`.
 - `imports` stops at the first declaration; Java `import static` is skipped.
 - `outline` lists members at every class level but no local declaration; `memberAt` picks the
   innermost member holding an offset, `classesAt` the classes, innermost first.
@@ -228,12 +231,21 @@ object TypeReferences {
   contract of every query.
 - `TypeGraph.resolveCallee` receiver rules: no receiver and `this` share one path (members of the
   enclosing classes and their supertypes, then visible top-level functions, then a visible class);
-  `super` gives only the members of the innermost enclosing class's supertypes, transitively;
-  any other receiver limits the result to the class it resolves to, and an unresolved receiver
-  gives every visible member or top-level function of that name.
+  `super` walks the supertypes of the innermost enclosing class breadth first and takes the members
+  of the first class on each path that has one; any other receiver limits the result to the class
+  it resolves to, and an unresolved receiver gives every visible member or top-level function of
+  that name. A private member of a supertype is never inherited, so the supertype part of the
+  unqualified/`this` path, the `super` path and `superMembers` leave it out; `implementations`
+  returns nothing for a private target.
+- `TypeGraph.classOf` picks, among the classes of the member's file with its simple container name,
+  the one declared nearest before the member, so two nested classes with the same simple name in
+  one file stay apart (`membersByClass` uses the same result).
 - `CallSites` finds calls by text only: an identifier followed by `(`, by type arguments and `(`,
   or in Kotlin by a trailing lambda `{`, or a `::name` reference, outside comments and strings;
-  keywords, annotations and declaration names are not calls.
+  keywords, annotations and declaration names are not calls. The `{` of a `by <expression>` in a
+  class header opens the class body, a Kotlin property accessor `get()`/`set()` after modifiers and
+  annotations only is a declaration, and a Java method or constructor head is a declaration even
+  when `outline` missed it.
 - `TypeReferences.declaredType` returns `Explicit` only for a written type and `ConstructorCall`
   only for an initializer that is a single upper-case call; everything else is `Unknown` with the
   reason the status bar shows.

@@ -1,11 +1,18 @@
 package stride.app.hierarchy
 
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -247,6 +254,90 @@ class HierarchyToolWindowStateTest {
         assertNull(state.tree)
         assertTrue(state.rows.isEmpty())
         assertTrue(state.listRows.isEmpty())
+    }
+
+    @Test
+    fun `background loads and UI toggles run without snapshot conflicts`() = runBlocking {
+        val failures = CopyOnWriteArrayList<Throwable>()
+        val handler = CoroutineExceptionHandler { _, throwable -> failures.add(throwable) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
+        val state = HierarchyToolWindowState(scope)
+        val children = (0 until 40).map { index ->
+            HierarchyNode(
+                "Node$index",
+                expanded = true,
+                children = {
+                    delay(1)
+                    listOf(HierarchyNode("Leaf$index"))
+                },
+            )
+        }
+        state.show(tree(HierarchyNode("Root", expanded = true, children = { children })))
+
+        repeat(100) { round ->
+            val text = "Node${round % 40}"
+            val index = state.rows.indexOfFirst { it.node?.text == text }
+            if (index >= 0) state.toggle(index)
+            val back = state.rows.indexOfFirst { it.node?.text == text }
+            if (back >= 0) state.toggle(back)
+        }
+
+        withTimeout(30_000) {
+            while (state.rows.count { it.node != null } < 1 + 40 + 40) delay(5)
+        }
+        scope.cancel()
+
+        assertEquals(emptyList<Throwable>(), failures)
+        assertEquals(40, state.rows.count { it.node?.text?.startsWith("Leaf") == true })
+    }
+
+    @Test
+    fun `rows end a cycle in the children graph`() {
+        val state = state()
+        lateinit var a: HierarchyNode
+        val b = HierarchyNode("B", expanded = true, children = { listOf(a) })
+        a = HierarchyNode("A", expanded = true, children = { listOf(b) })
+
+        state.show(tree(a))
+
+        assertEquals(listOf("▾ A", "▾ B", "A"), state.texts())
+        assertFalse(state.rows.last().expandable)
+    }
+
+    @Test
+    fun `a load that finishes after clear leaves no entries behind`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val state = HierarchyToolWindowState(scope)
+        val staleGate = CountDownLatch(1)
+        val freshGate = CompletableDeferred<List<HierarchyNode>>()
+        val calls = AtomicInteger()
+        val node = HierarchyNode(
+            "Root",
+            expanded = true,
+            children = {
+                when (calls.incrementAndGet()) {
+                    1 -> {
+                        staleGate.await()
+                        listOf(HierarchyNode("Stale"))
+                    }
+                    else -> freshGate.await()
+                }
+            },
+        )
+        state.show(tree(node))
+        state.clear()
+        state.show(tree(node))
+        staleGate.countDown()
+        delay(500)
+
+        assertEquals(listOf("▾ Root", "Searching…"), state.texts(), "the load started for the cleared tree is ignored")
+
+        freshGate.complete(listOf(HierarchyNode("Fresh")))
+        withTimeout(10_000) {
+            while (state.rows.count { it.node != null } < 2) delay(5)
+        }
+        scope.cancel()
+        assertEquals(listOf("▾ Root", "Fresh"), state.texts())
     }
 
     @Test

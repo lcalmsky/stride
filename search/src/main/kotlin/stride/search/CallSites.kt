@@ -17,10 +17,12 @@ data class CallSite(
 /**
  * Finds calls by text in Kotlin and Java sources, outside comments, strings and characters. A call
  * is an identifier followed, after optional spaces on the same line, by `(`, by balanced type
- * arguments and `(`, or in Kotlin by a trailing lambda `{`; or an identifier after `::`. Keywords
- * (`if`, `when`, `for`, `while`, `catch`, `return`, `super`, `this`, `object`, ...), annotations
- * (`@Name(`), Java `new` and the names of declarations themselves (`fun name(`, `class Name(`, a
- * Java method or constructor header, `constructor(`) are not calls. No types are resolved here.
+ * arguments and `(`, or in Kotlin by a trailing lambda `{`; or an identifier after `::`. The `{` of
+ * a `by <expression>` in a class header opens the class body, not a call. Keywords (`if`, `when`,
+ * `for`, `while`, `catch`, `return`, `super`, `this`, `object`, ...), annotations (`@Name(`), Java
+ * `new` and the names of declarations themselves (`fun name(`, `class Name(`, a property accessor
+ * `get()`/`set()` after modifiers only, a Java method or constructor header even when the outline
+ * misses it, `constructor(`) are not calls. No types are resolved here.
  */
 object CallSites {
     /** The calls of [name] in [text], in text order. */
@@ -56,7 +58,7 @@ object CallSites {
                 continue
             }
             if (!isCallAt(sanitized, siteStart, siteEnd, kotlin)) continue
-            if (siteStart in declarationNames || isDeclarationName(sanitized, siteStart, kotlin)) continue
+            if (siteStart in declarationNames || isDeclarationName(sanitized, siteStart, name, kotlin)) continue
             if (isAfterNew(sanitized, siteStart)) continue
             calls.add(CallSite(name, siteStart, siteEnd, receiverFor(siteStart - 1, sanitized)))
         }
@@ -75,9 +77,36 @@ object CallSites {
                 while (after < text.length && (text[after] == ' ' || text[after] == '\t')) after++
                 return after < text.length && text[after] == '('
             }
-            kotlin && text[i] == '{' -> return true
+            // In a class header the `{` after `by <expression>` opens the class body.
+            kotlin && text[i] == '{' -> return !isClassHeader(text, start)
         }
         return false
+    }
+
+    /** `true` when [offset] is on the first or a continued line of a Kotlin class header. */
+    private fun isClassHeader(text: String, offset: Int): Boolean {
+        var start = lineStartOf(text, offset)
+        while (start > 0) {
+            val previousEnd = start - 1
+            val previousStart = lineStartOf(text, previousEnd)
+            val previous = text.substring(previousStart, previousEnd).trim()
+            if (!previous.endsWith(",") && !previous.endsWith(":") && !previous.endsWith("where") &&
+                !ANNOTATION_LINE.matches(previous)
+            ) {
+                break
+            }
+            start = previousStart
+        }
+        val header = text.substring(start, lineEndOf(text, start)).trim()
+        return CLASS_HEADER.containsMatchIn(header)
+    }
+
+    private fun lineStartOf(text: String, offset: Int): Int =
+        (text.lastIndexOf('\n', offset - 1) + 1).coerceAtLeast(0)
+
+    private fun lineEndOf(text: String, start: Int): Int {
+        val end = text.indexOf('\n', start)
+        return if (end < 0) text.length else end
     }
 
     /** The index of the `>` that closes a type argument list opened at [start], on the same line. */
@@ -133,7 +162,7 @@ object CallSites {
         return text.substring(wordStart + 1, i + 1) == "new"
     }
 
-    private fun isDeclarationName(text: String, start: Int, kotlin: Boolean): Boolean {
+    private fun isDeclarationName(text: String, start: Int, name: String, kotlin: Boolean): Boolean {
         var boundary = 0
         for (i in start - 1 downTo 0) {
             when (text[i]) {
@@ -146,6 +175,7 @@ object CallSites {
         val prefix = text.substring(boundary, start)
         if (kotlin) {
             if (KOTLIN_DECLARATION_PREFIX.containsMatchIn(prefix.trim())) return true
+            if ((name == "get" || name == "set") && ACCESSOR_PREFIX.matches(prefix.trim())) return true
             val funIndex = lastWordIndex(prefix, "fun")
             if (funIndex >= 0) {
                 val after = prefix.substring(funIndex + 3).trim()
@@ -153,8 +183,26 @@ object CallSites {
             }
         } else {
             if (JAVA_DECLARATION_PREFIX.containsMatchIn(prefix.trim())) return true
+            if (isJavaDeclarationHead(text, boundary, start)) return true
         }
         return false
+    }
+
+    /**
+     * `true` when the Java name at [start] heads a method or constructor declaration: the whole
+     * head before it is a written declaration, not an expression.
+     */
+    private fun isJavaDeclarationHead(text: String, boundary: Int, start: Int): Boolean {
+        val end = lineEndOf(text, start)
+        val segment = text.substring(boundary, end)
+        val localStart = start - boundary
+        for (match in listOf(JAVA_METHOD.find(segment), JAVA_METHOD_START.find(segment))) {
+            if (match == null) continue
+            if (match.groups[2]!!.range.first != localStart) continue
+            if (match.groupValues[1] in EXPRESSION_WORDS) continue
+            return true
+        }
+        return CONSTRUCTOR_HEAD.matches(segment.substring(0, localStart))
     }
 
     private fun lastWordIndex(text: String, word: String): Int {
@@ -196,5 +244,27 @@ object CallSites {
     private val JAVA_DECLARATION_PREFIX = Regex(
         """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|static|final|abstract|sealed|""" +
             """non-sealed|strictfp)\s+)*(?:class|interface|enum|record)\s*$"""
+    )
+
+    private val ACCESSOR_PREFIX = Regex(
+        """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|internal|inline|override|""" +
+            """external|open|final|abstract)\b\s*)*$"""
+    )
+
+    private val CLASS_HEADER = Regex(
+        """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected|internal|open|abstract|final|""" +
+            """sealed|data|enum|annotation|value|inner|inline|companion|expect|actual|external)\s+)*""" +
+            """(?:class|interface|object)\s+"""
+    )
+
+    private val ANNOTATION_LINE = Regex("""^(?:@[\w$.]+(?:\([^()]*\))?\s*)+$""")
+
+    private val CONSTRUCTOR_HEAD = Regex(
+        """^(?:(?:@\w+(?:\([^)]*\))?)\s+)*(?:(?:public|private|protected)\s+)+$"""
+    )
+
+    private val EXPRESSION_WORDS = setOf(
+        "return", "new", "throw", "else", "case", "yield", "assert", "if", "for", "while", "do",
+        "switch", "try", "catch", "synchronized", "instanceof",
     )
 }

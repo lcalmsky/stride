@@ -212,6 +212,7 @@ private abstract class SourceScanner(private val kotlinSyntax: Boolean) {
     private var pendingClass: String? = null
     private var pendingParens = 0
     private var pendingHeader: HeaderAccumulator? = null
+    private var previousContent = ""
 
     fun scan(text: String): List<ParsedDeclaration> {
         text.split('\n').forEachIndexed { index, line -> scanLine(line.trimEnd('\r'), index) }
@@ -224,54 +225,93 @@ private abstract class SourceScanner(private val kotlinSyntax: Boolean) {
         val code = sanitize(line)
         val content = code.trim()
         if (content.isEmpty()) return
+        try {
+            scanCode(code, content, lineNumber)
+        } finally {
+            onLineScanned(content)
+        }
+    }
+
+    private fun scanCode(code: String, content: String, lineNumber: Int) {
         continueHeader(code, content)
 
-        val container = containers.lastOrNull()?.name
-        val membersAllowed = depth == 0 || containers.lastOrNull()?.bodyDepth == depth
-
-        // A header whose parens already closed on an earlier line: only a leading brace can still
-        // open its body, so anything else means the declaration had no body.
-        if (pendingClass != null && pendingParens == 0 && !content.startsWith("{")) pendingClass = null
-
-        val declared = if (pendingClass != null) {
-            null
-        } else if (kotlinSyntax) {
-            scanKotlin(code, lineNumber, container, membersAllowed)
-        } else {
-            scanJava(code, lineNumber, container, membersAllowed)
+        // A class header whose body `{` is on a later line: keep the pending class while the
+        // header continues and until the line that starts with `{`.
+        if (pendingClass != null && pendingParens == 0 && !content.startsWith("{") && !headerContinuesOnThisLine(content)) {
+            pendingClass = null
         }
+        val consumed = lineConsumed(code, lineNumber)
 
-        var pushName = pendingClass ?: declared?.name
-        val nameEnd = if (pendingClass != null) 0 else declared?.nameEnd ?: 0
-        var pushed = false
-        for (index in code.indices) {
+        var index = 0
+        var pushName: String? = pendingClass
+        var nameEnd = 0
+        var boundary = pushName == null && !consumed
+        while (index < code.length) {
+            if (pushName == null && boundary) {
+                while (index < code.length && (code[index] == ' ' || code[index] == '\t')) index++
+                if (index >= code.length) break
+                val container = containers.lastOrNull()?.name
+                val membersAllowed = depth == 0 || containers.lastOrNull()?.bodyDepth == depth
+                val declared = scanAt(code, index, lineNumber, container, membersAllowed)
+                boundary = false
+                if (declared != null) {
+                    pushName = declared.name
+                    nameEnd = declared.nameEnd
+                    continue
+                }
+            }
             val c = code[index]
             val name = pushName
             if (name != null) {
                 when {
-                    c == '(' && index >= nameEnd -> pendingParens++
-                    c == ')' && index >= nameEnd -> pendingParens--
+                    c == '(' && index >= nameEnd -> {
+                        pendingParens++
+                        index++
+                        continue
+                    }
+                    c == ')' && index >= nameEnd -> {
+                        pendingParens--
+                        index++
+                        continue
+                    }
                     // Braces inside the header parens belong to default values, not the body.
                     c == '{' && pendingParens <= 0 && index >= nameEnd -> {
                         depth++
                         containers.addLast(ContainerRef(name, depth))
-                        pushed = true
                         pushName = null
-                        pendingClass = null
                         pendingParens = 0
+                        boundary = true
+                        index++
                         continue
                     }
                 }
             }
             when (c) {
-                '{' -> depth++
+                '{' -> {
+                    depth++
+                    boundary = true
+                }
                 '}' -> {
                     depth = (depth - 1).coerceAtLeast(0)
                     while (containers.isNotEmpty() && depth < containers.last().bodyDepth) containers.removeLast()
+                    boundary = true
                 }
+                ';' -> boundary = true
             }
+            index++
         }
-        if (!pushed) pendingClass = pushName
+        pendingClass = pushName
+    }
+
+    private fun headerContinuesOnThisLine(content: String): Boolean {
+        if (content.startsWith(":") || content.startsWith(",") || content.startsWith("where")) return true
+        if (kotlinSyntax && content.startsWith("by")) return true
+        if (!kotlinSyntax && (content.startsWith("extends") || content.startsWith("implements") ||
+                content.startsWith("permits") || content.startsWith("throws"))
+        ) {
+            return true
+        }
+        return previousContent.endsWith(",") || previousContent.endsWith(":")
     }
 
     protected fun add(
@@ -372,20 +412,24 @@ private abstract class SourceScanner(private val kotlinSyntax: Boolean) {
 
     protected fun isAnnotationOnlyLine(content: String): Boolean = ANNOTATION_ONLY_LINE.matches(content)
 
-    /** Scans one sanitized line; returns the class declared on it, if any. */
-    protected abstract fun scanKotlin(
+    /**
+     * Scans the declaration written at [index] of the sanitized [code]; returns the class it
+     * declares together with the end of its name, if any.
+     */
+    protected abstract fun scanAt(
         code: String,
+        index: Int,
         line: Int,
         container: String?,
         membersAllowed: Boolean,
     ): DeclaredClass?
 
-    protected abstract fun scanJava(
-        code: String,
-        line: Int,
-        container: String?,
-        membersAllowed: Boolean,
-    ): DeclaredClass?
+    /** `true` when the whole line belongs to a declaration started on an earlier line. */
+    protected open fun lineConsumed(code: String, line: Int): Boolean = false
+
+    protected open fun onLineScanned(content: String) {
+        previousContent = content
+    }
 
     private fun sanitize(line: String): String {
         val out = StringBuilder(line.length)
@@ -546,14 +590,14 @@ private val JAVA_TYPE = Regex(
         """(?:(?:$JAVA_TYPE_MODIFIERS)\s+)*(?:class|interface|enum|record)\s+([A-Za-z_$][\w$]*)"""
 )
 
-private val JAVA_METHOD = Regex(
+internal val JAVA_METHOD = Regex(
     """^\s*(?:@\w+(?:\([^)]*\))?\s+)*""" +
         """(?:(?:$JAVA_MEMBER_MODIFIERS)\s+)*(?:<[^>]+>\s*)?($JAVA_TYPE_PATTERN)\s+([A-Za-z_$][\w$]*)\s*""" +
         """\([^;{}]*\)\s*(?:throws\s+[\w$., ]+)?[{;]"""
 )
 
 /** The head of a method signature whose parameters and body may continue on later lines. */
-private val JAVA_METHOD_START = Regex(
+internal val JAVA_METHOD_START = Regex(
     """^\s*(?:@\w+(?:\([^)]*\))?\s+)*""" +
         """(?:(?:$JAVA_MEMBER_MODIFIERS)\s+)*(?:<[^>]+>\s*)?($JAVA_TYPE_PATTERN)\s+([A-Za-z_$][\w$]*)\s*\("""
 )
@@ -561,7 +605,7 @@ private val JAVA_METHOD_START = Regex(
 private val JAVA_FIELD = Regex(
     """^\s*(?:@\w+(?:\([^)]*\))?\s+)*""" +
         """(?:(?:$JAVA_FIELD_MODIFIERS)\s+)*(?:<[^>]+>\s*)?($JAVA_TYPE_PATTERN)\s+([A-Za-z_$][\w$]*)\s*""" +
-        """(?:=[^;]*)?;\s*$"""
+        """(?:=[^;]*)?;"""
 )
 
 private val JAVA_KEYWORDS = setOf(
@@ -573,17 +617,20 @@ private val JAVA_KEYWORDS = setOf(
 )
 
 private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
-    override fun scanKotlin(
+    override fun scanAt(
         code: String,
+        index: Int,
         line: Int,
         container: String?,
         membersAllowed: Boolean,
     ): DeclaredClass? {
         if (!membersAllowed) return null
-        KOTLIN_CLASS.find(code)?.let { match ->
+        val segment = code.substring(index)
+        KOTLIN_CLASS.find(segment)?.let { match ->
             val name = match.groupValues[1]
-            val nameStart = match.groups[1]!!.range.first
-            val index = add(
+            val nameStart = index + match.groups[1]!!.range.first
+            val nameEnd = index + match.range.last + 1
+            val declarationIndex = add(
                 name,
                 DeclarationKind.CLASS,
                 line,
@@ -592,11 +639,11 @@ private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
                 columnOf(name, nameStart),
                 isInterface = isInterfaceKeyword(code, nameStart),
             )
-            startHeader(index, code.substring(match.range.last + 1), kotlin = true)
-            return DeclaredClass(DeclarationParser.unquote(name), match.range.last + 1)
+            startHeader(declarationIndex, code.substring(nameEnd), kotlin = true)
+            return DeclaredClass(DeclarationParser.unquote(name), nameEnd)
         }
-        KOTLIN_TYPEALIAS.find(code)?.let { match ->
-            val nameStart = match.groups[1]!!.range.first
+        KOTLIN_TYPEALIAS.find(segment)?.let { match ->
+            val nameStart = index + match.groups[1]!!.range.first
             add(
                 match.groupValues[1],
                 DeclarationKind.CLASS,
@@ -607,8 +654,8 @@ private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
             )
             return null
         }
-        KOTLIN_FUN.find(code)?.let { match ->
-            val nameStart = match.groups[1]!!.range.first
+        KOTLIN_FUN.find(segment)?.let { match ->
+            val nameStart = index + match.groups[1]!!.range.first
             add(
                 match.groupValues[1],
                 DeclarationKind.SYMBOL,
@@ -618,8 +665,8 @@ private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
                 columnOf(match.groupValues[1], nameStart),
                 isOverride = isOverrideModifier(code, nameStart),
             )
-        } ?: KOTLIN_PROPERTY.find(code)?.let { match ->
-            val nameStart = match.groups[1]!!.range.first
+        } ?: KOTLIN_PROPERTY.find(segment)?.let { match ->
+            val nameStart = index + match.groups[1]!!.range.first
             add(
                 match.groupValues[1],
                 DeclarationKind.SYMBOL,
@@ -632,9 +679,6 @@ private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
         }
         return null
     }
-
-    override fun scanJava(code: String, line: Int, container: String?, membersAllowed: Boolean): DeclaredClass? =
-        error("Kotlin scanner cannot scan Java")
 }
 
 private class JavaScanner : SourceScanner(kotlinSyntax = false) {
@@ -642,50 +686,42 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
     private var pendingMethodParens = 0
     private val annotationLines = ArrayList<String>()
 
-    override fun scanKotlin(code: String, line: Int, container: String?, membersAllowed: Boolean): DeclaredClass? =
-        error("Java scanner cannot scan Kotlin")
-
-    override fun scanJava(
-        code: String,
-        line: Int,
-        container: String?,
-        membersAllowed: Boolean,
-    ): DeclaredClass? {
-        try {
-            return scanJavaLine(code, line, container, membersAllowed)
-        } finally {
-            val content = code.trim()
-            if (isAnnotationOnlyLine(content)) annotationLines.add(content) else annotationLines.clear()
+    override fun lineConsumed(code: String, line: Int): Boolean {
+        val pending = pendingMethod ?: return false
+        pendingMethodParens += parenBalance(code)
+        if (pendingMethodParens <= 0 && code.any { it == '{' || it == ';' }) {
+            pendingMethod = null
+            add(
+                pending.name,
+                DeclarationKind.SYMBOL,
+                pending.line,
+                pending.container,
+                pending.isPrivate,
+                pending.column,
+                isOverride = pending.isOverride,
+            )
         }
+        return true
     }
 
-    private fun scanJavaLine(
+    override fun onLineScanned(content: String) {
+        super.onLineScanned(content)
+        if (isAnnotationOnlyLine(content)) annotationLines.add(content) else annotationLines.clear()
+    }
+
+    override fun scanAt(
         code: String,
+        index: Int,
         line: Int,
         container: String?,
         membersAllowed: Boolean,
     ): DeclaredClass? {
-        val pending = pendingMethod
-        if (pending != null) {
-            pendingMethodParens += parenBalance(code)
-            if (pendingMethodParens <= 0 && code.any { it == '{' || it == ';' }) {
-                pendingMethod = null
-                add(
-                    pending.name,
-                    DeclarationKind.SYMBOL,
-                    pending.line,
-                    pending.container,
-                    pending.isPrivate,
-                    pending.column,
-                    isOverride = pending.isOverride,
-                )
-            }
-            return null
-        }
-        JAVA_TYPE.find(code)?.let { match ->
+        val segment = code.substring(index)
+        JAVA_TYPE.find(segment)?.let { match ->
             val name = match.groupValues[1]
-            val nameStart = match.groups[1]!!.range.first
-            val index = add(
+            val nameStart = index + match.groups[1]!!.range.first
+            val nameEnd = index + match.range.last + 1
+            val declarationIndex = add(
                 name,
                 DeclarationKind.CLASS,
                 line,
@@ -694,13 +730,13 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
                 columnOf(name, nameStart),
                 isInterface = isInterfaceKeyword(code, nameStart),
             )
-            startHeader(index, code.substring(match.range.last + 1), kotlin = false)
-            return DeclaredClass(name, match.range.last + 1)
+            startHeader(declarationIndex, code.substring(nameEnd), kotlin = false)
+            return DeclaredClass(name, nameEnd)
         }
         if (!membersAllowed || container == null) return null
-        JAVA_METHOD.find(code)?.let { match ->
+        JAVA_METHOD.find(segment)?.let { match ->
             if (isValidType(match.groupValues[1])) {
-                val nameStart = match.groups[2]!!.range.first
+                val nameStart = index + match.groups[2]!!.range.first
                 add(
                     match.groupValues[2],
                     DeclarationKind.SYMBOL,
@@ -711,9 +747,11 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
                     isOverride = javaOverride(code, nameStart),
                 )
             }
-        } ?: JAVA_FIELD.find(code)?.let { match ->
+            return null
+        }
+        JAVA_FIELD.find(segment)?.let { match ->
             if (isValidType(match.groupValues[1])) {
-                val nameStart = match.groups[2]!!.range.first
+                val nameStart = index + match.groups[2]!!.range.first
                 add(
                     match.groupValues[2],
                     DeclarationKind.SYMBOL,
@@ -724,7 +762,9 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
                     isOverride = javaOverride(code, nameStart),
                 )
             }
-        } ?: startMethod(code, line, container)
+            return null
+        }
+        startMethod(code, segment, index, line, container)
         return null
     }
 
@@ -732,10 +772,10 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
         JAVA_OVERRIDE.containsMatchIn(code.substring(0, nameStart)) || javaOverrideAbove(annotationLines)
 
     /** Remembers the head of a method signature that continues on later lines. */
-    private fun startMethod(code: String, line: Int, container: String) {
-        val match = JAVA_METHOD_START.find(code) ?: return
+    private fun startMethod(code: String, segment: String, offset: Int, line: Int, container: String) {
+        val match = JAVA_METHOD_START.find(segment) ?: return
         if (!isValidType(match.groupValues[1])) return
-        val nameStart = match.groups[2]!!.range.first
+        val nameStart = offset + match.groups[2]!!.range.first
         pendingMethod = PendingMethod(
             match.groupValues[2],
             line,
@@ -744,7 +784,7 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
             columnOf(match.groupValues[2], nameStart),
             javaOverride(code, nameStart),
         )
-        pendingMethodParens = 1 + parenBalance(code.substring((match.range.last + 1).coerceAtMost(code.length)))
+        pendingMethodParens = 1 + parenBalance(code.substring((offset + match.range.last + 1).coerceAtMost(code.length)))
     }
 
     private fun isValidType(type: String): Boolean = type.trim() !in JAVA_KEYWORDS
@@ -773,6 +813,7 @@ private class HeaderAnalysis(
 private fun analyzeKotlinHeader(header: String): HeaderAnalysis {
     val scan = depthScan(header)
     val end = when {
+        scan.brace >= 0 && scan.where >= 0 -> minOf(scan.brace, scan.where)
         scan.brace >= 0 -> scan.brace
         scan.where >= 0 -> scan.where
         else -> header.length
@@ -894,9 +935,53 @@ private fun cleanSupertype(item: String): String? {
     var rest = stripLeadingAnnotations(item)
     val by = topLevelWordIndex(rest, "by")
     if (by >= 0) rest = rest.substring(0, by)
-    val name = cleanTypeName(rest)
-    return name.takeIf { it.isNotEmpty() }
+    return singleTypeName(rest)
 }
+
+private val CLEAN_TYPE_NAME = Regex("""(?:[A-Za-z_$][\w$]*|`[^`]+`)(?:\.(?:[A-Za-z_$][\w$]*|`[^`]+`))*""")
+
+/**
+ * [raw] cleaned of type arguments, `?` and whitespace, when what remains is one (dotted) name;
+ * `null` otherwise. Two names separated only by whitespace are not joined.
+ */
+internal fun singleTypeName(raw: String): String? {
+    if (wordsJoinAcrossSpace(raw)) return null
+    val cleaned = cleanTypeName(stripLeadingAnnotations(raw))
+    return cleaned.takeIf { CLEAN_TYPE_NAME.matches(it) }
+}
+
+private fun wordsJoinAcrossSpace(text: String): Boolean {
+    var angle = 0
+    var paren = 0
+    var bracket = 0
+    var brace = 0
+    var previous = ' '
+    var index = 0
+    while (index < text.length) {
+        val c = text[index]
+        when (c) {
+            '<' -> angle++
+            '>' -> if (angle > 0) angle--
+            '(' -> paren++
+            ')' -> if (paren > 0) paren--
+            '[' -> bracket++
+            ']' -> if (bracket > 0) bracket--
+            '{' -> brace++
+            '}' -> if (brace > 0) brace--
+        }
+        val topLevel = angle == 0 && paren == 0 && bracket == 0 && brace == 0
+        if (topLevel && c.isWhitespace()) {
+            var next = index + 1
+            while (next < text.length && text[next].isWhitespace()) next++
+            if (next < text.length && isNameChar(previous) && isNameChar(text[next])) return true
+        }
+        if (!c.isWhitespace()) previous = c
+        index++
+    }
+    return false
+}
+
+private fun isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '$'
 
 internal fun stripLeadingAnnotations(text: String): String {
     var rest = text.trimStart()
@@ -1129,6 +1214,8 @@ private class OutlineDraft(
     var end: Int = -1
 }
 
+private val TYPEALIAS_HEAD = Regex("""\btypealias\s*$""")
+
 private val KOTLIN_INIT_BLOCK = Regex("""^\s*init\s*\{""")
 
 private val KOTLIN_CONSTRUCTOR = Regex(
@@ -1238,11 +1325,9 @@ private class OutlineScanner(private val fileName: String, private val text: Str
     }
 
     private fun classDraft(declaration: ParsedDeclaration, line: Int, lineText: String): OutlineDraft? {
-        if (kotlin && KOTLIN_TYPEALIAS.find(lineText) != null) return null
-        val match = if (kotlin) KOTLIN_CLASS.find(lineText) else JAVA_TYPE.find(lineText)
-        val named = match?.takeIf { DeclarationParser.unquote(it.groupValues[1]) == declaration.name } ?: return null
-        val token = named.groupValues[1]
-        val nameStart = starts[line] + named.groups[1]!!.range.first
+        val (relativeStart, tokenLength) = nameToken(lineText, declaration) ?: return null
+        if (kotlin && TYPEALIAS_HEAD.containsMatchIn(lineText.substring(0, relativeStart))) return null
+        val nameStart = starts[line] + relativeStart
         return OutlineDraft(
             declaration.name,
             OutlineKind.CLASS,
@@ -1250,30 +1335,34 @@ private class OutlineScanner(private val fileName: String, private val text: Str
             line,
             starts[line],
             nameStart,
-            nameStart + token.length,
+            nameStart + tokenLength,
             false,
         )
     }
 
     private fun symbolDraft(declaration: ParsedDeclaration, line: Int, lineText: String): OutlineDraft? {
+        val (relativeStart, tokenLength) = nameToken(lineText, declaration) ?: return null
+        val segment = lineText.substring(declarationSegmentStart(lineText, relativeStart))
+        val function: MatchResult?
         val kind: OutlineKind
-        val match: MatchResult?
         if (kotlin) {
-            val function = namedMatch(KOTLIN_FUN, lineText, declaration.name, 1)
-            val property = namedMatch(KOTLIN_PROPERTY, lineText, declaration.name, 1)
-            kind = if (function != null) OutlineKind.FUNCTION else OutlineKind.PROPERTY
-            match = function ?: property
+            function = namedMatch(KOTLIN_FUN, segment, declaration.name, 1)
+            kind = if (function != null) {
+                OutlineKind.FUNCTION
+            } else {
+                if (namedMatch(KOTLIN_PROPERTY, segment, declaration.name, 1) == null) return null
+                OutlineKind.PROPERTY
+            }
         } else {
-            val function = namedMatch(JAVA_METHOD, lineText, declaration.name, 2)
-                ?: namedMatch(JAVA_METHOD_START, lineText, declaration.name, 2)
-            val field = namedMatch(JAVA_FIELD, lineText, declaration.name, 2)
-            kind = if (function != null) OutlineKind.FUNCTION else OutlineKind.PROPERTY
-            match = function ?: field
+            function = namedMatch(JAVA_METHOD, segment, declaration.name, 2)
+                ?: namedMatch(JAVA_METHOD_START, segment, declaration.name, 2)
+            kind = if (function != null) {
+                OutlineKind.FUNCTION
+            } else {
+                if (namedMatch(JAVA_FIELD, segment, declaration.name, 2) == null) return null
+                OutlineKind.PROPERTY
+            }
         }
-        if (match == null) return null
-        val group = if (kotlin) 1 else 2
-        val token = match.groupValues[group]
-        val relativeStart = match.groups[group]!!.range.first
         val nameStart = starts[line] + relativeStart
         val isOverride = if (kotlin) {
             OVERRIDE_MODIFIER.containsMatchIn(modifierRegion(lineText, relativeStart))
@@ -1287,9 +1376,38 @@ private class OutlineScanner(private val fileName: String, private val text: Str
             line,
             starts[line],
             nameStart,
-            nameStart + token.length,
+            nameStart + tokenLength,
             isOverride,
         )
+    }
+
+    /** The name token of [declaration] on [lineText] as (offset, length), from the parsed column. */
+    private fun nameToken(lineText: String, declaration: ParsedDeclaration): Pair<Int, Int>? {
+        val column = declaration.column
+        val start = if (column > 0 && lineText.getOrNull(column - 1) == '`') column - 1 else column
+        if (start < 0 || start >= lineText.length) return null
+        val token = if (lineText[start] == '`') {
+            val close = lineText.indexOf('`', start + 1)
+            if (close < 0) return null
+            lineText.substring(start, close + 1)
+        } else {
+            var end = start
+            while (end < lineText.length && (lineText[end].isLetterOrDigit() || lineText[end] == '_' || lineText[end] == '$')) {
+                end++
+            }
+            lineText.substring(start, end)
+        }
+        if (DeclarationParser.unquote(token) != declaration.name) return null
+        return start to token.length
+    }
+
+    /** The start of the declaration head that holds [index]: after the last `{`, `}` or `;` before it. */
+    private fun declarationSegmentStart(lineText: String, index: Int): Int {
+        var boundary = 0
+        for (i in 0 until index) {
+            if (lineText[i] == '{' || lineText[i] == '}' || lineText[i] == ';') boundary = i + 1
+        }
+        return boundary
     }
 
     private fun addExtraMembers(drafts: MutableList<OutlineDraft>, classes: List<OutlineDraft>) {

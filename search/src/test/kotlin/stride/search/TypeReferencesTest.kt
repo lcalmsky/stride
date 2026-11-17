@@ -183,6 +183,48 @@ class TypeReferencesTest {
     }
 
     @Test
+    fun `kotlin delegates and accessors do not join the written type`() {
+        val text = """
+            fun run() {
+                val a: Foo by lazy { 1 }
+                val b: Foo get() = field
+                var count: Int get() = field
+                val c: Int by remember { mutableStateOf(0) }
+                val f: (Int) -> Unit = {}
+            }
+        """.trimIndent()
+        assertEquals(DeclaredType.Explicit("Foo"), TypeReferences.declaredType("Sample.kt", text, text.indexOf("a:")))
+        assertEquals(DeclaredType.Explicit("Foo"), TypeReferences.declaredType("Sample.kt", text, text.indexOf("b:")))
+        assertEquals(DeclaredType.Explicit("Int"), TypeReferences.declaredType("Sample.kt", text, text.indexOf("count:")))
+        assertEquals(DeclaredType.Explicit("Int"), TypeReferences.declaredType("Sample.kt", text, text.indexOf("c:")))
+        assertEquals(
+            DeclaredType.Unknown(reason.format("f")),
+            TypeReferences.declaredType("Sample.kt", text, text.indexOf("f:")),
+        )
+    }
+
+    @Test
+    fun `java multi catch variables are locals without a single type`() {
+        val text = """
+            class Sample {
+                void run() {
+                    try {
+                        work();
+                    } catch (java.io.IOException | RuntimeException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        """.trimIndent()
+        val declaration = text.indexOf("RuntimeException e)") + "RuntimeException ".length
+        assertEquals(declaration, TypeReferences.localDeclaration("Sample.java", text, text.indexOf("e.printStackTrace"), "e"))
+        assertEquals(
+            DeclaredType.Unknown(reason.format("e")),
+            TypeReferences.declaredType("Sample.java", text, declaration),
+        )
+    }
+
+    @Test
     fun `kotlin untyped lambda parameters and destructuring are unknown`() {
         val text = """
             fun run(pair: Pair<Int, Int>) {

@@ -141,6 +141,53 @@ class DeclarationParserOutlineTest {
     }
 
     @Test
+    fun `members of a class whose body opens on a later line are outlined`() {
+        val kotlinText = """
+            class A
+                : Base
+            {
+                fun f() {}
+            }
+        """.trimIndent()
+        val kotlinMembers = DeclarationParser.outline("Sample.kt", kotlinText)
+        assertEquals(listOf("A", "f"), kotlinMembers.map { it.name })
+        assertEquals("f", kotlinMembers.memberAt(kotlinText.indexOf("f("))?.name)
+
+        val javaText = """
+            public class Sample
+                    extends Base
+            {
+                public void run() {}
+            }
+        """.trimIndent()
+        val javaMembers = DeclarationParser.outline("Sample.java", javaText)
+        assertEquals(listOf("Sample", "run"), javaMembers.map { it.name })
+        assertEquals("run", javaMembers.memberAt(javaText.indexOf("run()"))?.name)
+    }
+
+    @Test
+    fun `members written on the class line are outlined`() {
+        val text = "class A { fun f() {} }"
+        val members = DeclarationParser.outline("Sample.kt", text)
+        assertEquals(listOf("A", "f"), members.map { it.name })
+        assertEquals("f", members.memberAt(text.indexOf("f("))?.name)
+        assertEquals(listOf("A"), members.classesAt(text.indexOf("f(")).map { it.name })
+
+        val java = "public class Sample { public void run() {} }"
+        val javaMembers = DeclarationParser.outline("Sample.java", java)
+        assertEquals(listOf("Sample", "run"), javaMembers.map { it.name })
+        assertEquals("run", javaMembers.memberAt(java.indexOf("run()"))?.name)
+    }
+
+    @Test
+    fun `a second declaration after a closing brace is outlined`() {
+        val text = "fun a() {}\nfun b() {} fun c() {}"
+        val members = DeclarationParser.outline("Sample.kt", text)
+        assertEquals(listOf("a", "b", "c"), members.map { it.name })
+        assertEquals("c", members.memberAt(text.indexOf("c("))?.name)
+    }
+
+    @Test
     fun `no local declarations are listed`() {
         val text = """
             fun build() {

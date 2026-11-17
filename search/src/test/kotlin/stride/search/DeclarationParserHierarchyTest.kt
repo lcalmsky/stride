@@ -65,6 +65,29 @@ class DeclarationParserHierarchyTest {
     }
 
     @Test
+    fun `a kotlin where clause ends the supertype list`() {
+        val declarations = kotlin(
+            """
+            class A<T> : B where T : Comparable<T> {
+            }
+            class C<T> where T : Comparable<T> {
+            }
+            class D<T, U> : B where T : X, U : Y {
+            }
+            class E<T> : B
+                where T : Comparable<T> {
+            }
+            class F<T> where T : Comparable<T>
+            """.trimIndent()
+        )
+        assertEquals(listOf("B"), declarations.single { it.name == "A" }.supertypes)
+        assertTrue(declarations.single { it.name == "C" }.supertypes.isEmpty())
+        assertEquals(listOf("B"), declarations.single { it.name == "D" }.supertypes)
+        assertEquals(listOf("B"), declarations.single { it.name == "E" }.supertypes)
+        assertTrue(declarations.single { it.name == "F" }.supertypes.isEmpty())
+    }
+
+    @Test
     fun `kotlin supertype annotations and nullability are stripped`() {
         val declarations = kotlin("class A : @Ann(1) Base<T>?, Other.Thing?")
         assertEquals(listOf("Base", "Other.Thing"), declarations.single { it.name == "A" }.supertypes)

@@ -121,12 +121,15 @@ class TypeGraph(
     fun contextOf(declaration: Declaration): NameContext =
         NameContext(declaration.file, declaration.packageName, importsOf(declaration.file), listOfNotNull(declaration.container))
 
-    /** The class a member is declared in: the CLASS declaration of the same file named [Declaration.container]. */
+    /**
+     * The class a member is declared in: of the CLASS declarations of the same file named
+     * [Declaration.container], the one declared nearest before the member.
+     */
     fun classOf(member: Declaration): Declaration? {
         val container = member.container ?: return null
         return classesInFile(member.file.path.toString())
-            .filter { it.name == container }
-            .minByOrNull { it.line }
+            .filter { it.name == container && it.line <= member.line }
+            .maxByOrNull { it.line }
     }
 
     /** [type]'s direct supertypes in written order, each resolved from [type]'s own file. */
@@ -143,9 +146,11 @@ class TypeGraph(
      * What Go to Implementation lists for [target]. A CLASS: [allSubtypes] without interfaces. A
      * member (SYMBOL with a container): the members named like it declared in [allSubtypes] of its
      * class; in a Kotlin file only members marked [Declaration.isOverride] count, in a Java file any
-     * member of that name counts because `@Override` is optional. A top-level SYMBOL has none.
+     * member of that name counts because `@Override` is optional. A top-level SYMBOL and a private
+     * [target] have none.
      */
     fun implementations(target: Declaration): List<Declaration> {
+        if (target.isPrivate) return emptyList()
         if (target.kind == DeclarationKind.CLASS) {
             return allSubtypes(target).filter { !it.isInterface }
         }
@@ -164,8 +169,9 @@ class TypeGraph(
 
     /**
      * What Go to Super Method lists for [member]: walking [supertypes] breadth first, the first
-     * member named like it on each path (a branch stops at its first match). Empty for a Kotlin
-     * member without `override`, since it overrides nothing.
+     * member named like it on each path (a branch stops at its first match). A private member of a
+     * supertype is never listed: it is not inherited. Empty for a Kotlin member without `override`,
+     * since it overrides nothing.
      */
     fun superMembers(member: Declaration): List<Declaration> {
         if (member.kind != DeclarationKind.SYMBOL || member.container == null) return emptyList()
@@ -180,7 +186,7 @@ class TypeGraph(
             val current = queue.removeFirst()
             for (ref in supertypeRefs[key(current)].orEmpty()) {
                 for (supertype in ref.resolved) {
-                    val found = membersOf(supertype).filter { it.name == member.name }
+                    val found = membersOf(supertype).filter { it.name == member.name && !it.isPrivate }
                     if (found.isNotEmpty()) {
                         result.addAll(found)
                     } else if (visited.add(key(supertype))) {
@@ -192,13 +198,16 @@ class TypeGraph(
         return sort(result)
     }
 
-    /** Members named [name] declared in [type], and with [includeSupertypes] in its project supertypes too. */
+    /**
+     * Members named [name] declared in [type], and with [includeSupertypes] in its project supertypes
+     * too; a private member of a supertype is not inherited and is left out.
+     */
     fun membersNamed(name: String, type: Declaration, includeSupertypes: Boolean): List<Declaration> {
         val result = LinkedHashSet<Declaration>()
         result.addAll(membersOf(type).filter { it.name == name })
         if (includeSupertypes) {
             for (supertype in walk(key(type), supertypeIndex)) {
-                result.addAll(membersOf(supertype).filter { it.name == name })
+                result.addAll(membersOf(supertype).filter { it.name == name && !it.isPrivate })
             }
         }
         return sort(result)
@@ -208,8 +217,10 @@ class TypeGraph(
      * The project declarations a call of [name] written at [context] can reach. Unqualified or
      * through `this`: members named [name] of [NameContext.enclosingClasses] and their supertypes,
      * else visible top-level functions (same package, explicit import, star import), else a visible
-     * class (a constructor call). Through `super`: the members named [name] of the supertypes of
-     * the innermost enclosing class, transitively, and never that class's own members. Any other
+     * class (a constructor call). Through `super`: walking the supertypes of the innermost enclosing
+     * class breadth first, the members named [name] of the first class on each path that has one,
+     * and never that class's own members. A private member of a supertype is not inherited and is
+     * left out of both paths. Any other
      * receiver: when [resolveType] resolves it to a class the result is limited to members of that
      * class and its supertypes; otherwise every non-private SYMBOL named [name] with a container,
      * plus visible top-level ones (extension functions). These two receiver paths also drop a
@@ -237,8 +248,22 @@ class TypeGraph(
             val innermost = context.enclosingClasses.firstOrNull() ?: return emptyList()
             val type = classInContext(innermost, context) ?: return emptyList()
             val result = LinkedHashSet<Declaration>()
-            for (supertype in walk(key(type), supertypeIndex)) {
-                result.addAll(membersOf(supertype).filter { it.name == site.name })
+            val visited = HashSet<String>()
+            val queue = ArrayDeque<Declaration>()
+            queue.add(type)
+            visited.add(key(type))
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                for (ref in supertypeRefs[key(current)].orEmpty()) {
+                    for (supertype in ref.resolved) {
+                        val found = membersOf(supertype).filter { it.name == site.name && !it.isPrivate }
+                        if (found.isNotEmpty()) {
+                            result.addAll(found)
+                        } else if (visited.add(key(supertype))) {
+                            queue.add(supertype)
+                        }
+                    }
+                }
             }
             return sort(result)
         }

@@ -56,14 +56,20 @@ class HierarchyToolWindowState(
     var tree: HierarchyTree? by mutableStateOf(null)
         private set
 
-    /** The visible tree in depth-first order: expanded nodes followed by their children. */
+    /**
+     * The visible tree in depth-first order: expanded nodes followed by their children. A node that
+     * is already on the current path (the same instance) is drawn as a leaf row instead of being
+     * descended into, so a cycle in the children ends the list.
+     */
     val rows: List<HierarchyRow>
         get() {
             val tree = tree ?: return emptyList()
             val output = ArrayList<HierarchyRow>()
+            val path = HashSet<HierarchyNode>()
             fun visit(node: HierarchyNode, depth: Int) {
                 val entry = entries[node]
-                val expandable = isExpandable(node, entry)
+                val repeated = !path.add(node)
+                val expandable = !repeated && isExpandable(node, entry)
                 val expanded = expandable && entry?.expanded == true
                 output += HierarchyRow(
                     node = node,
@@ -71,13 +77,17 @@ class HierarchyToolWindowState(
                     expandable = expandable,
                     expanded = expanded,
                 )
-                if (!expanded) return
+                if (!expanded) {
+                    path.remove(node)
+                    return
+                }
                 when {
                     entry.loading -> output += HierarchyRow(null, depth + 1, searching = true)
                     entry.error != null ->
                         output += HierarchyRow(null, depth + 1, error = "Could not load: ${entry.error}")
                     else -> entry.children.forEach { visit(it, depth + 1) }
                 }
+                path.remove(node)
             }
             tree.roots.forEach { visit(it, 0) }
             return output
@@ -109,19 +119,23 @@ class HierarchyToolWindowState(
 
     /** Shows [tree], starting the root nodes that open themselves; loads of the previous tree stop. */
     fun show(tree: HierarchyTree) {
-        generation++
-        cancelLoads()
-        entries.clear()
-        this.tree = tree
+        synchronized(applyLock) {
+            generation++
+            cancelLoads()
+            entries.clear()
+            this.tree = tree
+        }
         tree.roots.forEach { node -> if (node.expanded) expand(node) }
     }
 
     /** Drops the tree and stops its loads; the registered window draws its empty state. */
     fun clear() {
-        generation++
-        cancelLoads()
-        entries.clear()
-        tree = null
+        synchronized(applyLock) {
+            generation++
+            cancelLoads()
+            entries.clear()
+            tree = null
+        }
     }
 
     /**
@@ -171,46 +185,53 @@ class HierarchyToolWindowState(
     }
 
     private fun expand(node: HierarchyNode) {
-        val entry = entries[node] ?: NodeEntry()
-        if (entry.expanded) return
-        entries[node] = entry.copy(expanded = true)
-        val loader = node.children ?: return
-        if (entry.loaded || entry.loading) return
-        entries[node] = entry.copy(expanded = true, loading = true)
-        val startedFor = generation
-        val job = scope.launch(start = CoroutineStart.LAZY) {
-            val result = try {
-                Result.success(loader())
-            } catch (e: CancellationException) {
-                throw e
-            } catch (t: Throwable) {
-                Result.failure(t)
-            }
-            // Two children of one expanded node load at once; their applies must not overlap on
-            // the shared entries map or Compose throws SnapshotApplyConflictException.
-            synchronized(applyLock) {
-                Snapshot.withMutableSnapshot {
-                    if (startedFor != generation) return@withMutableSnapshot
-                    val current = entries[node] ?: return@withMutableSnapshot
-                    val children = result.getOrNull()
-                    entries[node] = current.copy(
-                        loading = false,
-                        loaded = true,
-                        children = children ?: emptyList(),
-                        error = result.exceptionOrNull()?.let { it.message ?: it::class.simpleName },
-                    )
-                    children?.filter { it.expanded }?.forEach { expand(it) }
+        var job: Job? = null
+        synchronized(applyLock) {
+            val entry = entries[node] ?: NodeEntry()
+            if (entry.expanded) return
+            entries[node] = entry.copy(expanded = true)
+            val loader = node.children ?: return
+            if (entry.loaded || entry.loading) return
+            entries[node] = entry.copy(expanded = true, loading = true)
+            val startedFor = generation
+            val started = scope.launch(start = CoroutineStart.LAZY) {
+                val result = try {
+                    Result.success(loader())
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    Result.failure(t)
+                }
+                // A UI write must not land between opening this snapshot and applying it, or Compose
+                // throws SnapshotApplyConflictException on the shared entries map.
+                synchronized(applyLock) {
+                    Snapshot.withMutableSnapshot {
+                        if (startedFor != generation) return@withMutableSnapshot
+                        val current = entries[node] ?: return@withMutableSnapshot
+                        val children = result.getOrNull()
+                        entries[node] = current.copy(
+                            loading = false,
+                            loaded = true,
+                            children = children ?: emptyList(),
+                            error = result.exceptionOrNull()?.let { it.message ?: it::class.simpleName },
+                        )
+                        children?.filter { it.expanded }?.forEach { expand(it) }
+                    }
                 }
             }
+            jobs += started
+            started.invokeOnCompletion { jobs.remove(started) }
+            job = started
         }
-        jobs += job
-        job.invokeOnCompletion { jobs.remove(job) }
-        job.start()
+        // loader() may run on the caller thread with an unconfined dispatcher, so start outside the lock.
+        job?.start()
     }
 
     private fun collapse(node: HierarchyNode) {
-        val entry = entries[node] ?: return
-        entries[node] = entry.copy(expanded = false)
+        synchronized(applyLock) {
+            val entry = entries[node] ?: return
+            entries[node] = entry.copy(expanded = false)
+        }
     }
 
     private fun cancelLoads() {

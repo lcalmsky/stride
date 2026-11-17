@@ -262,15 +262,14 @@ object TypeReferences {
         val prefix = stripJavaPrefix(text.substring(boundary, nameStart))
         if (prefix.isEmpty()) return unknown(name)
         val cleaned = cleanTypeName(prefix).removeSuffix("...")
-        if (cleaned.isEmpty() || cleaned == "var") return unknown(name)
+        if (cleaned.isEmpty() || cleaned == "var" || cleaned.contains('|')) return unknown(name)
         return DeclaredType.Explicit(cleaned)
     }
 
     private fun explicitOrUnknown(text: String, typeStart: Int, name: String): DeclaredType {
         val typeText = readKotlinType(text, typeStart)
         if (typeText.contains("->")) return unknown(name)
-        val cleaned = cleanTypeName(stripLeadingAnnotations(typeText))
-        if (cleaned.isEmpty()) return unknown(name)
+        val cleaned = singleTypeName(typeText) ?: return unknown(name)
         return DeclaredType.Explicit(cleaned)
     }
 
@@ -291,6 +290,12 @@ object TypeReferences {
         var bracket = 0
         var i = start
         while (i < text.length) {
+            val topLevel = angle == 0 && paren == 0 && bracket == 0
+            if (topLevel && (matchesWordAtLocal(text, i, "by") || matchesWordAtLocal(text, i, "get") ||
+                    matchesWordAtLocal(text, i, "set"))
+            ) {
+                return text.substring(start, i)
+            }
             when (text[i]) {
                 '<' -> angle++
                 '>' -> if (angle > 0) angle--
@@ -517,7 +522,10 @@ object TypeReferences {
 
     private val JAVA_FOR_EACH = Regex("""\bfor\s*\(\s*(?:final\s+)?([A-Za-z_$][\w$.<>\[\]]*)\s+([A-Za-z_$][\w$]*)\s*:""")
 
-    private val JAVA_CATCH = Regex("""\bcatch\s*\(\s*(?:final\s+)?([A-Za-z_$][\w$.<>\[\]]*)\s+([A-Za-z_$][\w$]*)\s*\)""")
+    private val JAVA_CATCH = Regex(
+        """\bcatch\s*\(\s*(?:final\s+)?""" +
+            """([A-Za-z_$][\w$.<>\[\]]*(?:\s*\|\s*[A-Za-z_$][\w$.<>\[\]]*)*)\s+([A-Za-z_$][\w$]*)\s*\)"""
+    )
 
     private val CONSTRUCTOR_CALL = Regex("""^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*\(""")
 

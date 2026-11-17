@@ -236,6 +236,84 @@ class DeclarationParserTest {
     }
 
     @Test
+    fun `a class body opening on a later line keeps its members`() {
+        val declarations = parseKotlin(
+            """
+            class A
+                : Base
+            {
+                fun f() {}
+            }
+            class B : Base,
+                Other
+            {
+                fun g() {}
+            }
+            """.trimIndent()
+        )
+        assertEquals("A", declarations.single { it.name == "f" }.container)
+        assertEquals("B", declarations.single { it.name == "g" }.container)
+    }
+
+    @Test
+    fun `a java class body opening on a later line keeps its members`() {
+        val declarations = parseJava(
+            """
+            public class Sample
+                    extends Base
+            {
+                public void run() {}
+            }
+            """.trimIndent()
+        )
+        assertEquals("Sample", declarations.single { it.name == "run" }.container)
+    }
+
+    @Test
+    fun `members written on the class line are declarations`() {
+        val declarations = parseKotlin("class A { fun f() {} }")
+        assertEquals(listOf("A", "f"), declarations.map { it.name })
+        assertEquals("A", declarations.single { it.name == "f" }.container)
+    }
+
+    @Test
+    fun `a second declaration after a closing brace is a declaration`() {
+        val declarations = parseKotlin("fun a() {}\nfun b() {} fun c() {}")
+        assertEquals(listOf("a", "b", "c"), declarations.map { it.name })
+    }
+
+    @Test
+    fun `java members on the class line and after a closing brace are declarations`() {
+        val declarations = parseJava(
+            """
+            public class Sample { public void run() {} }
+            public class Other {
+                public void first() {} public void second() {}
+            }
+            """.trimIndent()
+        )
+        assertEquals("Sample", declarations.single { it.name == "run" }.container)
+        assertEquals("Other", declarations.single { it.name == "second" }.container)
+
+        val fields = parseJava("public class Fields { private int count = 1; public void run() {} }")
+        assertEquals("Fields", fields.single { it.name == "count" }.container)
+    }
+
+    @Test
+    fun `one line enums and objects keep their shape`() {
+        val declarations = parseKotlin(
+            """
+            enum class E { A, B }
+            object O { const val X = 1 }
+            """.trimIndent()
+        )
+        assertEquals(listOf("E", "O"), declarations.filter { it.kind == DeclarationKind.CLASS }.map { it.name })
+        assertEquals("O", declarations.single { it.name == "X" }.container)
+        val outline = DeclarationParser.outline("Sample.kt", "enum class E { A, B }\nobject O { const val X = 1 }\n")
+        assertEquals(listOf("E", "O", "X"), outline.map { it.name })
+    }
+
+    @Test
     fun `private kotlin declarations are flagged`() {
         val declarations = parseKotlin(
             """

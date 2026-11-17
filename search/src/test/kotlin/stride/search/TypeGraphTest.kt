@@ -286,6 +286,67 @@ class TypeGraphTest {
     }
 
     @Test
+    fun `private members of a supertype are not inherited`() {
+        val base = declaration("Base", path = "src/Base.kt", line = 1)
+        val secret = declaration("secret", path = "src/Base.kt", kind = DeclarationKind.SYMBOL, container = "Base", line = 2, isPrivate = true)
+        val child = declaration("Child", path = "src/Child.kt", line = 1, supertypes = listOf("Base"))
+        val typeGraph = graph(listOf(base, secret, child))
+
+        assertTrue(typeGraph.membersNamed("secret", child, includeSupertypes = true).isEmpty())
+        val inside = context(path = "src/Child.kt", enclosing = listOf("Child"))
+        assertTrue(typeGraph.resolveCallee(CallSite("secret", 0, 6), inside).isEmpty())
+        assertTrue(typeGraph.resolveCallee(CallSite("secret", 0, 6, receiver = "super"), inside).isEmpty())
+        assertTrue(typeGraph.implementations(secret).isEmpty())
+
+        val childSecret = declaration(
+            "secret", path = "src/Child.kt", kind = DeclarationKind.SYMBOL, container = "Child", line = 2, isOverride = true,
+        )
+        assertTrue(graph(listOf(base, secret, child, childSecret)).superMembers(childSecret).isEmpty())
+
+        val own = declaration("Own", path = "src/Own.kt", line = 1)
+        val hidden = declaration("hidden", path = "src/Own.kt", kind = DeclarationKind.SYMBOL, container = "Own", line = 2, isPrivate = true)
+        assertEquals(
+            listOf(hidden),
+            graph(listOf(own, hidden)).resolveCallee(CallSite("hidden", 0, 6), context(path = "src/Own.kt", enclosing = listOf("Own"))),
+            "a class's own private member is still a callee",
+        )
+    }
+
+    @Test
+    fun `a super call stops at the first member on each path`() {
+        val shape = declaration("Shape", path = "src/Shape.kt", line = 1)
+        val shapeArea = declaration("area", path = "src/Shape.kt", kind = DeclarationKind.SYMBOL, container = "Shape", line = 2)
+        val polygon = declaration("Polygon", path = "src/Polygon.kt", line = 1, supertypes = listOf("Shape"))
+        val polygonArea = declaration(
+            "area", path = "src/Polygon.kt", kind = DeclarationKind.SYMBOL, container = "Polygon", line = 2, isOverride = true,
+        )
+        val square = declaration("Square", path = "src/Square.kt", line = 1, supertypes = listOf("Polygon"))
+        val typeGraph = graph(listOf(shape, shapeArea, polygon, polygonArea, square))
+
+        val inside = context(path = "src/Square.kt", enclosing = listOf("Square"))
+        assertEquals(
+            listOf(polygonArea),
+            typeGraph.resolveCallee(CallSite("area", 0, 4, receiver = "super"), inside),
+        )
+    }
+
+    @Test
+    fun `classOf picks the nearest class declared before the member`() {
+        val outerA = declaration("A", path = "src/Both.kt", line = 0)
+        val bInA = declaration("B", path = "src/Both.kt", line = 1, container = "A")
+        val one = declaration("one", path = "src/Both.kt", kind = DeclarationKind.SYMBOL, container = "B", line = 2)
+        val outerC = declaration("C", path = "src/Both.kt", line = 4)
+        val bInC = declaration("B", path = "src/Both.kt", line = 5, container = "C")
+        val two = declaration("two", path = "src/Both.kt", kind = DeclarationKind.SYMBOL, container = "B", line = 6)
+        val typeGraph = graph(listOf(outerA, bInA, one, outerC, bInC, two))
+
+        assertEquals(bInA, typeGraph.classOf(one))
+        assertEquals(bInC, typeGraph.classOf(two))
+        assertEquals(listOf(two), typeGraph.membersNamed("two", bInC, includeSupertypes = false))
+        assertTrue(typeGraph.membersNamed("two", bInA, includeSupertypes = false).isEmpty())
+    }
+
+    @Test
     fun `mayCall applies the visibility and receiver rules`() {
         val privateMember = declaration(
             "secret", path = "src/Base.kt", kind = DeclarationKind.SYMBOL, container = "Base", line = 2, isPrivate = true,

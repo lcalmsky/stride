@@ -118,6 +118,62 @@ class CallSitesTest {
     }
 
     @Test
+    fun `property accessor declarations are not calls`() {
+        val text = """
+            class A {
+                var x: Int = 0
+                    get() = field
+                    set(value) { field = value }
+                val y: Int
+                    private get() = 1
+            }
+        """.trimIndent()
+        assertTrue(CallSites.find("Sample.kt", text, "get").isEmpty())
+        assertTrue(CallSites.find("Sample.kt", text, "set").isEmpty())
+        assertTrue(CallSites.find("Sample.kt", text, "field").isEmpty(), "field is not called either")
+    }
+
+    @Test
+    fun `a class header delegate expression is not a trailing lambda call`() {
+        val text = """
+            class A : Iface by impl {
+            }
+            class B :
+                Other by otherImpl {
+            }
+            fun run() {
+                val x by lazy { 1 }
+            }
+        """.trimIndent()
+        assertTrue(CallSites.find("Sample.kt", text, "impl").isEmpty())
+        assertTrue(CallSites.find("Sample.kt", text, "otherImpl").isEmpty())
+        assertEquals(1, CallSites.find("Sample.kt", text, "lazy").size)
+    }
+
+    @Test
+    fun `java method and constructor heads are not calls`() {
+        val split = """
+            public class Sample
+                    extends Base
+            {
+                public void run() {}
+            }
+        """.trimIndent()
+        assertTrue(CallSites.find("Sample.java", split, "run").isEmpty())
+
+        val expressions = """
+            class Sample {
+                void caller() {
+                    String s = run();
+                    other.run();
+                    return run();
+                }
+            }
+        """.trimIndent()
+        assertEquals(listOf(null, "other", null), CallSites.find("Sample.java", expressions, "run").map { it.receiver })
+    }
+
+    @Test
     fun `other file types have no calls`() {
         assertTrue(CallSites.find("notes.md", "foo()", "foo").isEmpty())
     }
