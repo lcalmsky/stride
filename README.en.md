@@ -37,7 +37,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"><br><br><img src="docs/images/problems.png" alt="Wavy underlines and the Problems window" width="480"></td>
 <td valign="top">
 
 - **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
@@ -51,6 +51,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Multiple carets** `⌃G` adds the next match to the selection (or selects the word at the caret when there is none), `⌃⇧G` drops the last added one, and `⌃⌘G` selects every match. `⌥⇧`-click adds or removes a caret, and holding the second `⌥` while pressing `↑`·`↓` clones a caret; `⌥`-drag or the `⌘⇧8` column selection mode builds a rectangular selection. Typing, deleting, pasting, arrow movement, and line comment, duplicate, delete, indent and case apply at every caret; any other action drops the secondary carets and works at the primary one. `Esc` drops the secondary carets
 - **Code folding** `⌘-` collapses the block that starts on the caret line or encloses the caret into `{...}`, and `⌘=` expands it again. `⌘⇧-`·`⌘⇧=` collapse and expand every block in the file, and the numeric keypad `⌘+`·`⌘-` work too. Multi-line `{}`·`[]` blocks, block comments and KDoc, and the import list fold (Kotlin, Java, JSON). `←`·`→` step over a folded range, and clicking the placeholder or moving the caret into a fold by going to a line, find or navigation expands it. The numbers of folded lines drop out of the gutter
 - **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure and `⌘⇧T` goes to the test; `⌥F7` lists usages in a Find window tab, the `⌘2` Bookmarks window and the `⌘7` Structure window list bookmarks and declarations, and `F3`·`⌘F3` handle bookmarks
+- **Problems** problems judged from the text alone, without a compiler, are shown together with the compiler messages of the last Gradle run. Kotlin and JSON report unbalanced brackets as errors and Kotlin reports unused imports as warnings, recomputed once typing pauses for 300 ms. Errors get a pink and warnings an amber wavy underline. `F2`·`⇧F2` go to the next and previous problem in the current file (errors only when there are any, wrapping around at the ends), and `⌘F1` shows the description of the problem at the caret in a popup. The `⌘6` Problems window splits the current file's problems (File) and the project's errors (Project Errors) into tabs, and `⌘⇧]`·`⌘⇧[` switch them while the window has the keyboard. A build message is shown only while its line can still be matched with certainty after later edits
 - **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
 </td>
@@ -234,8 +235,10 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘F12` | File structure |
 | `⌘⇧T` | Go to test |
 | `⌥F7` | Find usages (adds a Find window tab) |
-| `⌘2` / `⌘3` / `⌘7` | Bookmarks / Find / Structure window |
+| `⌘2` / `⌘3` / `⌘6` / `⌘7` | Bookmarks / Find / Problems / Structure window |
 | `F3` / `⌘F3` | Toggle bookmark / show bookmarks |
+| `F2` / `⇧F2` | Next problem / previous problem |
+| `⌘F1` | Describe the problem at the caret |
 | **Run** | |
 | `⌥↩` | Context actions |
 | `⌃⇧R` | Run the test at the caret, otherwise the file's main |
@@ -246,7 +249,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘4` · `⌘R` (Run window) | Open the Run window · rerun from the Run window |
 | **Terminal** | |
 | `⌥F12` | Open the Terminal window |
-| `⇧Esc` | Hide the tool window (Bookmarks, Find, Run, Structure and Terminal windows) |
+| `⇧Esc` | Hide the tool window (Bookmarks, Find, Run, Problems, Structure and Terminal windows) |
 | **Other** | |
 | Actions tab | Switch UI Font |
 
@@ -288,9 +291,9 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 
 ## How it works
 
-The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, intention, and import optimizer APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, and file types, and the Kotlin plugin also registers the import quick fixes, the `val`/`var` intention, and the import optimizer.
+The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, intention, import optimizer, and problem provider APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, file types, and bracket-matching problem providers, and the Kotlin plugin also registers the import quick fixes, the `val`/`var` intention, the import optimizer, and the unused import warning.
 
-Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
+Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, problem provider, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
 
 The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 
