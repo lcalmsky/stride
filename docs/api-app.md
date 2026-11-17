@@ -352,11 +352,12 @@ data class KeyStroke(
 
 enum class ActionId {
     OPEN_FOLDER, SAVE, CLOSE_TAB, SEARCH_EVERYWHERE, NEXT_TAB, PREVIOUS_TAB, HIDE_ACTIVE_WINDOW,
-    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW, SHOW_INTENTION_ACTIONS,
-    CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
+    RUN, RUN_CONTEXT, STOP, RERUN, ACTIVATE_RUN_TOOL_WINDOW,
+    ACTIVATE_BOOKMARKS_TOOL_WINDOW, ACTIVATE_FIND_TOOL_WINDOW, ACTIVATE_STRUCTURE_TOOL_WINDOW,
+    SHOW_INTENTION_ACTIONS, CHOOSE_RUN_CONFIGURATION, BUILD_PROJECT,
     EDITOR_DUPLICATE, EDITOR_DELETE_LINE, COMMENT_LINE, COMMENT_BLOCK, MOVE_LINE_UP, MOVE_LINE_DOWN,
     GOTO_LINE, UNDO, REDO, INDENT, UNINDENT, EDITOR_ESCAPE,
-    FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
+    FIND, REPLACE, FIND_NEXT, FIND_PREVIOUS, FIND_IN_PATH, REPLACE_IN_PATH, GOTO_FILE, GOTO_CLASS, GOTO_SYMBOL,
     GOTO_ACTION, RECENT_FILES, ACTIVATE_TERMINAL_TOOL_WINDOW,
     EDITOR_SELECT_WORD, EDITOR_UNSELECT_WORD, EDITOR_TOGGLE_CASE, EDITOR_JOIN_LINES,
     EDITOR_START_NEW_LINE, EDITOR_START_NEW_LINE_BEFORE, EDITOR_MATCH_BRACE,
@@ -376,6 +377,7 @@ enum class ActionId {
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
+    LIST_WINDOW,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -423,95 +425,99 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 
 | ActionId | Context | macOS strokes | Action | Keymap.kt |
 |---|---|---|---|---|
-| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :79 |
-| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :81 |
-| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :83 |
-| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :85, :86 |
-| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :88, :89 |
-| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL | ⇧Esc | `HideActiveWindow` | :91 |
-| `RUN` | GLOBAL | ⌃R | `Run` | :93 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :95 |
-| `STOP` | GLOBAL | ⌘F2 | `Stop` | :97 |
-| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :99 |
-| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :101 |
-| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :103 |
-| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :105 |
-| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :107, :108 |
-| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :110 |
-| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :112 |
-| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :114 |
-| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :116 |
-| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :118 |
-| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :120 |
-| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :122 |
-| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :124 |
-| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :126 |
-| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :128 |
-| `UNDO` | EDITOR | ⌘Z | `$Undo` | :130 |
-| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :132 |
-| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :134 |
-| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :136 |
-| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :138 |
-| `FIND` | EDITOR | ⌘F | `Find` | :140 |
-| `REPLACE` | EDITOR | ⌘R | `Replace` | :142 |
-| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :144 |
-| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :146 |
-| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :148 |
-| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :150 |
-| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :152 |
-| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :154 |
-| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :156 |
-| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :158 |
-| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :160 |
-| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :162 |
-| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :164 |
-| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :166 |
-| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :168 |
-| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :170 |
-| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :172 |
-| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :174 |
-| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :176 |
-| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :178 |
-| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :180 |
-| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :182 |
-| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :184 |
-| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :186 |
-| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :188 |
-| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :191, :192 |
-| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :194 |
-| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :196 |
-| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :198 |
-| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :200 |
-| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :202, :203 |
-| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :205 |
-| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :207 |
-| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :209 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :211 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :212 |
-| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :214 |
-| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :216, :217 |
-| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :219, :220 |
-| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :222 |
-| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :224 |
-| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :226 |
-| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :228 |
-| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :230 |
-| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :232 |
-| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :234 |
-| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :236 |
-| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :238 |
-| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :240, :241 |
-| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :243 |
-| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :247 |
-| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :249 |
-| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :251 |
-| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :253 |
+| `GOTO_CLASS` | GLOBAL | ⌘O (opens a folder when no project is open) | `GotoClass` | :84 |
+| `SAVE` | GLOBAL | ⌘S | `SaveAll` | :86 |
+| `CLOSE_TAB` | GLOBAL | ⌘W | `CloseContent` | :88 |
+| `NEXT_TAB` | GLOBAL | ⌘⇧] , ⌃→ | `NextTab` | :90, :91 |
+| `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :93, :94 |
+| `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :96 |
+| `RUN` | GLOBAL | ⌃R | `Run` | :104 |
+| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :106 |
+| `STOP` | GLOBAL | ⌘F2 | `Stop` | :108 |
+| `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :110 |
+| `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :112 |
+| `ACTIVATE_FIND_TOOL_WINDOW` | GLOBAL | ⌘3 | `ActivateFindToolWindow` | :114 |
+| `ACTIVATE_RUN_TOOL_WINDOW` | GLOBAL | ⌘4 | `ActivateRunToolWindow` | :116 |
+| `ACTIVATE_STRUCTURE_TOOL_WINDOW` | GLOBAL | ⌘7 | `ActivateStructureToolWindow` | :118 |
+| `EDITOR_DUPLICATE` | EDITOR | ⌘D | `EditorDuplicate` | :120 |
+| `EDITOR_DELETE_LINE` | EDITOR | ⌘⌫ | `EditorDeleteLine` | :122 |
+| `COMMENT_LINE` | EDITOR | ⌘/ , ⌘(numpad /) | `CommentByLineComment` | :124, :125 |
+| `COMMENT_BLOCK` | EDITOR | ⌘⌥/ | `CommentByBlockComment` | :127 |
+| `MOVE_LINE_UP` | EDITOR | ⌥⇧↑ | `MoveLineUp` | :129 |
+| `MOVE_LINE_DOWN` | EDITOR | ⌥⇧↓ | `MoveLineDown` | :131 |
+| `MOVE_STATEMENT_UP` | EDITOR | ⇧⌘↑ | `MoveStatementUp` | :133 |
+| `MOVE_STATEMENT_DOWN` | EDITOR | ⇧⌘↓ | `MoveStatementDown` | :135 |
+| `EDITOR_COMPLETE_STATEMENT` | EDITOR | ⇧⌘↩ | `EditorCompleteStatement` | :137 |
+| `UNWRAP` | EDITOR | ⇧⌘⌦ | `Unwrap` | :139 |
+| `REFORMAT_CODE` | EDITOR | ⌥⌘L | `ReformatCode` | :141 |
+| `EDITOR_SCROLL_TO_CENTER` | EDITOR | ⌃L | `EditorScrollToCenter` | :143 |
+| `GOTO_LINE` | EDITOR | ⌘L | `GotoLine` | :145 |
+| `UNDO` | EDITOR | ⌘Z | `$Undo` | :147 |
+| `REDO` | EDITOR | ⌘⇧Z | `$Redo` | :149 |
+| `INDENT` | EDITOR | Tab | `EditorIndentSelection` | :151 |
+| `UNINDENT` | EDITOR | ⇧Tab | `EditorUnindentSelection` | :153 |
+| `EDITOR_ESCAPE` | EDITOR | Esc | `EditorEscape` | :155 |
+| `FIND` | EDITOR | ⌘F | `Find` | :157 |
+| `REPLACE` | EDITOR | ⌘R | `Replace` | :159 |
+| `FIND_NEXT` | EDITOR, FIND_BAR | ⌘G | `FindNext` | :161 |
+| `FIND_PREVIOUS` | EDITOR, FIND_BAR | ⌘⇧G | `FindPrevious` | :163 |
+| `FIND_IN_PATH` | GLOBAL | ⌘⇧F | `FindInPath` | :165 |
+| `REPLACE_IN_PATH` | GLOBAL | ⇧⌘R | `ReplaceInPath` | :167 |
+| `GOTO_FILE` | GLOBAL | ⌘⇧O | `GotoFile` | :169 |
+| `GOTO_SYMBOL` | GLOBAL | ⌘⌥O | `GotoSymbol` | :171 |
+| `GOTO_ACTION` | GLOBAL | ⌘⇧A | `GotoAction` | :173 |
+| `RECENT_FILES` | GLOBAL | ⌘E | `RecentFiles` | :175 |
+| `ACTIVATE_TERMINAL_TOOL_WINDOW` | GLOBAL | ⌥F12 | `ActivateTerminalToolWindow` | :177 |
+| `SHOW_INTENTION_ACTIONS` | EDITOR | ⌥↩ | `ShowIntentionActions` | :179 |
+| `CHOOSE_RUN_CONFIGURATION` | GLOBAL | ⌃⌥R | `ChooseRunConfiguration` | :181 |
+| `BUILD_PROJECT` | GLOBAL | ⌘F9 | `CompileDirty` | :183 |
+| `EDITOR_SELECT_WORD` | EDITOR | ⌥↑ | `EditorSelectWord` | :185 |
+| `EDITOR_UNSELECT_WORD` | EDITOR | ⌥↓ | `EditorUnSelectWord` | :187 |
+| `EDITOR_TOGGLE_CASE` | EDITOR | ⌘⇧U | `EditorToggleCase` | :189 |
+| `EDITOR_JOIN_LINES` | EDITOR | ⌃⇧J | `EditorJoinLines` | :191 |
+| `EDITOR_START_NEW_LINE` | EDITOR | ⇧↩ | `EditorStartNewLine` | :193 |
+| `EDITOR_START_NEW_LINE_BEFORE` | EDITOR | ⌘⌥↩ | `EditorStartNewLineBefore` | :195 |
+| `EDITOR_MATCH_BRACE` | EDITOR | ⌃M | `EditorMatchBrace` | :197 |
+| `EDITOR_CODE_BLOCK_START` | EDITOR | ⌘⌥[ | `EditorCodeBlockStart` | :199 |
+| `EDITOR_CODE_BLOCK_END` | EDITOR | ⌘⌥] | `EditorCodeBlockEnd` | :201 |
+| `METHOD_UP` | EDITOR | ⌃⇧↑ | `MethodUp` | :203 |
+| `METHOD_DOWN` | EDITOR | ⌃⇧↓ | `MethodDown` | :205 |
+| `HIPPIE_COMPLETION` | EDITOR | ⌥/ | `HippieCompletion` | :207 |
+| `CODE_COMPLETION` | EDITOR | ⌃Space | `CodeCompletion` | :210, :211 |
+| `SMART_TYPE_COMPLETION` | EDITOR | ⌃⇧Space | `SmartTypeCompletion` | :213 |
+| `OPTIMIZE_IMPORTS` | EDITOR | ⌃⌥O | `OptimizeImports` | :215 |
+| `PASTE_MULTIPLE` | EDITOR | ⇧⌘V | `PasteMultiple` | :217 |
+| `PARAMETER_INFO` | EDITOR | ⌘P | `ParameterInfo` | :219 |
+| `QUICK_DOC` | EDITOR | F1 , ⌃J | `QuickJavaDoc` | :221, :222 |
+| `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :224 |
+| `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :226 |
+| `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :228 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :230 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :231 |
+| `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :233 |
+| `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :235, :236 |
+| `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :238, :239 |
+| `FILE_STRUCTURE_POPUP` | EDITOR | ⌘F12 | `FileStructurePopup` | :241 |
+| `GOTO_TEST` | GLOBAL | ⌘⇧T | `GotoTest` | :243 |
+| `FIND_USAGES` | EDITOR | ⌥F7 | `FindUsages` | :245 |
+| `TOGGLE_BOOKMARK` | EDITOR | F3 | `ToggleBookmark` | :247 |
+| `SHOW_BOOKMARKS` | GLOBAL | ⌘F3 | `ShowBookmarks` | :249 |
+| `ACTIVATE_PROJECT_TOOL_WINDOW` | GLOBAL | ⌘1 | `ActivateProjectToolWindow` | :251 |
+| `HIDE_ALL_WINDOWS` | GLOBAL | ⌘⇧F12 | `HideAllWindows` | :253 |
+| `COPY_PATHS` | GLOBAL | ⌘⇧C | `CopyPaths` | :255 |
+| `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :257 |
+| `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :259, :260 |
+| `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :262 |
+| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :264 |
+| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :266 |
+| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :268 |
+| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :270 |
 | `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
 | `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
-| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :256, :257 |
-| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :259, :260 |
-| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :262, :263 |
-| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :265, :266 |
+| `EXPAND_REGION` | EDITOR | ⌘(numpad +) , ⌘= | `ExpandRegion` | :272, :273 |
+| `COLLAPSE_REGION` | EDITOR | ⌘(numpad -) , ⌘- | `CollapseRegion` | :275, :276 |
+| `EXPAND_ALL_REGIONS` | EDITOR | ⇧⌘(numpad +) , ⇧⌘= | `ExpandAllRegions` | :278, :279 |
+| `COLLAPSE_ALL_REGIONS` | EDITOR | ⇧⌘(numpad -) , ⇧⌘- | `CollapseAllRegions` | :281, :282 |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -1168,6 +1174,32 @@ class ToolWindowManager {
 @Composable fun ToolWindowPanel(manager: ToolWindowManager, onFocusContext: (KeyContext) -> Unit,
                                 modifier: Modifier = Modifier,
                                 contentInset: Dp = 0.dp, contentBottomInset: Dp = 0.dp)
+
+data class ListWindowRow(
+    val primary: AnnotatedString,
+    val secondary: AnnotatedString? = null,
+    val iconName: String? = null,
+    val indent: Int = 0,
+    val accent: Boolean = false,
+)
+
+@Composable fun ListToolWindow(
+    rows: List<ListWindowRow>,
+    focusRequests: Int,
+    onOpen: (Int) -> Unit,
+    onEscape: () -> Unit,
+    modifier: Modifier = Modifier,
+    onDelete: ((Int) -> Unit)? = null,
+    selectOnFocus: (() -> Int)? = null,
+    onSelectionChange: ((Int) -> Unit)? = null,
+)
+
+@Composable fun ToolWindowEmptyState(
+    text: String,
+    modifier: Modifier = Modifier,
+    focusRequests: Int = 0,
+    onEscape: (() -> Unit)? = null,
+)
 ```
 
 `toggle` follows the `ActivateToolWindow` rule: hidden or a different active id → `activate`;
@@ -1181,12 +1213,51 @@ inactive in `textSecondaryOnGlass`), and the content plane starts below the grou
 left, with `contentBottomInset` reserved for the status capsules. The panel root is focusable and
 requests focus whenever `focusRequests` changes, reporting its context through `onFocusContext`.
 
-`AppState` registers two windows in its constructor: `run` (title Run, context `RUN_WINDOW`) and
-`terminal` (title Terminal, context `TERMINAL`), each showing a placeholder line. `⌘4`, `⌥F12`
-and `⇧Esc` drive them through `dispatchAction`. The panel sits below the editor area and spans
-the full window width, under the floating sidebar and status capsules; a `chromeGap` horizontal
-splitter carries the drag into `height` clamped to 120 dp … 80% of the window height.
-`closeSession()` hides the panel and resets `focus`.
+`AppState` registers five windows in its constructor, in switcher order: `bookmarks` (title
+Bookmarks, context `LIST_WINDOW`), `find` (title Find, `LIST_WINDOW`), `run` (title Run,
+`RUN_WINDOW`), `structure` (title Structure, `LIST_WINDOW`) and `terminal` (title Terminal,
+`TERMINAL`). The ids follow the IntelliJ tool-window numbers: `⌘2`, `⌘3`, `⌘4`, `⌘7` and
+`⌥F12`. `⌘2`, `⌘3`, `⌘4`, `⌘7` and `⌥F12` go through
+`AppState.toggleToolWindow(id: String, context: KeyContext)`, which applies the same toggle rule
+and, when the press hides the active and focused window, hands the keyboard back to the selected
+text editor (`focus = EDITOR` and a bump of `editorFocusRequests`). `⇧Esc` (`HIDE_ACTIVE_WINDOW`)
+hides the active window through `hideActiveWindow()` with the same hand-back. A window with no
+project shows one placeholder line (`Run — no configuration yet`, `Terminal — not started`); the
+list windows show their empty state instead.
+
+The three list windows share `ListToolWindow`; `ListWindowRow` carries the primary text, an
+optional secondary text, a file icon, an indent depth and an `accent` flag that paints the
+primary text in `accent2`. Inside the list, ↑/↓ move the selection, ↵ opens the selected row (and
+the editor takes the keyboard), Esc hands the keyboard to the editor and leaves the window
+visible, and `⇧Esc` hides it through the `LIST_WINDOW` binding. A click selects and a double click
+opens. `onDelete` adds Delete/Backspace removal (Bookmarks only). The list scrolls only when the
+selected row is outside the visible items, so moving within a fully visible list does not jump.
+`selectOnFocus` runs when the window takes the keyboard and again when rows first arrive, so a
+list parsed off the UI thread can start on the requested row; `onSelectionChange` reports the
+selected index so a header button can act on it. `ToolWindowEmptyState` draws the one muted line
+an empty window shows; with `onEscape` it takes the keyboard like the list does, so Esc still
+hands focus back from an empty window.
+
+The Bookmarks window lists `session.bookmarks.entries` in set order: primary
+`relativePath:line` (1-based), secondary the line text. ↵ or a double click calls
+`openBookmark`, and Delete/Backspace removes the selected bookmark while the window stays open.
+The Structure window follows the selected `TextFileEditor`, renders `FileStructure.entries` with
+the depth as the indent and class rows in `accent2`, and parses on `Dispatchers.Default` after a
+150 ms debounce, only while the window is composed (active and visible). When the window takes
+the keyboard it selects the last entry whose line is at or above the caret line; ↵ or a double
+click calls `editor.gotoLine((entry.line + 1).toString())` and hands the keyboard to the editor.
+
+Decision D1: the three list windows are ordinary `ToolWindow`s registered in the existing
+`ToolWindowManager` and drawn in the existing bottom `ToolWindowPanel`, with one shared list
+composable. A side dock was rejected: IntelliJ's default position for Bookmarks and Structure is
+the left side, but a second layout region beside the project tree would change the editor width
+and the editor frame path even when nothing is shown, and it would add files on the frame-time
+path. One bespoke composable per window was rejected because it would copy the selection,
+keyboard and scroll code three times. The behavioural difference from IntelliJ is therefore the
+dock position: stride shows Bookmarks, Find and Structure in the bottom panel. The panel sits
+below the editor area and spans the full window width, under the floating sidebar and status
+capsules; a `chromeGap` horizontal splitter carries the drag into `height` clamped to 120 dp …
+80% of the window height. `closeSession()` hides the panel and resets `focus`.
 
 `stride.app.ui.LocalAnimationsEnabled` (`staticCompositionLocalOf { true }`) turns UI animations
 off in tests and snapshots.
@@ -1269,6 +1340,7 @@ package stride.app.search
 data class FindInPathHit(
     val file: VFile, val relativePath: String, val line: Int, val column: Int,
     val lineText: String, val start: Int, val end: Int,
+    val matchText: String = "",
 )
 
 object FindInPathScanner {
@@ -1276,7 +1348,8 @@ object FindInPathScanner {
     const val MAX_HITS: Int = 200
     fun scan(
         files: List<IndexedFile>, query: String, options: FindOptions,
-        limit: Int = MAX_HITS, shouldStop: () -> Boolean = { false },
+        limit: Int = MAX_HITS, textOf: (Path) -> String? = { null },
+        shouldStop: () -> Boolean = { false },
     ): List<FindInPathHit>
 }
 
@@ -1286,7 +1359,59 @@ object FindInPathScanner {
     initialWholeWord: Boolean = false,
     onChoose: (FindInPathHit) -> Unit,
     onClose: () -> Unit,
+    textOf: (Path) -> String? = { null },
+    onOpenInFindWindow: (query: String, options: FindOptions) -> Unit = { _, _ -> },
+    replace: Boolean = false,
+    initialReplacement: String = "",
+    onOpenReplaceInFindWindow: (query: String, options: FindOptions, replacement: String) -> Unit =
+        { _, _, _ -> },
+    onReplaceAll: (ReplacePlan) -> Unit = {},
 )
+
+const val FIND_WINDOW_MAX_HITS: Int = 1000
+
+enum class FindTabKind { USAGES, OCCURRENCES, REPLACE }
+
+class FindTab(
+    val id: Long, val kind: FindTabKind, val query: String, val options: FindOptions,
+    val replacement: String?, val title: String,
+) {
+    var hits: List<FindInPathHit>   // Compose snapshot state, internal setter
+    var searching: Boolean
+    var truncated: Boolean
+    var message: String?
+    val header: String
+}
+
+class FindToolWindowState(
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+) {
+    val tabs: List<FindTab>
+    var selectedTabId: Long?
+    val selectedTab: FindTab?
+    fun select(tab: FindTab)
+    fun addTab(kind: FindTabKind, query: String, options: FindOptions, title: String,
+               files: List<IndexedFile>, replacement: String? = null,
+               textOf: (Path) -> String? = { null }): FindTab
+    fun close(tab: FindTab)
+    fun closeSelected(): FindTab?
+    fun showMessage(tab: FindTab, message: String?)
+    fun replaceState(tab: FindTab): ReplaceTabState
+    fun startReplaceAll(tab: FindTab, controller: FindReplaceController)
+    fun finishReplaceSelected(tab: FindTab, file: VFile, outcome: ReplaceOutcome, hits: List<FindInPathHit>)
+    fun refreshFileHits(tab: FindTab, file: VFile, hits: List<FindInPathHit>)
+    fun finishReplace(tab: FindTab, message: String)
+    fun clear()
+    companion object { const val MAX_TABS: Int = 10 }
+}
+
+@Composable fun FindToolWindow(
+    state: FindToolWindowState, focusRequests: Int, onOpen: (FindInPathHit) -> Unit,
+    onEscape: () -> Unit, modifier: Modifier = Modifier,
+    replace: FindReplaceController? = null,
+)
+
+fun openFindHit(state: AppState, session: ProjectSession, hit: FindInPathHit)
 
 @Composable fun RecentFilesPopup(
     files: List<VFile>,
@@ -1299,9 +1424,11 @@ object FindInPathScanner {
 `⌘⇧F` opens `FindInPathPopup` over any project. It scans `FileNameIndex.snapshot()` on
 `Dispatchers.Default`, skipping files over 2 MB, files with a NUL byte in their first 8 KB and
 files that fail to read; a new query cancels the previous scan through coroutine cancellation.
-Rows read `relativePath:line` with the line body, the matched characters in `neonAmber`; the
-status line reads `n results`, `searching…` or `200+ results (truncated)`. Enter opens the
-file and selects the match in the editor.
+`textOf` supplies the text of a file that is open in an editor, so an unsaved edit is searched
+instead of the disk; the app passes `AppState.textOfOpenEditor`. Rows read `relativePath:line`
+with the line body, the matched characters in `neonAmber`; the status line reads `n results`,
+`searching…` or `200+ results (truncated)`. Enter opens the file and selects the match in the
+editor. `⌘↵` closes the popup and opens the query in the Find window.
 
 `⌘E` opens `RecentFilesPopup` with `FileEditorManager.recentFiles` — newest first, at most 50
 entries, closed files still listed. The first selection is the second entry; Up/Down move,
@@ -1310,13 +1437,167 @@ list, footer hints and the neon selection signal.
 
 `FileEditorManager.recentFiles` is a snapshot list updated by `openFile` (new and existing
 tabs) and by `selectNext`/`selectPrevious`; `closeFile` leaves entries in place and `dispose`
-clears them. `AppState` adds `findBar`, `findInPathVisible` and `recentFilesVisible`, and
-`closeSession()` resets all three.
+clears them. `AppState` adds `findBar`, `findInPathVisible`, `findInPathReplace` and
+`recentFilesVisible`, and `closeSession()` closes and resets them.
 
 Whole-word matching (`FindOptions.wholeWord`, the `W` toggle in the popup) keeps only matches
-whose two sides are not identifier characters. `FindUsages` (`⌥F7`) opens this popup prefilled
-with the identifier at the caret and the toggle on, through `AppState.openFindInPath`, which
-bumps `findInPathGeneration` so the popup is recreated.
+whose two sides are not identifier characters. `FindUsages` (`⌥F7`) no longer opens this popup:
+it adds a `Usages of <name>` tab to the Find window with whole-word and case-sensitive matching,
+then activates and focuses the Find window. The old popup route was a stopgap; IntelliJ shows
+usages in the Find tool window.
+
+### Find window
+
+`FindToolWindowState` owns the result tabs and their scans. A tab is added from `⌥F7`
+(`FindTabKind.USAGES`) or from the popup's `⌘↵` (`OCCURRENCES`, titled
+`Occurrences of '<query>'`), and a Replace in Path tab is `REPLACE`, titled
+`Replace '<query>' with '<replacement>'`. At most `MAX_TABS` (10) tabs are kept and the oldest is
+dropped. A new search whose kind, query, options and replacement equal an existing tab's
+replaces that tab in place and selects it. The scans run on a scope the state owns (not the
+composition), so hiding the window leaves no tab stuck in `searching…`; `closeSession()` calls
+`clear()`, which cancels the scans and replace plans and drops every tab. Results are applied in
+one mutable snapshot, and a scan that was cancelled or whose tab was replaced writes nothing.
+A tab scans up to `FIND_WINDOW_MAX_HITS` (1000); its header reads `n results`, `searching…` or
+`1000+ results (truncated)`. Rows are a flat list, primary `relativePath:line`, secondary the line
+body from `hitLine`, the highlighted line builder the popup shares. `⌘W` while the Find window has
+the keyboard (`state.focus == LIST_WINDOW` and active id `find`) closes the selected tab instead
+of the editor tab; this is the existing `CLOSE_TAB` branch, with no new binding.
+
+`FindToolWindow` draws a horizontally scrolling capsule group of tabs, each with a small ×, and
+keeps the selected tab visible. The window takes the keyboard like the other list windows; its
+empty state reads `No results · ⇧⌘F Find in Path, ⌥F7 Find Usages`, and a searching tab with no
+hits yet draws `searching…` as the focusable empty state.
+
+Opening a hit goes through `openFindHit`, shared by the popup and the window: it opens the file
+and selects `[hit.start, hit.end)` when the text there still equals `hit.matchText`, otherwise it
+goes to `hit.line`; the landing position is one history entry.
+
+### Replace in Path
+
+`⇧⌘R` (`REPLACE_IN_PATH`) calls `AppState.openFindInPath(replace = true)`, which sets
+`findInPathReplace`; `FindInPathPopup` then opens in replace mode with the title
+`Replace in Path` and a `Replace with` row under the query (Tab moves between the two fields).
+Rows strike the matched characters through in `neonAmber` and show ` → ` followed by the
+replacement as typed, in `accentOnPopupPlate`. `↵` opens the selected hit, `⌘↵` opens the query
+and replacement in the Find window as a REPLACE tab, and `⌥⌘↵` runs Replace All.
+
+```kotlin
+enum class ReplaceSource { EDITOR, DISK }
+
+data class ReplaceFilePlan(
+    val file: VFile, val relativePath: String, val source: ReplaceSource,
+    val originalText: String, val edits: List<TextEdit>,
+) {
+    val newText: String
+}
+
+data class ReplacePlan(
+    val files: List<ReplaceFilePlan>,
+    val error: String? = null,
+    val skippedEncoding: Int = 0,
+) {
+    val occurrences: Int
+    val diskFiles: Int
+}
+
+data class ReplaceOutcome(
+    val replaced: Int = 0, val files: Int = 0, val skippedReadOnly: Int = 0,
+    val skippedChanged: Int = 0, val unsavedFiles: Int = 0, val failed: Int = 0,
+    val skippedEncoding: Int = 0,
+) {
+    val message: String
+}
+
+data class HitPlan(val plan: ReplaceFilePlan?, val error: String? = null)
+
+object ReplaceInPath {
+    fun replacementsFor(text: String, query: String, options: FindOptions, replacement: String): List<TextEdit>
+    fun plan(files: List<IndexedFile>, query: String, options: FindOptions, replacement: String,
+             textOf: (Path) -> String? = { null }, shouldStop: () -> Boolean = { false }): ReplacePlan
+    fun planHit(hit: FindInPathHit, query: String, options: FindOptions, replacement: String,
+                textOf: (Path) -> String? = { null }): HitPlan
+    fun apply(plan: ReplacePlan, openEditors: List<TextFileEditor>): ReplaceOutcome
+    fun confirmation(plan: ReplacePlan, query: String, replacement: String): String
+}
+
+class FindReplaceController(
+    files: () -> List<IndexedFile>,
+    textOf: (Path) -> String?,
+    openEditors: () -> List<TextFileEditor>,
+) {
+    fun planAll(tab: FindTab): ReplacePlan
+    fun planHit(tab: FindTab, hit: FindInPathHit): HitPlan
+    fun apply(plan: ReplacePlan): ReplaceOutcome
+    fun scanFile(tab: FindTab, hit: FindInPathHit): List<FindInPathHit>
+}
+
+class ReplaceTabState {
+    var busy: Boolean
+    var pendingPlan: ReplacePlan?
+    var confirmation: String?
+}
+```
+
+Decision D3: Replace in Path is two-phase, plan then apply. The plan runs off the UI thread over
+every indexed file — not only the displayed hits, so a truncated result list does not limit
+Replace All. Each file's text comes from the overlay first (the open editor's unsaved text) and
+from the disk otherwise; one edit per match is computed with `FindModel.search`. In regex mode
+`$1`-style group references expand with `java.util.regex` semantics over the full text, so a
+lookbehind or lookahead sees the real context; overlapping literal matches keep the first one.
+Before Replace All both UIs show an inline confirmation (not a dialog) in IntelliJ's wording,
+`Replace N occurrences of 'q' across M files with 'r'?`, plus `K files are written to disk and
+cannot be undone.` when K planned files are not open, plus a notice for files that had a match
+but are not UTF-8. `↵` confirms and Esc cancels.
+
+Apply runs on the UI thread, per file. When an editor is open for the path now, the file is
+skipped as read-only when that editor is read-only, skipped as changed when its text differs from
+the planned original text, and otherwise takes `editor.applyEdits(edits)`: one undo step, and the
+editor stays modified (unsaved). Otherwise the disk file is skipped as read-only when it is not
+writable, re-read and skipped as changed when its text differs from the planned original, and
+otherwise written with `VFile.writeText`. An `IOException` during a write counts that file's
+occurrences as failed and the remaining files are still written. Replace Selected plans only the
+hit's file and keeps the one edit whose range equals the hit's range; a hit whose match is gone
+is reported as changed. `ReplaceOutcome.message` reads
+`Replaced N occurrences in M files` followed by `, K skipped (read-only)`,
+`, K skipped (changed)`, `, K failed`, `, K files skipped (not UTF-8)` and
+`; K open files not saved` when they apply; the popup hands the plan to `AppState.applyReplacePlan`,
+which writes that message to `AppState.statusMessage`.
+The undo unit is therefore one step per open editor, through that editor's own ⌘Z; a file written
+to the disk has no undo in stride, which is why the confirmation states the count.
+
+Replace reads the disk strictly: `FindInPathScanner.readTextStrict` returns `null` for bytes that
+are not valid UTF-8, so a file is never rewritten with U+FFFD replacement characters. A file that
+matches when read leniently but is not valid UTF-8 is counted in `ReplacePlan.skippedEncoding`
+and left untouched; BOM and CRLF survive because decoding and `VFile.writeText` are byte-faithful
+for them. Searching itself stays lenient (`readText` replaces invalid bytes with U+FFFD), so a
+non-UTF-8 file still yields its ASCII matches. A regex replacement that java.util.regex cannot
+expand (`$2` with one group, say) becomes `Invalid replacement: <reason>`: the popup and the Find
+window show it and never offer the confirmation, and both clear their counting state in a
+`finally`, so the ⌥⌘↵ guard cannot stick. Writes stay `VFile.writeText`, with no temporary file
+and atomic move: a rename would replace a symlink instead of writing through it and can fail on
+directory permissions, and the confirmation already tells the user that disk files cannot be
+undone.
+
+The Find window's REPLACE tab draws the same preview rows and adds Replace Selected and Replace
+All buttons above them. Replace Selected applies the selected row only, then rescans just that
+file so the remaining rows carry the offsets the current text actually has (a second Replace
+Selected in the same file then works); a row that was skipped keeps its place, and an error is
+shown as the tab's message. Replace All plans through the tab and shows the same inline
+confirmation with Replace and Cancel buttons; after applying, the tab keeps the outcome line and
+no rows. The replace state lives per tab in `FindToolWindowState`, so switching tabs while a plan
+runs neither drops the confirmation nor re-enables the buttons.
+
+Rejected alternatives: opening every affected file in a tab and editing in memory only (tabs
+explode on a large replace, and stride closes an unsaved tab without asking, so changes can be
+lost silently); writing every file to the disk, including files open in editors (overwrites
+unsaved editor text or diverges from it, and loses the editor undo); and a session-wide undo
+record for Replace in Path (stride has no global undo, and it would be a non-IntelliJ action).
+
+Known limits: the row preview shows the replacement as typed, so it does not expand `$1` (the
+applied plan does); a disk write that fails midway leaves that file truncated and is counted as
+failed; there is no Exclude, Group by or Merge; Structure has no sort, filter or autoscroll
+option, and speed search is not included; open editors stay unsaved after Replace and are saved
+with the rest.
 
 ## Declaration navigation, tests and bookmarks
 
@@ -2233,10 +2514,14 @@ sidebar's column so they stay readable while the 30% sidebar glass covers that s
 content plane and checks that the switcher is one floating capsule over it.
 
 The tool-window switcher is a capsule group (`capsuleGlass`, radius half its height) offset
-`chromeGap` from the panel top and from the content inset; each tab is a `glassCapsule` inset
-2/3 dp, so only the active tab shows the selection pill. Inactive tab labels are
-`textSecondaryOnGlass`. `RunToolWindow`'s session tabs are a second capsule group inside the run
-content, with the same language.
+`chromeGap` from the panel top and from the content inset; it carries the five tabs Bookmarks,
+Find, Run, Structure and Terminal, each a `glassCapsule` inset 2/3 dp, so only the active tab
+shows the selection pill. Inactive tab labels are `textSecondaryOnGlass`. `RunToolWindow`'s
+session tabs and the Find window's result tabs are further capsule groups inside their content,
+with the same language; the Find tab row scrolls horizontally and keeps the selected tab in view.
+List rows on the content plane are `selectionRow` pills with a muted file icon, and the Find
+window draws a replaced match's new text in `accent2` there (in the popup the same preview uses
+`accentOnPopupPlate`).
 
 Run window text sits on the content plane: the header status word (`accent2` while running,
 `neonPink` on failure, `neonLime` on pass, `muted` otherwise), method names, and the detail
@@ -2627,7 +2912,7 @@ fun glassGutterColor(appearance: Appearance = AppearanceState.appearance): Color
 `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
 `12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`,
-`15-multi-caret.png`, `16-folding.png`).
+`15-multi-caret.png`, `16-folding.png`, `17-find-window.png`, `18-replace-in-path.png`).
 The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-light.png`,
 `04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
 `11-run-window-light.png`, `12-editor-scrolled-light.png`,
@@ -2667,16 +2952,20 @@ Maven Central alone does not carry it.
 | `TextChangeTest` | common prefix/suffix insert/delete/replace and empty edges; incremental highlighter equals a fresh one |
 | `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
 | `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
-| `KeymapTest` | every macOS binding in its context (including ⌃G, ⌃⇧G, ⌃⌘G, ⇧⌘8 and both strokes of each folding action), context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
+| `KeymapTest` | every macOS binding in its context (including ⌃G, ⌃⇧G, ⌃⌘G, ⇧⌘8, both strokes of each folding action, ⌘2, ⌘3, ⌘7, ⇧⌘R and ⇧Esc in `LIST_WINDOW`), context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
 | `KeyStrokeTextTest` | macOS glyph formatting and order, platform modifier labels (`Ctrl+S`, `Shift+Ctrl+O`) for non-macOS keymaps, first bound stroke per action |
 | `WelcomeHintsTest` | hints read from the keymap, Double Shift as the literal gesture, and platform modifier labels on a non-macOS keymap |
 | `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, the double-Option clone wait (surviving repeated arrows, ended by another modifier), platform shortcuts |
-| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone, occurrence and column-mode status messages including clearing a stale failure, the four folding actions reaching the selected editor |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone, occurrence and column-mode status messages including clearing a stale failure, the four folding actions reaching the selected editor, the ⌘2/⌘3/⌘7 list-window toggles through `toggleToolWindow`, the tool windows registered in key-number order, ⌥F7 adding a whole-word case-sensitive Find tab, ⌘W closing the selected Find tab instead of the editor tab, `closeSession` clearing the Find tabs, and ⇧⌘R opening the popup in replace mode |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
-| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
+| `ListToolWindowUiTest` | the Bookmarks window's ↑/↓ and Enter, Delete removing the selected bookmark with the window still visible, Esc handing the keyboard back from a list and from an empty window, the Structure window selecting the caret's entry and Enter moving the caret to it, and a move that keeps a fully visible row in place instead of scrolling it to the top |
+| `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌘↵ with an empty query adding no tab, ⌥⌘↵ showing the Replace All confirmation and ↵ applying while Esc cancels, Replace Selected changing the file and dropping its row, a second Replace Selected in the same file, Replace Selected reporting an invalid regex replacement and a non-UTF-8 file while keeping the row, an invalid replacement message followed by a fixed one that confirms, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
 | `FindBarStateTest` | span painting and current match, next cycling, replace all, close clearing spans |
-| `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop, whole-word filtering |
+| `FindInPathScannerTest` | line/column/body output, size and NUL exclusions, limit and stop, whole-word filtering, the open-editor overlay taking precedence over the disk, and a non-UTF-8 file still being searched leniently |
+| `FindToolWindowStateTest` | a tab's scan and result count, an equal search replaced in place, another kind/query/options/replacement adding a tab, the ten-tab cap, closing a tab and clearing everything, the 1000-hit truncation notice, a cancelled scan not writing into the tab that replaced it, a replace plan finishing on another tab keeping its confirmation, and a skipped Replace Selected keeping its row |
+| `FindHitNavigationTest` | a hit whose text still matches selecting its range and recording one history entry, and a hit whose text changed going to its line instead |
+| `ReplaceInPathTest` | literal, case-insensitive and whole-word edits, overlapping matches keeping the first, regex `$1` expansion and a lookbehind seeing its context, an invalid replacement returning the error, a non-UTF-8 file skipped with `skippedEncoding` while BOM and CRLF survive, a failed disk write counted with the remaining files still written, the editor overlay in the plan, a stale hit planning nothing, plan-time errors for an invalid replacement and a non-UTF-8 hit, an open editor taking one undo step and staying unsaved, read-only editors and files, disk writes, a disk file changed after the plan, and the outcome and confirmation wording in singular and plural |
 | `NavigationHistoryTest` | consecutive duplicate suppression, forward truncation on push, back/forward ends, the 100-entry cap, caret update and recording suspension |
 | `DeclarationNavigatorTest` | same-file nearest preceding target, package/module ranking, package and module derivation |
 | `TestNavigationTest` | source-to-test names in both directions, extension and directory ordering, no counterpart |
@@ -2690,7 +2979,7 @@ Maven Central alone does not carry it.
 | `SearchSelectionPillTest` | the Search Everywhere popup on the Skia path in both palettes and on the native path for structure only: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and on Skia the pill reads at least 1.15 against the panel (the offscreen native render has no panel, so its contrast rests on the token model) |
 | `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
-| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line, a Kotlin editor with several carets selecting the same word and a Kotlin editor with one function body folded (asserted folded before rendering) |
+| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line, a Kotlin editor with several carets selecting the same word, a Kotlin editor with one function body folded (asserted folded before rendering), the Find window with a usages tab, and the Replace in Path popup |
 | `MultiCaretTest` | normalization folding overlaps, shared ends and enclosed collapsed carets; typing replication through repeated characters, selections and out-of-document ranges; movement, word and line ends, deletion, paste distribution and copy ranges; occurrence selection and whole-word matching; caret cloning, blocks, toggling and the per-caret runner; thousands of carets staying under a second |
 | `TextFileEditorMultiCaretTest` | field-change replication and undo, consecutive typing merging into one step, selection-only changes dropping the carets and composition-only changes keeping them, program edits and rename restoring them through undo, Esc order, every-caret actions, multi-caret copy/cut/paste, column mode and cloning, read-only behaviour |
 | `MultiCaretUiTest` | typing and delete keys through the real composition at every caret, Esc, clipboard paste, column mode typing, the double-Option clone gesture, ⌥⇧-click and ⌥-drag, and a plain click on the primary caret dropping the secondary ones |

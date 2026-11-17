@@ -6,6 +6,8 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `editor-light.png` 라이트 외관의 프로젝트 트리와 Kotlin 에디터 (`02-editor-kotlin-light.png`)
 - `search.png` Search Everywhere 결과 (`04-search.png`)
 - `find.png` 찾기 바 (`08-find-bar.png`)
+- `find-window.png` Find 창 (`17-find-window.png`)
+- `replace-in-path.png` Replace in Path 팝업 (`18-replace-in-path.png`)
 - `terminal.png` 터미널 (`10-terminal.png`)
 - `run.png` Run 창 (`11-run-window.png`)
 - `glass.png` 코드 위에 뜬 Search Everywhere 유리 팝업 (`13-search-over-code.png`)

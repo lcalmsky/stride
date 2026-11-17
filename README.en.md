@@ -50,7 +50,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, `⌃⇧Space` narrows the candidates to classes in a type position and to symbols in an expression position, and `⇧F6` renames within the file
 - **Multiple carets** `⌃G` adds the next match to the selection (or selects the word at the caret when there is none), `⌃⇧G` drops the last added one, and `⌃⌘G` selects every match. `⌥⇧`-click adds or removes a caret, and holding the second `⌥` while pressing `↑`·`↓` clones a caret; `⌥`-drag or the `⌘⇧8` column selection mode builds a rectangular selection. Typing, deleting, pasting, arrow movement, and line comment, duplicate, delete, indent and case apply at every caret; any other action drops the secondary carets and works at the primary one. `Esc` drops the secondary carets
 - **Code folding** `⌘-` collapses the block that starts on the caret line or encloses the caret into `{...}`, and `⌘=` expands it again. `⌘⇧-`·`⌘⇧=` collapse and expand every block in the file, and the numeric keypad `⌘+`·`⌘-` work too. Multi-line `{}`·`[]` blocks, block comments and KDoc, and the import list fold (Kotlin, Java, JSON). `←`·`→` step over a folded range, and clicking the placeholder or moving the caret into a fold by going to a line, find or navigation expands it. The numbers of folded lines drop out of the gutter
-- **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure, `⌘⇧T` goes to the test, `⌥F7` finds usages, and `F3`·`⌘F3` handle bookmarks
+- **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure and `⌘⇧T` goes to the test; `⌥F7` lists usages in a Find window tab, the `⌘2` Bookmarks window and the `⌘7` Structure window list bookmarks and declarations, and `F3`·`⌘F3` handle bookmarks
 - **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
 </td>
@@ -61,7 +61,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/search.png" alt="Search Everywhere results" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/search.png" alt="Search Everywhere results" width="480"><br><br><img src="docs/images/find-window.png" alt="The Find window with an Usages of greet tab" width="480"><br><br><img src="docs/images/replace-in-path.png" alt="The Replace in Path popup with replacement previews" width="480"></td>
 <td valign="top">
 
 - **Search Everywhere** press `Shift` twice to open the All tab. It groups file, class, symbol, and action results (`Files`, `Classes`, and so on, up to 4 per contributor and 50 overall); `Tab`·`⇧Tab` cycle through the All·Classes·Files·Symbols·Actions tabs. Move with `↑`·`↓` and open with `Enter`
@@ -69,6 +69,8 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Go to file** `⌘⇧O` matches file names and relative paths fuzzily and lists them by score
 - **Actions** `⌘⇧A` lists every action with its name and shortcut and runs the chosen one
 - **Find in path** `⌘⇧F` searches the text of every project file. It skips files over 2 MB and binary files and shows up to 200 results. `W` turns on whole-word matching. Each row reads `path:line` with the line body, and the matched characters are highlighted. `Enter` opens the file and selects the match
+- **Find window** `⌘3` opens the results window. `⌥F7` find usages and `⌘↵` in the find-in-path popup add result tabs, and up to 10 tabs are kept. Rows are not grouped by file: each reads `path:line` with the line body, `↑`·`↓` move, `Enter` opens, and while the Find window has the keyboard `⌘W` closes the selected result tab instead of the editor tab
+- **Replace in path** `⇧⌘R` replaces text across the project. A row shows the removed text struck through next to the replacement; `⌥⌘↵` goes through a confirmation row and replaces everything, and `⌘↵` opens the replacement preview as a Find window tab. Files open in an editor are edited without saving and one `⌘Z` per file undoes the change, while files written to the disk cannot be undone and the confirmation row states how many there are. Files that are not UTF-8 are skipped
 - **Recent files** `⌘E` lists the most recently opened files, newest first, up to 50. Closed files stay in the list
 
 </td>
@@ -177,7 +179,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘O` | Go to class. Opens the folder chooser when there is no project |
 | `⌘⇧O` / `⌘⌥O` | Go to file / symbol |
 | `⌘⇧A` | Go to action |
-| `⌘⇧F` | Find in path |
+| `⌘⇧F` | Find in path (`⌘↵` in the popup opens the Find window) |
 | `⌘E` / `⌃Tab` `⌃⇧Tab` | Recent files / recent-file switcher |
 | `⌥F1` / `⌘⇧C` / `⌘⌥⇧C` | Reveal the current file in the tree / copy path / copy reference |
 | **Editor** | |
@@ -225,12 +227,14 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘F` | Open the find bar |
 | `⌘R` | Expand the replace row |
 | `⌘G` / `⌘⇧G` | Next match / previous match |
+| `⌘⇧R` | Replace in path (`⌥⌘↵` replaces all, `⌘↵` previews in the Find window) |
 | **Navigation** | |
 | `⌘B` · `⌘`-click | Go to declaration |
 | `⌘[` `⌘⌥←` / `⌘]` `⌘⌥→` | Back / forward |
 | `⌘F12` | File structure |
 | `⌘⇧T` | Go to test |
-| `⌥F7` | Find usages |
+| `⌥F7` | Find usages (adds a Find window tab) |
+| `⌘2` / `⌘3` / `⌘7` | Bookmarks / Find / Structure window |
 | `F3` / `⌘F3` | Toggle bookmark / show bookmarks |
 | **Run** | |
 | `⌥↩` | Context actions |
@@ -242,7 +246,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘4` · `⌘R` (Run window) | Open the Run window · rerun from the Run window |
 | **Terminal** | |
 | `⌥F12` | Open the Terminal window |
-| `⇧Esc` | Hide the tool window (Terminal and Run windows) |
+| `⇧Esc` | Hide the tool window (Bookmarks, Find, Run, Structure and Terminal windows) |
 | **Other** | |
 | Actions tab | Switch UI Font |
 
