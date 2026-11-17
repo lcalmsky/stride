@@ -75,6 +75,28 @@ fun openFileAtColumn(state: AppState, session: ProjectSession, file: VFile, line
     (editor as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
 }
 
+/**
+ * Opens [path] with the caret at [offset] (clamped) and records the landing position as one
+ * history entry. A file that no longer exists is reported and nothing opens; returns whether it opened.
+ */
+fun openFileAtOffset(state: AppState, session: ProjectSession, path: Path, offset: Int): Boolean {
+    if (!Files.exists(path)) {
+        state.statusMessage = missingFileMessage(session, path)
+        return false
+    }
+    val editor = session.history.withoutRecording {
+        session.editors.openFile(VFile(path))?.also { opened ->
+            val textEditor = opened as? TextFileEditor ?: return@also
+            textEditor.jumpTo(offset.coerceIn(0, textEditor.value.text.length))
+        }
+    } ?: return false
+    session.history.push(navigationLocation(editor))
+    state.focus = KeyContext.EDITOR
+    state.statusMessage = null
+    (editor as? TextFileEditor)?.let { runCatching { it.focusRequester.requestFocus() } }
+    return true
+}
+
 /** Opens [location]; a target whose file is gone is reported and dropped from the history. */
 private fun openLocation(state: AppState, session: ProjectSession, location: NavigationLocation): Boolean {
     if (!Files.exists(location.path)) {

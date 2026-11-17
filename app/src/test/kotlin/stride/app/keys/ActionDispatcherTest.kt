@@ -22,6 +22,7 @@ import stride.app.editor.find.FindOptions
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtColumn
+import stride.app.navigation.openFileAtOffset
 import stride.app.problems.FileProblem
 import stride.app.problems.ProblemScope
 import stride.app.problems.ProblemSource
@@ -1063,6 +1064,33 @@ class ActionDispatcherTest {
 
         assertEquals(tabs, session.editors.openFiles)
         assertEquals("File not found: gone.kt", state.statusMessage)
+        assertEquals(locations, session.history.locations())
+    }
+
+    @Test
+    fun `opening a file at an offset clamps the caret, records one entry and reports a gone file`() {
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val target = root.resolve("b.kt")
+        Files.writeString(target, "one\ntwo\n")
+        val before = session.history.size
+
+        assertTrue(openFileAtOffset(state, session, target, 5))
+        val editor = session.editors.selected as TextFileEditor
+        assertEquals(target, editor.file.path)
+        assertEquals(5, editor.value.selection.start)
+        assertEquals(KeyContext.EDITOR, state.focus)
+        assertEquals(before + 1, session.history.size)
+        assertEquals(5, session.history.current?.offset)
+
+        assertTrue(openFileAtOffset(state, session, target, 999))
+        assertEquals(editor.value.text.length, editor.value.selection.start)
+
+        val tabs = session.editors.openFiles.toList()
+        val locations = session.history.locations()
+        assertFalse(openFileAtOffset(state, session, root.resolve("gone.kt"), 0))
+        assertEquals("File not found: gone.kt", state.statusMessage)
+        assertEquals(tabs, session.editors.openFiles)
         assertEquals(locations, session.history.locations())
     }
 
