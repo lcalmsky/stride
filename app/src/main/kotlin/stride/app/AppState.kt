@@ -26,6 +26,7 @@ import stride.app.hierarchy.HierarchyTree
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
 import stride.app.navigation.EditLocations
+import stride.app.navigation.HierarchyGraphState
 import stride.app.navigation.NavigationBarState
 import stride.app.navigation.NavigationHistory
 import stride.app.navigation.NavigationLocation
@@ -177,6 +178,9 @@ class AppState {
     /** The tree the Hierarchy tool window shows; `null` until the first Type or Call Hierarchy. */
     var hierarchyTree by mutableStateOf<HierarchyTree?>(null)
         private set
+
+    /** The last graph the hierarchy actions built; kept until the index or the open texts change. */
+    internal var hierarchyGraph: HierarchyGraphState? = null
 
     var fileStructureVisible by mutableStateOf(false)
 
@@ -633,6 +637,7 @@ class AppState {
         problemsToolWindow.reset()
         hierarchyToolWindow.clear()
         hierarchyTree = null
+        hierarchyGraph = null
         recentLocationsVisible = false
         recentLocationsCaret = null
         navigationBar = null

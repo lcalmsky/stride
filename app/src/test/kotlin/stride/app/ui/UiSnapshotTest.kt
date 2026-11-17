@@ -996,20 +996,22 @@ class UiSnapshotTest {
             val session = requireNotNull(state.session)
             check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
             expand(session, root, "demo", "shapes")
-            val shape = openEditor(session, root.resolve("demo/shapes/Shape.kt"))
-            val text = shape.value.text
-            shape.updateValue(TextFieldValue(text, TextRange(text.indexOf("interface Shape") + 10)))
+            val polygon = openEditor(session, root.resolve("demo/shapes/Polygon.kt"))
+            val text = polygon.value.text
+            polygon.updateValue(TextFieldValue(text, TextRange(text.indexOf("class Polygon") + 6)))
 
             assertTrue(dispatchAction(ActionId.TYPE_HIERARCHY, state) { null })
             val deadline = System.currentTimeMillis() + 5_000
             while (System.currentTimeMillis() < deadline &&
-                state.hierarchyToolWindow.rows.none { it.node?.text == "Circle" }
+                state.hierarchyToolWindow.rows.none { it.node?.text == "Square" }
             ) {
                 Thread.sleep(20)
             }
             val rows = state.hierarchyToolWindow.rows
+            assertTrue(rows.any { it.node?.text == "Supertypes" }, "the Supertypes row did not load")
             assertTrue(rows.any { it.node?.text == "Subtypes" }, "the Subtypes row did not load")
-            assertTrue(rows.any { it.node?.text == "Circle" }, "the subtype rows did not load")
+            assertTrue(rows.any { it.node?.text == "Shape" }, "the supertype rows did not load")
+            assertTrue(rows.any { it.node?.text == "Square" }, "the subtype rows did not load")
 
             state.toolWindows.height = 420.dp
             renderApp("23-type-hierarchy.png", state, renderMillis = 1_500)

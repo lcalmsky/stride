@@ -20,7 +20,6 @@ import stride.search.TypeGraph
 import stride.search.classesAt
 import stride.search.memberAt
 import stride.search.TypeReferences
-import kotlin.math.abs
 
 /** The chooser Go to Implementation, Type Declaration and Super Method open over several targets. */
 class NavigationTargets(val title: String, val targets: List<Declaration>)
@@ -38,8 +37,9 @@ fun goToImplementation(state: AppState): Boolean {
         state.statusMessage = INDEXING_MESSAGE
         return true
     }
-    val graph = typeGraphOf(index)
-    val snapshot = index.snapshot()
+    val sources = hierarchyGraphOf(state, session, index)
+    val graph = sources.graph
+    val snapshot = sources.declarations
     val caret = HierarchyCaret(editor)
 
     val targets: List<Declaration>
@@ -86,8 +86,9 @@ fun goToTypeDeclaration(state: AppState): Boolean {
         state.statusMessage = INDEXING_MESSAGE
         return true
     }
-    val graph = typeGraphOf(index)
-    val snapshot = index.snapshot()
+    val sources = hierarchyGraphOf(state, session, index)
+    val graph = sources.graph
+    val snapshot = sources.declarations
     val caret = HierarchyCaret(editor)
     val name = caret.identifier ?: run {
         state.statusMessage = "No identifier at the caret"
@@ -135,8 +136,9 @@ fun goToSuperMethod(state: AppState): Boolean {
         state.statusMessage = INDEXING_MESSAGE
         return true
     }
-    val graph = typeGraphOf(index)
-    val snapshot = index.snapshot()
+    val sources = hierarchyGraphOf(state, session, index)
+    val graph = sources.graph
+    val snapshot = sources.declarations
     val caret = HierarchyCaret(editor)
     val member = caret.outline.memberAt(caret.offset)
 
@@ -190,16 +192,23 @@ fun showTypeHierarchy(state: AppState): Boolean {
         state.statusMessage = INDEXING_MESSAGE
         return true
     }
-    val graph = typeGraphOf(index)
-    val snapshot = index.snapshot()
+    val sources = hierarchyGraphOf(state, session, index)
+    val graph = sources.graph
+    val snapshot = sources.declarations
     val caret = HierarchyCaret(editor)
-    val target = caret.identifier?.let { graph.resolveType(it, caret.contextAt()).firstOrNull() }
-        ?: caret.outline.classesAt(caret.offset).firstOrNull()?.let { caret.declaration(it, session, snapshot) }
-    if (target == null) {
+    val resolved = caret.identifier?.let { graph.resolveType(it, caret.contextAt()) }.orEmpty()
+    val roots = if (resolved.isNotEmpty()) {
+        resolved
+    } else {
+        listOfNotNull(
+            caret.outline.classesAt(caret.offset).firstOrNull()?.let { caret.declaration(it, session, snapshot) },
+        )
+    }
+    if (roots.isEmpty()) {
         state.statusMessage = "Place the caret in a class"
         return true
     }
-    state.openHierarchy(TypeHierarchyNodes.tree(graph, target) { path -> HierarchyText.read(state, path) })
+    state.openHierarchy(TypeHierarchyNodes.tree(graph, roots) { path -> HierarchyText.read(state, path) })
     return true
 }
 
@@ -212,17 +221,18 @@ fun showCallHierarchy(state: AppState): Boolean {
         state.statusMessage = INDEXING_MESSAGE
         return true
     }
-    val graph = typeGraphOf(index)
-    val snapshot = index.snapshot()
+    val sources = hierarchyGraphOf(state, session, index)
+    val graph = sources.graph
+    val snapshot = sources.declarations
     val caret = HierarchyCaret(editor)
-    val target = callTarget(caret, session, graph, snapshot)
-    if (target == null) {
+    val targets = callTargets(caret, session, graph, snapshot)
+    if (targets.isEmpty()) {
         state.statusMessage = "Place the caret in a function"
         return true
     }
     val files = session.project.service<FileNameIndex>().snapshot()
     state.openHierarchy(
-        CallHierarchyNodes.tree(graph, snapshot, target, files) { path -> HierarchyText.read(state, path) },
+        CallHierarchyNodes.tree(graph, snapshot, targets, files) { path -> HierarchyText.read(state, path) },
     )
     return true
 }
@@ -236,16 +246,21 @@ private fun HierarchyCaret.callAtCaret(name: String): CallSite =
     CallSites.inRange(fileName, text, 0, text.length).firstOrNull { offset in it.start..it.end }
         ?: CallSite(name, offset, offset + name.length)
 
-private fun callTarget(
+/**
+ * The roots of the call hierarchy: the declaration whose name holds the caret, else every
+ * declaration the call at the caret resolves to (several stay several roots), else the member
+ * around the caret.
+ */
+private fun callTargets(
     caret: HierarchyCaret,
     session: ProjectSession,
     graph: TypeGraph,
     snapshot: List<Declaration>,
-): Declaration? {
+): List<Declaration> {
     val declaredName = caret.outline.firstOrNull {
         it.kind == OutlineKind.FUNCTION && caret.offset >= it.nameStart && caret.offset <= it.nameEnd
     }
-    if (declaredName != null) return caret.declaration(declaredName, session, snapshot)
+    if (declaredName != null) return listOf(caret.declaration(declaredName, session, snapshot))
 
     val identifier = caret.identifier
     if (identifier != null) {
@@ -253,15 +268,15 @@ private fun callTarget(
             .firstOrNull { caret.offset in it.start..it.end }
         if (site != null) {
             val resolved = graph.resolveCallee(site, caret.contextAt())
-            if (resolved.size == 1) return resolved.first()
+            if (resolved.isNotEmpty()) return resolved
         }
     }
 
     val member = caret.outline.memberAt(caret.offset)
     return if (member != null && member.kind in callableKinds) {
-        caret.declaration(member, session, snapshot)
+        listOf(caret.declaration(member, session, snapshot))
     } else {
-        null
+        emptyList()
     }
 }
 
@@ -366,15 +381,7 @@ private fun siteOf(
     val path = declaration.file.path.toAbsolutePath().normalize()
     val current = path == caret.editor.file.path.toAbsolutePath().normalize()
     val text = if (current) caret.text else HierarchyText.read(state, path) ?: return null
-    val nameStart = if (current) {
-        caret.outline
-            .filter { it.name == declaration.name && it.container == declaration.container }
-            .minByOrNull { abs(it.line - declaration.line) }
-            ?.nameStart
-            ?: offsetOfName(text, declaration.line, declaration.column, declaration.name)
-    } else {
-        offsetOfName(text, declaration.line, declaration.column, declaration.name)
-    }
+    val nameStart = offsetOfName(text, declaration.line, declaration.column, declaration.name)
     val context = if (current) caret.contextAt(nameStart) else graph.contextOf(declaration)
     return DeclarationSite(declaration.file.name, text, nameStart, context)
 }

@@ -40,6 +40,7 @@ import stride.app.editor.TextFileEditor
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
+import stride.app.search.ActionSearchContributor
 import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
@@ -226,6 +227,105 @@ class HierarchyKeyFlowUiTest {
             waitUntil(timeoutMillis = 5_000) { state.hierarchyTree != null }
             assertNotNull(state.hierarchyTree)
             assertEquals("Call Hierarchy of main", state.hierarchyTree?.title)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the chooser rows name the container and the path`() = runComposeUiTest {
+        val root = hierarchyProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            awaitIndexes(session)
+            session.editors.openFile(VFile(root.resolve("demo/shapes/Shape.kt")))
+            setContent { HierarchyKeyFlowHarness(state) }
+            focusEditor(state)
+            placeCaret(editorOf(session), "fun area", 4)
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.B) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.navigationTargets != null }
+            onNodeWithText("Choose Implementation of area (3 found)").assertExists()
+            onNodeWithText("Circle.area — demo/shapes/Circle.kt:4").assertExists()
+            onNodeWithText("Square.area — demo/shapes/Square.kt:4").assertExists()
+            onNodeWithText("Triangle.area — demo/shapes/Triangle.java:4").assertExists()
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.navigationTargets == null }
+            placeCaret(editorOf(session), "interface Shape", 10)
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.B) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.navigationTargets != null }
+            onNodeWithText("Circle — demo/shapes/Circle.kt:3").assertExists()
+            onNodeWithText("Polygon — demo/shapes/Polygon.kt:3").assertExists()
+            onNodeWithText("Square — demo/shapes/Square.kt:3").assertExists()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a letter key does not reach the editor while the chooser is open`() = runComposeUiTest {
+        val root = hierarchyProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            awaitIndexes(session)
+            val editor = session.editors.openFile(VFile(root.resolve("demo/shapes/Shape.kt"))) as TextFileEditor
+            setContent { HierarchyKeyFlowHarness(state) }
+            focusEditor(state)
+            placeCaret(editor, "interface Shape", 10)
+            val before = editor.value.text
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.AltLeft) { pressKey(Key.B) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.navigationTargets != null }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.X) }
+            waitForIdle()
+
+            assertEquals(before, editor.value.text)
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the actions tab runs go to implementation from the search popup`() = runComposeUiTest {
+        val root = hierarchyProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            awaitIndexes(session)
+            val editor = session.editors.openFile(VFile(root.resolve("demo/shapes/Shape.kt"))) as TextFileEditor
+            setContent { HierarchyKeyFlowHarness(state) }
+            focusEditor(state)
+            placeCaret(editor, "interface Shape", 10)
+
+            val contributor = ActionSearchContributor(state)
+            val entry = contributor.fetch("Go to Implementation", 50)
+                .first { it.item.presentableName == "Go to Implementation" }
+            state.focus = KeyContext.SEARCH_POPUP
+
+            assertTrue(contributor.process(entry.item))
+
+            waitUntil(timeoutMillis = 5_000) { state.navigationTargets != null }
+            onNodeWithText("Choose Implementation of Shape (4 found)").assertExists()
         } finally {
             state.dispose()
         }

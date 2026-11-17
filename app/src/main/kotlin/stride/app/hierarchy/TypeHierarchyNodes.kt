@@ -6,19 +6,27 @@ import stride.search.TypeGraph
 import java.nio.file.Path
 
 /**
- * The tree Type Hierarchy shows: the class at the root, its supertypes upward and its subtypes
- * downward. Children read the project sources when the window expands them; a cycle in malformed
- * code ends in a `(recursive)` leaf instead of looping.
+ * The tree Type Hierarchy shows: each root class, its supertypes upward and its subtypes
+ * downward. One root opens itself; several roots (one per class the name at the caret resolves
+ * to) start collapsed so their paths say where each came from. Children read the project sources
+ * when the window expands them; a cycle in malformed code ends in a `(recursive)` leaf instead of
+ * looping.
  */
 internal object TypeHierarchyNodes {
     const val MAX_CHILDREN: Int = 200
+    const val MAX_ROOTS: Int = 20
 
-    fun tree(graph: TypeGraph, root: Declaration, textOf: (Path) -> String?): HierarchyTree =
-        HierarchyTree(
-            title = "Type Hierarchy of ${root.name}",
-            note = "Types outside project sources are not expanded",
-            roots = listOf(classNode(graph, root, emptySet(), textOf, root = true)),
-        )
+    fun tree(graph: TypeGraph, roots: List<Declaration>, textOf: (Path) -> String?): HierarchyTree {
+        require(roots.isNotEmpty()) { "a type hierarchy needs at least one root" }
+        val single = roots.size == 1
+        val name = roots.first().name
+        val title = if (single) "Type Hierarchy of $name" else "Type Hierarchy of $name (${roots.size} classes)"
+        val nodes = roots.take(MAX_ROOTS).map {
+            classNode(graph, it, emptySet(), textOf, root = true, expanded = single)
+        }
+        val shown = if (roots.size > MAX_ROOTS) nodes + HierarchyNode("… ${roots.size - MAX_ROOTS} more") else nodes
+        return HierarchyTree(title, "Types outside project sources are not expanded", shown)
+    }
 
     private fun classNode(
         graph: TypeGraph,
@@ -26,7 +34,7 @@ internal object TypeHierarchyNodes {
         path: Set<String>,
         textOf: (Path) -> String?,
         root: Boolean = false,
-        open: Boolean = false,
+        expanded: Boolean = false,
     ): HierarchyNode {
         val key = keyOf(type)
         if (key in path) {
@@ -44,7 +52,7 @@ internal object TypeHierarchyNodes {
             location = locationOf(type, textOf),
             iconName = type.file.name,
             accent = root,
-            expanded = root || open,
+            expanded = expanded,
             children = { children(graph, type, next, textOf) },
         )
     }
@@ -62,7 +70,7 @@ internal object TypeHierarchyNodes {
                             nodes += HierarchyNode(ref.written, detail = "outside project sources")
                         } else {
                             ref.resolved.distinct().forEach {
-                                nodes += classNode(graph, it, path, textOf, open = true)
+                                nodes += classNode(graph, it, path, textOf)
                             }
                         }
                     }

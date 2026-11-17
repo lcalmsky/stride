@@ -430,6 +430,102 @@ class HierarchyActionsTest {
         assertNull(state.navigationTargets)
     }
 
+    @Test
+    fun `super method resolves a class the buffer has not saved`() {
+        val editor = openAt("demo/Main.kt") { it.length }
+        val text = editor.value.text + "\nclass NewThing : Shape\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("NewThing"))))
+
+        assertTrue(goToSuperMethod(state))
+
+        assertNull(state.statusMessage)
+        assertEquals("Shape.kt", session.editors.selected?.file?.name)
+        val shape = session.editors.selected as TextFileEditor
+        assertEquals(shape.value.text.indexOf("interface Shape") + 10, shape.value.selection.start)
+    }
+
+    @Test
+    fun `type hierarchy shows the supertypes of a class the buffer has not saved`() {
+        val editor = openAt("demo/Main.kt") { it.length }
+        val text = editor.value.text + "\nclass NewThing : Shape\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("NewThing"))))
+
+        assertTrue(showTypeHierarchy(state))
+
+        val tree = requireNotNull(state.hierarchyTree)
+        assertEquals("Type Hierarchy of NewThing", tree.title)
+        val bundles = runBlocking { requireNotNull(tree.roots.single().children)() }
+        val supertypes = runBlocking {
+            requireNotNull(bundles.first { it.text == "Supertypes" }.children)()
+        }
+        assertEquals(listOf("Shape"), supertypes.map { it.text })
+    }
+
+    @Test
+    fun `closing the session drops the cached hierarchy graph`() {
+        openAt("demo/shapes/Shape.kt") { it.indexOf("interface Shape") + 10 }
+        assertTrue(goToImplementation(state))
+        assertNotNull(state.hierarchyGraph)
+
+        state.closeSession()
+
+        assertNull(state.hierarchyGraph)
+    }
+
+    @Test
+    fun `implementation chooser uses the edited buffer's line for an open target`() {
+        val circle = openAt("demo/shapes/Circle.kt") { 0 }
+        val text = "// a\n// b\n// c\n" + circle.value.text
+        circle.updateValue(TextFieldValue(text, TextRange(0)))
+
+        openAt("demo/shapes/Shape.kt") { it.indexOf("interface Shape") + 10 }
+        assertTrue(goToImplementation(state))
+
+        val targets = requireNotNull(state.navigationTargets)
+        val target = requireNotNull(targets.targets.firstOrNull { it.name == "Circle" })
+        assertEquals(5, target.line)
+        assertEquals(6, target.column)
+    }
+
+    @Test
+    fun `super method opens a dirty target at its current line`() {
+        val polygon = openAt("demo/shapes/Polygon.kt") { 0 }
+        val text = "// a\n// b\n// c\n" + polygon.value.text
+        polygon.updateValue(TextFieldValue(text, TextRange(0)))
+
+        openAt("demo/shapes/Square.kt") { it.indexOf("class Square") + 6 }
+        assertTrue(goToSuperMethod(state))
+
+        assertNull(state.statusMessage)
+        assertEquals("Polygon.kt", session.editors.selected?.file?.name)
+        val reopened = session.editors.selected as TextFileEditor
+        assertEquals(reopened.value.text.indexOf("class Polygon") + 6, reopened.value.selection.start)
+    }
+
+    @Test
+    fun `call hierarchy opens one root per declaration an ambiguous call resolves to`() {
+        openAt("demo/Main.kt") { it.indexOf("worker.go()") + "worker.".length }
+
+        assertTrue(showCallHierarchy(state))
+
+        val tree = requireNotNull(state.hierarchyTree)
+        assertEquals("Call Hierarchy of go (2 declarations)", tree.title)
+        assertEquals(listOf("demo/Worker.kt:4", "demo/Worker.kt:5"), tree.roots.map { it.detail })
+        assertTrue(tree.roots.none { it.expanded })
+    }
+
+    @Test
+    fun `type hierarchy opens one root per class a name resolves to`() {
+        openAt("demo/Main.kt") { it.indexOf(": Duplicate") + 2 }
+
+        assertTrue(showTypeHierarchy(state))
+
+        val tree = requireNotNull(state.hierarchyTree)
+        assertEquals("Type Hierarchy of Duplicate (2 classes)", tree.title)
+        assertEquals(listOf("demo/DuplicateA.kt:3", "demo/DuplicateB.kt:3"), tree.roots.map { it.detail })
+        assertTrue(tree.roots.none { it.expanded })
+    }
+
     private fun installUnfinishedIndex() {
         val index = session.project.service<DeclarationIndex>()
         val field = DeclarationIndex::class.java.getDeclaredField("ready")
@@ -588,6 +684,10 @@ class HierarchyActionsTest {
                 println(value)
                 println(missing)
             }
+
+            fun viaWorker(worker: Worker) {
+                worker.go()
+            }
             """.trimIndent() + "\n",
         )
         write("demo/DuplicateA.kt", "package demo\n\nclass Duplicate\n")
@@ -601,6 +701,17 @@ class HierarchyActionsTest {
                 fun run() {
                     helper()
                 }
+            }
+            """.trimIndent() + "\n",
+        )
+        write(
+            "demo/Worker.kt",
+            """
+            package demo
+
+            class Worker {
+                fun go(a: Int) {}
+                fun go() {}
             }
             """.trimIndent() + "\n",
         )

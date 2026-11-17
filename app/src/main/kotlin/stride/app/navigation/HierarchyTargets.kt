@@ -15,7 +15,6 @@ import stride.search.OutlineMember
 import stride.search.SourceImport
 import stride.search.TypeGraph
 import stride.search.classesAt
-import stride.search.memberAt
 import java.nio.file.Path
 
 /** The current editor text with the parses the hierarchy actions resolve names against. */
@@ -41,10 +40,9 @@ internal class HierarchyCaret(val editor: TextFileEditor) {
 
     fun declaration(member: OutlineMember, session: ProjectSession, snapshot: List<Declaration>): Declaration =
         declarationForMember(
-            snapshot = snapshot,
+            declarations = snapshot,
             file = editor.file,
             relativePath = relativePath(session, editor.file),
-            fileName = fileName,
             text = text,
             member = member,
             packageName = packageName,
@@ -52,30 +50,27 @@ internal class HierarchyCaret(val editor: TextFileEditor) {
 }
 
 /**
- * The snapshot declaration matching an editor member by path, name, container and kind, nearest
- * to its line; a member the index has not seen yet (an unsaved declaration) is built from the text.
+ * The declaration of [member] in [declarations] by path, name, container, kind and line — the
+ * overlay and the outline are parsed from the same text, so the line is the member's identity.
+ * An outline member the parser does not record (`init`, a secondary constructor) is built from
+ * the member itself.
  */
 internal fun declarationForMember(
-    snapshot: List<Declaration>,
+    declarations: List<Declaration>,
     file: VFile,
     relativePath: String,
-    fileName: String,
     text: String,
     member: OutlineMember,
     packageName: String?,
 ): Declaration {
     val path = file.path.toAbsolutePath().normalize()
     val kind = member.declarationKind()
-    val match = snapshot
-        .filter {
-            it.name == member.name && it.kind == kind && it.container == member.container &&
-                it.file.path.toAbsolutePath().normalize() == path
-        }
-        .minByOrNull { kotlin.math.abs(it.line - member.line) }
-    if (match != null) return match
-    val parsed = DeclarationParser.parse(fileName, text)
-        .filter { it.name == member.name && it.container == member.container && it.kind == kind }
-        .minByOrNull { kotlin.math.abs(it.line - member.line) }
+    val sameName = declarations.filter {
+        it.name == member.name && it.kind == kind && it.container == member.container &&
+            it.file.path.toAbsolutePath().normalize() == path
+    }
+    sameName.firstOrNull { it.line == member.line }?.let { return it }
+    sameName.firstOrNull()?.let { return it }
     return Declaration(
         name = member.name,
         kind = kind,
@@ -84,11 +79,8 @@ internal fun declarationForMember(
         line = member.line,
         container = member.container,
         packageName = packageName,
-        isPrivate = parsed?.isPrivate ?: false,
-        column = member.nameStart - lineStart(text, lineOf(text, member.nameStart)),
-        supertypes = parsed?.supertypes.orEmpty(),
-        isInterface = parsed?.isInterface ?: false,
-        isOverride = parsed?.isOverride ?: member.isOverride,
+        column = member.nameStart - lineStart(text, member.line),
+        isOverride = member.isOverride,
     )
 }
 
@@ -142,17 +134,92 @@ internal fun offsetOfName(text: String, line: Int, column: Int, name: String): I
     return if (found >= 0) start + found else candidate
 }
 
-private var cachedSnapshot: List<Declaration>? = null
-private var cachedGraph: TypeGraph? = null
+/** One open editor's text, the part of the action sources that is not the index snapshot. */
+internal class OpenEditorSource(val path: Path, val fileName: String, val text: String)
 
-/** One [TypeGraph] per unchanged index snapshot; the same snapshot list is reused while it is current. */
-@Synchronized
-internal fun typeGraphOf(index: DeclarationIndex): TypeGraph {
+/** The index snapshot with the open editors' texts replacing their files, and the graph built from it. */
+internal class HierarchyGraphState(
+    val snapshot: List<Declaration>,
+    val openEditors: List<OpenEditorSource>,
+    val declarations: List<Declaration>,
+    val graph: TypeGraph,
+) {
+    fun sameSources(snapshot: List<Declaration>, openEditors: List<OpenEditorSource>): Boolean =
+        this.snapshot === snapshot && this.openEditors.size == openEditors.size &&
+            this.openEditors.indices.all {
+                this.openEditors[it].path == openEditors[it].path &&
+                    this.openEditors[it].text === openEditors[it].text
+            }
+}
+
+/**
+ * The declarations and the graph the hierarchy actions search: the index snapshot with every
+ * open editor's text replacing its file, so a declaration that is not saved yet takes part and
+ * the lines of an edited buffer are the ones the actions open. Kept on [AppState] while the
+ * snapshot list and the open texts stay the same.
+ */
+internal fun hierarchyGraphOf(
+    state: AppState,
+    session: ProjectSession,
+    index: DeclarationIndex,
+): HierarchyGraphState {
     val snapshot = index.snapshot()
-    val graph = cachedGraph
-    if (graph != null && snapshot === cachedSnapshot) return graph
-    val created = TypeGraph(snapshot, index::imports)
-    cachedGraph = created
-    cachedSnapshot = snapshot
+    val openEditors = session.editors.openFiles
+        .filterIsInstance<TextFileEditor>()
+        .map { OpenEditorSource(it.file.path.toAbsolutePath().normalize(), it.file.name, it.value.text) }
+        .sortedBy { it.path.toString() }
+    state.hierarchyGraph?.let { cached -> if (cached.sameSources(snapshot, openEditors)) return cached }
+    val created = buildHierarchyGraph(snapshot, openEditors, session.project.root, index)
+    state.hierarchyGraph = created
     return created
+}
+
+private fun buildHierarchyGraph(
+    snapshot: List<Declaration>,
+    openEditors: List<OpenEditorSource>,
+    root: Path,
+    index: DeclarationIndex,
+): HierarchyGraphState {
+    val openPaths = openEditors.mapTo(HashSet()) { it.path.toString() }
+    val importsByPath = HashMap<String, List<SourceImport>>()
+    val declarations = ArrayList<Declaration>(snapshot.size)
+    for (declaration in snapshot) {
+        if (declaration.file.path.toAbsolutePath().normalize().toString() in openPaths) continue
+        declarations.add(declaration)
+    }
+    for (source in openEditors) {
+        importsByPath[source.path.toString()] = DeclarationParser.imports(source.fileName, source.text)
+        if (!DeclarationParser.isSourceFile(source.fileName)) continue
+        val relativePath = relativePathOf(root, source.path) ?: continue
+        val file = VFile(source.path)
+        val packageName = DeclarationParser.packageOf(source.text)
+        for (parsed in DeclarationParser.parse(source.fileName, source.text)) {
+            declarations.add(
+                Declaration(
+                    name = parsed.name,
+                    kind = parsed.kind,
+                    file = file,
+                    relativePath = relativePath,
+                    line = parsed.line,
+                    container = parsed.container,
+                    packageName = packageName,
+                    isPrivate = parsed.isPrivate,
+                    column = parsed.column,
+                    supertypes = parsed.supertypes,
+                    isInterface = parsed.isInterface,
+                    isOverride = parsed.isOverride,
+                ),
+            )
+        }
+    }
+    val graph = TypeGraph(declarations) { file ->
+        importsByPath[file.path.toAbsolutePath().normalize().toString()] ?: index.imports(file)
+    }
+    return HierarchyGraphState(snapshot, openEditors, declarations, graph)
+}
+
+private fun relativePathOf(root: Path, path: Path): String? {
+    val relative = runCatching { root.relativize(path) }.getOrNull() ?: return null
+    if (relative.toString().isEmpty() || relative.any { it.toString() == ".." }) return null
+    return relative.joinToString("/") { it.toString() }
 }

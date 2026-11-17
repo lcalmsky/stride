@@ -24,7 +24,7 @@ class TypeHierarchyNodesTest {
     fun `the root names the class with its path and opens at its name`() {
         val fixture = fixture(mapOf("Circle.kt" to classText("class Circle : Shape"), "Shape.kt" to shape()))
 
-        val tree = TypeHierarchyNodes.tree(fixture.graph, fixture.find("Circle"), fixture.textOf)
+        val tree = TypeHierarchyNodes.tree(fixture.graph, listOf(fixture.find("Circle")), fixture.textOf)
 
         assertEquals("Type Hierarchy of Circle", tree.title)
         assertEquals("Types outside project sources are not expanded", tree.note)
@@ -49,7 +49,7 @@ class TypeHierarchyNodesTest {
             ),
         )
 
-        val root = TypeHierarchyNodes.tree(fixture.graph, fixture.find("Shape"), fixture.textOf).roots.single()
+        val root = TypeHierarchyNodes.tree(fixture.graph, listOf(fixture.find("Shape")), fixture.textOf).roots.single()
         val bundles = load(root)
         assertEquals(listOf("Supertypes", "Subtypes"), bundles.map { it.text })
         assertTrue(bundles.all { it.expanded })
@@ -71,7 +71,7 @@ class TypeHierarchyNodesTest {
             ),
         )
 
-        val root = TypeHierarchyNodes.tree(fixture.graph, fixture.find("Ring"), fixture.textOf).roots.single()
+        val root = TypeHierarchyNodes.tree(fixture.graph, listOf(fixture.find("Ring")), fixture.textOf).roots.single()
         val supertypes = load(load(root)[0])
 
         assertEquals(listOf("Shape", "Serializable"), supertypes.map { it.text })
@@ -84,7 +84,7 @@ class TypeHierarchyNodesTest {
     fun `a class already on the path is a recursive leaf`() {
         val fixture = fixture(mapOf("Loop.kt" to classText("class Loop : Loop")))
 
-        val root = TypeHierarchyNodes.tree(fixture.graph, fixture.find("Loop"), fixture.textOf).roots.single()
+        val root = TypeHierarchyNodes.tree(fixture.graph, listOf(fixture.find("Loop")), fixture.textOf).roots.single()
         val supertypes = load(load(root)[0])
 
         assertEquals(listOf("Loop (recursive)"), supertypes.map { it.text })
@@ -99,11 +99,43 @@ class TypeHierarchyNodesTest {
         repeat(205) { files["T$it.kt"] = classText("class T$it : Shape") }
         val fixture = fixture(files)
 
-        val root = TypeHierarchyNodes.tree(fixture.graph, fixture.find("Shape"), fixture.textOf).roots.single()
+        val root = TypeHierarchyNodes.tree(fixture.graph, listOf(fixture.find("Shape")), fixture.textOf).roots.single()
         val subtypes = load(load(root)[1])
 
         assertEquals(201, subtypes.size)
         assertEquals("… 5 more", subtypes.last().text)
+    }
+
+    @Test
+    fun `several roots stay collapsed and the title counts them`() {
+        val fixture = fixture(
+            mapOf(
+                "A.kt" to classText("class Duplicate"),
+                "B.kt" to classText("class Duplicate"),
+            ),
+        )
+        val roots = fixture.declarations.filter { it.name == "Duplicate" }
+
+        val tree = TypeHierarchyNodes.tree(fixture.graph, roots, fixture.textOf)
+
+        assertEquals("Type Hierarchy of Duplicate (2 classes)", tree.title)
+        assertEquals(listOf("Duplicate", "Duplicate"), tree.roots.map { it.text })
+        assertEquals(listOf("A.kt:3", "B.kt:3"), tree.roots.map { it.detail })
+        assertTrue(tree.roots.none { it.expanded })
+    }
+
+    @Test
+    fun `more than twenty roots end with a more leaf`() {
+        val files = LinkedHashMap<String, String>()
+        repeat(25) { files["D$it.kt"] = classText("class Duplicate") }
+        val fixture = fixture(files)
+        val roots = fixture.declarations.filter { it.name == "Duplicate" }
+
+        val tree = TypeHierarchyNodes.tree(fixture.graph, roots, fixture.textOf)
+
+        assertEquals(21, tree.roots.size)
+        assertEquals("… 5 more", tree.roots.last().text)
+        assertNull(tree.roots.last().children)
     }
 
     private fun load(node: HierarchyNode): List<HierarchyNode> =

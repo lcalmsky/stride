@@ -2100,7 +2100,9 @@ mislabels correct code; a list the user asked for may hold candidates when every
 it comes from and the list says how it matched. So stride jumps directly only to exactly one
 certain target, opens a chooser (or the Hierarchy window) for candidates, says so in the status
 bar when it cannot know, and every statement of absence names its scope (`in project sources`):
-library, JDK and standard library types are not indexed.
+library, JDK and standard library types are not indexed. The declarations the hierarchy actions
+search are the index snapshot with every open editor's text replacing its file, so a declaration
+that is not saved yet takes part and a jump into an edited buffer lands on that buffer's lines.
 
 Decision H3: Go to Implementation and Go to Super Method share the `⌘B` chooser.
 
@@ -2115,7 +2117,9 @@ Decision H3: Go to Implementation and Go to Super Method share the `⌘B` choose
   `TypeGraph.superMembers`; a Kotlin member without `override` reports `<name> does not override a
   method`; no project result reports `No super method of <name> in project sources`. In a class
   outside any member, its resolved supertypes are the targets (`No supertype of <name> in project
-  sources` when none resolves). Outside any class: `Place the caret in a class or function`.
+  sources` when none resolves). A caret inside a constructor or an `init` block counts as in the
+  class outside any member and takes the supertypes branch: the parser records those as outline
+  members, not as declarations. Outside any class: `Place the caret in a class or function`.
 - The chooser is `TargetChooserPopup` again (`navigationTargets`), not the Show Usages popup:
   that popup is typed to matched lines (`FindInPathHit`) and these rows are declarations, which is
   also how IntelliJ's chooser looks. It is part of `popupOwnsFocus`; Esc hands the keyboard back.
@@ -2129,7 +2133,8 @@ Decision H4: Go to Type Declaration only follows a type the text states.
   supertypes, else a visible top-level property or function; a class name is its own type.
 - Its type: `TypeReferences.declaredType`. An explicit type resolves from the declaration's own
   file; a constructor call `Foo(...)` counts only when `Foo` resolves to a project class and no
-  visible top-level function is named `Foo`.
+  visible top-level function or property is named `Foo` (a property can be invoked through its
+  `invoke` operator).
 - Anything else shows the reason in the status bar (`Cannot infer the type of <name> without a
   compiler; declare it explicitly`), and a type that does not resolve shows `<Type> is not in
   project sources`. A candidate list of every possible type was rejected: it would be the whole
@@ -2152,9 +2157,12 @@ Decision H5: Type and Call Hierarchy open a `Hierarchy` tool window, not a popup
   an expanded node or moves to the parent, ↑/↓ move, ↵/`F4`/double click opens the node's location
   and keeps the window, Esc hands the keyboard to the editor and ⇧Esc hides the window, as in the
   other list windows.
-- Type Hierarchy: the root is the class; a `Supertypes` node holds the resolved supertypes upward
-  (a supertype outside the project is a leaf marked `outside project sources`), a `Subtypes` node
-  the subtypes downward. Both are expanded; the graph is in memory.
+- Type Hierarchy: one root per class the name at the caret resolves to. A single root opens
+  itself; several roots (title `Type Hierarchy of <Name> (<n> classes)`) start collapsed, and each
+  root's `path:line` detail says where it came from. A `Supertypes` node holds the resolved
+  supertypes upward (a supertype outside the project is a leaf marked `outside project sources`),
+  a `Subtypes` node the subtypes downward. Both are expanded; the graph is in memory. Every level
+  keeps at most 200 children and ends with `… <n> more` when there are more.
 - Differences: no scope, sort or `Base on this` controls, no separate supertypes-only or
   subtypes-only views, no Method Hierarchy (`⇧⌘H`).
 
@@ -2164,12 +2172,15 @@ Decision H6: Call Hierarchy matches calls by name and visibility.
   the file is open), kept when `TypeGraph.mayCall` allows it, grouped by the member around each
   call (`memberAt`). A caller node shows `<Container>.<member>`, its path and line, and
   `<n> calls` when there are several; it opens at its first call and expands to its own callers.
-  A member already on the path is marked `(recursive)` and does not expand.
+  A call outside every member (a script's top level, for example) is a row named after its file
+  and does not expand. A member already on the path is marked `(recursive)` and does not expand.
 - Callees: `CallSites.inRange` over the member's own range, each resolved with
   `TypeGraph.resolveCallee`; calls that reach no project declaration (library calls) are left out.
   A callee opens at its declaration and expands to its own callees.
-- The root is the member; `Callers` is expanded, `Callees` loads on →. Each expansion keeps at most
-  200 children and ends with `… <n> more` when there are more.
+- The root is the member. A call that resolves to several declarations opens one root per
+  declaration (title `Call Hierarchy of <name> (<n> declarations)`) and starts collapsed; a single
+  root opens itself. `Callers` is expanded, `Callees` loads on →. Each expansion keeps at most 200
+  children and ends with `… <n> more` when there are more.
 - The note says how the calls matched: `Calls are matched by name and visibility`, plus
   `<n> declarations share this name` when more than one project declaration is named so.
 - Only-unique-name matching was rejected: most calls go through a receiver (`service.process()`),
@@ -2178,6 +2189,43 @@ Decision H6: Call Hierarchy matches calls by name and visibility.
   out by `mayCall`.
 - Differences: no scope filter, no `Base on this method`, no usage preview pane; the root cannot
   switch between callers and callees, both are children of it.
+
+### Messages
+
+Every status line, popup title, window title, note and row label the five actions and the
+Hierarchy window write, and when each one appears. `<name>` is the identifier or declaration name
+the action read, `<n>` a count and `<Type>` the type as it was written.
+
+| Message | When it appears |
+|---|---|
+| `Indexing… try again in a moment` | any of the five actions before the first declaration scan finishes |
+| `No identifier at the caret` | Go to Implementation with no declaration name under the caret and no identifier; Go to Type Declaration with no identifier |
+| `Cannot find the declaration of <name>` | Go to Type Declaration when the name resolves to no declaration, and when a resolved declaration's type list is empty |
+| `Choose Implementation of <name> (<n> found)` | Go to Implementation chooser title when more than one implementation resolves |
+| `No implementations of <name> found in project sources` | Go to Implementation when nothing implements the class or member |
+| `Choose Super Method of <name>` | Go to Super Method chooser title when the overridden member has several candidates |
+| `Choose Super Class of <name>` | Go to Super Method chooser title when the enclosing class has several project supertypes |
+| `No super method of <name> in project sources` | Go to Super Method when no project supertype declares a member of that name |
+| `No supertype of <name> in project sources` | Go to Super Method in a class when no supertype is a project class |
+| `<name> does not override a method` | Go to Super Method on a Kotlin function or property without `override` |
+| `Place the caret in a class or function` | Go to Super Method outside every class and member |
+| `Choose Type Declaration of <name>` | Go to Type Declaration chooser title when the declared type or the name resolves to several classes |
+| `<Type> is not in project sources` | Go to Type Declaration when the stated type resolves to no project class |
+| `Cannot infer the type of <name> without a compiler; declare it explicitly` | Go to Type Declaration when the text does not state the type |
+| `Place the caret in a class` | Type Hierarchy when neither the identifier nor the enclosing classes give a class |
+| `Place the caret in a function` | Call Hierarchy when neither the identifier, the call under the caret nor the enclosing member give a function |
+| `Type Hierarchy of <name>` | Type Hierarchy window title with one root |
+| `Type Hierarchy of <name> (<n> classes)` | Type Hierarchy window title with several roots |
+| `Call Hierarchy of <name>` | Call Hierarchy window title with one root |
+| `Call Hierarchy of <name> (<n> declarations)` | Call Hierarchy window title with several roots |
+| `Types outside project sources are not expanded` | Type Hierarchy note under the title |
+| `Calls are matched by name and visibility` | Call Hierarchy note under the title |
+| `Calls are matched by name and visibility; <n> declarations share this name` | the same note when more than one project declaration, class or symbol, has the root's name |
+| `Supertypes`, `Subtypes` | the bundles under a type root |
+| `Callers`, `Callees` | the bundles under a call root |
+| `outside project sources` | the detail of a supertype that resolves to no project class |
+| `(recursive)` | a node whose declaration is already on the path; it does not expand |
+| `… <n> more` | a level with more than 200 children, or more than 20 roots |
 
 ## Declaration navigation, tests and bookmarks
 

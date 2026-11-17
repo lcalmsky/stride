@@ -2,6 +2,7 @@ package stride.app.hierarchy
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -46,7 +47,7 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("b"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("b")), fixture.files, fixture.textOf)
 
         assertEquals("Call Hierarchy of b", tree.title)
         assertEquals("Calls are matched by name and visibility", tree.note)
@@ -75,7 +76,7 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("a"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("a")), fixture.files, fixture.textOf)
         val b = load(load(tree.roots.single())[0]).single()
         val backToA = load(b).single()
 
@@ -92,7 +93,7 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("target"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("target")), fixture.files, fixture.textOf)
         val caller = load(load(tree.roots.single())[0]).single()
 
         assertEquals("Loose.kt", caller.text)
@@ -122,7 +123,7 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("run"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("run")), fixture.files, fixture.textOf)
         val bundles = load(tree.roots.single())
         assertEquals(listOf("Callers", "Callees"), bundles.map { it.text })
         assertTrue(bundles[0].expanded)
@@ -153,7 +154,7 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("a"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("a")), fixture.files, fixture.textOf)
         val b = load(load(tree.roots.single())[1]).single()
         val backToA = load(b).single()
 
@@ -167,7 +168,7 @@ class CallHierarchyNodesTest {
         repeat(205) { calls.append("\nfun c$it() {\n    target()\n}\n") }
         val fixture = fixture(mapOf("Many.kt" to calls.toString()))
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("target"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("target")), fixture.files, fixture.textOf)
         val callers = load(load(tree.roots.single())[0])
 
         assertEquals(201, callers.size)
@@ -183,9 +184,88 @@ class CallHierarchyNodesTest {
             ),
         )
 
-        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, fixture.find("target"), fixture.files, fixture.textOf)
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, listOf(fixture.find("target")), fixture.files, fixture.textOf)
 
         assertEquals("Calls are matched by name and visibility; 2 declarations share this name", tree.note)
+    }
+
+    @Test
+    fun `the note counts a class declared with the function's name`() {
+        val fixture = fixture(
+            mapOf(
+                "A.kt" to "package demo.a\n\nfun target() {}\n",
+                "B.kt" to "package demo.b\n\nclass target\n",
+            ),
+        )
+
+        val tree = CallHierarchyNodes.tree(
+            fixture.graph,
+            fixture.declarations,
+            listOf(fixture.find("target")),
+            fixture.files,
+            fixture.textOf,
+        )
+
+        assertEquals("Calls are matched by name and visibility; 2 declarations share this name", tree.note)
+    }
+
+    @Test
+    fun `several roots stay collapsed and the title counts them`() {
+        val fixture = fixture(
+            mapOf(
+                "A.kt" to "package demo.a\n\nfun target() {}\n",
+                "B.kt" to "package demo.b\n\nfun target() {}\n",
+            ),
+        )
+        val roots = fixture.declarations.filter { it.name == "target" }
+
+        val tree = CallHierarchyNodes.tree(fixture.graph, fixture.declarations, roots, fixture.files, fixture.textOf)
+
+        assertEquals("Call Hierarchy of target (2 declarations)", tree.title)
+        assertEquals(listOf("A.kt:3", "B.kt:3"), tree.roots.map { it.detail })
+        assertTrue(tree.roots.none { it.expanded })
+    }
+
+    @Test
+    fun `expanding deeper reuses the file texts`() {
+        val fixture = fixture(
+            mapOf(
+                "A.kt" to """
+                    package demo
+
+                    fun a() {
+                        b()
+                    }
+
+                    fun b() {}
+                """.trimIndent() + "\n",
+                "B.kt" to """
+                    package demo
+
+                    class Service {
+                        fun run() {
+                            a()
+                        }
+                    }
+                """.trimIndent() + "\n",
+            ),
+        )
+
+        val tree = CallHierarchyNodes.tree(
+            fixture.graph,
+            fixture.declarations,
+            listOf(fixture.find("a")),
+            fixture.files,
+            fixture.textOf,
+        )
+        val callers = load(load(tree.roots.single())[0])
+        assertTrue(callers.any { it.text == "Service.run" })
+        assertTrue(fixture.reads.values.all { it == 1 }, "a file was read twice: ${fixture.reads}")
+
+        fixture.reads.clear()
+        load(callers.first { it.text == "Service.run" })
+
+        assertEquals(emptyMap<Path, Int>(), fixture.reads)
     }
 
     private fun load(node: HierarchyNode): List<HierarchyNode> =
@@ -196,6 +276,7 @@ class CallHierarchyNodesTest {
         val declarations: List<Declaration>
         val graph: TypeGraph
         val indexed: List<IndexedFile>
+        val reads = ConcurrentHashMap<Path, Int>()
         val textOf: (Path) -> String?
 
         init {
@@ -224,7 +305,10 @@ class CallHierarchyNodesTest {
             }
             graph = TypeGraph(declarations) { emptyList() }
             indexed = files.keys.map { IndexedFile(VFile(root.resolve(it)), it) }
-            textOf = { path -> runCatching { Files.readString(path) }.getOrNull() }
+            textOf = { path ->
+                reads.merge(path, 1, Int::plus)
+                runCatching { Files.readString(path) }.getOrNull()
+            }
         }
 
         val files: List<IndexedFile> get() = indexed
