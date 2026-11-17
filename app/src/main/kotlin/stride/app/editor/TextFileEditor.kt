@@ -90,6 +90,7 @@ import stride.app.problems.FileProblem
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.EdgeBandCache
+import stride.app.ui.theme.GLASS_FIND_MATCH_ALPHA
 import stride.app.ui.theme.LocalEditorInsets
 import stride.app.ui.theme.LocalSidebarChrome
 import stride.app.ui.theme.MirroredStripCache
@@ -273,6 +274,9 @@ class TextFileEditor(
 
     var searchSpans: List<BackgroundSpan> by mutableStateOf(emptyList())
 
+    /** Matches of Highlight Usages in File, drawn as background spans under the text. */
+    var usageHighlights: List<IntRange> by mutableStateOf(emptyList())
+
     var gutterMarkers: List<GutterMarker> by mutableStateOf(emptyList())
 
     /** The problems of the current text, drawn as squiggles and walked by F2/⇧F2. */
@@ -283,6 +287,12 @@ class TextFileEditor(
 
     /** Called after a jump moved the caret, so the navigation history can record the target. */
     var onJump: (() -> Unit)? = null
+
+    /**
+     * Called after the editor applied a text change, with the replaced range and whether the
+     * change entered the undo stack; undo, redo and every other unrecorded path report `false`.
+     */
+    var onTextChange: ((offset: Int, oldLength: Int, newLength: Int, recorded: Boolean) -> Unit)? = null
 
     /** Called with the caret offset of a ⌘-click; the app turns it into Go to Declaration. */
     var onGoToDeclarationAt: ((Int) -> Unit)? = null
@@ -406,6 +416,13 @@ class TextFileEditor(
         if (caretStep == null) secondaryCarets = emptyList()
         value = newValue
         reconcileFolds(change, carets)
+        if (change != null) reportTextChange(change, recorded = record)
+    }
+
+    /** Tells the observer about a change and drops the usage highlights the new text invalidates. */
+    private fun reportTextChange(change: TextChange, recorded: Boolean) {
+        usageHighlights = emptyList()
+        onTextChange?.invoke(change.offset, change.oldLength, change.newText.length, recorded)
     }
 
     /** Applies a multi-caret result: the last caret becomes [value]'s selection. */
@@ -468,6 +485,7 @@ class TextFileEditor(
         secondaryCarets = secondaries
         value = TextFieldValue(edit.text, primary, edit.composition)
         reconcileFolds(change, carets)
+        if (change != null) reportTextChange(change, recorded = record)
     }
 
     private fun clearCaretState() {
@@ -537,6 +555,7 @@ class TextFileEditor(
         hippie = null
         clearCaretState()
         reconcileFolds(change, carets)
+        if (change != null) reportTextChange(change, recorded = false)
     }
 
     /**
@@ -977,21 +996,26 @@ class TextFileEditor(
             gotoLineFocusRequests++
             true
         }
-        ActionId.EDITOR_ESCAPE -> when {
-            gotoLineVisible -> {
-                gotoLineVisible = false
-                runCatching { focusRequester.requestFocus() }
-                true
+        ActionId.EDITOR_ESCAPE -> {
+            val hadHighlights = usageHighlights.isNotEmpty()
+            usageHighlights = emptyList()
+            when {
+                gotoLineVisible -> {
+                    gotoLineVisible = false
+                    runCatching { focusRequester.requestFocus() }
+                    true
+                }
+                secondaryCarets.isNotEmpty() -> {
+                    removeSecondaryCarets()
+                    true
+                }
+                !value.selection.collapsed -> {
+                    applyValue(TextFieldValue(text, TextRange(value.selection.end)), record = false)
+                    true
+                }
+                hadHighlights -> true
+                else -> false
             }
-            secondaryCarets.isNotEmpty() -> {
-                removeSecondaryCarets()
-                true
-            }
-            !value.selection.collapsed -> {
-                applyValue(TextFieldValue(text, TextRange(value.selection.end)), record = false)
-                true
-            }
-            else -> false
         }
         ActionId.EDITOR_SELECT_WORD -> {
             expandWordSelection()
@@ -1311,6 +1335,7 @@ class TextFileEditor(
     override fun Content(modifier: Modifier) {
         val currentSpans = spans
         val currentSearchSpans = searchSpans
+        val currentUsages = usageHighlights
         val currentValue = value
         val foldView = if (foldedRegions.isEmpty()) {
             FoldView.NONE
@@ -1325,10 +1350,27 @@ class TextFileEditor(
         }
         val scheme = schemeAndGutter.first
         val gutterColor = schemeAndGutter.second
-        val transformation = remember(currentSpans, currentSearchSpans, scheme, gutterColor, foldView) {
+        // Without usage highlights the transformation gets the find bar's own list, so a clean
+        // editor allocates nothing and keeps the frame path it had.
+        val usageSpans = if (currentUsages.isEmpty()) {
+            emptyList()
+        } else {
+            remember(currentUsages, nativeGlass) {
+                val alpha = if (nativeGlass) GLASS_FIND_MATCH_ALPHA else 0.55f
+                currentUsages.map { range ->
+                    BackgroundSpan(range.first, range.last + 1, DesignTokens.accent.copy(alpha = alpha))
+                }
+            }
+        }
+        val currentBackgroundSpans = if (usageSpans.isEmpty()) {
+            currentSearchSpans
+        } else {
+            remember(currentSearchSpans, usageSpans) { currentSearchSpans + usageSpans }
+        }
+        val transformation = remember(currentSpans, currentBackgroundSpans, scheme, gutterColor, foldView) {
             HighlightingVisualTransformation(
                 currentSpans,
-                currentSearchSpans,
+                currentBackgroundSpans,
                 scheme,
                 foldView,
                 SpanStyle(color = gutterColor),
@@ -1870,7 +1912,7 @@ class TextFileEditor(
                     ExtensionKey(
                         layout = textLayout,
                         spans = currentSpans,
-                        searchSpans = currentSearchSpans,
+                        searchSpans = currentBackgroundSpans,
                         horizontal = horizontal.value,
                         vertical = vertical.value,
                         chrome = sidebar,

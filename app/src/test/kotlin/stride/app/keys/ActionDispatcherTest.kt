@@ -23,6 +23,7 @@ import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtColumn
 import stride.app.navigation.openFileAtOffset
+import stride.app.navigation.openUsagesFindWindow
 import stride.app.problems.FileProblem
 import stride.app.problems.ProblemScope
 import stride.app.problems.ProblemSource
@@ -1653,6 +1654,165 @@ class ActionDispatcherTest {
         assertTrue(dispatchAction(ActionId.SURROUND_WITH, state) { null })
         assertNull(state.surround)
         assertEquals("File is read-only", state.statusMessage)
+    }
+
+    @Test
+    fun `show usages opens a popup for the identifier at the caret`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val text = "fun helper() {}\n\nfun use() { helper() }\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.lastIndexOf("helper") + 1)))
+
+        assertTrue(dispatchAction(ActionId.SHOW_USAGES, state) { null })
+
+        val request = requireNotNull(state.showUsages)
+        assertEquals("helper", request.name)
+        assertTrue(request.searching)
+        assertEquals(KeyContext.SEARCH_POPUP, state.focus)
+        assertEquals(1L, state.showUsagesGeneration)
+    }
+
+    @Test
+    fun `show usages without an editor is not consumed and without an identifier reports it`() {
+        state.focus = KeyContext.EDITOR
+        assertFalse(dispatchAction(ActionId.SHOW_USAGES, state) { null })
+
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("a + b", TextRange(2)))
+
+        assertTrue(dispatchAction(ActionId.SHOW_USAGES, state) { null })
+        assertEquals("No identifier at the caret", state.statusMessage)
+        assertNull(state.showUsages)
+    }
+
+    @Test
+    fun `show usages and find usages open the same find window tab`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val root = temp.resolve("project")
+        val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val text = "fun helper() {}\n\nfun use() { helper() }\n"
+        editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("helper") + 1)))
+
+        assertTrue(dispatchAction(ActionId.FIND_USAGES, state) { null })
+        val fromFindUsages = state.findToolWindow.tabs.single()
+
+        assertTrue(dispatchAction(ActionId.SHOW_USAGES, state) { null })
+        val request = requireNotNull(state.showUsages)
+        state.showUsages = null
+        openUsagesFindWindow(state, request.name)
+
+        val fromPopup = state.findToolWindow.tabs.single()
+        assertEquals(fromFindUsages.id, fromPopup.id)
+        assertEquals(fromFindUsages.kind, fromPopup.kind)
+        assertEquals(fromFindUsages.title, fromPopup.title)
+        assertEquals(fromFindUsages.query, fromPopup.query)
+        assertEquals(fromFindUsages.options, fromPopup.options)
+    }
+
+    @Test
+    fun `jump to last change opens the newest place and walks back on repeat`() {
+        val session = openProjectWith("a.kt", "b.kt")
+        val root = temp.resolve("project")
+        val a = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
+        val b = session.editors.openFile(VFile(root.resolve("b.kt"))) as TextFileEditor
+        a.updateValue(TextFieldValue("one\ntwo\n", TextRange(0)))
+        b.updateValue(TextFieldValue("alpha\nbeta\n", TextRange(0)))
+        val aPath = a.file.path.toAbsolutePath().normalize()
+        val bPath = b.file.path.toAbsolutePath().normalize()
+        session.editLocations.change(aPath, offset = 4, oldLength = 0, newLength = 0, line = 1, recorded = true)
+        session.editLocations.change(bPath, offset = 6, oldLength = 0, newLength = 0, line = 1, recorded = true)
+        session.editors.openFile(VFile(root.resolve("a.kt")))
+        a.updateValue(TextFieldValue("one\ntwo\n", TextRange(0)))
+
+        assertTrue(dispatchAction(ActionId.JUMP_TO_LAST_CHANGE, state) { null })
+        assertEquals(b.file.path, session.editors.selected?.file?.path)
+        assertEquals(6, b.value.selection.start)
+
+        assertTrue(dispatchAction(ActionId.JUMP_TO_LAST_CHANGE, state) { null })
+        assertEquals(a.file.path, session.editors.selected?.file?.path)
+        assertEquals(4, (session.editors.selected as TextFileEditor).value.selection.start)
+    }
+
+    @Test
+    fun `jump to last change reports no place and drops a gone file's places`() {
+        val session = openProjectWith("a.kt")
+        assertTrue(dispatchAction(ActionId.JUMP_TO_LAST_CHANGE, state) { null })
+        assertEquals("No edit location", state.statusMessage)
+
+        val gone = temp.resolve("project/gone.kt").toAbsolutePath().normalize()
+        session.editLocations.change(gone, offset = 0, oldLength = 0, newLength = 0, line = 0, recorded = true)
+
+        assertTrue(dispatchAction(ActionId.JUMP_TO_LAST_CHANGE, state) { null })
+        assertEquals("File not found: gone.kt", state.statusMessage)
+        assertTrue(session.editLocations.places.isEmpty())
+    }
+
+    @Test
+    fun `highlight usages in file marks every match and clears on the next press`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        val text = "alpha beta\nalpha\n"
+        editor.updateValue(TextFieldValue(text, TextRange(1)))
+
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+
+        assertEquals(listOf(0..4, 11..15), editor.usageHighlights)
+        assertEquals("2 usages of alpha · ⌘G next · ⇧⌘G previous · Esc clears", state.statusMessage)
+
+        editor.updateValue(TextFieldValue(text, TextRange(2)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+        assertTrue(editor.usageHighlights.isEmpty())
+    }
+
+    @Test
+    fun `find next walks the usage highlights and wraps`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\nalpha gamma\nalpha\n", TextRange(0)))
+        editor.usageHighlights = listOf(0..4, 11..15, 23..27)
+        assertFalse(state.findBar.visible)
+
+        assertTrue(dispatchAction(ActionId.FIND_NEXT, state) { null })
+        assertEquals(11, editor.value.selection.start)
+        assertTrue(dispatchAction(ActionId.FIND_NEXT, state) { null })
+        assertEquals(23, editor.value.selection.start)
+        assertTrue(dispatchAction(ActionId.FIND_NEXT, state) { null })
+        assertEquals(0, editor.value.selection.start)
+        assertTrue(dispatchAction(ActionId.FIND_PREVIOUS, state) { null })
+        assertEquals(23, editor.value.selection.start)
+    }
+
+    @Test
+    fun `find next without highlights still uses the find bar`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(0)))
+
+        assertFalse(dispatchAction(ActionId.FIND_NEXT, state) { null })
+
+        state.findBar.open(editor, replace = false)
+        state.findBar.query = "alpha"
+        assertTrue(dispatchAction(ActionId.FIND_NEXT, state) { null })
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
+    @Test
+    fun `escape and a text change clear the usage highlights`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\nalpha\n", TextRange(0)))
+        editor.usageHighlights = listOf(0..4, 11..15)
+
+        assertTrue(dispatchAction(ActionId.EDITOR_ESCAPE, state) { null })
+        assertTrue(editor.usageHighlights.isEmpty())
+
+        editor.usageHighlights = listOf(0..4, 11..15)
+        editor.updateValue(TextFieldValue("alpha beta\nalpha\nx", TextRange(19)))
+        assertTrue(editor.usageHighlights.isEmpty())
     }
 
     private fun openProjectWith(vararg names: String): ProjectSession {

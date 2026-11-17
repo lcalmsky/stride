@@ -293,6 +293,23 @@ class KeymapTest {
     }
 
     @Test
+    fun `the edit location and usage bindings resolve in their contexts`() {
+        // JumpToLastChange meta shift BACK_SPACE
+        assertEquals(ActionId.JUMP_TO_LAST_CHANGE, action("meta shift BACK_SPACE", KeyContext.GLOBAL))
+        // ShowUsages meta alt F7
+        assertEquals(ActionId.SHOW_USAGES, action("meta alt F7", KeyContext.EDITOR))
+        // HighlightUsagesInFile meta shift F7
+        assertEquals(ActionId.HIGHLIGHT_USAGES_IN_FILE, action("meta shift F7", KeyContext.EDITOR))
+        // ⌘⌫ stays Delete Line.
+        assertEquals(ActionId.EDITOR_DELETE_LINE, action("meta BACK_SPACE", KeyContext.EDITOR))
+        // The editor-only bindings do not answer from the global context, and modal popups own no key.
+        assertNull(action("meta alt F7", KeyContext.GLOBAL))
+        assertNull(action("meta shift F7", KeyContext.GLOBAL))
+        assertNull(action("meta alt F7", KeyContext.SEARCH_POPUP))
+        assertNull(action("meta shift F7", KeyContext.CONTEXT_POPUP))
+    }
+
+    @Test
     fun `non-mac swaps meta for control`() {
         val other = Keymap.forPlatform(false)
 

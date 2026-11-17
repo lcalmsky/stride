@@ -6,6 +6,7 @@ import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.EditActions
 import stride.app.editor.TextFileEditor
+import stride.app.editor.find.FindModel
 import stride.app.editor.find.FindOptions
 import stride.app.keys.KeyContext
 import stride.app.search.FindTabKind
@@ -228,17 +229,95 @@ fun openFileStructure(state: AppState): Boolean {
     return true
 }
 
-/** Find Usages: a Find window tab for the identifier at the caret, whole-word and case-sensitive. */
-fun findUsages(state: AppState): Boolean {
-    val editor = selectedTextEditor(state) ?: return false
-    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start) ?: return false
+/** The scan every usage search runs: whole word and case-sensitive, like IntelliJ's usages. */
+private val USAGE_OPTIONS = FindOptions(caseSensitive = true, wholeWord = true)
+
+/** Opens the Find window tab a usage search of [name] shows; ⌥F7 and ⌘↵ both land here. */
+fun openUsagesFindWindow(state: AppState, name: String) {
     state.openFindResults(
         kind = FindTabKind.USAGES,
         title = "Usages of $name",
         query = name,
-        options = FindOptions(caseSensitive = true, wholeWord = true),
+        options = USAGE_OPTIONS,
     )
+}
+
+/** Find Usages: a Find window tab for the identifier at the caret, whole-word and case-sensitive. */
+fun findUsages(state: AppState): Boolean {
+    val editor = selectedTextEditor(state) ?: return false
+    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start) ?: return false
+    openUsagesFindWindow(state, name)
     state.statusMessage = null
+    return true
+}
+
+/** Show Usages: the same scan as Find Usages, shown in a popup over the editor. */
+fun showUsages(state: AppState): Boolean {
+    val editor = selectedTextEditor(state) ?: return false
+    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start)
+    if (name == null) {
+        state.statusMessage = "No identifier at the caret"
+        return true
+    }
+    state.openShowUsagesPopup(name)
+    state.statusMessage = null
+    return true
+}
+
+/** Whole-word, case-sensitive matches of [name], the same matcher the Find window scans with. */
+object UsageMatches {
+    fun ranges(text: String, name: String): List<IntRange> =
+        FindModel.search(text, name, USAGE_OPTIONS).matches.map { it.start until it.end }
+
+    /** The first start after [caret], wrapping to the first match; `null` without matches. */
+    fun next(highlights: List<IntRange>, caret: Int): IntRange? =
+        highlights.firstOrNull { it.first > caret } ?: highlights.firstOrNull()
+
+    /** The last start before [caret], wrapping to the last match; `null` without matches. */
+    fun previous(highlights: List<IntRange>, caret: Int): IntRange? =
+        highlights.lastOrNull { it.first < caret } ?: highlights.lastOrNull()
+}
+
+/**
+ * Highlight Usages in File: the identifier at the caret, or clears the highlights when the
+ * caret already sits on one of them.
+ */
+fun highlightUsagesInFile(state: AppState): Boolean {
+    val editor = selectedTextEditor(state) ?: return false
+    val caret = editor.value.selection.start
+    if (editor.usageHighlights.any { caret in it }) {
+        editor.usageHighlights = emptyList()
+        state.statusMessage = null
+        return true
+    }
+    val name = identifierAt(editor.value.text, editor.file.name, caret)
+    if (name == null) {
+        state.statusMessage = "No identifier at the caret"
+        return true
+    }
+    val highlights = UsageMatches.ranges(editor.value.text, name)
+    editor.usageHighlights = highlights
+    state.statusMessage = "${highlights.size} usages of $name · ⌘G next · ⇧⌘G previous · Esc clears"
+    return true
+}
+
+/** Jump to Last Change: the newest edit place, walking back on every repeated press. */
+fun jumpToLastChange(state: AppState): Boolean {
+    val session = state.session ?: return false
+    val editor = selectedTextEditor(state)
+    val path = editor?.file?.path?.toAbsolutePath()?.normalize()
+    val line = editor?.let { BookmarkManager.lineIndex(it.value.text, it.value.selection.start) }
+    val place = session.editLocations.next(path, line)
+    if (place == null) {
+        state.statusMessage = "No edit location"
+        return true
+    }
+    if (!Files.exists(place.path)) {
+        session.editLocations.drop(place.path)
+        state.statusMessage = missingFileMessage(session, place.path)
+        return true
+    }
+    openFileAtOffset(state, session, place.path, place.offset)
     return true
 }
 

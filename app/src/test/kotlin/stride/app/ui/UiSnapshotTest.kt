@@ -27,6 +27,7 @@ import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.keys.dispatchAction
 import stride.app.problems.CompilerMessage
 import stride.app.problems.ProblemSource
 import stride.app.problems.ProblemsModel
@@ -885,7 +886,49 @@ class UiSnapshotTest {
     }
 
     @Test
-    @Order(30)
+    @Order(31)
+    fun `show usages popup snapshot`() {
+        val root = demoProject()
+        Files.writeString(
+            root.resolve("src/main/kotlin/demo/Main.kt"),
+            """
+            package demo
+
+            fun main() {
+                val greeting = Greeter()
+                println(greeting.greet("strIDE"))
+                println(greeting.greet("team"))
+                println(greeting.greet("world"))
+            }
+            """.trimIndent() + "\n",
+        )
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<FileNameIndex>().awaitReady(5_000)) { "file index did not finish" }
+            expand(session, root, "src", "main", "kotlin", "demo")
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val text = greeting.value.text
+            greeting.updateValue(TextFieldValue(text, TextRange(text.indexOf("fun greet(") + 4)))
+
+            assertTrue(dispatchAction(ActionId.SHOW_USAGES, state) { null })
+            val request = requireNotNull(state.showUsages)
+            assertEquals("greet", request.name)
+
+            renderApp("20-show-usages.png", state, renderMillis = 1_800)
+
+            check(!request.searching) { "the usages scan did not finish" }
+            check(request.hits.size >= 3) { "the popup has ${request.hits.size} usage rows" }
+            assertEquals(2, request.hits.map { it.relativePath }.distinct().size)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("20-show-usages.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
             val file = SnapshotRenderer.snapshotDir().resolve(name)
@@ -1022,6 +1065,7 @@ class UiSnapshotTest {
             "17-find-window.png",
             "18-replace-in-path.png",
             "19-problems.png",
+            "20-show-usages.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

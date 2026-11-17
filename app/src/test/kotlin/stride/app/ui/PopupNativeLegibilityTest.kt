@@ -62,6 +62,8 @@ import stride.app.search.FindInPathPopup
 import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
+import stride.app.search.ShowUsagesPopup
+import stride.app.search.ShowUsagesRequest
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
@@ -548,6 +550,19 @@ class PopupNativeLegibilityTest {
                 SurroundWithPopup(
                     request = SurroundRequest(editor, SurroundWith.templatesFor("kt")),
                     onChoose = {},
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "show-usages",
+                key = "popup-usages",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.ACCENT),
+                renderMillis = 1_200,
+            ) {
+                ShowUsagesPopup(
+                    request = ShowUsagesRequest(id = 1, name = "alpha", files = index.snapshot()),
+                    onOpen = {},
+                    onOpenInFindWindow = {},
                     onClose = {},
                 )
             },

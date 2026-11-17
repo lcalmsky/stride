@@ -9,10 +9,13 @@ import stride.app.editor.openPasteHistory
 import stride.app.editor.openRename
 import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
+import stride.app.navigation.UsageMatches
 import stride.app.navigation.copyPath
 import stride.app.navigation.findUsages
 import stride.app.navigation.goToDeclaration
 import stride.app.navigation.goToTest
+import stride.app.navigation.highlightUsagesInFile
+import stride.app.navigation.jumpToLastChange
 import stride.app.navigation.navigateBack
 import stride.app.navigation.navigateForward
 import stride.app.navigation.openFileStructure
@@ -21,6 +24,7 @@ import stride.app.navigation.openQuickDefinition
 import stride.app.navigation.openQuickDoc
 import stride.app.navigation.selectInProjectView
 import stride.app.navigation.showBookmarks
+import stride.app.navigation.showUsages
 import stride.app.navigation.toggleBookmark
 import stride.app.problems.ErrorDescriptionRequest
 import stride.app.problems.ProblemNavigation
@@ -160,9 +164,20 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.FIND_NEXT, ActionId.FIND_PREVIOUS -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
-        if (!state.findBar.visible) return false
-        if (action == ActionId.FIND_NEXT) state.findBar.next(editor) else state.findBar.previous(editor)
-        true
+        if (editor.usageHighlights.isNotEmpty()) {
+            val caret = editor.value.selection.start
+            val target = if (action == ActionId.FIND_NEXT) {
+                UsageMatches.next(editor.usageHighlights, caret)
+            } else {
+                UsageMatches.previous(editor.usageHighlights, caret)
+            }
+            target?.let { editor.jumpTo(it.first) }
+            true
+        } else {
+            if (!state.findBar.visible) return false
+            if (action == ActionId.FIND_NEXT) state.findBar.next(editor) else state.findBar.previous(editor)
+            true
+        }
     }
     ActionId.FIND_IN_PATH -> {
         if (state.session != null) state.openFindInPath()
@@ -185,6 +200,9 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.FILE_STRUCTURE_POPUP -> openFileStructure(state)
     ActionId.GOTO_TEST -> goToTest(state)
     ActionId.FIND_USAGES -> findUsages(state)
+    ActionId.SHOW_USAGES -> showUsages(state)
+    ActionId.HIGHLIGHT_USAGES_IN_FILE -> highlightUsagesInFile(state)
+    ActionId.JUMP_TO_LAST_CHANGE -> jumpToLastChange(state)
     ActionId.TOGGLE_BOOKMARK -> toggleBookmark(state)
     ActionId.SHOW_BOOKMARKS -> showBookmarks(state)
     ActionId.ACTIVATE_PROJECT_TOOL_WINDOW -> {

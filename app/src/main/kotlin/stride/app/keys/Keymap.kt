@@ -24,6 +24,7 @@ enum class ActionId {
     SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
     EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
     EXPAND_REGION, COLLAPSE_REGION, EXPAND_ALL_REGIONS, COLLAPSE_ALL_REGIONS,
+    JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
 }
 
 enum class KeyContext {
@@ -291,4 +292,10 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta F1", ActionId.SHOW_ERROR_DESCRIPTION, KeyContext.EDITOR)
     // REOPEN_CLOSED_TAB and CLOSE_OTHER_TABS have no strokes and are reachable from the Actions tab.
     // EditorCloneCaretAbove/Below have no stroke either: a double Option gesture in KeyRouter.
+    // JumpToLastChange meta shift BACK_SPACE
+    bind("meta shift BACK_SPACE", ActionId.JUMP_TO_LAST_CHANGE, KeyContext.GLOBAL)
+    // ShowUsages meta alt F7
+    bind("meta alt F7", ActionId.SHOW_USAGES, KeyContext.EDITOR)
+    // HighlightUsagesInFile meta shift F7
+    bind("meta shift F7", ActionId.HIGHLIGHT_USAGES_IN_FILE, KeyContext.EDITOR)
 }

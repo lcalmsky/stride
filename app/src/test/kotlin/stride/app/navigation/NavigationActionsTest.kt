@@ -29,6 +29,25 @@ class NavigationActionsTest {
     }
 
     @Test
+    fun `usage matches are whole word and case sensitive`() {
+        val text = "alpha Alpha alphas alpha\n"
+
+        assertEquals(listOf(0..4, 19..23), UsageMatches.ranges(text, "alpha"))
+    }
+
+    @Test
+    fun `the usage walk wraps at both ends`() {
+        val highlights = listOf(0..4, 10..14, 20..24)
+
+        assertEquals(10..14, UsageMatches.next(highlights, 5))
+        assertEquals(0..4, UsageMatches.next(highlights, 24))
+        assertEquals(0..4, UsageMatches.previous(highlights, 5))
+        assertEquals(20..24, UsageMatches.previous(highlights, 0))
+        assertNull(UsageMatches.next(emptyList(), 0))
+        assertNull(UsageMatches.previous(emptyList(), 0))
+    }
+
+    @Test
     fun `local targets can be looked up in declarations that were parsed already`() {
         val declarations = listOf(
             ParsedDeclaration("helper", DeclarationKind.SYMBOL, 2),

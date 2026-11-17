@@ -117,6 +117,9 @@ object ActionNames {
         ActionId.COLLAPSE_REGION to "Collapse",
         ActionId.EXPAND_ALL_REGIONS to "Expand All",
         ActionId.COLLAPSE_ALL_REGIONS to "Collapse All",
+        ActionId.JUMP_TO_LAST_CHANGE to "Last Edit Location",
+        ActionId.SHOW_USAGES to "Show Usages",
+        ActionId.HIGHLIGHT_USAGES_IN_FILE to "Highlight Usages in File",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

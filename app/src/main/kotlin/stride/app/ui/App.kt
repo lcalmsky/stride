@@ -113,6 +113,7 @@ import stride.app.glass.windowDragRegion
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
+import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksPopup
 import stride.app.navigation.CallText
 import stride.app.navigation.ChooserRow
@@ -128,6 +129,7 @@ import stride.app.navigation.navigationLocation
 import stride.app.navigation.openBookmark
 import stride.app.navigation.openDeclaration
 import stride.app.navigation.openFileAtLine
+import stride.app.navigation.openUsagesFindWindow
 import stride.app.problems.EditorProblems
 import stride.app.problems.ErrorDescriptionPopup
 import stride.app.run.ContextActionsPopup
@@ -140,6 +142,7 @@ import stride.app.search.FindTabKind
 import stride.app.search.RecentFilesPopup
 import stride.app.search.SearchEverywhere
 import stride.app.search.SearchEverywherePopup
+import stride.app.search.ShowUsagesPopup
 import stride.app.search.openFindHit
 import stride.app.tree.TreeRow
 import stride.app.ui.LocalAnimationsEnabled
@@ -291,6 +294,16 @@ fun App(
                                     onFocusContext = { state.focus = it },
                                     onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
+                                    onTextChange = { editor, offset, oldLength, newLength, recorded ->
+                                        session.editLocations.change(
+                                            path = editor.file.path.toAbsolutePath().normalize(),
+                                            line = BookmarkManager.lineIndex(editor.value.text, offset),
+                                            offset = offset,
+                                            oldLength = oldLength,
+                                            newLength = newLength,
+                                            recorded = recorded,
+                                        )
+                                    },
                                     modifier = Modifier.fillMaxSize(),
                                     focusRequests = state.editorFocusRequests,
                                     leftInset = contentLeft,
@@ -480,6 +493,33 @@ fun App(
                     },
                     onClose = {
                         state.recentFilesVisible = false
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val usages = state.showUsages
+        if (usages != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.SEARCH_POPUP
+                    },
+            ) {
+                ShowUsagesPopup(
+                    request = usages,
+                    onOpen = { hit ->
+                        state.showUsages = null
+                        openFindHit(state, session, hit)
+                    },
+                    onOpenInFindWindow = {
+                        state.showUsages = null
+                        openUsagesFindWindow(state, usages.name)
+                        state.statusMessage = null
+                    },
+                    onClose = {
+                        state.showUsages = null
                         refocusEditor(state)
                     },
                 )
@@ -1181,6 +1221,7 @@ private fun EditorArea(
     onFocusContext: (KeyContext) -> Unit,
     onGoToDeclaration: (TextFileEditor, Int) -> Unit,
     onJump: (TextFileEditor) -> Unit,
+    onTextChange: (TextFileEditor, Int, Int, Int, Boolean) -> Unit,
     modifier: Modifier,
     focusRequests: Int = 0,
     leftInset: Dp = 0.dp,
@@ -1218,6 +1259,9 @@ private fun EditorArea(
                     selected.onFocusContext = onFocusContext
                     selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
                     selected.onJump = { onJump(selected) }
+                    selected.onTextChange = { offset, oldLength, newLength, recorded ->
+                        onTextChange(selected, offset, oldLength, newLength, recorded)
+                    }
                 }
                 if (nativeGlass) {
                     Box(

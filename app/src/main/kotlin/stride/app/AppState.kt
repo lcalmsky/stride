@@ -22,6 +22,7 @@ import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
 import stride.app.navigation.BookmarkManager
 import stride.app.navigation.BookmarksToolWindow
+import stride.app.navigation.EditLocations
 import stride.app.navigation.NavigationHistory
 import stride.app.navigation.ParameterInfoRequest
 import stride.app.navigation.PeekRequest
@@ -40,6 +41,7 @@ import stride.app.search.FindToolWindow
 import stride.app.search.FindToolWindowState
 import stride.app.search.ReplaceOutcome
 import stride.app.search.ReplacePlan
+import stride.app.search.ShowUsagesRequest
 import stride.app.search.openFindHit
 import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
@@ -78,6 +80,9 @@ class ProjectSession private constructor(val project: Project) : Disposable {
 
     /** Bookmarks of this session; they outlive the tab the line was set in. */
     val bookmarks = BookmarkManager()
+
+    /** Last edit places of this session, fed by the selected text editor's change reports. */
+    val editLocations = EditLocations()
 
     init {
         project.service<VirtualFileManager>().start()
@@ -133,6 +138,13 @@ class AppState {
         private set
 
     var recentFilesVisible by mutableStateOf(false)
+
+    /** The open Show Usages popup; `null` when it is closed. */
+    var showUsages by mutableStateOf<ShowUsagesRequest?>(null)
+
+    /** Incremented by every Show Usages request; the popup's scan is keyed on it. */
+    var showUsagesGeneration by mutableStateOf(0L)
+        private set
 
     /** Candidates of the Go to Declaration chooser; empty when it is closed. */
     var declarationChoices by mutableStateOf(emptyList<Declaration>())
@@ -402,6 +414,24 @@ class AppState {
         toolWindows.activate("find")
     }
 
+    /**
+     * Opens the Show Usages popup for [name] over the same files and editor texts a Find window
+     * tab scans, and hands the popup the keyboard.
+     */
+    fun openShowUsagesPopup(name: String): ShowUsagesRequest? {
+        val current = session ?: return null
+        showUsagesGeneration++
+        val request = ShowUsagesRequest(
+            id = showUsagesGeneration,
+            name = name,
+            files = current.project.service<FileNameIndex>().snapshot(),
+            textOf = ::textOfOpenEditor,
+        )
+        showUsages = request
+        focus = KeyContext.SEARCH_POPUP
+        return request
+    }
+
     /** The text of the open editor for [path], so searches see unsaved changes; `null` when closed. */
     fun textOfOpenEditor(path: Path): String? {
         val target = path.toAbsolutePath().normalize()
@@ -502,6 +532,7 @@ class AppState {
         findInPathWholeWord = false
         findInPathReplace = false
         recentFilesVisible = false
+        showUsages = null
         declarationChoices = emptyList()
         declarationChooserVisible = false
         fileStructureVisible = false
