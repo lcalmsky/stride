@@ -1769,6 +1769,36 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `turning usage highlights off keeps a status written since`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("alpha beta\nalpha\n", TextRange(1)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+        assertEquals(listOf(0..4, 11..15), editor.usageHighlights)
+        state.statusMessage = "Copied /project/a.kt"
+
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+
+        assertTrue(editor.usageHighlights.isEmpty())
+        assertEquals("Copied /project/a.kt", state.statusMessage)
+    }
+
+    @Test
+    fun `a caret just past a usage clears the highlights on the next press`() {
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        val text = "alpha beta\nalpha\n"
+        editor.updateValue(TextFieldValue(text, TextRange(1)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+        assertEquals(listOf(0..4, 11..15), editor.usageHighlights)
+
+        editor.updateValue(TextFieldValue(text, TextRange(5)))
+        assertTrue(dispatchAction(ActionId.HIGHLIGHT_USAGES_IN_FILE, state) { null })
+
+        assertTrue(editor.usageHighlights.isEmpty())
+    }
+
+    @Test
     fun `find next walks the usage highlights and wraps`() {
         val session = openProjectWith("a.kt")
         val editor = session.editors.selected as TextFileEditor

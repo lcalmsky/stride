@@ -229,7 +229,7 @@ fun openFileStructure(state: AppState): Boolean {
     return true
 }
 
-/** The scan every usage search runs: whole word and case-sensitive, like IntelliJ's usages. */
+/** The scan every usage search runs: whole word and case-sensitive, the same scan ⌥F7 runs. */
 private val USAGE_OPTIONS = FindOptions(caseSensitive = true, wholeWord = true)
 
 /** Opens the Find window tab a usage search of [name] shows; ⌥F7 and ⌘↵ both land here. */
@@ -297,9 +297,9 @@ internal fun clearUsageStatus(state: AppState) {
 fun highlightUsagesInFile(state: AppState): Boolean {
     val editor = selectedTextEditor(state) ?: return false
     val caret = editor.value.selection.start
-    if (editor.usageHighlights.any { caret in it }) {
+    if (editor.usageHighlights.any { caret in it.first..it.last + 1 }) {
         editor.usageHighlights = emptyList()
-        state.statusMessage = null
+        clearUsageStatus(state)
         return true
     }
     val name = identifierAt(editor.value.text, editor.file.name, caret)

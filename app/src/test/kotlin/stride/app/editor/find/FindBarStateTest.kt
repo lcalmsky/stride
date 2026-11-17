@@ -158,6 +158,74 @@ class FindBarStateTest {
         assertNull(state.currentIndex)
     }
 
+    @Test
+    fun `regex replace all expands a lookbehind match against the whole text`() {
+        val text = "foobar xbar"
+        val editor = editor(text)
+        val state = FindBarState()
+        state.open(editor, replace = true)
+        state.regex = true
+        state.query = "(?<=foo)bar"
+        state.replacement = "[\$0]"
+        state.refresh(editor)
+
+        state.replaceAll(editor)
+
+        assertEquals(Regex("(?<=foo)bar").replace(text, "[\$0]"), editor.value.text)
+        assertEquals("foo[bar] xbar", editor.value.text)
+    }
+
+    @Test
+    fun `regex replace all expands a group reference`() {
+        val text = "John Smith, Jane Doe"
+        val editor = editor(text)
+        val state = FindBarState()
+        state.open(editor, replace = true)
+        state.regex = true
+        state.query = "(\\w+) (\\w+)"
+        state.replacement = "\$2, \$1"
+        state.refresh(editor)
+
+        state.replaceAll(editor)
+
+        assertEquals(Regex("(\\w+) (\\w+)").replace(text, "\$2, \$1"), editor.value.text)
+        assertEquals("Smith, John, Doe, Jane", editor.value.text)
+    }
+
+    @Test
+    fun `regex replace all keeps a backslash in the replacement an escape`() {
+        val text = "ab"
+        val editor = editor(text)
+        val state = FindBarState()
+        state.open(editor, replace = true)
+        state.regex = true
+        state.query = "a"
+        state.replacement = "a\\b"
+        state.refresh(editor)
+
+        state.replaceAll(editor)
+
+        assertEquals(Regex("a").replace(text, "a\\b"), editor.value.text)
+        assertEquals("abb", editor.value.text)
+    }
+
+    @Test
+    fun `regex replace all expands a zero width match against the whole text`() {
+        val text = "aa"
+        val editor = editor(text)
+        val state = FindBarState()
+        state.open(editor, replace = true)
+        state.regex = true
+        state.query = "(?=a)"
+        state.replacement = "[\$0]"
+        state.refresh(editor)
+
+        state.replaceAll(editor)
+
+        assertEquals(Regex("(?=a)").replace(text, "[\$0]"), editor.value.text)
+        assertEquals("[]a[]a", editor.value.text)
+    }
+
     private fun editor(text: String): TextFileEditor {
         val path = temp.resolve("Find.kt")
         Files.writeString(path, text)

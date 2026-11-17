@@ -144,14 +144,20 @@ class FindBarState {
 
     /** The ranges a regular-expression query replaces, ascending, each after the previous ones. */
     private fun regexChanges(text: String): List<TextChange>? {
-        val result = FindModel.search(text, query, options())
-        if (result.error != null) return null
-        val changes = ArrayList<TextChange>(result.matches.size)
+        val pattern = runCatching { Regex(query, regexOptions()).toPattern() }.getOrNull() ?: return null
+        val matcher = pattern.matcher(text)
+        val changes = ArrayList<TextChange>()
         var delta = 0
-        for (match in result.matches) {
-            val replaced = expandedReplacement(text, match)
-            val length = match.end - match.start
-            changes.add(TextChange(match.start + delta, length, replaced))
+        var appended = 0
+        while (matcher.find()) {
+            // appendReplacement expands against the whole text, so lookarounds and `\` escapes
+            // read the same way as in Matcher.replaceAll.
+            val buffer = StringBuilder()
+            matcher.appendReplacement(buffer, replacement)
+            val replaced = buffer.substring(matcher.start() - appended)
+            appended = matcher.end()
+            val length = matcher.end() - matcher.start()
+            changes.add(TextChange(matcher.start() + delta, length, replaced))
             delta += replaced.length - length
         }
         return changes

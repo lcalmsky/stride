@@ -150,6 +150,25 @@ class EditLocationTrackingTest {
     }
 
     @Test
+    fun `a place between two regex matches stays put after regex replace all`() {
+        val text = "foo\nfoo X foo Y foo\n"
+        val (editor, locations) = trackedEditor(text, caret = 8)
+        editor.updateValue(TextFieldValue(text.substring(0, 8) + "Z" + text.substring(8), TextRange(9)))
+        assertEquals(listOf(8), locations.offsets())
+        val findBar = FindBarState()
+        findBar.open(editor, replace = true)
+        findBar.regex = true
+        findBar.query = "f(o)o"
+        findBar.replacement = "b\$1r"
+        findBar.refresh(editor)
+
+        findBar.replaceAll(editor)
+
+        assertEquals("bor\nbor ZX bor Y bor\n", editor.value.text)
+        assertTrue(8 in locations.offsets(), "the place on X moved: ${locations.offsets()}")
+    }
+
+    @Test
     fun `a reformat keeps a place on a line below the first reindented line`() {
         val text = "class A {\nval a = 1\nval b = 2\n}\n"
         val (editor, locations) = trackedEditor(text, caret = 0)
