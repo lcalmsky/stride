@@ -141,7 +141,7 @@ class DeclarationIndex(private val project: Project) : Disposable {
             val file = VFile(absolute)
             val packageName = DeclarationParser.packageOf(text)
             byFile[key] = DeclarationParser.parse(fileName, text)
-                .map { Declaration(it.name, it.kind, file, relativePath, it.line, it.container, packageName) }
+                .map { Declaration(it.name, it.kind, file, relativePath, it.line, it.container, packageName, it.isPrivate) }
             changed()
         }
     }

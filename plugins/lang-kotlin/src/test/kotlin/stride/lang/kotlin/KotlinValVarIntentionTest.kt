@@ -72,4 +72,43 @@ class KotlinValVarIntentionTest {
         assertTrue(collect("// val x = 1\n").isEmpty())
         assertTrue(collect("/* var y = 2 */\n").isEmpty())
     }
+
+    @Test
+    fun `an overriding var does not become val`() {
+        val text = "class A : B() {\n    override var x: Int = 0\n}\n"
+        assertTrue(collect(text, text.indexOf("var")).isEmpty())
+    }
+
+    @Test
+    fun `an overriding val still becomes var`() {
+        val text = "class A : B() {\n    override val x: Int = 0\n}\n"
+        val actions = collect(text, text.indexOf("val"))
+
+        assertEquals(listOf("Change 'val' to 'var'"), actions.map { it.text })
+    }
+
+    @Test
+    fun `a val bound by when is skipped`() {
+        val text = "fun main() {\n    when (val r = compute()) {\n        else -> r\n    }\n}\n"
+        assertTrue(collect(text, text.indexOf("val")).isEmpty())
+    }
+
+    @Test
+    fun `a delegated property is skipped`() {
+        assertTrue(collect("val text by lazy { \"x\" }\n").isEmpty())
+    }
+
+    @Test
+    fun `accessor declarations are skipped`() {
+        assertTrue(collect("val x: Int get() = 1\n").isEmpty())
+        assertTrue(collect("var y: Int = 0 set(value) {\n    field = value\n}\n").isEmpty())
+    }
+
+    @Test
+    fun `a constructor property is offered`() {
+        val text = "class A(val x: Int)\n"
+        val actions = collect(text, text.indexOf("val"))
+
+        assertEquals(listOf("Change 'val' to 'var'"), actions.map { it.text })
+    }
 }

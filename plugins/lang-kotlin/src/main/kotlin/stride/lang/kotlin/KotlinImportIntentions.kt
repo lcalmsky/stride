@@ -75,7 +75,12 @@ class KotlinImportIntentions : IntentionProvider {
     private fun usedIdentifiers(text: String, parsed: KotlinImportList): Set<String> {
         val used = HashSet<String>()
         for (token in codeTokens(text)) {
-            if (token.type != KotlinTokenTypes.IDENTIFIER) continue
+            val identifier = when (token.type) {
+                KotlinTokenTypes.IDENTIFIER -> true
+                KotlinTokenTypes.KEYWORD -> token.text !in HARD_KEYWORDS
+                else -> false
+            }
+            if (!identifier) continue
             if (onPackageOrImportLine(token.start, parsed)) continue
             used.add(unquoteIdentifier(token.text))
         }
@@ -145,7 +150,13 @@ class KotlinImportIntentions : IntentionProvider {
             "rangeUntil", "unaryPlus", "unaryMinus", "not", "inc", "dec", "plusAssign", "minusAssign",
             "timesAssign", "divAssign", "remAssign",
             "component1", "component2", "component3", "component4", "component5", "component6",
-            "component7", "component8", "component9",
+            "component7", "component8", "component9", "assign",
+        )
+
+        val HARD_KEYWORDS: Set<String> = setOf(
+            "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
+            "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
+            "true", "try", "typealias", "typeof", "val", "var", "when", "while",
         )
     }
 }

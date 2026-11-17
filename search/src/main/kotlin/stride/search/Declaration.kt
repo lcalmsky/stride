@@ -13,4 +13,5 @@ data class Declaration(
     val line: Int,
     val container: String? = null,
     val packageName: String? = null,
+    val isPrivate: Boolean = false,
 )

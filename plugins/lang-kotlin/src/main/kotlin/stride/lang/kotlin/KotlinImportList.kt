@@ -22,6 +22,8 @@ private val PACKAGE = Regex("""package\s+([^\s;]+)\s*;?""")
 
 private val IMPORT = Regex("""import\s+([^\s;]+)(?:\s+as\s+(`[^`]+`|[A-Za-z_]\w*))?\s*;?""")
 
+private val FILE_ANNOTATION = Regex("""^@file:""")
+
 private class CommentState {
     var depth = 0
 }
@@ -39,27 +41,27 @@ internal fun parseImports(text: String): KotlinImportList {
         val fullEnd = if (newline < 0) text.length else newline + 1
         val line = text.substring(offset, lineEnd).removeSuffix("\r")
         val code = stripComments(line, comments).trim()
-        if (code.isNotEmpty()) {
+        if (code.isNotEmpty() && !FILE_ANNOTATION.containsMatchIn(code)) {
             val packageMatch = if (packageName == null && imports.isEmpty()) PACKAGE.matchEntire(code) else null
             if (packageMatch != null) {
                 packageName = unquotePath(packageMatch.groupValues[1])
                 packageLineStart = offset
                 packageLineEnd = offset + line.length
             } else {
-                IMPORT.matchEntire(code)?.let { match ->
-                    val path = match.groupValues[1]
-                    val alias = match.groupValues[2].ifEmpty { null }?.let(::unquoteIdentifier)
-                    imports.add(
-                        KotlinImport(
-                            start = offset,
-                            end = fullEnd,
-                            path = path,
-                            alias = alias,
-                            boundName = alias ?: unquoteIdentifier(path.substringAfterLast('.')),
-                            star = path.endsWith(".*") || path == "*",
-                        ),
-                    )
-                }
+                val importMatch = IMPORT.matchEntire(code)
+                if (importMatch == null) break
+                val path = importMatch.groupValues[1]
+                val alias = importMatch.groupValues[2].ifEmpty { null }?.let(::unquoteIdentifier)
+                imports.add(
+                    KotlinImport(
+                        start = offset,
+                        end = fullEnd,
+                        path = path,
+                        alias = alias,
+                        boundName = alias ?: unquoteIdentifier(path.substringAfterLast('.')),
+                        star = path.endsWith(".*") || path == "*",
+                    ),
+                )
             }
         }
         if (newline < 0) break

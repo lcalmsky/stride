@@ -6,6 +6,7 @@ data class ParsedDeclaration(
     val kind: DeclarationKind,
     val line: Int,
     val container: String? = null,
+    val isPrivate: Boolean = false,
 )
 
 /**
@@ -81,6 +82,8 @@ object DeclarationParser {
 }
 
 private val PACKAGE_STATEMENT = Regex("""package\s+([^\s;]+)\s*;?""")
+
+private val PRIVATE_MODIFIER = Regex("""\bprivate\b""")
 
 private val SOURCE_EXTENSIONS = setOf(
     DeclarationParser.KOTLIN_EXTENSIONS,
@@ -162,8 +165,30 @@ private abstract class SourceScanner(private val kotlinSyntax: Boolean) {
         if (!pushed) pendingClass = pushName
     }
 
-    protected fun add(name: String, kind: DeclarationKind, line: Int, container: String?) {
-        declarations.add(ParsedDeclaration(DeclarationParser.unquote(name), kind, line, container))
+    protected fun add(
+        name: String,
+        kind: DeclarationKind,
+        line: Int,
+        container: String?,
+        isPrivate: Boolean = false,
+    ) {
+        declarations.add(ParsedDeclaration(DeclarationParser.unquote(name), kind, line, container, isPrivate))
+    }
+
+    /**
+     * `true` when `private` appears between the last `{`, `}`, `;` or line start before
+     * [nameStart] and [nameStart] itself, i.e. among the declaration's own modifiers.
+     */
+    protected fun isPrivate(code: String, nameStart: Int): Boolean {
+        var boundary = 0
+        for (index in nameStart - 1 downTo 0) {
+            val c = code[index]
+            if (c == '{' || c == '}' || c == ';') {
+                boundary = index + 1
+                break
+            }
+        }
+        return PRIVATE_MODIFIER.containsMatchIn(code.substring(boundary, nameStart))
     }
 
     /** Scans one sanitized line; returns the class declared on it, if any. */
@@ -376,17 +401,35 @@ private class KotlinScanner : SourceScanner(kotlinSyntax = true) {
         if (!membersAllowed) return null
         KOTLIN_CLASS.find(code)?.let { match ->
             val name = match.groupValues[1]
-            add(name, DeclarationKind.CLASS, line, container)
+            add(name, DeclarationKind.CLASS, line, container, isPrivate(code, match.groups[1]!!.range.first))
             return DeclaredClass(DeclarationParser.unquote(name), match.range.last + 1)
         }
         KOTLIN_TYPEALIAS.find(code)?.let { match ->
-            add(match.groupValues[1], DeclarationKind.CLASS, line, container)
+            add(
+                match.groupValues[1],
+                DeclarationKind.CLASS,
+                line,
+                container,
+                isPrivate(code, match.groups[1]!!.range.first),
+            )
             return null
         }
         KOTLIN_FUN.find(code)?.let { match ->
-            add(match.groupValues[1], DeclarationKind.SYMBOL, line, container)
+            add(
+                match.groupValues[1],
+                DeclarationKind.SYMBOL,
+                line,
+                container,
+                isPrivate(code, match.groups[1]!!.range.first),
+            )
         } ?: KOTLIN_PROPERTY.find(code)?.let { match ->
-            add(match.groupValues[1], DeclarationKind.SYMBOL, line, container)
+            add(
+                match.groupValues[1],
+                DeclarationKind.SYMBOL,
+                line,
+                container,
+                isPrivate(code, match.groups[1]!!.range.first),
+            )
         }
         return null
     }
@@ -413,20 +456,36 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
             pendingMethodParens += parenBalance(code)
             if (pendingMethodParens <= 0 && code.any { it == '{' || it == ';' }) {
                 pendingMethod = null
-                add(pending.name, DeclarationKind.SYMBOL, pending.line, pending.container)
+                add(pending.name, DeclarationKind.SYMBOL, pending.line, pending.container, pending.isPrivate)
             }
             return null
         }
         JAVA_TYPE.find(code)?.let { match ->
             val name = match.groupValues[1]
-            add(name, DeclarationKind.CLASS, line, container)
+            add(name, DeclarationKind.CLASS, line, container, isPrivate(code, match.groups[1]!!.range.first))
             return DeclaredClass(name, match.range.last + 1)
         }
         if (!membersAllowed || container == null) return null
         JAVA_METHOD.find(code)?.let { match ->
-            if (isValidType(match.groupValues[1])) add(match.groupValues[2], DeclarationKind.SYMBOL, line, container)
+            if (isValidType(match.groupValues[1])) {
+                add(
+                    match.groupValues[2],
+                    DeclarationKind.SYMBOL,
+                    line,
+                    container,
+                    isPrivate(code, match.groups[2]!!.range.first),
+                )
+            }
         } ?: JAVA_FIELD.find(code)?.let { match ->
-            if (isValidType(match.groupValues[1])) add(match.groupValues[2], DeclarationKind.SYMBOL, line, container)
+            if (isValidType(match.groupValues[1])) {
+                add(
+                    match.groupValues[2],
+                    DeclarationKind.SYMBOL,
+                    line,
+                    container,
+                    isPrivate(code, match.groups[2]!!.range.first),
+                )
+            }
         } ?: startMethod(code, line, container)
         return null
     }
@@ -435,11 +494,16 @@ private class JavaScanner : SourceScanner(kotlinSyntax = false) {
     private fun startMethod(code: String, line: Int, container: String) {
         val match = JAVA_METHOD_START.find(code) ?: return
         if (!isValidType(match.groupValues[1])) return
-        pendingMethod = PendingMethod(match.groupValues[2], line, container)
+        pendingMethod = PendingMethod(
+            match.groupValues[2],
+            line,
+            container,
+            isPrivate(code, match.groups[2]!!.range.first),
+        )
         pendingMethodParens = 1 + parenBalance(code.substring((match.range.last + 1).coerceAtMost(code.length)))
     }
 
     private fun isValidType(type: String): Boolean = type.trim() !in JAVA_KEYWORDS
 
-    private class PendingMethod(val name: String, val line: Int, val container: String)
+    private class PendingMethod(val name: String, val line: Int, val container: String, val isPrivate: Boolean)
 }

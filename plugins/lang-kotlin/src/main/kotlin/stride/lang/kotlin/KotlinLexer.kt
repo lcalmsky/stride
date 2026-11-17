@@ -395,7 +395,7 @@ class KotlinLexer : Lexer {
     private fun Char.isHexDigit(): Boolean =
         isDigit() || this in 'a'..'f' || this in 'A'..'F'
 
-    private companion object {
+    internal companion object {
         const val STATE_NORMAL = 0
         const val STATE_BLOCK_COMMENT = 1
         const val MAX_BLOCK_COMMENT_DEPTH = 0x0FFF

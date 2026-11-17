@@ -17,7 +17,7 @@ class ProjectSymbolLookup(private val index: DeclarationIndex) : SymbolLookup {
         if (snapshot !== source) {
             source = snapshot
             byName = snapshot
-                .filter { it.container == null && !it.packageName.isNullOrEmpty() }
+                .filter { it.container == null && !it.packageName.isNullOrEmpty() && !it.isPrivate }
                 .groupBy { it.name }
                 .mapValues { (_, declarations) ->
                     declarations.mapNotNull { declaration ->

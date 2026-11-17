@@ -187,6 +187,61 @@ class KotlinImportIntentionsTest {
     }
 
     @Test
+    fun `a simple template usage keeps its import`() {
+        val text = "package demo\n\nimport demo.config.VERSION\n\nfun main() {\n    println(\"v\$VERSION\")\n}\n"
+        assertTrue(collect(text, caretAfter(text, "import demo.config.VERSION")).isEmpty())
+    }
+
+    @Test
+    fun `a simple template in a raw string is a usage`() {
+        val text = "package demo\n\nimport demo.config.VERSION\n\nval banner = \"\"\"\nv\$VERSION\n\"\"\"\n"
+        assertTrue(collect(text, caretAfter(text, "import demo.config.VERSION")).isEmpty())
+    }
+
+    @Test
+    fun `an escaped dollar is not a template`() {
+        val text = "package demo\n\nimport demo.config.VERSION\n\nfun main() {\n    println(\"\\\$VERSION\")\n}\n"
+        val actions = collect(text, caretAfter(text, "import demo.config.VERSION"))
+
+        assertEquals(listOf("Remove unused import 'demo.config.VERSION'"), actions.map { it.text })
+    }
+
+    @Test
+    fun `a soft keyword used as a name keeps its import`() {
+        val text = "import demo.store.data\n\nfun main() { println(data.size) }\n"
+        assertTrue(collect(text, caretAfter(text, "import demo.store.data")).isEmpty())
+    }
+
+    @Test
+    fun `the assignment plugin name is never unused`() {
+        val text = "package demo\n\nimport demo.a.assign\n\nfun main() {\n}\n"
+        assertTrue(collect(text, caretAfter(text, "assign")).isEmpty())
+    }
+
+    @Test
+    fun `an import inside a raw string is not an import`() {
+        val text =
+            "package demo\n\nimport demo.a.Alpha\n\nval sample = \"\"\"\nimport zzz.Zed\n\"\"\"\n\n" +
+                "fun main() { Alpha(); Clock() }\n"
+        val actions = collect(text, caretAfterLast(text, "Clock"))
+
+        assertEquals(listOf("Import 'demo.time.Clock'"), actions.map { it.text })
+        assertEquals(
+            "package demo\n\nimport demo.a.Alpha\nimport demo.time.Clock\n\nval sample = \"\"\"\n" +
+                "import zzz.Zed\n\"\"\"\n\nfun main() { Alpha(); Clock() }\n",
+            apply(text, actions.single().edits),
+        )
+    }
+
+    @Test
+    fun `a raw string after the imports does not extend the import block`() {
+        val text =
+            "package demo\n\nimport demo.a.Alpha\n\nval sample = \"\"\"\nimport zzz.Zed\n\"\"\"\n\nfun main() { Alpha() }\n"
+
+        assertTrue(collect(text, caretAfter(text, "import demo.a.Alpha")).isEmpty())
+    }
+
+    @Test
     fun `a caret outside the import block offers no removal`() {
         val text = "package demo\n\nimport demo.a.Alpha\n\nfun main() {\n}\n"
         assertTrue(collect(text, caretAfter(text, "main")).isEmpty())

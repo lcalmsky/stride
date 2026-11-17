@@ -19,9 +19,12 @@ class KotlinValVarIntention : IntentionProvider {
         }
         val target = keywords.firstOrNull { it.text == "val" || it.text == "var" } ?: return emptyList()
         val previous = keywords.lastOrNull { it.start < target.start }?.text
+        val following = keywords.filter { it.start > target.end }.map { it.text }
+        if (previous == "when") return emptyList()
+        if (following.any { it == "by" || it == "get" || it == "set" }) return emptyList()
         return when (target.text) {
             "val" -> if (previous == "const") emptyList() else listOf(change(target, "var"))
-            "var" -> if (previous == "lateinit") emptyList() else listOf(change(target, "val"))
+            "var" -> if (previous == "lateinit" || previous == "override") emptyList() else listOf(change(target, "val"))
             else -> emptyList()
         }
     }

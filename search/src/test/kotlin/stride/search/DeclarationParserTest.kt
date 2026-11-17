@@ -236,6 +236,69 @@ class DeclarationParserTest {
     }
 
     @Test
+    fun `private kotlin declarations are flagged`() {
+        val declarations = parseKotlin(
+            """
+            package demo
+
+            private class Hidden
+            private fun format() = 1
+            private val prefix = 0
+            class Public
+            fun visible() {}
+            internal class Internal
+            internal val internalValue = 1
+            """.trimIndent()
+        )
+
+        assertTrue(declarations.single { it.name == "Hidden" }.isPrivate)
+        assertTrue(declarations.single { it.name == "format" }.isPrivate)
+        assertTrue(declarations.single { it.name == "prefix" }.isPrivate)
+        assertFalse(declarations.single { it.name == "Public" }.isPrivate)
+        assertFalse(declarations.single { it.name == "visible" }.isPrivate)
+        assertFalse(declarations.single { it.name == "Internal" }.isPrivate)
+        assertFalse(declarations.single { it.name == "internalValue" }.isPrivate)
+    }
+
+    @Test
+    fun `a private member name follows its own modifier not an enclosing class`() {
+        val declarations = parseKotlin(
+            """
+            private class Container {
+                private fun secret() {}
+                fun open() {}
+                val value = 0
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(declarations.single { it.name == "Container" }.isPrivate)
+        assertTrue(declarations.single { it.name == "secret" }.isPrivate)
+        assertFalse(declarations.single { it.name == "open" }.isPrivate)
+        assertFalse(declarations.single { it.name == "value" }.isPrivate)
+    }
+
+    @Test
+    fun `private java declarations are flagged`() {
+        val declarations = parseJava(
+            """
+            class Sample {
+                private int count;
+                private void hidden() {}
+                public void shown() {}
+                private static class Nested {}
+            }
+            """.trimIndent()
+        )
+
+        assertTrue(declarations.single { it.name == "count" }.isPrivate)
+        assertTrue(declarations.single { it.name == "hidden" }.isPrivate)
+        assertFalse(declarations.single { it.name == "shown" }.isPrivate)
+        assertTrue(declarations.single { it.name == "Nested" }.isPrivate)
+        assertFalse(declarations.single { it.name == "Sample" }.isPrivate)
+    }
+
+    @Test
     fun `packageOf finds the first package statement`() {
         assertEquals("demo.time", DeclarationParser.packageOf("package demo.time\n\nclass Clock\n"))
         assertEquals("demo", DeclarationParser.packageOf("package demo;\n\nclass Sample {}\n"))
