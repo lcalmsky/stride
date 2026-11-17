@@ -2369,7 +2369,12 @@ R3 to R5.
   not split when the line ends with a token that cannot end an expression (a binary operator, `.`,
   `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`), when the next
   line starts with `.`, `?.`, `?:`, `&&`, `||`, `else`, `catch`, `finally`, or with `while` after a
-  `do` body, or when the line holds only annotations. Newlines inside `()`, `[]` and nested `{}`
+  `do` body, or when the line holds only annotations. It does not split either when the line ends
+  with a name that is not a keyword or soft keyword right after a token on the same line that ends
+  an operand (a name that is not a modifier, a label, `by` or `where`; a literal; a string end; a
+  `)` other than one closing an `if`, `for`, `while` or `catch` header; `]`; `}`; `this`; `!!`):
+  Kotlin reads that name as an infix call (`a to`, `0 until`) and takes its right side from the
+  next line. Newlines inside `()`, `[]` and nested `{}`
   never split. These shapes also keep one statement, all on the joining side: a control body
   without braces (a newline after `if (…)`, `for (…)`, `while (…)`, `catch (…)`, `else`, `try`,
   `do`, `finally`), a next line starting with `{` (a block, or a trailing lambda, which Kotlin
