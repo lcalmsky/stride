@@ -2265,8 +2265,44 @@ without `⌥`. Rename (`⇧F6`) stays the existing text-level rename and appears
 
 ```kotlin
 // stride.app.refactor
-fun openRefactorThis(state: AppState): Boolean
+fun openRefactorThis(state: AppState, keymap: Keymap = Keymap.forPlatform(KeyRouter.isMacOs())): Boolean
 fun startRefactoring(state: AppState, kind: RefactoringKind): Boolean
+
+internal sealed interface RefactorThisEntry {
+    data object Rename
+    class Prepared(val kind: RefactoringKind, val step: RefactoringStep)
+}
+internal class RefactorThisRequest(val editor: TextFileEditor, val preparedText: String,
+                                   val rows: List<ChooserRow<RefactorThisEntry>>)
+internal class RefactoringChooseRequest(val editor: TextFileEditor, val kind: RefactoringKind,
+                                        val preparedText: String, val step: RefactoringStep.Choose,
+                                        val restoreHighlights: List<IntRange>)
+internal class RefactoringNameRequest(val editor: TextFileEditor, val kind: RefactoringKind,
+                                      val preparedText: String, val step: RefactoringStep.AskName) {
+    var errorMessage: String?                    // the last rejected name's reason
+}
+internal fun prepareWithProviders(editor: TextFileEditor, kind: RefactoringKind): RefactoringStep
+internal fun chooseRefactorThis(state: AppState, entry: RefactorThisEntry): Boolean
+internal fun chooseRefactoringOption(state: AppState, option: RefactoringOption): Boolean
+internal fun selectRefactoringOption(state: AppState, option: RefactoringOption)
+internal fun closeRefactoringChoose(state: AppState)
+internal fun submitRefactoringName(state: AppState, name: String): Boolean
+internal fun closeRefactoringName(state: AppState)
+@Composable fun RefactoringNamePopup(title: String, suggested: String, error: String?,
+                                     onSubmit: (String) -> Unit, onClose: () -> Unit)
+
+// stride.app.AppState
+internal var refactorThis: RefactorThisRequest?
+internal var refactoringChoose: RefactoringChooseRequest?
+internal var refactoringName: RefactoringNameRequest?
+internal var prepareRefactoring: (TextFileEditor, RefactoringKind) -> RefactoringStep
+                                                 // defaults to ::prepareWithProviders; tests replace it
+
+// stride.app.navigation
+data class ChooserRow<T>(val text: String, val value: T, val hint: String? = null)
+@Composable fun <T> TargetChooserPopup(title: String, rows: List<ChooserRow<T>>,
+                                       onChoose: (T) -> Unit, onClose: () -> Unit,
+                                       onSelect: (T) -> Unit = {})
 
 // stride.app.editor.TextFileEditor
 fun applyEdits(edits: List<TextEdit>, caret: Int? = null): Boolean   // one undo step; caret in the edited text
@@ -2474,6 +2510,7 @@ Messages written by the app; R3 to R5 list the provider's.
 | `<Refactoring> is not available for .<ext> files` | a file whose language has no refactoring provider; `this file` for a name without an extension |
 | `<Refactoring> failed: <Exception>` | the provider threw; the exception is logged |
 | `The file changed; run <Refactoring> again` | the text changed between preparing and applying |
+| `<Refactoring> failed: the edits overlap` | `applyEdits` rejected the provider's edits, which overlap or leave the text |
 | `Type a name` | `Enter` with an empty name field |
 
 ## Declaration navigation, tests and bookmarks
@@ -2536,9 +2573,10 @@ object FileStructure {
     fun matching(entries: List<FileStructureEntry>, query: String): List<FileStructureEntry>
 }
 
-data class ChooserRow<T>(val text: String, val value: T)
+data class ChooserRow<T>(val text: String, val value: T, val hint: String? = null)
 @Composable fun <T> TargetChooserPopup(title: String, rows: List<ChooserRow<T>>,
-                                       onChoose: (T) -> Unit, onClose: () -> Unit)
+                                       onChoose: (T) -> Unit, onClose: () -> Unit,
+                                       onSelect: (T) -> Unit = {})
 @Composable fun FileStructurePopup(entries: List<FileStructureEntry>,
                                    onChoose: (FileStructureEntry) -> Unit, onClose: () -> Unit)
 @Composable fun BookmarksPopup(bookmarks: List<Bookmark>, onChoose: (Bookmark) -> Unit,
@@ -3908,3 +3946,6 @@ Maven Central alone does not carry it.
 | `HierarchyToolWindowUiTest` | opening a hierarchy registering and focusing the window with its title and note, right expanding a lazy node and left collapsing it, enter opening a node's location while keeping the window, enter flipping a node without a location, and escape handing the keyboard to the editor with the window still visible |
 | `HierarchyKeyFlowUiTest` | ⌃H opening the hierarchy without touching the editor text, ⌘⌥B opening the chooser with enter opening the chosen file, escape closing the chooser and returning the keyboard, ⌘U going to the super method, both type declaration strokes reaching the declared type, ⌃⌥H opening the call hierarchy, the chooser rows naming the container and the path, a letter key not reaching the editor while the chooser is open, and go to implementation from the actions tab |
 | `HierarchyKeymapTest` | the six hierarchy strokes resolving in the editor, modifier order not changing the stroke, and the strokes not firing in the global or modal contexts |
+| `RefactoringActionsTest` | a refused step's reason, the read-only refusal before the provider runs, the missing-editor `false`, an applied edit's text, caret and status line, one undo restoring the text and the pre-refactoring selection and redo restoring the caret, an invalid name keeping the popup open and a valid one applying, a one-option chooser followed directly, a changed text refusing the edit, secondary carets dropped, running from the Search popup focus, Refactor This's row order, filtering and strokes with the empty message, the Rename row opening the rename popup, a chooser's highlights restored on close, and the provider path refusing `.java` and `.txt` files |
+| `RefactoringEditsTest` | `applyEdits` with a caret as one undo step whose undo restores the text and the selection before it and whose redo returns the caret, and the mapped caret without one |
+| `RefactoringPopupUiTest` | ⌃T opening Refactor This with its entries and strokes and ↓ then ↵ running the chosen kind, the name popup applying a typed name, and a rejected name showing its reason with Esc cancelling back to the editor |

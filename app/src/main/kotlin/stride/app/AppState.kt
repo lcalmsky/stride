@@ -43,6 +43,10 @@ import stride.app.problems.FileProblem
 import stride.app.problems.ProblemsModel
 import stride.app.problems.ProblemsToolWindow
 import stride.app.problems.ProblemsToolWindowState
+import stride.app.refactor.RefactorThisRequest
+import stride.app.refactor.RefactoringChooseRequest
+import stride.app.refactor.RefactoringNameRequest
+import stride.app.refactor.prepareWithProviders
 import stride.app.search.FindReplaceController
 import stride.app.search.FindTabKind
 import stride.app.search.FindToolWindow
@@ -72,6 +76,8 @@ import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.core.vfs.VirtualFileManager
+import stride.lang.RefactoringKind
+import stride.lang.RefactoringStep
 import stride.search.Declaration
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
@@ -228,6 +234,18 @@ class AppState {
 
     /** The open rename popup; `null` when it is closed. */
     var rename by mutableStateOf<RenameRequest?>(null)
+
+    /** The open Refactor This popup; `null` when it is closed. */
+    internal var refactorThis by mutableStateOf<RefactorThisRequest?>(null)
+
+    /** The open chooser of a refactoring step; `null` when it is closed. */
+    internal var refactoringChoose by mutableStateOf<RefactoringChooseRequest?>(null)
+
+    /** The open refactoring name popup; `null` when it is closed. */
+    internal var refactoringName by mutableStateOf<RefactoringNameRequest?>(null)
+
+    /** Prepares a refactoring of an editor; tests replace it to skip the language providers. */
+    internal var prepareRefactoring: (TextFileEditor, RefactoringKind) -> RefactoringStep = ::prepareWithProviders
 
     /** The open Quick Documentation popup; `null` when it is closed. */
     var quickDoc by mutableStateOf<PeekRequest?>(null)
@@ -623,6 +641,9 @@ class AppState {
         runConfigurationsVisible = false
         completion = null
         rename = null
+        refactorThis = null
+        refactoringChoose = null
+        refactoringName = null
         pasteHistory = null
         quickDoc = null
         quickDefinition = null

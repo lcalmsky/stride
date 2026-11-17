@@ -143,6 +143,14 @@ import stride.app.navigation.openFileAtOffset
 import stride.app.navigation.openNavigationBarFile
 import stride.app.problems.EditorProblems
 import stride.app.problems.ErrorDescriptionPopup
+import stride.app.refactor.RefactoringNamePopup
+import stride.app.refactor.chooseRefactorThis
+import stride.app.refactor.chooseRefactoringOption
+import stride.app.refactor.closeRefactorThis
+import stride.app.refactor.closeRefactoringChoose
+import stride.app.refactor.closeRefactoringName
+import stride.app.refactor.selectRefactoringOption
+import stride.app.refactor.submitRefactoringName
 import stride.app.run.ContextActionsPopup
 import stride.app.run.RunConfigurationPopup
 import stride.app.run.RunManager
@@ -947,6 +955,77 @@ fun App(
                 )
             }
         }
+        val refactorThis = state.refactorThis
+        if (refactorThis != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = "Refactor This",
+                    rows = refactorThis.rows,
+                    onChoose = { entry ->
+                        chooseRefactorThis(state, entry)
+                        refocusEditorUnlessPopup(state)
+                    },
+                    onClose = {
+                        closeRefactorThis(state)
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val refactoringChoose = state.refactoringChoose
+        if (refactoringChoose != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = refactoringChoose.step.title,
+                    rows = refactoringChoose.step.options.map { ChooserRow(it.text, it) },
+                    onChoose = { option ->
+                        chooseRefactoringOption(state, option)
+                        refocusEditorUnlessPopup(state)
+                    },
+                    onClose = {
+                        closeRefactoringChoose(state)
+                        refocusEditor(state)
+                    },
+                    onSelect = { option -> selectRefactoringOption(state, option) },
+                )
+            }
+        }
+        val refactoringName = state.refactoringName
+        if (refactoringName != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                RefactoringNamePopup(
+                    title = refactoringName.step.title,
+                    suggested = refactoringName.step.suggested,
+                    error = refactoringName.errorMessage,
+                    onSubmit = { name ->
+                        submitRefactoringName(state, name)
+                        refocusEditorUnlessPopup(state)
+                    },
+                    onClose = {
+                        closeRefactoringName(state)
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
     }
     }
 }
@@ -1015,9 +1094,15 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.testChooserVisible || state.fileStructureVisible ||
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
+        state.refactorThis != null || state.refactoringChoose != null || state.refactoringName != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
         state.navigationBar != null || state.findBar.visible
+
+/** Hands the keyboard back to the editor only when the action left no popup open. */
+private fun refocusEditorUnlessPopup(state: AppState) {
+    if (!popupOwnsFocus(state)) refocusEditor(state)
+}
 
 private fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR

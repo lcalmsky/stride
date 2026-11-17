@@ -11,6 +11,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,16 +55,20 @@ import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrimSurface
 import stride.app.ui.theme.selectionRow
 
-/** One chooser row: the text it shows and the value it chooses. */
-data class ChooserRow<T>(val text: String, val value: T)
+/** One chooser row: the text it shows, the value it chooses and the shortcut drawn on its right. */
+data class ChooserRow<T>(val text: String, val value: T, val hint: String? = null)
 
-/** A glass popup listing [rows]; Enter chooses the selected row and Escape closes it. */
+/**
+ * A glass popup listing [rows]; Enter chooses the selected row and Escape closes it. [onSelect]
+ * runs whenever the selection moves to another row.
+ */
 @Composable
 fun <T> TargetChooserPopup(
     title: String,
     rows: List<ChooserRow<T>>,
     onChoose: (T) -> Unit,
     onClose: () -> Unit,
+    onSelect: (T) -> Unit = {},
 ) {
     var selectedIndex by remember { mutableStateOf(0) }
     val index = selectedIndex.coerceIn(0, (rows.size - 1).coerceAtLeast(0))
@@ -105,11 +110,23 @@ fun <T> TargetChooserPopup(
                                 true
                             }
                             Key.DirectionDown -> {
-                                if (rows.isNotEmpty()) selectedIndex = (index + 1).coerceAtMost(rows.lastIndex)
+                                if (rows.isNotEmpty()) {
+                                    val next = (index + 1).coerceAtMost(rows.lastIndex)
+                                    if (next != index) {
+                                        selectedIndex = next
+                                        onSelect(rows[next].value)
+                                    }
+                                }
                                 true
                             }
                             Key.DirectionUp -> {
-                                if (rows.isNotEmpty()) selectedIndex = (index - 1).coerceAtLeast(0)
+                                if (rows.isNotEmpty()) {
+                                    val previous = (index - 1).coerceAtLeast(0)
+                                    if (previous != index) {
+                                        selectedIndex = previous
+                                        onSelect(rows[previous].value)
+                                    }
+                                }
                                 true
                             }
                             Key.Enter, Key.NumPadEnter -> {
@@ -152,7 +169,7 @@ fun <T> TargetChooserPopup(
                 ) {
                     LazyColumn(state = listState) {
                         itemsIndexed(rows) { rowIndex, row ->
-                            ChooserItem(row.text, rowIndex == index) { onChoose(row.value) }
+                            ChooserItem(row.text, row.hint, rowIndex == index) { onChoose(row.value) }
                         }
                     }
                     VerticalScrollbar(
@@ -169,7 +186,7 @@ fun <T> TargetChooserPopup(
 }
 
 @Composable
-private fun ChooserItem(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun ChooserItem(text: String, hint: String?, selected: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     Row(
@@ -189,6 +206,17 @@ private fun ChooserItem(text: String, selected: Boolean, onClick: () -> Unit) {
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        if (hint != null) {
+            Spacer(Modifier.width(DesignTokens.space12))
+            Text(
+                hint,
+                color = if (selected) DesignTokens.selectedText else DesignTokens.textSecondaryOnGlass,
+                fontSize = DesignTokens.uiTextSize,
+                fontFamily = DesignTokens.uiFont,
+                maxLines = 1,
+            )
+        }
     }
 }

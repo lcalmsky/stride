@@ -58,6 +58,7 @@ import stride.app.problems.ErrorDescriptionPopup
 import stride.app.problems.ErrorDescriptionRequest
 import stride.app.problems.FileProblem
 import stride.app.problems.ProblemSource
+import stride.app.refactor.RefactoringNamePopup
 import stride.app.run.ContextAction
 import stride.app.run.ContextActionKind
 import stride.app.run.ContextActionsPopup
@@ -371,6 +372,23 @@ class PopupNativeLegibilityTest {
                 )
             },
             PopupCase(
+                name = "refactor-this",
+                key = "popup-chooser-Refactor This",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY),
+                renderMillis = 600,
+            ) {
+                TargetChooserPopup(
+                    title = "Refactor This",
+                    rows = listOf(
+                        ChooserRow("Rename…", 0, "⇧F6"),
+                        ChooserRow("Introduce Variable…", 1, "⌥⌘V"),
+                        ChooserRow("Inline…", 2, "⌥⌘N"),
+                    ),
+                    onChoose = {},
+                    onClose = {},
+                )
+            },
+            PopupCase(
                 name = "search",
                 key = "popup-search",
                 roles = listOf(Role.TEXT, Role.BUSY),
@@ -451,6 +469,21 @@ class PopupNativeLegibilityTest {
                 selectionPill = false,
             ) {
                 RenamePopup(initialName = "alphaOne", onRename = {}, onClose = {})
+            },
+            PopupCase(
+                name = "refactoring-name",
+                key = "popup-refactoring-name",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.AMBER, Role.ERROR),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                RefactoringNamePopup(
+                    title = "Introduce Variable",
+                    suggested = "alphaOne",
+                    error = "Not a valid name",
+                    onSubmit = {},
+                    onClose = {},
+                )
             },
             PopupCase(
                 name = "paste-history",

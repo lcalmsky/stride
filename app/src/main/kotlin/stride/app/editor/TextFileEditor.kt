@@ -1330,8 +1330,12 @@ class TextFileEditor(
         applyEdit(EditResult(newText, TextRange(rangeStart + replacement.length)))
     }
 
-    /** Applies [edits] as one undo step; `false` when the editor is read-only or an edit is out of range or overlaps another. */
-    fun applyEdits(edits: List<TextEdit>): Boolean {
+    /**
+     * Applies [edits] as one undo step; `false` when the editor is read-only or an edit is out of
+     * range or overlaps another. [caret], an offset in the text after the edits, replaces the
+     * mapped caret when it is given.
+     */
+    fun applyEdits(edits: List<TextEdit>, caret: Int? = null): Boolean {
         if (isReadOnly || edits.isEmpty()) return false
         val sorted = edits.sortedBy { it.start }
         var previousEnd = -1
@@ -1351,7 +1355,7 @@ class TextFileEditor(
             changes.add(TextChange(edit.start + delta, length, edit.replacement))
             delta += edit.replacement.length - length
         }
-        applyEdit(EditResult(newText, TextRange(mappedCaret(sorted))), changes)
+        applyEdit(EditResult(newText, TextRange(caret ?: mappedCaret(sorted))), changes)
         return true
     }
 
