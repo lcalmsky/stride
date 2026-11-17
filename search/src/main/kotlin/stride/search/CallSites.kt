@@ -19,8 +19,9 @@ data class CallSite(
 /**
  * Finds calls by text in Kotlin and Java sources, outside comments, strings and characters. A call
  * is an identifier followed, after optional spaces on the same line, by `(`, by balanced type
- * arguments and `(`, or in Kotlin by a trailing lambda `{`; or an identifier after `::`. The `{` of
- * a `by <expression>` in a class header opens the class body, not a call. Keywords (`if`, `when`,
+ * arguments and `(`, or in Kotlin by a trailing lambda `{`; or an identifier after `::`. A name in
+ * a type position after `:` is neither a call nor a trailing-lambda head. The `{` of a
+ * `by <expression>` in a class header opens the class body, not a call. Keywords (`if`, `when`,
  * `for`, `while`, `catch`, `return`, `super`, `this`, `object`, ...), annotations (`@Name(`), Java
  * `new` and the names of declarations themselves (`fun name(`, `class Name(`, a property accessor
  * `get()`/`set()` after modifiers only, a Java method or constructor header even when the outline
@@ -137,7 +138,7 @@ object CallSites {
                 } else {
                     return false
                 }
-                if (isAfterTypeColon(text, begin)) return false
+                if (isInTypePosition(text, begin)) return false
                 return isCallName(text, begin, end)
             }
         }
@@ -153,9 +154,7 @@ object CallSites {
             while (begin > 0 && isIdentifierChar(text[begin - 1])) begin--
         }
         if (text.substring(begin, end) == "return") return true
-        var before = begin - 1
-        while (before >= 0 && (text[before] == ' ' || text[before] == '\t')) before--
-        if (before >= 0 && text[before] == ':') return false
+        if (isInTypePosition(text, begin)) return false
         return isCallName(text, begin, end)
     }
 
@@ -197,19 +196,35 @@ object CallSites {
         return null
     }
 
-    /** `true` when the name at [start] stands in a type position, after a `:`. */
-    private fun isAfterTypeColon(text: String, start: Int): Boolean {
+    /**
+     * `true` when the name at [start] stands in a type position: scanning back over a type
+     * expression (identifiers, `.`, `?`, spaces, balanced `<...>` and `(...)`, `->`, `,`) reaches
+     * a `:` that is neither the `:` of an elvis `?:` nor of a `::` reference.
+     */
+    private fun isInTypePosition(text: String, start: Int): Boolean {
         var index = start - 1
-        while (true) {
-            while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
-            if (index < 0 || text[index] != '.') break
-            index--
-            if (index >= 0 && text[index] == '?') index--
-            while (index >= 0 && (text[index] == ' ' || text[index] == '\t')) index--
-            if (index < 0 || !isIdentifierChar(text[index])) return false
-            while (index >= 0 && isIdentifierChar(text[index])) index--
+        while (index >= 0) {
+            val c = text[index]
+            when {
+                c == ' ' || c == '\t' -> index--
+                isIdentifierChar(c) -> while (index >= 0 && isIdentifierChar(text[index])) index--
+                c == '.' || c == '?' || c == ',' -> index--
+                c == '>' -> {
+                    if (index > 0 && text[index - 1] == '-') {
+                        index -= 2
+                    } else {
+                        index = (matchingOpenAngle(text, index) ?: return false) - 1
+                    }
+                }
+                c == ')' -> index = (matchingOpenParen(text, index) ?: return false) - 1
+                c == ':' -> {
+                    val before = text.getOrNull(index - 1)
+                    return before != '?' && before != ':'
+                }
+                else -> return false
+            }
         }
-        return index >= 0 && text[index] == ':'
+        return false
     }
 
     private fun matchingOpenParen(text: String, close: Int): Int? {
@@ -278,10 +293,10 @@ object CallSites {
                 if (after >= text.length) return false
                 if (text[after] == '(') return true
                 return kotlin && text[after] == '{' && !isClassHeader(text, start) &&
-                    !isAfterTypeColon(text, start)
+                    !isInTypePosition(text, start)
             }
-            // In a class header the `{` after `by <expression>` opens the class body.
-            kotlin && text[i] == '{' -> return !isClassHeader(text, start)
+            // A declared body's `{` follows a type name or a class header's `by <expression>`.
+            kotlin && text[i] == '{' -> return !isClassHeader(text, start) && !isInTypePosition(text, start)
         }
         return false
     }

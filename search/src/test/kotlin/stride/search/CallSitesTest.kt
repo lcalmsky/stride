@@ -272,6 +272,43 @@ class CallSitesTest {
         )) {
             assertFalse(lambdas(text).single().inLambda, "expected no lambda: $text")
         }
+
+        val returned = "fun f(): () -> Unit {\n    prepare()\n    return { load() }\n}"
+        assertFalse(CallSites.find("Sample.kt", returned, "prepare").single().inLambda)
+    }
+
+    @Test
+    fun `a return type name is not a call and opens no lambda`() {
+        fun lambdas(text: String) = CallSites.find("Sample.kt", text, "load")
+
+        for ((text, type) in listOf(
+            "fun f(): Int { load() }" to "Int",
+            "fun f(): Result<T> { load() }" to "Result",
+            "fun f(): () -> Unit { load() }" to "Unit",
+            "fun f(): (Int) -> Result { load() }" to "Result",
+            "fun f(): kotlin.Unit { load() }" to "Unit",
+            "fun f(): List<() -> Unit> { load() }" to "List",
+        )) {
+            assertTrue(CallSites.find("Sample.kt", text, type).isEmpty(), "expected no call: $text")
+            assertFalse(lambdas(text).single().inLambda, "expected no lambda: $text")
+        }
+    }
+
+    @Test
+    fun `an elvis or lambda arrow does not put a call in a type position`() {
+        fun lambdas(text: String) = CallSites.find("Sample.kt", text, "load")
+
+        for ((text, call) in listOf(
+            "val y = x ?: run { load() }" to "run",
+            "val y = x ?: configure<A> { load() }" to "configure",
+            "list.map { x -> build { load() } }" to "build",
+            "when (x) {\n    1 -> run { load() }\n}" to "run",
+        )) {
+            assertEquals(1, CallSites.find("Sample.kt", text, call).size, "expected a call: $text")
+            assertTrue(lambdas(text).single().inLambda, "expected a lambda: $text")
+        }
+
+        assertTrue(lambdas("val f: () -> Unit = { load() }").single().inLambda)
     }
 
     @Test
