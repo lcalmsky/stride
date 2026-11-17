@@ -159,9 +159,14 @@ class KotlinExtractMethodTest {
         val literals = "fun f() {\n    val s = \"hi\"\n    val c = 'x'\n    val ok = true\n" +
             "    val n = 1L\n    val d = 1.5\n    val x = 1.5f\n    val i = 42\n" +
             "    println(s + c + ok + n + d + x + i)\n}\n"
-        val applied = extract(literals, "println(s + c + ok + n + d + x + i)")
-        val head = "private fun extracted(s: String, c: Char, ok: Boolean, n: Long, d: Double, x: Float, i: Int)"
-        assertTrue(applied.text.contains(head))
+        assertEquals(
+            "fun f() {\n    val s = \"hi\"\n    val c = 'x'\n    val ok = true\n" +
+                "    val n = 1L\n    val d = 1.5\n    val x = 1.5f\n    val i = 42\n" +
+                "    extracted(s, c, ok, n, d, x, i)\n}\n\n" +
+                "private fun extracted(s: String, c: Char, ok: Boolean, n: Long, d: Double, x: Float, i: Int) {\n" +
+                "    println(s + c + ok + n + d + x + i)\n}\n",
+            extract(literals, "println(s + c + ok + n + d + x + i)").text,
+        )
     }
 
     @Test
@@ -209,11 +214,11 @@ class KotlinExtractMethodTest {
 
     @Test
     fun `a val declared in the selection and read after becomes a returned output`() {
-        val text = "fun f() {\n    val total = Foo(1)\n    println(total.size)\n}\n"
-        val applied = extract(text, "val total = Foo(1)")
+        val text = "class Item(val size: Int)\n\nfun f() {\n    val total = Item(1)\n    println(total.size)\n}\n"
+        val applied = extract(text, "val total = Item(1)")
         assertEquals(
-            "fun f() {\n    val total = extracted()\n    println(total.size)\n}\n\n" +
-                "private fun extracted(): Foo {\n    val total = Foo(1)\n    return total\n}\n",
+            "class Item(val size: Int)\n\nfun f() {\n    val total = extracted()\n    println(total.size)\n}\n\n" +
+                "private fun extracted(): Item {\n    val total = Item(1)\n    return total\n}\n",
             applied.text,
         )
         assertEquals(applied.text.indexOf("extracted()"), applied.caret)
@@ -630,6 +635,329 @@ class KotlinExtractMethodTest {
         assertEquals(
             "The selection changes x; extract whole statements instead",
             refused(select(text, "x++")),
+        )
+    }
+
+    @Test
+    fun `an integer literal past the Int range becomes a Long`() {
+        val text = "fun f() {\n    val big = 4294967295\n    val hex = 0xFFFF_FFFF\n" +
+            "    val bin = 0b1000_0000_0000_0000_0000_0000_0000_0000\n" +
+            "    val small = 1_000\n    val max = 0x7FFF_FFFF\n" +
+            "    println(big + hex + bin + small + max)\n}\n"
+        assertEquals(
+            "fun f() {\n    val big = 4294967295\n    val hex = 0xFFFF_FFFF\n" +
+                "    val bin = 0b1000_0000_0000_0000_0000_0000_0000_0000\n" +
+                "    val small = 1_000\n    val max = 0x7FFF_FFFF\n" +
+                "    extracted(big, hex, bin, small, max)\n}\n\n" +
+                "private fun extracted(big: Long, hex: Long, bin: Long, small: Int, max: Int) {\n" +
+                "    println(big + hex + bin + small + max)\n}\n",
+            extract(text, "println(big + hex + bin + small + max)").text,
+        )
+    }
+
+    @Test
+    fun `an unsigned integer literal has no inferred type`() {
+        val text = "fun f() {\n    val u = 1u\n    println(u)\n}\n"
+        assertEquals(
+            "Cannot infer the type of u without a compiler; declare it explicitly",
+            refused(select(text, "println(u)")),
+        )
+    }
+
+    @Test
+    fun `a constructor input needs written type arguments or a class in this file`() {
+        val declared = "class Item(val size: Int)\n\nfun f() {\n    val item = Item(1)\n    println(item.size)\n}\n"
+        assertEquals(
+            "class Item(val size: Int)\n\nfun f() {\n    val item = Item(1)\n    extracted(item)\n}\n\n" +
+                "private fun extracted(item: Item) {\n    println(item.size)\n}\n",
+            extract(declared, "println(item.size)").text,
+        )
+        val fromAnotherFile = "fun f() {\n    val item = Item(1)\n    println(item.size)\n}\n"
+        assertEquals(
+            "Cannot infer the type of item without a compiler; declare it explicitly",
+            refused(select(fromAnotherFile, "println(item.size)")),
+        )
+        val pair = "fun f() {\n    val pair = Pair(1, 2)\n    println(pair.first)\n}\n"
+        assertEquals(
+            "Cannot infer the type of pair without a compiler; declare it explicitly",
+            refused(select(pair, "println(pair.first)")),
+        )
+        val capitalizedFunction = "fun f() {\n    val item = Build(1)\n    println(item.size)\n}\n"
+        assertEquals(
+            "Cannot infer the type of item without a compiler; declare it explicitly",
+            refused(select(capitalizedFunction, "println(item.size)")),
+        )
+    }
+
+    @Test
+    fun `a generic class in this file called without type arguments cannot be inferred`() {
+        val text = "class Box<T>(val value: T)\n\nfun f() {\n    val box = Box(1)\n    println(box.value)\n}\n"
+        assertEquals(
+            "Cannot infer the type of box without a compiler; declare it explicitly",
+            refused(select(text, "println(box.value)")),
+        )
+    }
+
+    @Test
+    fun `a delegated local is refused as an input`() {
+        val text = "fun f(holder: Holder) {\n    var x: Int by holder\n    println(x)\n}\n"
+        assertEquals("x is a delegated local", refused(select(text, "println(x)")))
+    }
+
+    @Test
+    fun `a delegated local is refused as an output`() {
+        val text = "fun f(holder: Holder) {\n    var y: Int by holder\n    println(y)\n}\n"
+        assertEquals("y is a delegated local", refused(select(text, "var y: Int by holder")))
+    }
+
+    @Test
+    fun `a var captured by a lambda in the selection is refused`() {
+        val read = "fun f() {\n    var x = 0\n    val cbs = ArrayList<() -> Unit>()\n" +
+            "    cbs.add { println(x) }\n    x = 1\n    cbs.forEach { it() }\n}\n"
+        assertEquals(
+            "The selection captures var x in a lambda",
+            refused(select(read, "cbs.add { println(x) }")),
+        )
+        val write = read.replace("println(x)", "x++")
+        assertEquals(
+            "The selection captures var x in a lambda",
+            refused(select(write, "cbs.add { x++ }")),
+        )
+    }
+
+    @Test
+    fun `a val captured by a lambda in the selection is allowed`() {
+        val text = "fun f() {\n    val x = 0\n    val cbs = ArrayList<() -> Unit>()\n    cbs.add { println(x) }\n}\n"
+        assertEquals(
+            "fun f() {\n    val x = 0\n    val cbs = ArrayList<() -> Unit>()\n    extracted(cbs, x)\n}\n\n" +
+                "private fun extracted(cbs: ArrayList<() -> Unit>, x: Int) {\n    cbs.add { println(x) }\n}\n",
+            extract(text, "cbs.add { println(x) }").text,
+        )
+    }
+
+    @Test
+    fun `a one-line container is refused`() {
+        val text = "class A { val x = 1; fun f() { println(x) } }\n"
+        assertEquals(
+            "The function's last line holds other code; put it on its own line first",
+            refused(select(text, "println(x)")),
+        )
+    }
+
+    @Test
+    fun `a label of a construct outside the selection is refused`() {
+        val function = "fun f() {\n    run {\n        return@f\n    }\n}\n"
+        assertEquals(
+            "The selection uses the label @f from outside it",
+            refused(select(function, "run {\n        return@f\n    }")),
+        )
+        val receiver = "fun String.f() {\n    run {\n        println(this@f)\n    }\n}\n"
+        assertEquals(
+            "The selection uses the label @f from outside it",
+            refused(select(receiver, "run {\n        println(this@f)\n    }")),
+        )
+    }
+
+    @Test
+    fun `a return to a lambda written in the selection is allowed`() {
+        val text = "fun f(items: List<Int>) {\n    items.forEach { return@forEach }\n}\n"
+        val applied = extract(text, "items.forEach { return@forEach }")
+        assertEquals(
+            "fun f(items: List<Int>) {\n    extracted(items)\n}\n\n" +
+                "private fun extracted(items: List<Int>) {\n    items.forEach { return@forEach }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an expression of only literals and operators is refused`() {
+        assertEquals(
+            "Cannot infer the type of 1 without a compiler",
+            refused(select("fun f() {\n    val x: Long = 1\n}\n", "1")),
+        )
+        assertEquals(
+            "Cannot infer the type of 1 + 2 without a compiler",
+            refused(select("fun f() {\n    val x: Long = 1 + 2\n}\n", "1 + 2")),
+        )
+        assertEquals(
+            "Cannot infer the type of -1 without a compiler",
+            refused(select("fun f() {\n    val x = -1\n}\n", "-1")),
+        )
+    }
+
+    @Test
+    fun `a lambda itself is refused as an expression`() {
+        assertEquals(
+            "Cannot infer the type of { 1 } without a compiler",
+            refused(select("fun f() {\n    val g = { 1 }\n}\n", "{ 1 }")),
+        )
+    }
+
+    @Test
+    fun `an anonymous function itself is refused as an expression`() {
+        assertEquals(
+            "Cannot infer the type of fun(x: Int): Int { return x + 1 } without a compiler",
+            refused(select("fun f() {\n    val g = fun(x: Int): Int { return x + 1 }\n}\n", "fun(x: Int): Int { return x + 1 }")),
+        )
+    }
+
+    @Test
+    fun `a finally block is not a value block`() {
+        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        1\n" +
+            "    } finally {\n        reset()\n        val a = 2\n        a + 1\n    }\n} else {\n    0\n}\n"
+        val applied = extract(text, "val a = 2\n        a + 1")
+        assertEquals(
+            "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        1\n" +
+                "    } finally {\n        reset()\n        extracted()\n    }\n} else {\n    0\n}\n\n" +
+                "private fun extracted() {\n    val a = 2\n    a + 1\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `modifiers do not count as used names`() {
+        val text = "value class Id(val raw: Int)\n\ninline fun f() {\n    println(1)\n}\n"
+        val question = ask(select(text, "println(1)"))
+        assertTrue(question.complete("value") is NameCheck.Valid)
+        assertTrue(question.complete("inline") is NameCheck.Valid)
+        val objectText = "data class Row(val id: Int)\n\nclass Holder {\n    companion object {\n" +
+            "        fun f() {\n            println(1)\n        }\n    }\n}\n"
+        val objectQuestion = ask(select(objectText, "println(1)"))
+        assertTrue(objectQuestion.complete("data") is NameCheck.Valid)
+        assertTrue(objectQuestion.complete("companion") is NameCheck.Valid)
+        val used = "fun f() {\n    val value = 1\n    println(value)\n}\n"
+        assertEquals(
+            NameCheck.Invalid("'value' is already used in this file"),
+            ask(select(used, "println(value)")).complete("value"),
+        )
+    }
+
+    @Test
+    fun `the enclosing function check runs before the shape check for strings and comments`() {
+        assertEquals(
+            "Extract Method works inside a function body",
+            refused(select("class A {\n    val x = \"hello\"\n}\n", "hello")),
+        )
+        assertEquals(
+            "Extract Method works inside a function body",
+            refused(select("class A {\n    // hello\n    val x = 1\n}\n", "hello")),
+        )
+    }
+
+    @Test
+    fun `a trailing semicolon moves into the function`() {
+        val text = "fun f() {\n    foo();\n}\n"
+        assertEquals(
+            "fun f() {\n    extracted()\n}\n\nprivate fun extracted() {\n    foo();\n}\n",
+            extract(text, "foo();").text,
+        )
+    }
+
+    @Test
+    fun `a trailing comment moves into the function`() {
+        val text = "fun f() {\n    println(1) // note\n}\n"
+        assertEquals(
+            "fun f() {\n    extracted()\n}\n\nprivate fun extracted() {\n    println(1) // note\n}\n",
+            extract(text, "println(1) // note").text,
+        )
+    }
+
+    @Test
+    fun `a nullable written type is kept`() {
+        val text = "fun f(x: Int?) {\n    println(x)\n}\n"
+        assertEquals(
+            "fun f(x: Int?) {\n    extracted(x)\n}\n\n" +
+                "private fun extracted(x: Int?) {\n    println(x)\n}\n",
+            extract(text, "println(x)").text,
+        )
+    }
+
+    @Test
+    fun `inline operator and infix modifiers are not copied`() {
+        val inline = "inline fun f(block: () -> Unit) {\n    block()\n}\n"
+        assertEquals(
+            "inline fun f(block: () -> Unit) {\n    extracted(block)\n}\n\n" +
+                "private fun extracted(block: () -> Unit) {\n    block()\n}\n",
+            extract(inline, "block()").text,
+        )
+        val operator = "operator fun Box.plus(other: Box) {\n    println(other)\n}\n"
+        assertEquals(
+            "operator fun Box.plus(other: Box) {\n    extracted(other)\n}\n\n" +
+                "private fun Box.extracted(other: Box) {\n    println(other)\n}\n",
+            extract(operator, "println(other)").text,
+        )
+        val infix = "infix fun Int.matches(other: Int) {\n    println(other)\n}\n"
+        assertEquals(
+            "infix fun Int.matches(other: Int) {\n    extracted(other)\n}\n\n" +
+                "private fun Int.extracted(other: Int) {\n    println(other)\n}\n",
+            extract(infix, "println(other)").text,
+        )
+    }
+
+    @Test
+    fun `a when used as an expression keeps its value`() {
+        val text = "fun f(x: Int): Int = when (x) {\n    1 -> {\n        a.value\n    }\n    else -> 0\n}\n"
+        val applied = extract(text, "a.value")
+        assertEquals(
+            "fun f(x: Int): Int = when (x) {\n    1 -> {\n        extracted()\n    }\n    else -> 0\n}\n\n" +
+                "private fun extracted() = a.value\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an object an interface and a companion object hold the new function`() {
+        val objectText = "object A {\n    fun f() {\n        println(1)\n    }\n}\n"
+        assertEquals(
+            "object A {\n    fun f() {\n        extracted()\n    }\n\n" +
+                "    private fun extracted() {\n        println(1)\n    }\n}\n",
+            extract(objectText, "println(1)").text,
+        )
+        val companion = "class A {\n    companion object {\n        fun f() {\n            println(1)\n" +
+            "        }\n    }\n}\n"
+        assertEquals(
+            "class A {\n    companion object {\n        fun f() {\n            extracted()\n        }\n\n" +
+                "        private fun extracted() {\n            println(1)\n        }\n    }\n}\n",
+            extract(companion, "println(1)").text,
+        )
+        val interfaceText = "interface A {\n    fun f() {\n        println(1)\n    }\n}\n"
+        assertEquals(
+            "interface A {\n    fun f() {\n        extracted()\n    }\n\n" +
+                "    private fun extracted() {\n        println(1)\n    }\n}\n",
+            extract(interfaceText, "println(1)").text,
+        )
+    }
+
+    @Test
+    fun `a raw string keeps its lines as written`() {
+        val text = "fun f(c: Boolean) {\n    if (c) {\n        println(\"\"\"\n            line1\n        \"\"\")\n    }\n}\n"
+        val selection = "println(\"\"\"\n            line1\n        \"\"\")"
+        assertEquals(
+            "fun f(c: Boolean) {\n    if (c) {\n        extracted()\n    }\n}\n\n" +
+                "private fun extracted() {\n    println(\"\"\"\n            line1\n        \"\"\")\n}\n",
+            extract(text, selection).text,
+        )
+    }
+
+    @Test
+    fun `a raw string in a tab-indented file keeps its lines as written`() {
+        val text = "fun f(c: Boolean) {\n\tif (c) {\n\t\tprintln(\"\"\"\n\t\t\tline1\n\t\t\"\"\")\n\t}\n}\n"
+        val selection = "println(\"\"\"\n\t\t\tline1\n\t\t\"\"\")"
+        assertEquals(
+            "fun f(c: Boolean) {\n\tif (c) {\n\t\textracted()\n\t}\n}\n\n" +
+                "private fun extracted() {\n\tprintln(\"\"\"\n\t\t\tline1\n\t\t\"\"\")\n}\n",
+            extract(text, selection).text,
+        )
+    }
+
+    @Test
+    fun `a raw string inside a multi-line expression keeps its lines`() {
+        val text = "fun f(a: A) {\n    val x = a.render(\n        \"\"\"\n        line\n        \"\"\",\n    )\n}\n"
+        val selection = "a.render(\n        \"\"\"\n        line\n        \"\"\",\n    )"
+        assertEquals(
+            "fun f(a: A) {\n    val x = extracted(a)\n}\n\n" +
+                "private fun extracted(a: A) = a.render(\n        \"\"\"\n        line\n        \"\"\",\n    )\n",
+            extract(text, selection).text,
         )
     }
 }

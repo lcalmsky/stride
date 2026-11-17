@@ -19,10 +19,14 @@ internal object KotlinExtractMethod {
     private const val BLOCK_VALUE = "The selection is the block's value; extract one expression"
     private const val RETURN = "The selection contains return"
     private const val LOOP = "The selection contains break or continue for a loop outside it"
+    private const val PLACEMENT = "The function's last line holds other code; put it on its own line first"
     private const val NOT_A_NAME = "Not a valid name"
     private const val FOUR_SPACES = "    "
-    private val LINE_BREAK = Regex("\r\n|\n|\r")
     private val ASSIGNMENTS = setOf("=", "+=", "-=", "*=", "/=", "%=")
+    private val LABEL_USERS = setOf("return", "break", "continue", "this", "super")
+    private val LITERAL_KEYWORDS = setOf("true", "false", "null")
+    private val DECLARATION_KEYWORDS =
+        setOf("class", "object", "interface", "fun", "val", "var", "typealias", "constructor", "init")
 
     fun prepare(context: RefactoringContext): RefactoringStep =
         prepare(KotlinCode(context.text), context.selectionStart, context.selectionEnd)
@@ -33,11 +37,12 @@ internal object KotlinExtractMethod {
         val end = maxOf(selectionStart, selectionEnd).coerceIn(0, code.text.length)
         val selection = trim(code, KtRange(start, end))
         if (selection.isEmpty) return RefactoringStep.Refused(NO_SELECTION)
-        if (code.isInsideOpaqueText(selection.start)) return RefactoringStep.Refused(SHAPE)
 
         val place = enclosing(code, selection.start)
         place.refusal?.let { return RefactoringStep.Refused(it) }
         val enclosing = place.enclosing!!
+        if (code.isInsideOpaqueText(selection.start)) return RefactoringStep.Refused(SHAPE)
+        placementRefusal(code, enclosing)?.let { return RefactoringStep.Refused(it) }
 
         val statements = statementsCovering(code, selection)
         if (statements != null) {
@@ -47,13 +52,14 @@ internal object KotlinExtractMethod {
                 }
                 return RefactoringStep.Refused(BLOCK_VALUE)
             }
-            return statementsStep(code, selection, statements, enclosing)
+            return statementsStep(code, selection, enclosing)
         }
         if (code.checkExpression(selection) != null) {
             if (enclosing.body == null && code.statementAt(selection.start) == null) {
                 return RefactoringStep.Refused(EXPRESSION_BODY)
             }
-            return RefactoringStep.Refused(SHAPE)
+            // A lambda or anonymous function is expression-shaped but takes its type from its place.
+            if (!isLambdaOrAnonymousFunction(code, selection)) return RefactoringStep.Refused(SHAPE)
         }
         return expressionStep(code, selection, enclosing)
     }
@@ -125,6 +131,30 @@ internal object KotlinExtractMethod {
         return FOUR_SPACES
     }
 
+    /** The new function follows the enclosing function's line, which holds nothing else (R4 Placement). */
+    private fun placementRefusal(code: KotlinCode, enclosing: Enclosing): String? {
+        if (enclosing.body == null) return null
+        return if (lineHoldsCodeAfter(code, enclosing.function.declarationEnd)) PLACEMENT else null
+    }
+
+    private fun lineHoldsCodeAfter(code: KotlinCode, offset: Int): Boolean {
+        val end = code.lineEnd(offset)
+        var index = offset
+        while (index < end) {
+            when {
+                code.text[index].isWhitespace() -> index++
+                code.text.startsWith("//", index) -> return false
+                code.text.startsWith("/*", index) -> {
+                    val close = code.text.indexOf("*/", index + 2)
+                    if (close < 0) return false
+                    index = close + 2
+                }
+                else -> return true
+            }
+        }
+        return false
+    }
+
     private fun statementsCovering(code: KotlinCode, selection: KtRange): List<KtStatement>? {
         for (block in code.blocks) {
             if (!block.isStatementBlock) continue
@@ -135,8 +165,32 @@ internal object KotlinExtractMethod {
             while (last + 1 < blockStatements.size && blockStatements[last + 1].end <= selection.end) last++
             val covered = blockStatements.subList(first, last + 1)
             if (covered.last().end == selection.end) return covered
+            if (selection.end > covered.last().end && trailingSelectionOnly(code, covered.last().end, selection.end)) {
+                return covered
+            }
         }
         return null
+    }
+
+    /** True when only `;` and same-line comments follow the last statement inside the selection. */
+    private fun trailingSelectionOnly(code: KotlinCode, from: Int, to: Int): Boolean {
+        val tail = code.text.substring(from, to)
+        if ('\n' in tail || '\r' in tail) return false
+        var index = from
+        while (index < to) {
+            when {
+                code.text[index].isWhitespace() -> index++
+                code.text[index] == ';' -> index++
+                code.text.startsWith("//", index) -> return true
+                code.text.startsWith("/*", index) -> {
+                    val close = code.text.indexOf("*/", index + 2)
+                    if (close < 0 || close + 2 > to) return false
+                    index = close + 2
+                }
+                else -> return false
+            }
+        }
+        return true
     }
 
     /** True when the control construct owning [block] stands in an expression position and yields a value. */
@@ -180,7 +234,7 @@ internal object KotlinExtractMethod {
         "if" -> headerKeywordBefore(code, block)
         "when" -> whenKeyword(code, block)
         "else" -> scanBackFor(code, block.open.index, "if")
-        "catch", "finally" -> scanBackFor(code, block.open.index, "try")
+        "catch" -> scanBackFor(code, block.open.index, "try")
         "try" -> code.code.getOrNull(block.open.index - 1)?.takeIf { it.text == "try" }
         else -> null
     }
@@ -229,7 +283,6 @@ internal object KotlinExtractMethod {
     private fun statementsStep(
         code: KotlinCode,
         selection: KtRange,
-        statements: List<KtStatement>,
         enclosing: Enclosing,
     ): RefactoringStep {
         val inputs = when (val result = collectInputs(code, selection, enclosing.function)) {
@@ -246,7 +299,7 @@ internal object KotlinExtractMethod {
         exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
         val output = outputs.singleOrNull()
         return nameStep(code) { name ->
-            statementEdit(code, selection, statements, enclosing, inputs, output, name)
+            statementEdit(code, selection, enclosing, inputs, output, name)
         }
     }
 
@@ -268,13 +321,40 @@ internal object KotlinExtractMethod {
             )
         }
         exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
-        if (!selfTyped(code, selection)) {
+        if (contextTyped(code, selection) || !selfTyped(code, selection)) {
             return RefactoringStep.Refused(
                 "Cannot infer the type of ${writtenExpression(code, selection)} without a compiler",
             )
         }
         return nameStep(code) { name ->
             expressionEdit(code, selection, enclosing, inputs, name)
+        }
+    }
+
+    /**
+     * True when the expression takes its type from where it sits: only literals and operators,
+     * or a lambda or anonymous function itself (R4 Expression type).
+     */
+    private fun contextTyped(code: KotlinCode, range: KtRange): Boolean {
+        if (isLambdaOrAnonymousFunction(code, range)) return true
+        val tokens = code.tokens.filter {
+            !it.isComment && (it.isCode || it.isStringBody) && it.start >= range.start && it.end <= range.end
+        }
+        if (tokens.isEmpty()) return false
+        return tokens.all { token ->
+            token.isStringBody || token.type == KotlinTokenTypes.NUMBER ||
+                token.type == KotlinTokenTypes.CHARACTER || token.type == KotlinTokenTypes.PARENTHESES ||
+                token.type == KotlinTokenTypes.BRACKETS || token.type == KotlinTokenTypes.BRACES ||
+                token.type == KotlinTokenTypes.OPERATION_SIGN ||
+                (token.type == KotlinTokenTypes.KEYWORD && token.text in LITERAL_KEYWORDS)
+        }
+    }
+
+    private fun isLambdaOrAnonymousFunction(code: KotlinCode, range: KtRange): Boolean {
+        if (code.tokenStartingAt(range.start)?.text == "fun") return true
+        return code.blocks.any {
+            it.kind == BlockKind.LAMBDA && it.open.start == range.start &&
+                (it.close?.end ?: it.open.end) == range.end
         }
     }
 
@@ -326,6 +406,10 @@ internal object KotlinExtractMethod {
             if (local.kind == LocalKind.LOCAL_FUN || local.kind == LocalKind.LOCAL_CLASS) {
                 return InputResult.Refused("The selection uses local ${local.name}")
             }
+            if (local.delegated) return InputResult.Refused("${local.name} is a delegated local")
+            if (local.kind == LocalKind.VAR && capturedInLambda(code, selection, reference.token.start)) {
+                return InputResult.Refused("The selection captures var ${local.name} in a lambda")
+            }
             if (!seen.add(local)) continue
             val declared = function.parameters.firstOrNull { it.nameToken.index == local.nameToken.index }
             if (declared != null && declared.vararg) {
@@ -336,6 +420,14 @@ internal object KotlinExtractMethod {
         }
         return InputResult.Found(parameters)
     }
+
+    /** True when [offset] sits in a lambda, anonymous function, object expression or local function of the selection. */
+    private fun capturedInLambda(code: KotlinCode, selection: KtRange, offset: Int): Boolean =
+        code.blockChain(offset).any {
+            it.open.start >= selection.start &&
+                (it.kind == BlockKind.LAMBDA || it.kind == BlockKind.FUNCTION_BODY ||
+                    it.kind == BlockKind.CLASS_BODY)
+        }
 
     private fun typeOf(code: KotlinCode, local: KtLocal): String? {
         // A destructured local's written type is the whole tuple's, not this name's type.
@@ -364,13 +456,25 @@ internal object KotlinExtractMethod {
 
     private fun numberType(text: String): String? {
         when {
-            text.endsWith("u") || text.endsWith("U") -> return null
+            text.any { it == 'u' || it == 'U' } -> return null
+            // An `F` is a hex digit, so the radix decides before the suffix does.
+            text.startsWith("0x") || text.startsWith("0X") ->
+                return integerType(text.substring(2).replace("_", "").removeSuffix("L").removeSuffix("l"), 16)
+            text.startsWith("0b") || text.startsWith("0B") ->
+                return integerType(text.substring(2).replace("_", "").removeSuffix("L").removeSuffix("l"), 2)
             text.endsWith("L") || text.endsWith("l") -> return "Long"
             text.endsWith("F") || text.endsWith("f") -> return "Float"
-            text.startsWith("0x") || text.startsWith("0X") || text.startsWith("0b") || text.startsWith("0B") -> return "Int"
             text.contains('.') || text.contains('e') || text.contains('E') -> return "Double"
         }
-        return "Int"
+        return integerType(text.replace("_", ""), 10)
+    }
+
+    /** `Int` inside its range, `Long` past it, `null` when the literal does not fit a signed 64-bit value. */
+    private fun integerType(digits: String, radix: Int): String? {
+        val value = digits.toLongOrNull(radix)
+        if (value != null) return if (value > Int.MAX_VALUE) "Long" else "Int"
+        val bits = if (radix == 16) 16 else if (radix == 2) 64 else return null
+        return if (digits.isNotEmpty() && digits.length <= bits) "Long" else null
     }
 
     private fun constructorType(code: KotlinCode, range: KtRange): String? {
@@ -381,12 +485,15 @@ internal object KotlinExtractMethod {
         if (raw.isEmpty() || !raw.first().isUpperCase()) return null
         var typeEnd = name.end
         var next = start + 1
+        var writtenTypeArguments = false
         if (code.code.getOrNull(next)?.text == "<") {
             val close = angleClose(code, next)
             if (close < 0) return null
             typeEnd = code.code[close].end
             next = close + 1
+            writtenTypeArguments = true
         }
+        if (!writtenTypeArguments && !classWithoutTypeParameters(code, raw)) return null
         val open = code.code.getOrNull(next) ?: return null
         if (open.text != "(") return null
         val close = code.matchingIndex(open.index)
@@ -397,6 +504,21 @@ internal object KotlinExtractMethod {
 
     private fun inferMessage(name: String) =
         "Cannot infer the type of $name without a compiler; declare it explicitly"
+
+    /** True when this file declares a class of [name] without type parameters. */
+    private fun classWithoutTypeParameters(code: KotlinCode, name: String): Boolean {
+        for (index in code.code.indices) {
+            val token = code.code[index]
+            if (token.type != KotlinTokenTypes.KEYWORD || token.text != "class") continue
+            val previous = code.code.getOrNull(index - 1)
+            if (previous != null && (previous.type == KotlinTokenTypes.DOT || previous.text == "::")) continue
+            val className = code.code.getOrNull(index + 1) ?: continue
+            if (!isNameToken(className) || className.text.removeSurrounding("`") != name) continue
+            if (code.code.getOrNull(index + 2)?.text == "<") continue
+            return true
+        }
+        return false
+    }
 
     // --- type parameters ----------------------------------------------------------------------
 
@@ -478,6 +600,7 @@ internal object KotlinExtractMethod {
         }
         val pair = all.minByOrNull { it.second } ?: return OutputResult.Found(emptyList())
         val local = pair.first
+        if (local.delegated) return OutputResult.Refused("${local.name} is a delegated local")
         val type = typeOf(code, local) ?: return OutputResult.Refused(inferMessage(local.name))
         val isDeclared = declared.any { it.first === local }
         return OutputResult.Found(listOf(Output(local, type, isDeclared, pair.second)))
@@ -517,7 +640,67 @@ internal object KotlinExtractMethod {
                 "break", "continue" -> if (!loopAllowed(code, selection, token, loops)) return LOOP
             }
         }
+        return labelRefusal(code, selection, loops)
+    }
+
+    /** A `return@`, `this@` or `super@` label has to name a construct written inside the selection. */
+    private fun labelRefusal(code: KotlinCode, selection: KtRange, loops: List<Loop>): String? {
+        for (index in code.code.indices) {
+            val token = code.code[index]
+            if (token.start < selection.start || token.end > selection.end) continue
+            if (token.text !in LABEL_USERS) continue
+            if (code.code.getOrNull(index + 1)?.text != "@") continue
+            val label = code.code.getOrNull(index + 2) ?: continue
+            if (!isNameToken(label)) continue
+            val name = label.text.removeSurrounding("`")
+            if (!labelWrittenInside(code, selection, loops, name)) {
+                return "The selection uses the label @$name from outside it"
+            }
+        }
         return null
+    }
+
+    private fun labelWrittenInside(code: KotlinCode, selection: KtRange, loops: List<Loop>, label: String): Boolean {
+        for (block in code.blocks) {
+            if (block.open.start < selection.start || (block.close?.end ?: block.open.end) > selection.end) continue
+            if (block.kind != BlockKind.LAMBDA && block.kind != BlockKind.FUNCTION_BODY) continue
+            if (blockLabel(code, block) == label) return true
+        }
+        for (loop in loops) {
+            if (loop.start < selection.start || loop.bodyEnd > selection.end) continue
+            val name = code.code.getOrNull(loop.keywordIndex - 2) ?: continue
+            if (code.code.getOrNull(loop.keywordIndex - 1)?.text != "@") continue
+            if (isNameToken(name) && name.text.removeSurrounding("`") == label) return true
+        }
+        return code.locals.any {
+            it.kind == LocalKind.LOCAL_FUN && it.name == label &&
+                it.nameToken.start >= selection.start && it.nameToken.end <= selection.end
+        }
+    }
+
+    /** The label a lambda or anonymous function declares: `label@` before it or the callee that takes it. */
+    private fun blockLabel(code: KotlinCode, block: KtBlock): String? {
+        val before = code.code.getOrNull(block.open.index - 1) ?: return null
+        if (before.text == "@") {
+            val name = code.code.getOrNull(block.open.index - 2) ?: return null
+            return if (isNameToken(name)) name.text.removeSurrounding("`") else null
+        }
+        if (before.text == "fun") {
+            if (code.code.getOrNull(block.open.index - 2)?.text != "@") return null
+            val name = code.code.getOrNull(block.open.index - 3) ?: return null
+            return if (isNameToken(name)) name.text.removeSurrounding("`") else null
+        }
+        if (isNameToken(before)) return before.text.removeSurrounding("`")
+        if (before.text != ")") return null
+        val open = code.matchingIndex(before.index)
+        if (open < 0) return null
+        var callee = code.code.getOrNull(open - 1) ?: return null
+        if (callee.text == ">") {
+            val angleOpen = angleOpenBefore(code, open - 1)
+            if (angleOpen <= 0) return null
+            callee = code.code.getOrNull(angleOpen - 1) ?: return null
+        }
+        return if (isNameToken(callee)) callee.text.removeSurrounding("`") else null
     }
 
     private fun returnAllowed(code: KotlinCode, selection: KtRange, token: KtToken): Boolean {
@@ -624,14 +807,23 @@ internal object KotlinExtractMethod {
     }
 
     private fun isNameUsedInFile(code: KotlinCode, name: String): Boolean =
-        code.code.any { isNameToken(it) && it.text.removeSurrounding("`") == name }
+        code.code.any {
+            isNameToken(it) && it.text.removeSurrounding("`") == name && !isModifierUse(code, it)
+        }
+
+    /** A soft keyword written as a declaration modifier (`value class`, `data class`) is not an identifier. */
+    private fun isModifierUse(code: KotlinCode, token: KtToken): Boolean {
+        if (token.type != KotlinTokenTypes.KEYWORD || token.text !in KotlinCode.MODIFIER_WORDS) return false
+        val next = code.code.getOrNull(token.index + 1) ?: return false
+        return next.type == KotlinTokenTypes.KEYWORD &&
+            (next.text in KotlinCode.MODIFIER_WORDS || next.text in DECLARATION_KEYWORDS)
+    }
 
     // --- edits --------------------------------------------------------------------------------
 
     private fun statementEdit(
         code: KotlinCode,
         selection: KtRange,
-        statements: List<KtStatement>,
         enclosing: Enclosing,
         inputs: List<Parameter>,
         output: Output?,
@@ -640,7 +832,7 @@ internal object KotlinExtractMethod {
         val lineBreak = code.lineBreak(enclosing.function.declarationEnd)
         val insertAt = code.lineEnd(enclosing.function.declarationEnd)
         val replacement = callText(name, inputs, output)
-        val functionText = statementFunction(code, enclosing, name, inputs, output, statements, lineBreak)
+        val functionText = statementFunction(code, enclosing, name, inputs, output, selection, lineBreak)
         val edits = listOf(
             TextEdit(selection.start, selection.end, replacement),
             TextEdit(insertAt, insertAt, lineBreak + lineBreak + functionText),
@@ -682,13 +874,13 @@ internal object KotlinExtractMethod {
         name: String,
         inputs: List<Parameter>,
         output: Output?,
-        statements: List<KtStatement>,
+        selection: KtRange,
         lineBreak: String,
     ): String {
         val base = enclosing.indent + enclosing.unit
         val body = ArrayList<String>()
         if (output != null && !output.declared) body.add(base + "var ${output.name} = ${output.name}")
-        body.addAll(reindented(code, statements.first().start, statements.last().end, base))
+        body.addAll(reindented(code, selection.start, selection.end, base))
         if (output != null) body.add(base + "return ${output.name}")
         val returnPart = if (output != null) ": ${output.type}" else ""
         val lines = ArrayList<String>()
@@ -708,16 +900,23 @@ internal object KotlinExtractMethod {
         lineBreak: String,
     ): String {
         val base = enclosing.indent + enclosing.unit
-        val lines = code.text.substring(selection.start, selection.end).split(LINE_BREAK)
+        val lines = linesOf(code, selection.start, selection.end)
         val continuation = lines.drop(1)
         val common = sharedPrefix(
-            continuation.filter { it.isNotBlank() }.map { it.takeWhile { char -> char == ' ' || char == '\t' } },
+            continuation.filter { it.second.isNotBlank() && it.first !in code.rawContinuationStarts }
+                .map { (_, line) -> line.takeWhile { char -> char == ' ' || char == '\t' } },
         )
         val result = ArrayList<String>()
         result.addAll(annotationLines(enclosing))
-        result.add(declaration(enclosing, name, inputs) + " = " + lines.first())
-        for (line in continuation) {
-            result.add(if (line.isBlank()) "" else base + line.removePrefix(common))
+        result.add(declaration(enclosing, name, inputs) + " = " + lines.first().second)
+        for ((offset, line) in continuation) {
+            result.add(
+                when {
+                    offset in code.rawContinuationStarts -> line
+                    line.isBlank() -> ""
+                    else -> base + line.removePrefix(common)
+                },
+            )
         }
         return result.joinToString(lineBreak)
     }
@@ -738,18 +937,41 @@ internal object KotlinExtractMethod {
         return name.substringAfterLast('.') == "Composable"
     }
 
+    /**
+     * The lines of [start]..[end] with their offsets. A line that starts inside a string is kept as
+     * written and left out of the common indentation, so a raw string's value does not change.
+     */
+    private fun linesOf(code: KotlinCode, start: Int, end: Int): List<Pair<Int, String>> {
+        val lines = ArrayList<Pair<Int, String>>()
+        var lineStart = start
+        var index = start
+        while (index < end) {
+            val char = code.text[index]
+            if (char == '\r' || char == '\n') {
+                lines.add(lineStart to code.text.substring(lineStart, index))
+                index += if (char == '\r' && index + 1 < end && code.text[index + 1] == '\n') 2 else 1
+                lineStart = index
+                continue
+            }
+            index++
+        }
+        if (lineStart < end || lines.isEmpty()) lines.add(lineStart to code.text.substring(lineStart, end))
+        return lines
+    }
+
     private fun reindented(code: KotlinCode, start: Int, end: Int, base: String): List<String> {
-        val lines = code.text.substring(start, end).split(LINE_BREAK)
+        val lines = linesOf(code, start, end)
         val indents = ArrayList<String>()
         indents.add(code.indentation(start))
-        for (line in lines.drop(1)) {
-            if (line.isBlank()) continue
+        for ((offset, line) in lines.drop(1)) {
+            if (line.isBlank() || offset in code.rawContinuationStarts) continue
             indents.add(line.takeWhile { it == ' ' || it == '\t' })
         }
         val common = sharedPrefix(indents)
-        return lines.mapIndexed { index, line ->
+        return lines.mapIndexed { index, (offset, line) ->
             when {
                 index == 0 -> base + line
+                offset in code.rawContinuationStarts -> line
                 line.isBlank() -> ""
                 else -> base + line.removePrefix(common)
             }
