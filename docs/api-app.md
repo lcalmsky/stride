@@ -369,6 +369,8 @@ enum class ActionId {
     UNWRAP, REFORMAT_CODE, EDITOR_SCROLL_TO_CENTER,
     OPTIMIZE_IMPORTS, SMART_TYPE_COMPLETION, PASTE_MULTIPLE,
     PARAMETER_INFO, QUICK_DOC, QUICK_DEFINITION, SURROUND_WITH,
+    SELECT_NEXT_OCCURRENCE, UNSELECT_PREVIOUS_OCCURRENCE, SELECT_ALL_OCCURRENCES,
+    EDITOR_TOGGLE_COLUMN_MODE, EDITOR_CLONE_CARET_ABOVE, EDITOR_CLONE_CARET_BELOW,
 }
 
 enum class KeyContext {
@@ -499,6 +501,12 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `COPY_REFERENCE` | GLOBAL | ⌘⌥⇧C | `CopyReference` | :238 |
 | `SWITCHER` | GLOBAL | ⌃Tab , ⌃⇧Tab | `Switcher` | :240, :241 |
 | `SELECT_IN_PROJECT_VIEW` | GLOBAL | ⌥F1 | `SelectInProjectView` | :243 |
+| `SELECT_NEXT_OCCURRENCE` | EDITOR | ⌃G | `SelectNextOccurrence` | :247 |
+| `UNSELECT_PREVIOUS_OCCURRENCE` | EDITOR | ⌃⇧G | `UnselectPreviousOccurrence` | :249 |
+| `SELECT_ALL_OCCURRENCES` | EDITOR | ⌃⌘G | `SelectAllOccurrences` | :251 |
+| `EDITOR_TOGGLE_COLUMN_MODE` | EDITOR | ⇧⌘8 | `EditorToggleColumnMode` | :253 |
+| `EDITOR_CLONE_CARET_ABOVE` | EDITOR | ⌥⌥↑ (second ⌥ held) | `EditorCloneCaretAbove` | — |
+| `EDITOR_CLONE_CARET_BELOW` | EDITOR | ⌥⌥↓ (second ⌥ held) | `EditorCloneCaretBelow` | — |
 | `OPEN_FOLDER` | — | (none; Actions tab) | (none) | — |
 | `SEARCH_EVERYWHERE` | GLOBAL | ⇧⇧ | `SearchEverywhere` | — |
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
@@ -510,6 +518,15 @@ repeated down of an already-pressed modifier is ignored. `DoubleModifierDetector
 Shift into `SEARCH_EVERYWHERE` (on the second release), and any other key in between cancels it.
 Non-modifier downs call `otherKeyPressed()` and then `keymap.actionFor(stroke, focus)`.
 `KeyRouter.isMacOs()` reads `os.name`; `KeyRouter(isMac, clock)` builds the platform keymap.
+
+`KeyRouter` also recognises the clone-caret gesture the keymap cannot carry: while the second
+Option press is held (`DoubleModifierDetector.isSecondPressHeld(ModifierKey.ALT)`), an ↑/↓ down
+with Option alone in the editor returns `EDITOR_CLONE_CARET_ABOVE` / `EDITOR_CLONE_CARET_BELOW`
+without clearing the wait, so holding the second Option and pressing the arrow again clones
+again. Releasing Option, pressing any other key, or pressing another modifier ends the wait, and
+a single Option press keeps its keymap action (`EDITOR_SELECT_WORD` / `EDITOR_UNSELECT_WORD`).
+The Actions tab shows the gestures from `KeyRouter.CLONE_CARET_ABOVE_GESTURE` and
+`CLONE_CARET_BELOW_GESTURE`.
 
 `Main` wires `Window(onPreviewKeyEvent = ...)` to `handleWindowKeyEvent`, which reads
 `state.focus`, routes the event and calls `dispatchAction`. `dispatchAction` returns `true` only
@@ -750,6 +767,9 @@ data class UndoEntry(
     val newText: String,
     val selectionBefore: TextRange,
     val selectionAfter: TextRange,
+    val secondaryBefore: List<TextRange> = emptyList(),
+    val secondaryAfter: List<TextRange> = emptyList(),
+    val typing: Boolean = false,
 )
 
 class UndoManager(clock: () -> Long = System::currentTimeMillis, limit: Int = 1_000) {
@@ -765,9 +785,10 @@ class UndoManager(clock: () -> Long = System::currentTimeMillis, limit: Int = 1_
 
 `record` merges a new entry into the previous one only when both are pure insertions, the new
 insertion continues the previous one (`n.offset == p.offset + p.newText.length`), its text is
-exactly one non-whitespace character, and no more than 500 ms have passed. `breakMerge` makes the
-next `record` start a new entry; the editor calls it before and after every edit action so a whole
-action is one undo step.
+exactly one non-whitespace character, and no more than 500 ms have passed. Two `typing` entries
+with non-empty secondary sets merge under the caret-identity rules described under
+[Multiple carets](#multiple-carets). `breakMerge` makes the next `record` start a new entry; the
+editor calls it before and after every edit action so a whole action is one undo step.
 
 `TextFileEditor` records every text change through `updateValue` and applies undo/redo through the
 same path, so the highlighter stays in step with the text:
@@ -781,7 +802,10 @@ class TextFileEditor(
     val undo: UndoManager
     val commenter: Commenter?
     var gotoLineVisible: Boolean
-    fun updateValue(newValue: TextFieldValue)   // records the change
+    val secondaryCarets: List<TextRange>       // oldest first
+    val carets: List<TextRange>                // secondaryCarets + value.selection
+    val columnMode: Boolean
+    fun updateValue(newValue: TextFieldValue)   // program path; records the change, drops the secondary carets
     fun undo(): Boolean
     fun redo(): Boolean
     fun gotoLine(input: String): Boolean        // "12" or "12:5"; false for non-numeric input
@@ -792,6 +816,18 @@ class TextFileEditor(
     fun reformat(): String                    // the status line to show
     fun replaceRange(start: Int, end: Int, replacement: String)
     fun applyResult(result: EditResult): Boolean  // one undo step; false when read-only
+    fun removeSecondaryCarets(): Boolean
+    internal fun moveCarets(move: CaretMove, extend: Boolean): Boolean   // false with only the primary caret
+    fun deleteAtCarets(forward: Boolean, word: Boolean): Boolean
+    fun pasteAtCarets(clip: String): Boolean
+    fun extendBlock(dLine: Int, dCol: Int): Boolean            // column mode only
+    fun selectBlock(anchorLine: Int, anchorCol: Int, leadLine: Int, leadCol: Int)
+    fun toggleCaretAt(offset: Int)
+    fun selectNextOccurrence(): Boolean
+    fun selectAllOccurrences(): Boolean
+    fun unselectPreviousOccurrence()
+    fun cloneCaret(above: Boolean): Boolean                     // false when nothing was added
+    fun toggleColumnMode(): Boolean                            // returns the new state
 }
 ```
 
@@ -802,7 +838,9 @@ class TextFileEditor(
 `EDITOR_START_NEW_LINE_BEFORE`, `EDITOR_MATCH_BRACE`, `EDITOR_CODE_BLOCK_START`,
 `EDITOR_CODE_BLOCK_END`, `METHOD_UP`, `METHOD_DOWN`, `COPY_LINE`, `CUT_LINE`,
 `MOVE_STATEMENT_UP`, `MOVE_STATEMENT_DOWN`, `EDITOR_COMPLETE_STATEMENT`, `UNWRAP`,
-`REFORMAT_CODE`, `EDITOR_SCROLL_TO_CENTER` and `HIPPIE_COMPLETION` (without other editors' text).
+`REFORMAT_CODE`, `EDITOR_SCROLL_TO_CENTER`, `HIPPIE_COMPLETION` (without other editors' text),
+`SELECT_NEXT_OCCURRENCE`, `UNSELECT_PREVIOUS_OCCURRENCE`, `SELECT_ALL_OCCURRENCES`,
+`EDITOR_TOGGLE_COLUMN_MODE`, `EDITOR_CLONE_CARET_ABOVE` and `EDITOR_CLONE_CARET_BELOW`.
 A read-only
 editor consumes the edit actions without changing the text, and a file whose language has no
 commenter consumes the comment actions. Everything else returns `false`.
@@ -811,7 +849,9 @@ commenter consumes the comment actions. Everything else returns `false`.
 selection changes by another route) and `EDITOR_UNSELECT_WORD` pops it. `COPY_LINE` writes the
 caret line, newline included, through `TextClipboard`; `CUT_LINE` also deletes it. Both return
 `false` when a real selection exists or the clipboard refuses the write, so `BasicTextField`
-keeps its own copy and cut for selections. `hippieComplete` replaces the prefix before the caret
+keeps its own copy and cut for selections. With secondary carets both take the multiple-caret
+path instead: the selections are joined, or the whole lines of every caret are copied, and a cut
+deletes those ranges in one undo step. `hippieComplete` replaces the prefix before the caret
 with the next candidate of `hippieCandidates` and restarts the cycle after any other edit.
 `renameWord` replaces every whole-word occurrence through one `updateValue`, so one undo step
 restores it, and returns the count. `replaceRange` is the popup's insert path.
@@ -830,6 +870,141 @@ diverging. The same table entry carries the other editor actions and returns the
 call `TextFileEditor.unwrap()` and `TextFileEditor.reformat()` and copy their result into the
 status bar (`Nothing to unwrap`, `Reformatted N lines`, `Nothing to reformat`, `File is
 read-only`). `HIPPIE_COMPLETION` also hands the other open editors' text to the editor.
+
+### Multiple carets
+
+`TextFileEditor` keeps the field's own selection as the primary caret and holds the rest in
+`secondaryCarets`; `internal object MultiCaret` is the pure engine over a text and its carets.
+
+**Model.** `value.selection` is the primary caret — the most recently added one.
+`secondaryCarets` holds the others oldest first, and `carets` is
+`secondaryCarets + value.selection`, so its last entry is the primary. `TextRange` direction is
+kept: `start` is the anchor and `end` the caret position. After every operation
+`MultiCaret.normalize` orders the carets and folds two carets into one when their ranges overlap
+with positive length, their `end`s are equal, or a collapsed caret lies strictly inside another
+caret's selection; the survivor keeps the merged union range and its own direction, and the most
+recently added member is the survivor, so a folded primary stays primary. `columnMode` is a
+per-editor flag that is not persisted.
+
+Two alternatives were rejected. A text component owned by the editor, with every caret equal,
+would have to rebuild mouse selection and drag, double-click, IME composition, clipboard and
+scroll following, and would rewrite the existing tests and the frame-time path. A caret list as
+the single source of truth with `TextFieldValue` derived from it would behave the same on the
+outside while changing every reader of `value.selection`. Keeping the field in charge of the
+primary caret leaves its input, IME and mouse paths untouched.
+
+**Field changes.** The field still calls `onFieldValueChange`. With no secondary caret it behaves
+like `updateValue`. With secondary carets, a change that only moves the selection drops them (and
+forgets the caret step), a composition-only change keeps them, and a text change goes through
+`MultiCaret.replicate`: it derives the changed region from the primary selection and the previous
+composition, replays it at the same relative offsets at every secondary caret, carries the new
+composition range across, and sets `typing` when the region is one non-whitespace character
+inserted into collapsed carets with no composition. A change that cannot be modelled drops the
+secondary carets and applies the single value. A press without Command, Control or Option (Shift
+is allowed) is left to the field's own click path, so it drops the secondary carets without
+consuming the event — clicking the primary caret's own position clears them too. A program path
+that sets the value (`updateValue`, `replaceRange`, `renameWord`, and the move helpers) drops
+them as well, and undo restores them from the entry.
+
+**Keys.** `CaretKeys.commandFor` runs from the field's `onPreviewKeyEvent` only while secondary
+carets exist or column mode is on; the window keymap runs first, so only strokes it does not
+carry arrive. Control arrows, ⌘↑/⌘↓, ⌘⌥←/→, `Home`/`End`/`MoveHome`/`MoveEnd` and
+`PageUp`/`PageDown` stay with the field, which then drops the secondary carets through the
+selection path.
+
+| key | effect |
+|---|---|
+| ← / → / ↑ / ↓ | move every caret; with a selection, ← and → fold to its min and max first, and ↑↓ move by line and clear the selection |
+| ⇧ + arrows | extend every selection from its anchor; in column mode the arrows extend the block |
+| ⌥ + ← / → | word-wise move or extension |
+| ⌘ + ← / → | line start (column 0) / line end (before `\n`, and before `\r` in CRLF) |
+| ⌫ / ⌦ (with ⌥: word) | delete the selection or one code point at every caret |
+| ⌘V | paste at every caret |
+
+Vertical movement uses the character column (a tab or a wide glyph is one column); consecutive
+↑↓ presses remember each caret's desired column, and a caret on the first or last line does not
+move past it.
+
+**Copy, cut and paste.** ⌘C/⌘X are `COPY_LINE`/`CUT_LINE`. With secondary carets the editor
+handles them itself: if any caret has a selection, the selected texts are joined in document
+order with `\n`; otherwise the whole lines of every caret are copied in document order, each line
+once, newline included. A cut deletes those ranges in one undo step. The dispatcher also records
+the copied text in the clipboard history. ⌘V splits the clip by line breaks (a trailing newline
+is dropped) and, when the number of lines equals a caret count of two or more, gives the i-th
+line in document order to the i-th caret; otherwise every caret receives the whole clip. Each
+caret's selection is replaced and the caret is left collapsed at the end of its inserted text.
+
+**Column selection.** `MultiCaret.block` turns an anchor and a lead (line, column) into one caret
+per line between them, `[lineStart + min(column), lineStart + max(column))`, with the caret at
+the lead column's side. There is no virtual space: a short line ends with a collapsed caret on
+its line end. In column mode ⇧←/⇧→ move the lead column by ∓1 (never below 0, no upper bound),
+⇧↑/⇧↓ move the lead line and clamp to the document, and the first Shift arrow starts the block
+from the primary caret. ⌥-drag and a plain drag in column mode build the same block from the
+press and the dragged position; right of a line the column continues as
+`lineLength + round((x - lineRight) / glyphWidth)`. Any other caret operation ends the block.
+
+**Action scope.** The line-oriented actions run through `MultiCaret.perCaret` when secondary
+carets exist; every other action takes the single-selection path, which drops the secondary
+carets and records them in the undo entry.
+
+| scope | actions |
+|---|---|
+| every caret | typing, Enter, IME composition, ⌫/⌦ (with ⌥), arrows with their ⌥, ⌘, ⇧ forms, ⌘C ⌘X ⌘V, undo/redo, Esc, the six caret actions below |
+| every caret through `perCaret` | `COMMENT_LINE`, `EDITOR_DUPLICATE`, `EDITOR_DELETE_LINE`, `UNINDENT`, `INDENT` (line-based only when a caret has a selection), `EDITOR_TOGGLE_CASE` |
+| primary caret only | everything else (line moves, statement moves, join, start new line, complete statement, unwrap, reformat, surround, block comment, ⌥↑/⌥↓, declaration moves, completion, rename, ⌥↩, paste history, find and replace, go to line) |
+
+`perCaret` applies the function bottom-up; for a line-based action it calls it once per group of
+carets whose touched lines overlap, through the group's latest-added caret, and maps the other
+carets past the edit. A group whose edit region overlaps the previously applied one is skipped.
+The whole run is one undo step, and a read-only editor consumes the action without changing the
+text.
+
+**Caret actions.** Each new `ActionId` returns `false` when no editor is selected, which the
+dispatcher leaves unconsumed.
+
+| action | behaviour |
+|---|---|
+| `SELECT_NEXT_OCCURRENCE` (⌃G) | with no selection on any caret, selects the word at every caret and turns on whole-word matching; otherwise finds the primary caret's selected text (or the latest selected caret's when the primary is collapsed) after the primary's end, wraps around the document, skips matches that overlap a caret, is case-sensitive and applies the whole-word test when the flag is on, and adds the match as the new primary. With no match the status bar shows `No more occurrences`; a success clears it |
+| `UNSELECT_PREVIOUS_OCCURRENCE` (⌃⇧G) | with two or more carets, drops the primary and promotes the previous one; with one caret it only collapses the selection to `end` |
+| `SELECT_ALL_OCCURRENCES` (⌃⌘G) | a collapsed primary selects its word with whole-word matching; a selection uses its text (whole-word only when the flag is on). Every match in the file becomes a caret, in document order, with the match containing or touching the primary as the primary; a collapsed primary at either end of its word accepts that boundary |
+| `EDITOR_TOGGLE_COLUMN_MODE` (⇧⌘8) | toggles `columnMode` and writes `Column selection mode on` / `Column selection mode off` |
+| `EDITOR_CLONE_CARET_ABOVE` / `_BELOW` (⌥⌥↑ / ⌥⌥↓) | adds a collapsed caret in the same column on the line above the topmost (below the bottommost) caret and makes it primary. Consecutive clones keep the first clone's column; the opposite direction removes the last clone. A missing line ends the action |
+
+`EDITOR_ESCAPE` closes the Go to Line popup, then drops the secondary carets (keeping the
+primary selection), then collapses a lone selection. Column mode is not turned off by Esc.
+
+**Undo.** `UndoEntry` carries `secondaryBefore`, `secondaryAfter` and `typing`; undo and redo
+restore the text with both caret sets. An entry with no secondary carets restores an empty set.
+Besides the single-caret insertion merge, a new entry merges into the previous one when both are
+`typing`, both have non-empty secondary sets before and after, the new `selectionBefore` equals
+the previous `selectionAfter`, the new `secondaryBefore` equals the previous `secondaryAfter`,
+and the new old region `[offset, offset + oldText.length)` lies inside the previous new region,
+all within `MERGE_MILLIS` (500 ms). The merged entry keeps the previous offset and old text and
+splices the new text into the previous new text, while `selectionAfter` and `secondaryAfter`
+come from the new entry. A multi-caret edit is recorded as one `computeTextChange` replacement
+from the first to the last caret.
+
+**Drawing.** The field's modifier chain grows by a `drawWithContent` only when secondary carets
+exist, so the single-caret path keeps its chain and frame cost. The draw fills each selection with
+`layout.getPathForRange` in `DesignTokens.selection` before `drawContent()` and paints a 2 dp
+`DesignTokens.accent2` bar at each caret's `getCursorRect` after it — the same colour as the
+primary cursor brush, and never blinking. Only carets that touch the visible lines are computed:
+the window is derived from the scroll offset and viewport height exactly as for the background
+canvas, selections are clipped to `lineStart(first)`..`lineEnd(last)` with the line indices
+clamped to the layout, and a bar is drawn only when the caret's end lies on a visible line. The
+decision is `visibleCaretRanges`, a pure function unit-tested without a layout. The background
+canvas and the gutter paint `DesignTokens.currentLineGlow` and the 2 dp `DesignTokens.accent2Glow`
+for the secondary caret lines as well, visible lines only, using the per-text line-start array and
+binary search; only the primary caret line gets the accent line number.
+
+Scroll following stays on the primary caret; secondary carets are not scrolled into view.
+
+A read-only editor still adds, moves, selects and copies carets, but every text-changing caret
+operation leaves the text alone and consumes the action.
+
+Known differences: no virtual space, columns count characters (a tab or a wide glyph is one
+column), secondary carets do not blink, and ⌥⇧⌘-drag, middle-button drag, ⇧⌥G (Add Carets to
+Ends of Selected Lines) and ⌃G/⌃⌘G inside the find bar are out of scope.
 
 ### Completion and rename popups
 
@@ -866,7 +1041,8 @@ stays inside the following margin, so that effect leaves the new offset alone.
 The vertical scrollbar's adapter subtracts the chrome insets from its track, so the thumb reaches
 the track's end at `maxValue` instead of stopping short by the inset height.
 The gutter (line numbers) follows only the vertical scroll and stays outside the horizontal
-scroll, which wraps the text body alone.
+scroll, which wraps the text body alone. The following effect watches only the primary caret;
+secondary carets do not pull the viewport.
 
 ## Tool windows
 
@@ -2025,6 +2201,10 @@ node and blocks presses from reaching the editor, while the gaps between capsule
 clickable. The scroll edge effect blurs the content in the 52 dp top and 50 dp bottom bands
 (the editor's own offscreen copy, easing out 24 dp past each band) and fades it toward the field
 (`scrim` gradients), so content passes under the floating controls without a bar or a cut line.
+Secondary carets paint their selections in `DesignTokens.selection` under the text and a 2 dp
+`DesignTokens.accent2` bar at each caret, never blinking, and their lines take the same
+`currentLineGlow` with the 2 dp `accent2Glow` edge on visible lines only; the gutter's accent
+line number stays on the primary caret's line.
 
 The vertical and horizontal scroll views (`VerticalScrollViewport` / `HorizontalScrollViewport`,
 `EditorScrollState`) have two paths. Below `LAYERED_SCROLL_ENTER_LINES` (1 000) the content is
@@ -2350,7 +2530,8 @@ fun glassGutterColor(appearance: Appearance = AppearanceState.appearance): Color
 `05-search-empty-results.png`, `05-search-empty-results-light.png`,
 `06-selection-editor.png`, `07-selection-popup.png`,
 `08-find-bar.png`, `09-recent-files.png`, `10-terminal.png`, `11-run-window.png`,
-`12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`).
+`12-editor-scrolled.png`, `13-search-over-code.png`, `14-context-actions.png`,
+`15-multi-caret.png`).
 The dark scenes keep their names, and `01-empty-light.png`, `02-editor-kotlin-light.png`,
 `04-search-light.png`, `08-find-bar-light.png`, `10-terminal-light.png`,
 `11-run-window-light.png`, `12-editor-scrolled-light.png`,
@@ -2390,11 +2571,11 @@ Maven Central alone does not carry it.
 | `TextChangeTest` | common prefix/suffix insert/delete/replace and empty edges; incremental highlighter equals a fresh one |
 | `HighlightStylesTest` | Kotlin spans map to the dark scheme styles |
 | `KeyStrokeParserTest` | key strings: modifiers, letters, digit/function/numpad keys, unknown-token rejection |
-| `KeymapTest` | every macOS binding in its context, context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
+| `KeymapTest` | every macOS binding in its context (including ⌃G, ⌃⇧G, ⌃⌘G and ⇧⌘8), context-over-global resolution, modal popup contexts never falling back to GLOBAL, non-mac meta↔control swap |
 | `KeyStrokeTextTest` | macOS glyph formatting and order, platform modifier labels (`Ctrl+S`, `Shift+Ctrl+O`) for non-macOS keymaps, first bound stroke per action |
 | `WelcomeHintsTest` | hints read from the keymap, Double Shift as the literal gesture, and platform modifier labels on a non-macOS keymap |
-| `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, platform shortcuts |
-| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone |
+| `KeyRouterTest` | double Shift, cancellation, repeated modifier downs, the double-Option clone wait (surviving repeated arrows, ended by another modifier), platform shortcuts |
+| `ActionDispatcherTest` | undo/redo consumption, next/previous tab wrap, run tool window toggle, hide resets focus, the source-set refusal message, direct runs starting in the file's directory, ⌥↩ import quick fix applied through `applyContextAction` and undone, occurrence and column-mode status messages including clearing a stale failure |
 | `ToolWindowManagerTest` | the three toggle rules, hide, activate, same-id replacement, height clamp |
 | `KeyFlowUiTest` | double Shift search, ⌘4 then ⇧Esc on the run panel, ⌥F12 terminal, ⌘⇧] next tab, ⌘F find bar stepping, ⌘E recent files, ⌘⇧F find in path, ⌃⇧R run at caret, ⌘F2 stop, the no-test status message, ⌃R and Escape while the context actions popup is open, an Actions-tab entry returning global shortcuts, direct `EDITOR_ESCAPE` dispatch closing the goto-line popup and refocusing the editor, completion filtering/insertion with ⌃R blocked and Escape closing, rename through its popup and Escape cancelling |
 | `FindModelTest` | case folding, regular expressions, invalid pattern errors, indexing wrap, replacement order |
@@ -2413,7 +2594,12 @@ Maven Central alone does not carry it.
 | `SearchSelectionPillTest` | the Search Everywhere popup on the Skia path in both palettes and on the native path for structure only: the selected tab and row carry one pill, no underline under the tab and no bar on the row's edge, and on Skia the pill reads at least 1.15 against the panel (the offscreen native render has no panel, so its contrast rests on the token model) |
 | `SelectionPillAlphaTest` | the pill's strength through the click and arrow-key handovers, with the hovered row never dropping below the hover pill while the selection fades in or out |
 | `PopupGlassTest` | the popup fade keeps a real backdrop at the mid and final frames, the shadow/clip chain still blurs, the Search Everywhere panel is translucent and its interior shows a checkerboard backdrop at about 3:1, the fifth percentile of the core glyph contrast clears 4.5 on a bright backdrop for Recent Files rows and the Search Everywhere query, the selected recent row carries one pill with no edge line, the find bar is a floating capsule whose glass follows its backdrop and whose rounded corner is outside the fill, and no fade runs with animations disabled |
-| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code and the context-actions popup over the `main` line |
+| `UiSnapshotTest` | headless PNGs of the empty state, Kotlin and JSON editors, Search Everywhere in both palettes and its empty-query light frame, the find bar, recent files, the terminal, the run window, an editor scrolled to a far column, Search Everywhere over code, the context-actions popup over the `main` line and a Kotlin editor with several carets selecting the same word |
+| `MultiCaretTest` | normalization folding overlaps, shared ends and enclosed collapsed carets; typing replication through repeated characters, selections and out-of-document ranges; movement, word and line ends, deletion, paste distribution and copy ranges; occurrence selection and whole-word matching; caret cloning, blocks, toggling and the per-caret runner; thousands of carets staying under a second |
+| `TextFileEditorMultiCaretTest` | field-change replication and undo, consecutive typing merging into one step, selection-only changes dropping the carets and composition-only changes keeping them, program edits and rename restoring them through undo, Esc order, every-caret actions, multi-caret copy/cut/paste, column mode and cloning, read-only behaviour |
+| `MultiCaretUiTest` | typing and delete keys through the real composition at every caret, Esc, clipboard paste, column mode typing, the double-Option clone gesture, ⌥⇧-click and ⌥-drag, and a plain click on the primary caret dropping the secondary ones |
+| `CaretKeysTest` | which strokes become caret commands with and without secondary carets or column mode and which stay with the field, the virtual column right of a line, and the sorted distinct secondary caret lines |
+| `VisibleCaretRangesTest` | carets outside the visible lines dropped, spanning selections clipped to the window, collapsed carets contributing only a bar, and a visible bar keeping its clipped range |
 | `PopupPlateContrastTest` | every popup text role clears 4.5:1 on the plate over a white and a black desktop in both palettes, the selected and hovered labels on their pills over the plate, and the plate floor is the desktop worse for the palette's polarity |
 | `PopupNativeLegibilityTest` | each popup rendered offscreen on the native path over a white and a black desktop in both palettes: every text role the popup can draw clears 4.5:1 on a glyph-free block of its plate and the selected row's label on its pill, and the hole and glass piece leave nothing behind when the scene closes |
 | `GlassCompositionTest` | the real `App` composed with the native path forced on: an empty Search Everywhere popup carries the palette plate in every sampled pixel of its reported glass piece (only glyph ink may differ, and ink stays a minority of the filled samples), the popup hole maps into a drawing element's own space, the editor and tool-window pieces are reported with the regular style and the editor tint, grids over the tree, editor and tool window carry no Compose fill, the Go to Line popup's non-glyph samples are the plate or an accent decoration rather than a foreign fill and its text draws outside the editor clip, and the editor clip removes code from under an open popup |
@@ -2433,7 +2619,7 @@ Maven Central alone does not carry it.
 | `GradleRunIntegrationTest` | a real `:core:test` child Gradle through the init script (tagged `slow`, opt-in with `-Dstride.runIntegration=true`) |
 | `EditActionsTest` | duplicate, delete, move, line/block comment, indent and unindent with no selection, one line, many lines, the first line and a last line without a newline; `gotoLine` clamping; the word/selection ladder through brackets, strings and lines; toggle case, join lines, start new line, brace matching outside strings and comments, code block start/end, declaration targets, whole-word ranges, hippie candidate order and whole-line ranges |
 | `CodeCompletionTest` | identifier order, prefix and camel-hump ranking with duplicates, blank-prefix ordering, the result limit and language keywords |
-| `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections |
+| `UndoManagerTest` | typing merge within 500 ms, whitespace and deletion separation, redo clearing, `breakMerge`, the entry limit, stored selections, and the multi-caret typing merge with caret identity |
 | `TextFileEditorUndoTest` | undo restores text, selection and a freshly highlighted editor; duplicate undo; read-only actions; commenter resolution; goto line parsing and the popup flag |
 | `TextFileEditorActionsTest` | extend/shrink selection and its reset, join and start-new-line undo steps, toggle case, brace and code-block caret moves, method up/down, whole-line copy and cut through a fake clipboard, hippie cycling and restart, one-step rename and replace range, `applyEdits` caret mapping, one undo step and rejection of overlapping or read-only edits |
 | `ContextActionsTest` | run entry order, then quick fixes before intentions before run entries with the run order unchanged |

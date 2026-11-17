@@ -37,7 +37,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"></td>
 <td valign="top">
 
 - **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
@@ -48,6 +48,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Code cleanup** `⌘⌥L` recomputes indentation from bracket depth and tidies trailing whitespace and runs of blank lines (Kotlin, Java, and JSON; other files get the whitespace cleanup only). It never moves line breaks. `⌃⌥O` removes unused and duplicate imports in Kotlin files and sorts them in IntelliJ's default order. `⌃L` scrolls the caret line to the middle of the view
 - **Code info** `⌘P` shows the parameter list of the call at the caret with the current parameter highlighted, and keeps following the caret while you type. `F1`·`⌃J` show the KDoc or comment above the declaration, and `⌥Space` shows its source in a popup. Declarations come from the current file and the declaration index
 - **Editing helpers** `⌥↑`·`⌥↓` grow and shrink the selection from the caret through word, string contents, brackets, and lines. `⌘⇧U` changes case, `⌃⇧J` joins lines, `⇧↩`·`⌘⌥↩` start a new line, `⌃M` jumps to the matching brace, `⌘⌥[`·`⌘⌥]` move to the code block edges, and `⌃⇧↑`·`⌃⇧↓` move between methods. `⌥/` completes from words in open editors, `⌃Space`·`⌃⌥Space` complete from the declaration index and keywords, `⌃⇧Space` narrows the candidates to classes in a type position and to symbols in an expression position, and `⇧F6` renames within the file
+- **Multiple carets** `⌃G` adds the next match to the selection (or selects the word at the caret when there is none), `⌃⇧G` drops the last added one, and `⌃⌘G` selects every match. `⌥⇧`-click adds or removes a caret, and holding the second `⌥` while pressing `↑`·`↓` clones a caret; `⌥`-drag or the `⌘⇧8` column selection mode builds a rectangular selection. Typing, deleting, pasting, arrow movement, and line comment, duplicate, delete, indent and case apply at every caret; any other action drops the secondary carets and works at the primary one. `Esc` drops the secondary carets
 - **Navigation** `⌘B` or `⌘`-click goes to a declaration, and `⌘[`·`⌘]` or `⌘⌥←`·`⌘⌥→` move back and forward. `⌘F12` shows the file structure, `⌘⇧T` goes to the test, `⌥F7` finds usages, and `F3`·`⌘F3` handle bookmarks
 - **Status capsules** the path capsule at the bottom shows the relative path, and the status capsule group shows `Ln`·`Col`, the file type, `UTF-8`, and a read-only badge
 
@@ -185,7 +186,7 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘/` · `⌘⌥/` | Toggle line comment · toggle block comment |
 | `Tab` / `⇧Tab` | Indent / unindent |
 | `⌘L` | Go to line |
-| `Esc` | Close Go to Line, collapse the selection to the caret |
+| `Esc` | Close Go to Line, drop the secondary carets, collapse the selection to the caret |
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `⌥↑` / `⌥↓` | Grow / shrink the selection |
 | `⌘⇧U` | Toggle case |
@@ -209,6 +210,13 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌃L` | Scroll the caret line to the middle |
 | `⌘P` | Parameter info |
 | `F1` · `⌃J` / `⌥Space` | Declaration docs / declaration source |
+| **Multiple carets** | |
+| `⌃G` / `⌃⇧G` | Add the next match to the selection / drop the last added one |
+| `⌃⌘G` | Select every match |
+| `⌥⇧`-click | Add or remove a caret |
+| `⌥⌥↑` / `⌥⌥↓` | Clone the caret above / below (holding the second `⌥`) |
+| `⌥`-drag | Rectangular selection |
+| `⌘⇧8` | Toggle column selection mode |
 | **Find** | |
 | `⌘F` | Open the find bar |
 | `⌘R` | Expand the replace row |
