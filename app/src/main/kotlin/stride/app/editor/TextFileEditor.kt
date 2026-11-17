@@ -43,12 +43,14 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -1261,6 +1263,12 @@ class TextFileEditor(
     override fun Content(modifier: Modifier) {
         val currentSpans = spans
         val currentSearchSpans = searchSpans
+        val currentValue = value
+        val foldView = if (foldedRegions.isEmpty()) {
+            FoldView.NONE
+        } else {
+            remember(currentValue.text, foldedRegions) { FoldView.of(currentValue.text, foldedRegions) }
+        }
         val nativeGlass = LocalNativeGlass.current
         val appearance = AppearanceState.appearance
         val schemeAndGutter = remember(nativeGlass, appearance) {
@@ -1269,8 +1277,14 @@ class TextFileEditor(
         }
         val scheme = schemeAndGutter.first
         val gutterColor = schemeAndGutter.second
-        val transformation = remember(currentSpans, currentSearchSpans, scheme) {
-            HighlightingVisualTransformation(currentSpans, currentSearchSpans, scheme)
+        val transformation = remember(currentSpans, currentSearchSpans, scheme, gutterColor, foldView) {
+            HighlightingVisualTransformation(
+                currentSpans,
+                currentSearchSpans,
+                scheme,
+                foldView,
+                SpanStyle(color = gutterColor),
+            )
         }
         val vertical = verticalScroll
         val horizontal = horizontalScroll
@@ -1282,6 +1296,7 @@ class TextFileEditor(
         val bandSlices = remember(this) { LineSliceCache() }
         val gutterSlices = remember(this) { LineSliceCache() }
         val latestLayout = rememberUpdatedState(layout)
+        val latestFolds = rememberUpdatedState(foldView)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
         var layeredScroll by remember(this) { mutableStateOf(lineCount >= LAYERED_SCROLL_ENTER_LINES) }
         LaunchedEffect(lineCount) {
@@ -1295,12 +1310,15 @@ class TextFileEditor(
             lineHeight = DesignTokens.codeLineHeight,
             color = defaultForeground(scheme),
         )
-        val currentValue = value
         val caretLine = lineIndexAt(currentValue.text, currentValue.selection.start)
+        val caretRow = if (foldView.isEmpty) caretLine else foldView.rowOf(caretLine)
         val lineHeight = with(LocalDensity.current) { DesignTokens.codeLineHeight.toDp() }
-        val gutterText = remember(lineCount, caretLine) { buildGutterText(lineCount, caretLine) }
-        val secondaryLines = remember(currentValue.text, secondaryCarets) {
-            secondaryCaretLines(currentValue.text, secondaryCarets)
+        val gutterText = remember(lineCount, caretLine, caretRow, foldView) {
+            if (foldView.isEmpty) buildGutterText(lineCount, caretLine) else buildGutterText(foldView.visibleLines, caretRow)
+        }
+        val secondaryLines = remember(currentValue.text, secondaryCarets, foldView) {
+            val lines = secondaryCaretLines(currentValue.text, secondaryCarets)
+            if (foldView.isEmpty) lines else lines.map { foldView.rowOf(it) }.distinct().sorted().toIntArray()
         }
 
         BoxWithConstraints(modifier.contentTint()) {
@@ -1312,12 +1330,13 @@ class TextFileEditor(
             val topPadPx = with(density) { topPad.toPx() }
             val viewportHeightPx = with(density) { (maxHeight - topPad - bottomPad).coerceAtLeast(0.dp).toPx() }
             val windowHeightPx = with(density) { maxHeight.toPx() }
-            LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight, leftPad) {
+            LaunchedEffect(currentValue.selection.end, layout, maxWidth, maxHeight, leftPad, foldView) {
                 val textLayout = layout ?: return@LaunchedEffect
                 // The layout can still be the previous document's for one frame after a tab switch.
-                val caretOffset = currentValue.selection.end
-                    .coerceIn(0, textLayout.layoutInput.text.length)
-                val rect = textLayout.getCursorRect(caretOffset)
+                val limit = textLayout.layoutInput.text.length
+                val caretOffset = currentValue.selection.end.coerceIn(0, limit)
+                val viewOffset = if (foldView.isEmpty) caretOffset else foldView.toView(caretOffset).coerceIn(0, limit)
+                val rect = textLayout.getCursorRect(viewOffset)
                 // The text field spans the window; the glyph column starts past the gutter and the
                 // visible region starts at the gutter's right edge.
                 val contentLeft = with(density) { (leftPad + gutterWidth + DesignTokens.space16).toPx() }
@@ -1352,18 +1371,20 @@ class TextFileEditor(
                 val targetYPx = targetY.toInt().coerceIn(0, vertical.maxValue)
                 if (targetYPx != vertical.value) vertical.scrollTo(targetYPx)
             }
-            LaunchedEffect(centerRequests) {
+            LaunchedEffect(centerRequests, foldView) {
                 if (centerRequests == 0) return@LaunchedEffect
                 val textLayout = layout ?: return@LaunchedEffect
-                val caretOffset = currentValue.selection.end
-                    .coerceIn(0, textLayout.layoutInput.text.length)
-                val line = textLayout.getLineForOffset(caretOffset)
+                val limit = textLayout.layoutInput.text.length
+                val caretOffset = currentValue.selection.end.coerceIn(0, limit)
+                val viewOffset = if (foldView.isEmpty) caretOffset else foldView.toView(caretOffset).coerceIn(0, limit)
+                val line = textLayout.getLineForOffset(viewOffset)
                 val lineCenter = topPadPx + (textLayout.getLineTop(line) + textLayout.getLineBottom(line)) / 2f
                 // The chrome insets bound the visible viewport, so its middle sits below topPad.
                 val target = lineCenter - topPadPx - viewportHeightPx / 2f
                 vertical.scrollTo(target.roundToInt().coerceIn(0, vertical.maxValue))
             }
-            val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * lineCount)
+            val contentLines = if (foldView.isEmpty) lineCount else foldView.rowCount
+            val gutterHeight = maxOf((maxHeight - topPad - bottomPad).coerceAtLeast(0.dp), lineHeight * contentLines)
             val textMinWidth = (maxWidth - leftPad - gutterWidth - 32.dp).coerceAtLeast(0.dp)
             val sidebar = LocalSidebarChrome.current
             Canvas(Modifier.matchParentSize()) {
@@ -1392,9 +1413,9 @@ class TextFileEditor(
                 for (index in firstLineAtOrAfter(secondaryLines, first) until secondaryLines.size) {
                     val line = secondaryLines[index]
                     if (line > last) break
-                    if (line != caretLine) paintLine(line)
+                    if (line != caretRow) paintLine(line)
                 }
-                paintLine(caretLine)
+                paintLine(caretRow)
             }
             VerticalScrollViewport(vertical, Modifier.fillMaxSize(), layered = layered) {
             Box(
@@ -1445,8 +1466,21 @@ class TextFileEditor(
                                             val last =
                                                 ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
                                             val lastLine = textLayout.lineCount - 1
+                                            // The layout is the folded text; only when the view
+                                            // holds folds do the carets need moving into it.
+                                            val folds = latestFolds.value
+                                            val carets = if (folds.isEmpty || folds.docLength != text.length) {
+                                                secondaryCarets
+                                            } else {
+                                                secondaryCarets.map {
+                                                    TextRange(
+                                                        folds.toView(it.start).coerceIn(0, limit),
+                                                        folds.toView(it.end).coerceIn(0, limit),
+                                                    )
+                                                }
+                                            }
                                             val visible = visibleCaretRanges(
-                                                carets = secondaryCarets,
+                                                carets = carets,
                                                 lineOf = { offset ->
                                                     textLayout.getLineForOffset(offset.coerceIn(0, limit))
                                                 },
@@ -1471,6 +1505,42 @@ class TextFileEditor(
                                                     DesignTokens.accent2,
                                                     topLeft = Offset(rect.left, rect.top),
                                                     size = Size(caretWidth, rect.height),
+                                                )
+                                            }
+                                        }
+                                    },
+                                )
+                                // Only when something is folded does the chain grow, so the
+                                // unfold path keeps its modifiers and frame cost.
+                                .then(
+                                    if (foldView.isEmpty) {
+                                        Modifier
+                                    } else {
+                                        Modifier.drawBehind {
+                                            val textLayout = latestLayout.value ?: return@drawBehind
+                                            if (textLayout.layoutInput.text.length != foldView.viewLength) return@drawBehind
+                                            // Same window as the background canvas, in layout rows.
+                                            val linePx = DesignTokens.codeLineHeight.toPx()
+                                            val first = ((vertical.value - topPadPx) / linePx).toInt() - 1
+                                            val last =
+                                                ((vertical.value - topPadPx + windowHeightPx) / linePx).toInt() + 1
+                                            val inflate = 1.dp.toPx()
+                                            for (index in foldView.folds.indices) {
+                                                val start = foldView.placeholderStart(index)
+                                                val row = textLayout.getLineForOffset(start)
+                                                if (row < first || row > last) continue
+                                                val head = textLayout.getBoundingBox(start)
+                                                val tail = textLayout.getBoundingBox(start + FOLD_PLACEHOLDER.length - 1)
+                                                val left = minOf(head.left, tail.left) - inflate
+                                                val right = maxOf(head.right, tail.right) + inflate
+                                                val top = minOf(head.top, tail.top)
+                                                val bottom = maxOf(head.bottom, tail.bottom)
+                                                drawRoundRect(
+                                                    color = DesignTokens.accent2.copy(alpha = 0.55f),
+                                                    topLeft = Offset(left, top),
+                                                    size = Size(right - left, bottom - top),
+                                                    cornerRadius = CornerRadius(3.dp.toPx()),
+                                                    style = Stroke(width = 1.dp.toPx()),
                                                 )
                                             }
                                         }
@@ -1514,10 +1584,12 @@ class TextFileEditor(
                                                     textLayout.getLineRight(line),
                                                 )
                                                 if (!inside) continue
-                                                val offset = textLayout.getOffsetForPosition(change.position)
-                                                    .coerceIn(0, text.length)
+                                                val raw = textLayout.getOffsetForPosition(change.position)
+                                                    .coerceIn(0, textLayout.layoutInput.text.length)
+                                                val folds = latestFolds.value
+                                                val offset = if (folds.isEmpty) raw else folds.toDoc(raw)
                                                 change.consume()
-                                                onGoToDeclarationAt?.invoke(offset)
+                                                onGoToDeclarationAt?.invoke(offset.coerceIn(0, text.length))
                                                 continue
                                             }
                                             val gesture = caretPointerGesture(
@@ -1528,14 +1600,28 @@ class TextFileEditor(
                                                 columnMode = columnMode,
                                             )
                                             if (gesture == null) {
-                                                // A plain press (shift allowed) moves the single
-                                                // caret where it lands, so the extra ones go.
-                                                if (event.buttons.isPrimaryPressed &&
+                                                val unmodified = event.buttons.isPrimaryPressed &&
                                                     !modifiers.isAltPressed &&
                                                     !modifiers.isCtrlPressed &&
-                                                    !modifiers.isMetaPressed &&
-                                                    secondaryCarets.isNotEmpty()
-                                                ) {
+                                                    !modifiers.isMetaPressed
+                                                if (unmodified && !modifiers.isShiftPressed) {
+                                                    val folds = latestFolds.value
+                                                    val index = foldPlaceholderAt(
+                                                        folds,
+                                                        textLayout,
+                                                        change.position,
+                                                        1.dp.toPx(),
+                                                    )
+                                                    if (index >= 0) {
+                                                        change.consume()
+                                                        expandFoldAt(folds.placeholderStart(index))
+                                                        runCatching { focusRequester.requestFocus() }
+                                                        continue
+                                                    }
+                                                }
+                                                // A plain press (shift allowed) moves the single
+                                                // caret where it lands, so the extra ones go.
+                                                if (unmodified && secondaryCarets.isNotEmpty()) {
                                                     removeSecondaryCarets()
                                                 }
                                                 continue
@@ -1543,14 +1629,15 @@ class TextFileEditor(
                                             change.consume()
                                             when (gesture) {
                                                 CaretPointerGesture.TOGGLE -> {
-                                                    toggleCaretAt(
-                                                        textLayout.getOffsetForPosition(change.position)
-                                                            .coerceIn(0, text.length),
-                                                    )
+                                                    val raw = textLayout.getOffsetForPosition(change.position)
+                                                        .coerceIn(0, textLayout.layoutInput.text.length)
+                                                    val folds = latestFolds.value
+                                                    val offset = if (folds.isEmpty) raw else folds.toDoc(raw)
+                                                    toggleCaretAt(offset.coerceIn(0, text.length))
                                                     runCatching { focusRequester.requestFocus() }
                                                 }
                                                 CaretPointerGesture.BLOCK -> {
-                                                    val anchor = blockCorner(textLayout, change.position)
+                                                    val anchor = blockCorner(textLayout, change.position, latestFolds.value)
                                                     selectBlock(
                                                         anchor.line,
                                                         anchor.column,
@@ -1563,7 +1650,7 @@ class TextFileEditor(
                                                         val moved = next.changes
                                                             .firstOrNull { it.id == change.id } ?: break
                                                         val current = latestLayout.value ?: textLayout
-                                                        val lead = blockCorner(current, moved.position)
+                                                        val lead = blockCorner(current, moved.position, latestFolds.value)
                                                         selectBlock(anchor.line, anchor.column, lead.line, lead.column)
                                                         moved.consume()
                                                         if (!moved.pressed) break
@@ -1608,9 +1695,9 @@ class TextFileEditor(
                             for (index in firstLineAtOrAfter(secondaryLines, first) until secondaryLines.size) {
                                 val line = secondaryLines[index]
                                 if (line > last) break
-                                if (line != caretLine) paintLine(line)
+                                if (line != caretRow) paintLine(line)
                             }
-                            paintLine(caretLine)
+                            paintLine(caretRow)
                             val stroke = 1.dp.toPx()
                             drawRect(
                                 DesignTokens.glassBorderSide,
@@ -1642,7 +1729,8 @@ class TextFileEditor(
                             val left = 13.dp.toPx()
                             val notch = 3.dp.toPx()
                             for (line in bookmarked) {
-                                val top = line * linePx + (linePx - glyphHeight) / 2
+                                val row = if (foldView.isEmpty) line else foldView.visibleRowOf(line) ?: continue
+                                val top = row * linePx + (linePx - glyphHeight) / 2
                                 val path = Path().apply {
                                     moveTo(left, top)
                                     lineTo(left + glyphWidth, top)
@@ -1657,11 +1745,12 @@ class TextFileEditor(
                     }
                     val currentMarkers = gutterMarkers
                     for (marker in currentMarkers) {
+                        val row = if (foldView.isEmpty) marker.line else foldView.visibleRowOf(marker.line) ?: continue
                         Canvas(
                             Modifier
                                 .offset(
                                     x = 2.dp,
-                                    y = (lineHeight * marker.line).coerceAtLeast(0.dp) +
+                                    y = (lineHeight * row).coerceAtLeast(0.dp) +
                                         (lineHeight - 10.dp) / 2,
                                 )
                                 .size(10.dp)
@@ -1941,21 +2030,43 @@ class TextFileEditor(
     }
 
     /** The document line and column a press at [position] points at, past the line end included. */
-    private fun blockCorner(layout: TextLayoutResult, position: Offset): BlockCorner {
+    private fun blockCorner(layout: TextLayoutResult, position: Offset, folds: FoldView): BlockCorner {
         val source = layout.layoutInput.text
-        val line = layout.getLineForVerticalPosition(position.y).coerceIn(0, layout.lineCount - 1)
-        val start = layout.getLineStart(line).coerceIn(0, source.length)
+        val row = layout.getLineForVerticalPosition(position.y).coerceIn(0, layout.lineCount - 1)
+        val line = if (folds.isEmpty) row else folds.lineOfRow(row)
+        val start = layout.getLineStart(row).coerceIn(0, source.length)
         var end = start
         while (end < source.length && source[end] != '\n') end++
         if (end > start && source[end - 1] == '\r') end--
         val length = end - start
-        val lineRight = layout.getLineRight(line)
+        val lineRight = layout.getLineRight(row)
         val column = if (position.x <= lineRight) {
             (layout.getOffsetForPosition(position) - start).coerceIn(0, length)
         } else {
             virtualColumn(position.x, lineRight, length, asciiCharWidth(layout))
         }
         return BlockCorner(line, column)
+    }
+
+    /** The fold whose placeholder box holds [position], or -1; the box is inflated by 1 dp. */
+    private fun foldPlaceholderAt(
+        folds: FoldView,
+        layout: TextLayoutResult,
+        position: Offset,
+        inflate: Float,
+    ): Int {
+        if (folds.isEmpty || folds.viewLength != layout.layoutInput.text.length) return -1
+        for (index in folds.folds.indices) {
+            val start = folds.placeholderStart(index)
+            val head = layout.getBoundingBox(start)
+            val tail = layout.getBoundingBox(start + FOLD_PLACEHOLDER.length - 1)
+            val left = minOf(head.left, tail.left) - inflate
+            val right = maxOf(head.right, tail.right) + inflate
+            val top = minOf(head.top, tail.top)
+            val bottom = maxOf(head.bottom, tail.bottom)
+            if (position.x in left..right && position.y in top..bottom) return index
+        }
+        return -1
     }
 
     /** The width of the first non-blank ASCII glyph; the virtual column step of the block drag. */
@@ -1973,6 +2084,16 @@ class TextFileEditor(
             append(line.toString())
             if (line == caretLine + 1) addStyle(SpanStyle(color = DesignTokens.accent2), start, length)
             if (line < lineCount) append('\n')
+        }
+    }
+
+    /** The gutter of a folded document: one number per row, from the row's document line. */
+    private fun buildGutterText(lines: IntArray, caretRow: Int): AnnotatedString = buildAnnotatedString {
+        for (row in lines.indices) {
+            val start = length
+            append((lines[row] + 1).toString())
+            if (row == caretRow) addStyle(SpanStyle(color = DesignTokens.accent2), start, length)
+            if (row < lines.size - 1) append('\n')
         }
     }
 

@@ -110,6 +110,12 @@ internal fun effectiveFolds(folded: List<FoldRegion>): List<FoldRegion> {
 /**
  * The document text as the field lays it out: every effective fold replaced by the
  * [FOLD_PLACEHOLDER], plus the offsets and rows that map between the two.
+ *
+ * The field's value stays the document text; making the folded text the value instead would
+ * force every editing path to translate offsets, and hiding lines under the identity mapping
+ * would leave their newlines breaking rows. Unlike IntelliJ there are no gutter fold markers,
+ * Fold Selection, `//region` folding, collapsed-by-default settings or preview popups, fold
+ * state does not survive a restart, and a placeholder is always `...`.
  */
 internal class FoldView private constructor(
     val docLength: Int,

@@ -1,10 +1,19 @@
 package stride.app.editor
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import stride.lang.ColorScheme
+import stride.lang.TextAttributesKey
+import stride.lang.TokenSpan
 
 class CodeFoldingTest {
     private val kotlinSample = """
@@ -195,4 +204,42 @@ class CodeFoldingTest {
         assertEquals(7, none.lineOfRow(7))
     }
 
+    @Test
+    fun `the transformation replaces a fold with the placeholder`() {
+        val text = "abcdefghij"
+        val folds = FoldView.of(text, listOf(FoldRegion(3, 7)))
+        val transformation = HighlightingVisualTransformation(
+            spans = listOf(
+                TokenSpan(4, 6, TextAttributesKey.KEYWORD),
+                TokenSpan(1, 5, TextAttributesKey.KEYWORD),
+                TokenSpan(5, 9, TextAttributesKey.KEYWORD),
+            ),
+            backgroundSpans = emptyList(),
+            scheme = ColorScheme.DARK,
+            folds = folds,
+            placeholderStyle = SpanStyle(color = Color.Red),
+        )
+
+        val transformed = transformation.filter(AnnotatedString(text))
+        assertEquals("abc...hij", transformed.text.text)
+        assertSame(folds, transformed.offsetMapping)
+        assertTrue(transformed.text.spanStyles.any { it.start == 3 && it.end == 6 && it.item.color == Color.Red })
+        val bold = transformed.text.spanStyles.filter { it.item.fontWeight == FontWeight.Bold }
+        assertEquals(listOf(1 to 3, 6 to 8), bold.map { it.start to it.end })
+        for (range in bold) {
+            assertFalse(range.start < 6 && 3 < range.end, "span $range covers the placeholder")
+        }
+    }
+
+    @Test
+    fun `without folds the transformation keeps the text and the identity mapping`() {
+        val text = "val answer = 42\n"
+        val transformation = HighlightingVisualTransformation(
+            spans = listOf(TokenSpan(0, 3, TextAttributesKey.KEYWORD)),
+            scheme = ColorScheme.DARK,
+        )
+        val transformed = transformation.filter(AnnotatedString(text))
+        assertEquals(text, transformed.text.text)
+        assertTrue(transformed.offsetMapping === OffsetMapping.Identity)
+    }
 }

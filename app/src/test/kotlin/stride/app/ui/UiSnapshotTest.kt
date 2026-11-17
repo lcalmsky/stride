@@ -23,6 +23,7 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
+import stride.app.keys.ActionId
 import stride.app.run.FakeProcess
 import stride.app.run.GradleCommand
 import stride.app.run.ProcessStarter
@@ -648,6 +649,31 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(27)
+    fun `folding editor snapshot`() {
+        val root = demoProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            expand(session, root, "src", "main", "kotlin", "demo")
+            openEditor(session, root.resolve("src/main/kotlin/demo/Main.kt"))
+            val greeting = openEditor(session, root.resolve("src/main/kotlin/demo/Greeting.kt"))
+            val text = greeting.value.text
+            val funLine = text.indexOf("fun greet(name: String, count: Int = 3): String {")
+            val caret = funLine + "fun greet".length
+            greeting.updateValue(TextFieldValue(text, TextRange(caret)))
+            check(greeting.applyAction(ActionId.COLLAPSE_REGION)) { "the function body did not collapse" }
+            // The caret stays on the folded row, which now shows `{...}`.
+            greeting.updateValue(TextFieldValue(text, TextRange(caret)))
+            renderApp("16-folding.png", state, renderMillis = 800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("16-folding.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(24)
     fun `switching the appearance re-themes without losing the caret or scroll`() {
         val root = demoProject()
@@ -852,6 +878,7 @@ class UiSnapshotTest {
             "14-context-actions.png",
             "14-context-actions-light.png",
             "15-multi-caret.png",
+            "16-folding.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",

@@ -11,6 +11,7 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
+import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.editorGlassFloor
 import stride.app.ui.theme.paletteOf
 import stride.app.ui.theme.readableOn
@@ -67,15 +68,43 @@ fun spanStyles(spans: List<TokenSpan>, scheme: ColorScheme = activeColorScheme()
 data class BackgroundSpan(val start: Int, val end: Int, val color: Color)
 
 /**
- * Applies highlight spans without changing offsets, so a [androidx.compose.foundation.text.BasicTextField]
- * keeps its selection and cursor positions.
+ * Applies highlight spans and, when [folds] is not empty, replaces each collapsed range with
+ * the fold placeholder and maps the field's offsets through it. Without folds the text and the
+ * identity mapping are the ones the field had before folding existed.
  */
-class HighlightingVisualTransformation(
+class HighlightingVisualTransformation internal constructor(
     private val spans: List<TokenSpan>,
     private val backgroundSpans: List<BackgroundSpan> = emptyList(),
     private val scheme: ColorScheme = activeColorScheme(),
+    private val folds: FoldView = FoldView.NONE,
+    private val placeholderStyle: SpanStyle = SpanStyle(color = DesignTokens.muted),
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
+        if (folds.isEmpty || text.length != folds.docLength) return identity(text)
+        val folded = foldedText(text)
+        val builder = AnnotatedString.Builder(folded)
+        val defaultColor = scheme.getAttributes(stride.lang.TextAttributesKey.DEFAULT_TEXT)?.foreground
+        if (defaultColor != null) {
+            builder.addStyle(SpanStyle(color = Color(defaultColor.toInt())), 0, folded.length)
+        }
+        for (range in spanStyles(spans, scheme)) {
+            val start = mappedStart(range.start)
+            val end = mappedEnd(range.end)
+            if (start < end) builder.addStyle(range.item, start, end)
+        }
+        for (span in backgroundSpans) {
+            val start = mappedStart(span.start)
+            val end = mappedEnd(span.end)
+            if (start < end) builder.addStyle(SpanStyle(background = span.color), start, end)
+        }
+        for (index in folds.folds.indices) {
+            val start = folds.placeholderStart(index)
+            builder.addStyle(placeholderStyle, start, start + FOLD_PLACEHOLDER.length)
+        }
+        return TransformedText(builder.toAnnotatedString(), folds)
+    }
+
+    private fun identity(text: AnnotatedString): TransformedText {
         val builder = AnnotatedString.Builder(text)
         val defaultColor = scheme.getAttributes(stride.lang.TextAttributesKey.DEFAULT_TEXT)?.foreground
         if (defaultColor != null) {
@@ -90,11 +119,44 @@ class HighlightingVisualTransformation(
         return TransformedText(builder.toAnnotatedString(), OffsetMapping.Identity)
     }
 
+    private fun foldedText(text: AnnotatedString): AnnotatedString {
+        val builder = StringBuilder(folds.viewLength)
+        var cursor = 0
+        for (fold in folds.folds) {
+            builder.append(text.text, cursor, fold.hiddenStart)
+            builder.append(FOLD_PLACEHOLDER)
+            cursor = fold.hiddenEnd
+        }
+        builder.append(text.text, cursor, text.length)
+        return AnnotatedString(builder.toString())
+    }
+
+    private fun mappedStart(offset: Int): Int {
+        val clamped = offset.coerceIn(0, folds.docLength)
+        val index = folds.foldIndexContaining(clamped)
+        if (index >= 0) return folds.placeholderStart(index) + FOLD_PLACEHOLDER.length
+        return folds.toView(clamped)
+    }
+
+    private fun mappedEnd(offset: Int): Int {
+        val clamped = offset.coerceIn(0, folds.docLength)
+        val index = folds.foldIndexEndingAt(clamped)
+        if (index >= 0) return folds.placeholderStart(index)
+        return folds.toView(clamped)
+    }
+
     override fun equals(other: Any?): Boolean =
         other is HighlightingVisualTransformation &&
             other.spans == spans &&
             other.backgroundSpans == backgroundSpans &&
-            other.scheme === scheme
+            other.scheme === scheme &&
+            other.folds === folds &&
+            other.placeholderStyle == placeholderStyle
 
-    override fun hashCode(): Int = 31 * (31 * spans.hashCode() + backgroundSpans.hashCode()) + scheme.hashCode()
+    override fun hashCode(): Int {
+        var result = 31 * spans.hashCode() + backgroundSpans.hashCode()
+        result = 31 * result + scheme.hashCode()
+        result = 31 * result + folds.hashCode()
+        return 31 * result + placeholderStyle.hashCode()
+    }
 }
