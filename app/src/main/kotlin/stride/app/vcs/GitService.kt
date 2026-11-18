@@ -539,20 +539,8 @@ class GitService(private val project: Project) : Disposable {
         }
         if (behind == 0) return@withContext UpdatePlan.Refused("Already up to date")
         if (ahead > 0) {
-            val status = readQuiet(
-                GitCommand(
-                    listOf("status", "--porcelain=v2", "-z", "--untracked-files=no"),
-                    repository.root,
-                    timeouts.read,
-                ),
-            )
-            val changed = GitStatusParser.parse(status.stdoutText()).records.count { it.kind != ChangeKind.UNTRACKED }
-            val total = changed + unsavedTrackedEditors
-            if (total > 0) {
-                return@withContext UpdatePlan.Refused(
-                    "Update needs a clean working tree to merge or rebase: commit your $total changed files first",
-                )
-            }
+            val total = changedTrackedFiles(repository) + unsavedTrackedEditors
+            if (total > 0) return@withContext UpdatePlan.Refused(cleanTreeMessage(total))
         }
         val limit = minOf(behind, MAX_OUTGOING)
         val log = read(
@@ -593,7 +581,15 @@ class GitService(private val project: Project) : Disposable {
             }
             operationInProgress()?.let { return@withContext GitWriteResult(false, operationMessage(it)) }
             updateBusy(UPDATING)
-            statusGate.withLock { updateLocked(repository, plan, strategy) }
+            statusGate.withLock {
+                // The popup can stay open while the tree changes, and an abort cannot restore an
+                // uncommitted edit, so the clean-tree check is repeated here before git starts.
+                if (strategy != UpdateStrategy.FAST_FORWARD) {
+                    val changed = changedTrackedFiles(repository)
+                    if (changed > 0) return@withLock GitWriteResult(false, cleanTreeMessage(changed))
+                }
+                updateLocked(repository, plan, strategy)
+            }
         } finally {
             updateBusy(null)
             writeGate.unlock()
@@ -1002,6 +998,21 @@ class GitService(private val project: Project) : Disposable {
         return if (setting?.lowercase() in REBASE_TRUE_VALUES) UpdateStrategy.REBASE else UpdateStrategy.MERGE
     }
 
+    /** The tracked changes in the whole repository, read the way [updatePlan] and [update] share. */
+    private suspend fun changedTrackedFiles(repository: GitRepository): Int {
+        val status = readQuiet(
+            GitCommand(
+                listOf("status", "--porcelain=v2", "-z", "--untracked-files=no"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        return GitStatusParser.parse(status.stdoutText()).records.count { it.kind != ChangeKind.UNTRACKED }
+    }
+
+    private fun cleanTreeMessage(changed: Int): String =
+        "Update needs a clean working tree to merge or rebase: commit your $changed changed files first"
+
     private suspend fun updateLocked(
         repository: GitRepository,
         plan: UpdatePlan.Ready,
@@ -1029,17 +1040,8 @@ class GitService(private val project: Project) : Disposable {
         }
         val text = result.stdoutText() + "\n" + result.stderr
         val lower = text.lowercase()
-        if (lower.contains("would be overwritten by merge") && lower.contains("your local changes to the following files")) {
-            val count = countListedFiles(text, "your local changes to the following files")
-            return GitWriteResult(
-                false,
-                "Update stopped: local changes to $count files would be overwritten: commit them first",
-            )
-        }
-        if (lower.contains("untracked working tree files would be overwritten")) {
-            val count = countListedFiles(text, "untracked working tree files would be overwritten")
-            return GitWriteResult(false, "Update stopped: $count untracked files would be overwritten: move them first")
-        }
+        // The in-progress marker decides first: only the abort restores a half-finished rebase,
+        // whatever the output says.
         val operation = operationInProgress()
         if (operation != null) {
             val conflicts = readQuiet(
@@ -1066,6 +1068,17 @@ class GitService(private val project: Project) : Disposable {
             } else {
                 GitWriteResult(false, "Update failed: ${firstLine(result)} (undone)")
             }
+        }
+        if (lower.contains("would be overwritten by merge") && lower.contains("your local changes to the following files")) {
+            val count = countListedFiles(text, "your local changes to the following files")
+            return GitWriteResult(
+                false,
+                "Update stopped: local changes to $count files would be overwritten: commit them first",
+            )
+        }
+        if (lower.contains("untracked working tree files would be overwritten")) {
+            val count = countListedFiles(text, "untracked working tree files would be overwritten")
+            return GitWriteResult(false, "Update stopped: $count untracked files would be overwritten: move them first")
         }
         return GitWriteResult(false, "Update failed: ${describe(result, timeouts.update)}")
     }

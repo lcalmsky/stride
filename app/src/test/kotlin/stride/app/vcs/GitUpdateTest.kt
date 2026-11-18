@@ -290,6 +290,100 @@ class GitUpdateTest {
     }
 
     @Test
+    fun `a merge after the plan refuses a tree that became dirty`() {
+        val up = diverged()
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+
+        val (result, writes) = withService(up.repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            up.repo.write("src/Local.kt", "edited\n")
+            service.update(ready, UpdateStrategy.MERGE) to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertFalse(result.ok)
+        assertEquals(
+            "Update needs a clean working tree to merge or rebase: commit your 1 changed files first",
+            result.message,
+        )
+        assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+        assertEquals("edited\n", Files.readString(up.repo.root.resolve("src/Local.kt")))
+        assertFalse(writes.any { it.startsWith("git merge") }, writes.toString())
+    }
+
+    @Test
+    fun `a rebase after the plan refuses a tree that became dirty`() {
+        val up = diverged()
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+
+        val (result, writes) = withService(up.repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            up.repo.write("src/Local.kt", "edited\n")
+            service.update(ready, UpdateStrategy.REBASE) to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertFalse(result.ok)
+        assertEquals(
+            "Update needs a clean working tree to merge or rebase: commit your 1 changed files first",
+            result.message,
+        )
+        assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+        assertEquals("edited\n", Files.readString(up.repo.root.resolve("src/Local.kt")))
+        assertFalse(writes.any { it.startsWith("git rebase") }, writes.toString())
+    }
+
+    @Test
+    fun `a rebase that fails part-way is undone`() {
+        val up = upstream()
+        val clone = cloneOf(up)
+        commitIn(up, clone, "src/Main.kt", "remote\n", "Remote change")
+        up.repo.write("src/One.kt", "one\n")
+        up.repo.commitAll("Local one")
+        up.repo.write("src/Main.kt", "local\n")
+        up.repo.commitAll("Local two")
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+
+        val (result, operation) = withService(up.repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            service.update(ready, UpdateStrategy.REBASE) to service.operationInProgress()
+        }
+
+        assertFalse(result.ok)
+        assertEquals(
+            "Update had conflicts in 1 files and was undone: update from the terminal (⌥F12) to resolve them",
+            result.message,
+        )
+        assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+        assertEquals("refs/heads/main", up.repo.git("symbolic-ref", "HEAD").trim())
+        assertEquals("local\n", Files.readString(up.repo.root.resolve("src/Main.kt")))
+        assertFalse(Files.exists(up.repo.root.resolve(".git/rebase-merge")))
+        assertNull(operation)
+    }
+
+    @Test
+    fun `a rebase refused over an untracked file leaves the branch and the file alone`() {
+        val up = upstream()
+        val clone = cloneOf(up)
+        commitIn(up, clone, "new.txt", "remote\n", "Remote adds new")
+        up.repo.write("src/Local.kt", "local\n")
+        up.repo.commitAll("Local commit")
+        up.repo.write("new.txt", "mine\n")
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+
+        val (result, operation) = withService(up.repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            service.update(ready, UpdateStrategy.REBASE) to service.operationInProgress()
+        }
+
+        assertFalse(result.ok)
+        assertEquals("Update stopped: 1 untracked files would be overwritten: move them first", result.message)
+        assertNull(operation)
+        assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+        assertEquals("refs/heads/main", up.repo.git("symbolic-ref", "HEAD").trim())
+        assertEquals("mine\n", Files.readString(up.repo.root.resolve("new.txt")))
+        assertFalse(Files.exists(up.repo.root.resolve(".git/rebase-merge")))
+    }
+
+    @Test
     fun `autoStash in the repository does not leave a stash`() {
         val up = upstream()
         up.repo.git("config", "merge.autoStash", "true")
