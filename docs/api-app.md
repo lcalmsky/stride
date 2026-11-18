@@ -2750,7 +2750,7 @@ Kotlin 2.4.21:
 | a top-level function or property named `A` in project sources (`ProjectTypes.hasTopLevelFunction`, private ones included) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
 | the class has no explicit constructor at all | the implicit `A()` disappears; `A()` stops compiling, enum entries without arguments stop compiling, and a top-level `fun A()` silently receives `A()` | write `constructor()` first, then the new constructor: `A()`, entries and subclass calls keep their target (measured). A callable reference `::A` without an expected type becomes ambiguous (a compile error, documented) |
 | a supertype initialized in the header (`class A : Base()`) | `supertype initialization is impossible without a primary constructor` | refuse: `A initializes Base() in its header` |
-| a class supertype without parentheses (`class A : Base`), possible only when the class already has explicit constructors | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first as written (`vararg` kept, passed on as `*xs`) and the body delegates `: super(a, b)`; when an unparenthesized supertype is not in project sources and the class has explicit constructors, refuse: `Base is not in project sources`. Without explicit constructors every unparenthesized supertype is an interface (a class supertype would need `()`), so it needs no `super` call |
+| a class supertype without parentheses (`class A : Base`), possible only when the class has no primary constructor and has secondary constructors | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first as written (`vararg` kept, passed on as `*xs`) and the body delegates `: super(a, b)`; when an unparenthesized supertype is not in project sources and the class has no primary constructor and has secondary constructors, refuse: `Base is not in project sources`. Otherwise every unparenthesized supertype is an interface (with a primary constructor, written or implicit, a class supertype would need `()`), so it needs no `super` call |
 | `types == null` with a class supertype or a top-level-function check pending | the index is not ready | refuse: `Indexing… try again in a moment` |
 
 The empty constructor body follows IntelliJ's template, which is a comment; stride writes no
@@ -2806,14 +2806,15 @@ override fun toString(): String {
   or hash the wrong value without a compile error: the parameter becomes `other1` and the local
   `result1`, as IntelliJ's unique-name helper does, when such a property is checked.
 - **Supertypes.** The superclass chain is walked through project sources. When a class along it
-  overrides `equals`, equals adds `if (!super.equals(other)) return false`; independently, when one
-  overrides `hashCode`, hashCode starts `var result = super.hashCode()`. A chain that reaches no
+  overrides `equals` (one parameter of type `Any?`; an overload such as `equals(o: Foo)` does not
+  count), equals adds `if (!super.equals(other)) return false`; independently, when one
+  overrides `hashCode` (no parameters), hashCode starts `var result = super.hashCode()`. A chain that reaches no
   override adds neither (`Any`'s versions compare identity, so a super call would make every
   comparison false). One that declares them `final` refuses: `Base declares equals() final`. A class supertype that is not in
   project sources refuses equals/hashCode with `Base is not in project sources`: whether its
   `equals` compares fields cannot be read, and a wrong super call makes every comparison false.
-  The same holds for an unparenthesized supertype outside project sources when the class has
-  explicit constructors (it may be a class, as in G4).
+  The same holds for an unparenthesized supertype outside project sources when the class has no
+  primary constructor and has secondary constructors (it may be a class, as in G4).
   toString never calls super, as IntelliJ's default.
 - **Index.** With `types == null` and a supertype, equals/hashCode refuses with
   `Indexing… try again in a moment`, because the supertype rule above reads other files; without a
@@ -2832,9 +2833,13 @@ the same tokens and blocks as the current file.
   `private`, not `final` (`final override` included), not constructors, `init` blocks or nested
   types; interface members are open; class members need `open`, `abstract` or `override`. The
   nearest declaration along the walk wins. A member the class already declares with the same
-  name and the same written parameter types after substitution is left out. Override also lists
+  name and the same written parameter types after substitution is left out; a `val` or `var`
+  parameter of the primary constructor counts as a declared property. A function whose return type
+  is not written (an expression body, `fun name() = "x"`) is listed with `type not written` and
+  cannot be checked, as a property is. Override also lists
   `equals(other: Any?): Boolean`, `hashCode(): Int` and `toString(): String` of `Any` under the
-  group `Any` unless the class or a project supertype declares them, or declares them `final`.
+  group `Any` unless the class or a project supertype declares them, or declares them `final`; an
+  interface lists no `Any` group (an interface may not implement a member of `Any`).
 - **Override** lists every candidate grouped by supertype, none checked. A concrete member's body
   calls super: `return super.f(a, b)` (block body; `Unit` members drop the `return`), a `vararg`
   parameter passes as `*xs` (measured: without `*` the array arrives as one element), and when
@@ -2858,10 +2863,12 @@ the same tokens and blocks as the current file.
   - a class body and an unrelated interface body: listed (`inherits multiple implementations`); when
     the class body is final no override compiles either, so the row is disabled: `f is final in B`
   - an abstract class declaration and an unrelated interface body: listed
-  - a `private` body in a class is not a declaration here, so `P.f` is listed Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+  - a `private` body in a class is not a declaration here, so `P.f` is listed
+
+  Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
   walk is not in project sources (a supertype with `()`, or one without parentheses in a class with
-  explicit constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
+  no primary constructor and with secondary constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
   (measured: `class C : Lib(), P` compiles without overriding when `Lib` has `f()`, so a
   generated `TODO()` would replace working code). A written supertype that is an interface outside
   project sources only drops its members, and the chooser title says
