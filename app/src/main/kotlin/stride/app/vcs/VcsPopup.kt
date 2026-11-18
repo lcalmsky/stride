@@ -66,6 +66,9 @@ class VcsPopupRequest internal constructor() {
 
     internal var file: Path? = null
     internal var line: Int? = null
+
+    /** Read before the popup takes `state.focus`; the App hands the keyboard back to it on close. */
+    internal var openedFrom: KeyContext? = null
 }
 
 internal const val VCS_POPUP_KEY: String = "popup-vcs-operations"
@@ -75,6 +78,7 @@ private val vcsPopupWidth = 360.dp
 /** Opens the VCS Operations popup; without a project it opens with the not-a-repository row. */
 fun openVcsPopup(state: AppState): Boolean {
     val request = VcsPopupRequest()
+    request.openedFrom = state.focus
     val session = state.session
     if (session == null) {
         request.outsideRepository = true

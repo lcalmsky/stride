@@ -921,9 +921,6 @@ fun App(
             }
         }
         val vcsPopup = state.vcsPopup
-        // openVcsPopup moves `state.focus` to the popup in the same call, so this reads
-        // CONTEXT_POPUP and closing the popup keeps handing the editor the keyboard.
-        val vcsReturnContext = remember(vcsPopup) { if (vcsPopup != null) state.focus else null }
         if (vcsPopup != null && session != null) {
             Box(
                 Modifier
@@ -934,7 +931,7 @@ fun App(
             ) {
                 VcsPopup(vcsPopup, state) {
                     state.vcsPopup = null
-                    refocusAfterPopup(state, vcsReturnContext)
+                    refocusAfterPopup(state, vcsPopup.openedFrom)
                 }
             }
         }

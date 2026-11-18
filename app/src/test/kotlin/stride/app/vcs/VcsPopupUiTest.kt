@@ -16,12 +16,18 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
@@ -241,6 +247,182 @@ class VcsPopupUiTest {
             assertNull(state.vcsPopup)
             assertFalse(state.toolWindows.visible && state.toolWindows.activeId == "commit")
         }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control V closes back onto the commit window's list when it had the keyboard`() = runComposeUiTest {
+        withRepo("popup-return-commit") { state, repo ->
+            repo.write("src/Main.kt", "first\n")
+            repo.commitAll("Initial commit")
+            repo.write("src/Main.kt", "second\n")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) {
+                state.toolWindows.visible && state.toolWindows.activeId == "commit"
+            }
+            waitUntil(timeoutMillis = 5_000) { commitRowShown() }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            onRoot().performKeyInput { pressKey(Key.Tab) }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                state.vcsPopup != null && state.focus == KeyContext.CONTEXT_POPUP
+            }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.vcsPopup == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control V closes back onto the git window's log when it had the keyboard`() = runComposeUiTest {
+        withRepo("popup-return-git") { state, repo ->
+            repo.write("src/Main.kt", "one\n")
+            repo.commitAll("Initial commit")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            pressCommand(Key.Nine)
+            waitUntil(timeoutMillis = 5_000) {
+                state.toolWindows.visible && state.toolWindows.activeId == "git"
+            }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Initial commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                state.vcsPopup != null && state.focus == KeyContext.CONTEXT_POPUP
+            }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.vcsPopup == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            // The log holds the keyboard again: Enter opens the row it still has selected.
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            assertTrue(requireNotNull(state.diffRequest).title.endsWith("Initial commit"))
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control V from the editor returns to the editor`() = runComposeUiTest {
+        withRepo("popup-return-editor") { state, repo ->
+            val file = repo.write("src/Main.kt", "alpha\n")
+            repo.commitAll("Initial commit")
+            runBlocking { state.session!!.git.refreshNow() }
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(file))
+            state.focusSelectedEditor()
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                state.vcsPopup != null && state.focus == KeyContext.CONTEXT_POPUP
+            }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.vcsPopup == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertTrue(session.editors.selected is TextFileEditor)
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control V then 1 leaves the keyboard in the commit window's message field`() = runComposeUiTest {
+        withRepo("popup-return-commit-row") { state, repo ->
+            repo.write("src/Main.kt", "first\n")
+            repo.commitAll("Initial commit")
+            repo.write("src/Main.kt", "second\n")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Commit…").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.One) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.toolWindows.visible && state.toolWindows.activeId == "commit"
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            assertNull(state.vcsPopup)
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `commit from the popup over the commit window moves the keyboard to the message field`() = runComposeUiTest {
+        withRepo("popup-return-commit-window-row") { state, repo ->
+            repo.write("src/Main.kt", "first\n")
+            repo.commitAll("Initial commit")
+            repo.write("src/Main.kt", "second\n")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { commitRowShown() }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            onRoot().performKeyInput { pressKey(Key.Tab) }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                state.vcsPopup != null && state.focus == KeyContext.CONTEXT_POPUP
+            }
+            onRoot().performKeyInput { pressKey(Key.One) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.commitRowShown(): Boolean =
+        onAllNodes(hasText("Main.kt") and hasAnyAncestor(hasTestTag(COMMIT_LIST_TAG)))
+            .fetchSemanticsNodes()
+            .isNotEmpty()
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.pressCommand(key: Key) {
+        onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(key) } }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.pressControl(key: Key) {
+        onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(key) } }
     }
 
     @OptIn(ExperimentalTestApi::class)
