@@ -805,4 +805,74 @@ class KotlinCodeModelTest {
         assertSame(kotlinCodeFor(text), kotlinCodeFor(text))
         assertNotSame(kotlinCodeFor(text), kotlinCodeFor(String(text.toCharArray())))
     }
+
+    private fun shapeOf(text: String): String? {
+        val code = model(text)
+        val local = code.locals.first { it.name == "x" }
+        return code.smartCastShape(local, 0, text.length)?.text
+    }
+
+    @Test
+    fun `each smart cast shape names its marker`() {
+        val cases = listOf(
+            "fun f(x: Any) {\n    if (x is String) println(x)\n}\n" to "is",
+            "fun f(x: Any) {\n    if (x !is String) println(x)\n}\n" to "!",
+            "fun f(x: Any) {\n    val y = x as String\n}\n" to "as",
+            "fun f(x: Any) {\n    val y = x!!\n}\n" to "!!",
+            "fun f(x: Any) {\n    if (x == null) return\n}\n" to "==",
+            "fun f(x: Any) {\n    if (x != null) return\n}\n" to "!=",
+            "fun f(x: Any) {\n    if (x === null) return\n}\n" to "===",
+            "fun f(x: Any) {\n    if (x !== null) return\n}\n" to "!==",
+            "fun f(x: Any) {\n    if (null == x) return\n}\n" to "==",
+            "fun f(x: Any) {\n    println(x ?: \"\")\n}\n" to "?:",
+            "fun f(x: Any) {\n    when (x) {\n        else -> 1\n    }\n}\n" to "when",
+            "fun f(x: Any) {\n    println(x.isNullOrEmpty())\n}\n" to "isNullOrEmpty",
+            "fun f(x: Any) {\n    println(x.isNullOrBlank())\n}\n" to "isNullOrBlank",
+            "fun f(x: Any) {\n    require(x)\n}\n" to "require",
+            "fun f(x: Any) {\n    check(x)\n}\n" to "check",
+            "fun f(x: Any) {\n    requireNotNull(x)\n}\n" to "requireNotNull",
+            "fun f(x: Any) {\n    checkNotNull(x)\n}\n" to "checkNotNull",
+            "fun f(x: Any) {\n    assert(x)\n}\n" to "assert",
+        )
+        for ((text, expected) in cases) {
+            assertEquals(expected, shapeOf(text), text)
+        }
+    }
+
+    @Test
+    fun `a shape for a same-name local elsewhere is not this local's`() {
+        val text = "fun f(x: Any) {\n    if (x is String) {\n        val x = 1\n        println(x)\n    }\n}\n"
+        val code = model(text)
+
+        val parameter = code.locals.first { it.name == "x" && it.kind == LocalKind.PARAMETER }
+        val inner = code.locals.first { it.name == "x" && it.kind == LocalKind.VAL }
+        assertEquals("is", code.smartCastShape(parameter, 0, text.length)?.text)
+        assertNull(code.smartCastShape(inner, 0, text.length))
+    }
+
+    @Test
+    fun `a shape outside the range is not returned`() {
+        val text = "fun f(x: Any) {\n    if (x is String) println(x)\n}\n"
+        val code = model(text)
+        val local = code.locals.first { it.name == "x" }
+
+        assertEquals("is", code.smartCastShape(local, 0, text.length)?.text)
+        assertNull(code.smartCastShape(local, text.indexOf("is String"), text.length))
+        assertNull(code.smartCastShape(local, 0, text.indexOf("x is")))
+    }
+
+    @Test
+    fun `a final class in the file and an open one are told apart`() {
+        val final = model("class Foo(val n: Int)\n")
+        val open = model("open class Foo(val n: Int)\n")
+        val sealed = model("sealed class Foo(val n: Int)\n")
+        val generic = model("class Foo<T>(val n: Int)\n")
+        val interfaceType = model("interface Foo {\n    fun run()\n}\n")
+
+        assertTrue(final.isFinalClassInFile("Foo"))
+        assertFalse(open.isFinalClassInFile("Foo"))
+        assertFalse(sealed.isFinalClassInFile("Foo"))
+        assertFalse(generic.isFinalClassInFile("Foo"))
+        assertFalse(interfaceType.isFinalClassInFile("Foo"))
+    }
 }

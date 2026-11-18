@@ -1200,4 +1200,26 @@ class KotlinExtractMethodTest {
             refused(select(text, "emptyList()")),
         )
     }
+
+    @Test
+    fun `an input with a smart cast before the selection is refused`() {
+        val text = "fun show(a: Any) = println(\"any\")\nfun show(s: String) = println(\"string\")\n\n" +
+            "fun f(x: Any) {\n    if (x is String) {\n        show(x)\n    }\n}\n"
+        assertEquals(
+            "x may be smart-cast at line 5; the extracted function would see its declared type",
+            refused(select(text, "show(x)")),
+        )
+    }
+
+    @Test
+    fun `a smart cast inside the selection moves with it`() {
+        val text = "fun f(x: Any) {\n    println(x!!)\n}\n"
+        val applied = extract(text, "x!!")
+
+        assertEquals(
+            "fun f(x: Any) {\n    println(extracted(x))\n}\n\nprivate fun extracted(x: Any) = x!!\n",
+            applied.text,
+        )
+        assertEquals("Extracted method extracted", applied.message)
+    }
 }

@@ -633,6 +633,51 @@ class KotlinIntroduceVariableTest {
         assertEquals("fun f() {\n    val u = 1u\n    println(u)\n}\n", applied.text)
     }
 
+    @Test
+    fun `a smart cast between the insertion point and the selection is refused`() {
+        val text = "fun f(x: Any) {\n    show(x!!, x)\n}\n"
+        val last = text.lastIndexOf("x")
+        val step = startAt(text, last, last + 1)
+
+        assertEquals(
+            "x may be smart-cast at line 2; the variable would keep its unchecked type",
+            refused(step),
+        )
+    }
+
+    @Test
+    fun `an occurrence after a smart cast is left out`() {
+        val text = "fun f(x: Int) {\n    println(x + 1)\n    val y = x!!\n    println(x + 1)\n}\n"
+        val question = ask(select(text, "x + 1"))
+        val applied = finish(text, question, "value")
+
+        assertEquals(
+            "fun f(x: Int) {\n    val value = x + 1\n    println(value)\n    val y = x!!\n    println(x + 1)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a smart cast before the insertion point does not refuse`() {
+        val text = "fun f(x: Any) {\n    if (x !is String) return\n    show(x)\n}\n"
+        val x = text.indexOf("show(x)") + "show(".length
+        val question = ask(startAt(text, x, x + 1))
+        val applied = finish(text, question, "value")
+
+        assertEquals(
+            "fun f(x: Any) {\n    if (x !is String) return\n    val value = x\n    show(value)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `an if statement body selection is refused before the smart cast rule`() {
+        val text = "fun f(x: Any) {\n    if (x is String) show(x)\n}\n"
+        val step = startAt(text, text.indexOf("show(x)") + "show(".length, text.indexOf("show(x)") + "show(".length + 1)
+
+        assertEquals("x runs only in some cases here; a variable would run it every time", refused(step))
+    }
+
     /** Introduce Variable with the suggested name, then Inline it at its only use. */
     private fun introduceThenInline(text: String, snippet: String): String {
         val introduced = finish(text, ask(select(text, snippet)), "value").text

@@ -443,6 +443,7 @@ internal object KotlinInlineFunction {
                 return CallPlan.Refused("Arguments of the call at line $line would run in a different order")
             }
         }
+        argumentTypeRefusal(code, bindings, site)?.let { return CallPlan.Refused(it) }
         bodyNameCapture(code, body, site)?.let {
             return CallPlan.Refused("$it means something else at the call at line $line")
         }
@@ -474,6 +475,109 @@ internal object KotlinInlineFunction {
             return CallPlan.Refused("The inlined code spans several lines and cannot go into a string template")
         }
         return CallPlan.Ready(site.range, text)
+    }
+
+    private enum class ArgumentType { FIXED, SUFFIXED, EXACT }
+
+    private val LITERAL_KEYWORDS = setOf("true", "false", "null")
+
+    /**
+     * Each argument must have its parameter's type as the text shows it, since the inlined body
+     * resolves by the argument's static type (R5 「Arguments」).
+     */
+    private fun argumentTypeRefusal(
+        code: KotlinCode,
+        bindings: List<Binding>,
+        site: CallSite,
+    ): String? {
+        val functionStart = enclosingFunctionStart(code, site.calleeStart)
+        for (binding in bindings) {
+            val type = binding.parameter.type ?: continue
+            val argument = KotlinInline.oneLine(code.text.substring(binding.range.start, binding.range.end))
+            val narrower = "The argument $argument may have a narrower type than ${binding.parameter.name}: $type"
+            when (argumentType(code, type)) {
+                ArgumentType.FIXED -> Unit
+                ArgumentType.SUFFIXED -> {
+                    if (literalOperatorsOnly(code, binding.range) &&
+                        !hasNumericSuffix(code, binding.range, type)
+                    ) {
+                        return narrower
+                    }
+                }
+                ArgumentType.EXACT -> {
+                    val reference = singleReference(code, binding.range)
+                    val local = reference?.resolved
+                    if (local != null && local.writtenType?.trim() == type.trim()) {
+                        val shape = code.smartCastShape(local, functionStart, site.calleeStart) ?: continue
+                        return "${local.name} may be smart-cast at line ${code.lineIndex(shape.start) + 1}; " +
+                            "the inlined expression could get a different type"
+                    }
+                    if (KotlinInline.fitsDeclaredType(code, type, binding.range)) continue
+                    return narrower
+                }
+            }
+        }
+        return null
+    }
+
+    private fun argumentType(code: KotlinCode, type: String): ArgumentType {
+        val trimmed = type.trim()
+        if (trimmed.endsWith("?")) return ArgumentType.EXACT
+        when (trimmed) {
+            "Int", "Boolean", "Char", "String", "Double" -> return ArgumentType.FIXED
+            "Long", "Short", "Byte", "Float" -> return ArgumentType.SUFFIXED
+        }
+        return if (code.isFinalClassInFile(trimmed)) ArgumentType.FIXED else ArgumentType.EXACT
+    }
+
+    /** True when [offset] sits in the body of the innermost function holding it, or at the top level. */
+    private fun enclosingFunctionStart(code: KotlinCode, offset: Int): Int =
+        code.functions
+            .filter { it.bodyRange?.contains(offset) == true }
+            .maxByOrNull { it.bodyRange!!.start }
+            ?.funToken
+            ?.start ?: 0
+
+    private fun literalOperatorsOnly(code: KotlinCode, range: KtRange): Boolean {
+        val tokens = code.tokens.filter {
+            !it.isComment && (it.isCode || it.isStringBody) && it.start >= range.start && it.end <= range.end
+        }
+        if (tokens.isEmpty()) return false
+        return tokens.all { token ->
+            when (token.type) {
+                KotlinTokenTypes.NUMBER, KotlinTokenTypes.CHARACTER, KotlinTokenTypes.OPERATION_SIGN,
+                KotlinTokenTypes.PARENTHESES, KotlinTokenTypes.BRACKETS,
+                -> true
+                else -> token.isStringBody ||
+                    (token.type == KotlinTokenTypes.KEYWORD && token.text in LITERAL_KEYWORDS)
+            }
+        }
+    }
+
+    private fun hasNumericSuffix(code: KotlinCode, range: KtRange, type: String): Boolean {
+        val suffix = when (type.trim()) {
+            "Long" -> "l"
+            "Float" -> "f"
+            else -> return false
+        }
+        return code.tokens.any { token ->
+            token.type == KotlinTokenTypes.NUMBER && token.start >= range.start && token.end <= range.end &&
+                numberCarries(token.text, suffix)
+        }
+    }
+
+    private fun numberCarries(text: String, suffix: String): Boolean {
+        val lower = text.lowercase()
+        if (!lower.endsWith(suffix)) return false
+        if (suffix == "f" && (lower.startsWith("0x") || lower.startsWith("0b"))) return false
+        return true
+    }
+
+    private fun singleReference(code: KotlinCode, range: KtRange): KtReference? {
+        val tokens = code.code.filter { it.start >= range.start && it.end <= range.end }
+        val token = tokens.singleOrNull() ?: return null
+        if (!isNameToken(token)) return null
+        return code.references.firstOrNull { it.token.index == token.index }
     }
 
     private fun argumentSource(

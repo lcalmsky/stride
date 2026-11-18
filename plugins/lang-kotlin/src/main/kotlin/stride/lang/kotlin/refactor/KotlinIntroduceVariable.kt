@@ -58,6 +58,12 @@ internal object KotlinIntroduceVariable {
         if (!code.isStable(expression) && code.effectsBefore(expression).isNotEmpty()) {
             return RefactoringStep.Refused("Code before $written in this statement would run after it")
         }
+        code.smartCastShapeReadBy(expression, code.lineStart(statement.start), expression.start)?.let { shape ->
+            return RefactoringStep.Refused(
+                "${shape.first.name} may be smart-cast at line ${code.lineIndex(shape.second.start) + 1}; " +
+                    "the variable would keep its unchecked type",
+            )
+        }
         val others = occurrences(code, expression, statement)
         if (others.isEmpty()) return nameStep(code, expression, statement, emptyList())
         val all = (others + expression).sortedBy { it.start }
@@ -146,6 +152,7 @@ internal object KotlinIntroduceVariable {
             !it.isComment && (it.isCode || it.isStringBody) && it.start >= statement.start && it.end <= blockEnd
         }
         val receiverName = receiverSensitiveName(code, expression)
+        val insertion = code.lineStart(statement.start)
         val result = ArrayList<KtRange>()
         var index = 0
         while (index + template.size <= search.size) {
@@ -172,6 +179,10 @@ internal object KotlinIntroduceVariable {
                 continue
             }
             if (receiverName != null && receiverScopeBetween(code, expression.start, range.start)) {
+                index += template.size
+                continue
+            }
+            if (code.smartCastShapeReadBy(range, insertion, range.start) != null) {
                 index += template.size
                 continue
             }

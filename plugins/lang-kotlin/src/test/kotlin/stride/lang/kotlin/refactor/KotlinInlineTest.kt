@@ -499,14 +499,12 @@ class KotlinInlineTest {
     }
 
     @Test
-    fun `a trailing lambda maps to the last parameter`() {
+    fun `a trailing lambda argument of a function type is refused`() {
         val text = "private fun each(v: Int, block: (Int) -> Unit) = list.forEach(block)\n\n" +
             "fun f() {\n    each(1) { println(it) }\n}\n"
-        val applied = apply(choose(caretAt(text, "each(1)"), 0), text)
         assertEquals(
-            "private fun each(v: Int, block: (Int) -> Unit) = list.forEach(block)\n\n" +
-                "fun f() {\n    list.forEach({ println(it) })\n}\n",
-            applied.text,
+            "The argument { println(it) } may have a narrower type than block: (Int) -> Unit",
+            refused(caretAt(text, "each(1)")),
         )
     }
 
@@ -738,29 +736,33 @@ class KotlinInlineTest {
 
 
     @Test
-    fun `a call that passes only a trailing lambda is inlined at the call`() {
+    fun `a call that passes only a trailing lambda is refused at the call`() {
         val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each { println(1) }\n}\n"
-        val applied = apply(choose(caretAt(text, "each {"), 0), text)
 
-        assertEquals("private fun each(block: () -> Unit) = block()\n\nfun f() {\n    ({ println(1) })()\n}\n", applied.text)
-        assertEquals("Inlined a call of each", applied.message)
+        assertEquals(
+            "The argument { println(1) } may have a narrower type than block: () -> Unit",
+            refused(caretAt(text, "each {")),
+        )
     }
 
     @Test
-    fun `a call that passes only a trailing lambda is inlined in all mode`() {
+    fun `a call that passes only a trailing lambda is refused in all mode`() {
         val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each { println(1) }\n}\n"
-        val edit = (caretAt(text, "fun each", delta = 4) as RefactoringStep.Apply).edit
 
-        assertEquals("fun f() {\n    ({ println(1) })()\n}\n", apply(text, edit.edits))
-        assertEquals("Inlined a call of each", edit.message)
+        assertEquals(
+            "The argument { println(1) } may have a narrower type than block: () -> Unit",
+            refused(caretAt(text, "fun each", delta = 4)),
+        )
     }
 
     @Test
-    fun `a trailing lambda on the next line is a call`() {
+    fun `a trailing lambda on the next line is a refused call`() {
         val text = "private fun each(block: () -> Unit) = block()\n\nfun f() {\n    each\n    { println(1) }\n}\n"
-        val applied = apply(choose(caretAt(text, "each\n"), 0), text)
 
-        assertEquals("private fun each(block: () -> Unit) = block()\n\nfun f() {\n    ({ println(1) })()\n}\n", applied.text)
+        assertEquals(
+            "The argument { println(1) } may have a narrower type than block: () -> Unit",
+            refused(caretAt(text, "each\n")),
+        )
     }
 
 
@@ -971,5 +973,92 @@ class KotlinInlineTest {
 
         assertEquals("fun f() {\n    { }\n    println(1)\n}\n", applied.text)
         assertEquals("Inlined x (1 use)", applied.message)
+    }
+
+    @Test
+    fun `a local read by the initializer with a smart cast before the use is refused`() {
+        val text = "fun show(a: Any) = println(\"any\")\nfun show(s: String) = println(\"string\")\n\n" +
+            "fun f(x: Any) {\n    val v = x\n    if (x is String) show(v)\n}\n"
+        assertEquals(
+            "x may be smart-cast at line 6; the inlined expression could get a different type",
+            refused(caretAt(text, "v = x")),
+        )
+    }
+
+    @Test
+    fun `a smart cast inside the initializer does not refuse`() {
+        val text = "fun f(x: Any?) {\n    val v = x!!\n    show(v)\n}\n"
+        val applied = apply(caretAt(text, "v = x!!"), text)
+
+        assertEquals("fun f(x: Any?) {\n    show(x!!)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `an Any argument that is not the parameter's type is refused`() {
+        val text = "fun show(a: Any) = println(\"any\")\nfun show(s: String) = println(\"string\")\n\n" +
+            "private fun g(a: Any) = show(a)\n\nfun f() {\n    g(\"s\")\n}\n"
+        assertEquals(
+            "The argument \"s\" may have a narrower type than a: Any",
+            refused(caretAt(text, "g(\"s\")")),
+        )
+    }
+
+    @Test
+    fun `a reference argument with a smart cast before the call is refused`() {
+        val text = "private fun g(a: Any) = println(a)\n\nfun f(x: Any) {\n    if (x is String) {\n        g(x)\n    }\n}\n"
+        assertEquals(
+            "x may be smart-cast at line 4; the inlined expression could get a different type",
+            refused(caretAt(text, "g(x)")),
+        )
+    }
+
+    @Test
+    fun `an argument of a narrow constructor is refused for an Any parameter`() {
+        val text = "class Foo(val n: Int)\n\nprivate fun g(a: Any) = println(a)\n\nfun f() {\n    g(Foo(1))\n}\n"
+        assertEquals(
+            "The argument Foo(1) may have a narrower type than a: Any",
+            refused(caretAt(text, "g(Foo(1))")),
+        )
+    }
+
+    @Test
+    fun `an Int parameter takes an expression of literals`() {
+        val text = "private fun g(a: Int) = a + 1\n\nfun f() {\n    println(g(1 + 2))\n}\n"
+        val applied = apply(choose(caretAt(text, "g(1 + 2)"), 0), text)
+
+        assertEquals("private fun g(a: Int) = a + 1\n\nfun f() {\n    println((1 + 2) + 1)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a final class in this file takes any argument`() {
+        val text = "class Foo(val n: Int)\n\nprivate fun g(a: Foo) = a.n\n\nfun f() {\n    println(g(Foo(1)))\n}\n"
+        val applied = apply(choose(caretAt(text, "g(Foo(1))"), 0), text)
+
+        assertEquals("class Foo(val n: Int)\n\nprivate fun g(a: Foo) = a.n\n\nfun f() {\n    println(Foo(1).n)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a local written with the parameter's type is passed`() {
+        val text = "private fun g(a: Any) = println(a)\n\nfun f(other: Any) {\n    g(other)\n}\n"
+        val applied = apply(choose(caretAt(text, "g(other)"), 0), text)
+
+        assertEquals("private fun g(a: Any) = println(a)\n\nfun f(other: Any) {\n    println(other)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a Long parameter takes a literal with its suffix`() {
+        val text = "private fun h(a: Long) = a + 1\n\nfun f() {\n    println(h(1L))\n}\n"
+        val applied = apply(choose(caretAt(text, "h(1L)"), 0), text)
+
+        assertEquals("private fun h(a: Long) = a + 1\n\nfun f() {\n    println(1L + 1)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a Long parameter refuses a literal without its suffix`() {
+        val text = "private fun h(a: Long) = a + 1\n\nfun f() {\n    println(h(2147483647))\n}\n"
+        assertEquals(
+            "The argument 2147483647 may have a narrower type than a: Long",
+            refused(caretAt(text, "h(2147483647)")),
+        )
     }
 }

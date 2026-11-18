@@ -154,7 +154,31 @@ internal object KotlinInline {
                 }
             }
         }
+        smartCastRefusal(code, statement, initializer, uses)?.let { return RefactoringStep.Refused(it) }
         return RefactoringStep.Apply(variableEdit(code, local, statement, initializer, uses))
+    }
+
+    /** A local the initializer reads may be smart-cast before a reference (R5 「Other initializers」). */
+    private fun smartCastRefusal(
+        code: KotlinCode,
+        statement: KtStatement,
+        initializer: KtRange,
+        uses: List<KtReference>,
+    ): String? {
+        val reads = code.references
+            .filter { it.token.start >= initializer.start && it.token.end <= initializer.end }
+            .mapNotNull { it.resolved }
+        if (reads.isEmpty()) return null
+        var best: Pair<KtLocal, KtToken>? = null
+        for (use in uses) {
+            for (read in reads) {
+                val shape = code.smartCastShape(read, statement.end, use.token.start) ?: continue
+                if (best == null || shape.start < best.second.start) best = read to shape
+            }
+        }
+        val pair = best ?: return null
+        return "${pair.first.name} may be smart-cast at line ${code.lineIndex(pair.second.start) + 1}; " +
+            "the inlined expression could get a different type"
     }
 
     private fun declaredInNestedScope(code: KotlinCode, local: KtLocal): Boolean {
