@@ -790,6 +790,81 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a declaration after a string expression body is a function`() {
+        assertEquals(
+            listOf("a", "b"),
+            model("fun a(x: Any) = \"?\"\nfun b() {\n}\n").functions.map { it.name },
+        )
+        assertEquals(
+            listOf("a", "b"),
+            model("fun a(x: Any) = \"\${x}\"\nfun b() {\n}\n").functions.map { it.name },
+        )
+        assertEquals(
+            listOf("a", "b"),
+            model("fun a(x: Any) = \"\"\"raw\"\"\"\nfun b() {\n}\n").functions.map { it.name },
+        )
+    }
+
+    @Test
+    fun `a block after a string is a lambda rather than a control body`() {
+        val ifBody = "fun f(c: Boolean) {\n    if (c) \"a\"\n    {\n        foo()\n    }\n}\n"
+        assertEquals(listOf(BlockKind.FUNCTION_BODY, BlockKind.LAMBDA), model(ifBody).blocks.map { it.kind })
+
+        val elseBody = "fun f(c: Boolean) {\n    if (c) 1 else \"a\"\n    { }\n}\n"
+        assertEquals(listOf(BlockKind.FUNCTION_BODY, BlockKind.LAMBDA), model(elseBody).blocks.map { it.kind })
+    }
+
+    @Test
+    fun `an index after a string literal is not a call`() {
+        val template = model("fun f(x: Any) {\n    val c = \"\${x}\"[0]\n}\n")
+        assertTrue(template.calls.isEmpty())
+
+        val name = model("fun f(s: String) {\n    val c = s[0]\n}\n")
+        assertEquals(listOf(CallKind.INDEX), name.calls.map { it.kind })
+    }
+
+    @Test
+    fun `a type check on a string literal narrows nothing`() {
+        assertNull(shapeOf("fun f(x: Any) {\n    if (\"\${x}\" is String) show(x)\n}\n"))
+    }
+
+    @Test
+    fun `an infix name before a string literal is not its operand`() {
+        val text = "fun f(x: Any) {\n    val pair = x to \"b\"\n    if (x to \"a\" == pair) show(pair)\n}\n"
+        assertNull(narrowingOf(text, "to \"a\""))
+        assertEquals("pair", narrowingOf(text, "show(pair)"))
+    }
+
+    @Test
+    fun `a string literal is not the right operand of a comparison`() {
+        val text = "fun f(x: Any) {\n    val pair = x to \"a\"\n    if (pair == \"b\" to x) show(x)\n}\n"
+        assertNull(narrowingOf(text, "\"b\" to x"))
+    }
+
+    @Test
+    fun `a member read on a string literal is not a chain`() {
+        val text = "fun f(x: Any) {\n    if (\"\${x}\".length == 3) show(x.length)\n}\n"
+        assertNull(narrowingOf(text, "show(x.length)"))
+    }
+
+    @Test
+    fun `a null check on a string literal narrows nothing`() {
+        val text = "fun f(x: Any?) {\n    if (\"\${x}\".isNullOrEmpty()) show(x)\n}\n"
+        assertNull(narrowingOf(text, "show(x)"))
+    }
+
+    @Test
+    fun `a when subject that is a string literal narrows nothing`() {
+        assertNull(shapeOf("fun f(x: Any) {\n    when (\"\${x}\") {\n        else -> show(x)\n    }\n}\n"))
+    }
+
+    @Test
+    fun `a check call whose argument is a string literal narrows nothing`() {
+        val text = "fun f(x: Any) {\n    require(\"\${x}\")\n    show(x)\n}\n"
+        assertNull(narrowingOf(text, "show(x)"))
+    }
+
+    @Test
     fun `a class body property and its accessor are separate lines`() {
         val text = "class C {\n    var x = 0\n    private set\n}\n"
         val code = model(text)

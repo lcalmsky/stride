@@ -159,6 +159,9 @@ internal class KotlinCode(val text: String) {
     /** Code token index → the token before it, string bodies included. */
     private val previousTokens: Array<KtToken?>
 
+    /** Code token index → the token after it, string bodies included. */
+    private val nextTokens: Array<KtToken?>
+
     init {
         val raw = codeTokens(text).sortedBy { it.start }
         var index = 0
@@ -179,6 +182,7 @@ internal class KotlinCode(val text: String) {
         rawContinuationStarts = rawContinuations(tokens)
         insideStringTokens = buildInsideStringTokens()
         previousTokens = buildPreviousTokens()
+        nextTokens = buildNextTokens()
         val pairs = IntArray(code.size) { -1 }
         var matched = true
         val stack = ArrayList<Int>()
@@ -405,7 +409,7 @@ internal class KotlinCode(val text: String) {
         if (isInfixNameAtLineEnd(previous)) return true
         if (lineHoldsOnlyAnnotations(previous)) return true
         if (!isNameToken(previous)) return false
-        if (previousTokens.getOrNull(previous.index)?.type == KotlinTokenTypes.DOT) return true
+        if (previousToken(previous)?.type == KotlinTokenTypes.DOT) return true
         return lineHoldsDeclarationHeader(previous)
     }
 
@@ -455,7 +459,7 @@ internal class KotlinCode(val text: String) {
         if (previous.type != KotlinTokenTypes.IDENTIFIER) return false
         if (insideStringTokens.getOrElse(previous.index) { false }) return false
         // A string literal is one token spanning its template code, so its end is the head.
-        val head = previousTokens.getOrNull(previous.index) ?: return false
+        val head = previousToken(previous) ?: return false
         if (hasNewline(head.end, previous.start)) return false
         // `1u` is a number with a suffix the lexer splits, not `1 u <next line>`.
         if (previous.index in numberSuffixTokens) return false
@@ -493,6 +497,29 @@ internal class KotlinCode(val text: String) {
             previous[token.index] = best?.takeIf { it.end <= token.start }
         }
         return previous
+    }
+
+    /**
+     * The token right before [token], comments skipped. A string literal counts as one token: the
+     * piece that ends it, so the code before the literal is not its neighbour.
+     */
+    internal fun previousToken(token: KtToken): KtToken? = previousTokens.getOrNull(token.index)
+
+    /**
+     * The token right after [token], comments skipped. A string literal counts as one token: the
+     * piece that starts it, so the code after the literal is not its neighbour.
+     */
+    internal fun nextToken(token: KtToken): KtToken? = nextTokens.getOrNull(token.index)
+
+    private fun buildNextTokens(): Array<KtToken?> {
+        val visible = tokens.filter { !it.isComment }
+        val next = arrayOfNulls<KtToken>(code.size)
+        var index = 0
+        for (token in code) {
+            while (index < visible.size && visible[index].start < token.end) index++
+            next[token.index] = visible.getOrNull(index)
+        }
+        return next
     }
 
     private fun buildInsideStringTokens(): BooleanArray {
@@ -710,7 +737,9 @@ internal fun computeBlocks(code: KotlinCode): List<KtBlock> {
 private class BraceInfo(val kind: BlockKind, val keyword: String?, val loopBody: Boolean)
 
 private fun classifyBrace(code: KotlinCode, openIndex: Int, parent: KtBlock?): BraceInfo {
-    val previous = code.code.getOrNull(openIndex - 1) ?: return BraceInfo(BlockKind.LAMBDA, null, false)
+    val previous = code.previousToken(code.code[openIndex]) ?: return BraceInfo(BlockKind.LAMBDA, null, false)
+    // A string literal ends an expression, so a brace right after it starts a statement of its own.
+    if (previous.isStringBody) return BraceInfo(BlockKind.LAMBDA, null, false)
     if (previous.text == "->") {
         val whenBranch = parent?.kind == BlockKind.WHEN_BODY
         return BraceInfo(if (whenBranch) BlockKind.CONTROL_BODY else BlockKind.LAMBDA, "when", false)

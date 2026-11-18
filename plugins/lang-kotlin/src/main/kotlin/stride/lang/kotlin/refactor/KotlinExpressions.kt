@@ -58,7 +58,7 @@ internal fun computeCalls(code: KotlinCode): List<KtCall> {
                 if (call) calls.add(KtCall(token, code.matching(token.index), CallKind.PARENTHESES))
             }
             "[" -> {
-                val previous = code.code.getOrNull(token.index - 1) ?: continue
+                val previous = code.previousToken(token) ?: continue
                 val call = isNameToken(previous) || previous.text == ")" || previous.text == "]"
                 if (call) calls.add(KtCall(token, code.matching(token.index), CallKind.INDEX))
             }

@@ -98,21 +98,20 @@ private fun KotlinCode.computeSmartCasts(): List<KtSmartCast> {
         if (nonExpressionRanges.any { it.contains(token.start) }) continue
         when {
             token.type == KotlinTokenTypes.KEYWORD && token.text == "is" -> {
-                val bang = code.getOrNull(index - 1)?.takeIf { it.text == "!" }
-                val end = if (bang != null) index - 2 else index - 1
-                add(leftOperand(end), bang ?: token, false)
+                val bang = previousToken(token)?.takeIf { it.text == "!" }
+                add(leftOperandBefore(bang ?: token), bang ?: token, false)
             }
-            token.type == KotlinTokenTypes.KEYWORD && token.text == "as" -> add(leftOperand(index - 1), token, false)
-            token.text == "!!" -> add(leftOperand(index - 1), token, false)
-            token.text == "?:" -> add(leftOperand(index - 1), token, false)
+            token.type == KotlinTokenTypes.KEYWORD && token.text == "as" -> add(leftOperandBefore(token), token, false)
+            token.text == "!!" -> add(leftOperandBefore(token), token, false)
+            token.text == "?:" -> add(leftOperandBefore(token), token, false)
             token.type == KotlinTokenTypes.OPERATION_SIGN && token.text in EQUALITY_OPERATORS -> {
-                add(leftOperand(index - 1), token, true)
-                add(rightOperand(index + 1), token, true)
+                add(leftOperandBefore(token), token, true)
+                add(rightOperandAfter(token), token, true)
             }
-            token.type == KotlinTokenTypes.KEYWORD && token.text == "when" -> add(whenSubject(index), token, false)
+            token.type == KotlinTokenTypes.KEYWORD && token.text == "when" -> add(whenSubject(token), token, false)
             isNameToken(token) && token.spelling() in NULL_CHECKS &&
-                code.getOrNull(index + 1)?.text == "(" -> add(nullCheckOperand(index), token, false)
-            token.type == KotlinTokenTypes.OPERATION_SIGN && token.text == "=" -> add(assignmentOperand(index), token, false)
+                code.getOrNull(index + 1)?.text == "(" -> add(nullCheckOperand(token), token, false)
+            token.type == KotlinTokenTypes.OPERATION_SIGN && token.text == "=" -> add(assignmentOperand(token), token, false)
         }
     }
     for (call in calls) {
@@ -121,7 +120,7 @@ private fun KotlinCode.computeSmartCasts(): List<KtSmartCast> {
         val callee = code.getOrNull(call.open.index - 1) ?: continue
         if (!isNameToken(callee) || callee.spelling() !in CHECK_CALLS) continue
         if (nonExpressionRanges.any { it.contains(callee.start) }) continue
-        for (operand in checkCallOperands(call.open.index, close.index)) {
+        for (operand in checkCallOperands(call.open, close)) {
             casts.addAll(narrowedCasts(operand, callee, false, typeParameters))
         }
     }
@@ -187,118 +186,111 @@ private fun KotlinCode.fileTypeParameters(): Set<String> {
 
 // --- the operands -----------------------------------------------------------------------------
 
-/** The postfix expression ending at [endIndex]; groups and `!!` make it more than its leading chain. */
-private fun KotlinCode.leftOperand(endIndex: Int): Operand? {
-    var index = endIndex
+/**
+ * The postfix expression ending before [operator]; groups and `!!` make it more than its leading
+ * chain. A string literal is one operand token, so an operator right after one has no chain.
+ */
+private fun KotlinCode.leftOperandBefore(operator: KtToken): Operand? {
+    var token = previousToken(operator) ?: return null
     var whole = true
-    while (index >= 0) {
-        val token = code[index]
+    while (true) {
         when {
-            isNameToken(token) -> return Operand(chainEndingAt(index) ?: return null, whole)
+            token.isStringBody -> return null
+            isNameToken(token) -> return Operand(chainEndingAt(token) ?: return null, whole)
             token.text == ")" || token.text == "]" || token.text == "}" -> {
-                val open = matchingIndex(index)
-                if (open < 0) return null
+                val open = matching(token.index) ?: return null
                 whole = false
-                index = open - 1
+                token = previousToken(open) ?: return null
             }
             token.text == "!!" -> {
                 whole = false
-                index--
+                token = previousToken(token) ?: return null
             }
             else -> return null
         }
     }
-    return null
 }
 
-/** The chain beginning at [startIndex], when the operand may continue past it. */
-private fun KotlinCode.rightOperand(startIndex: Int): Operand? {
-    val token = code.getOrNull(startIndex) ?: return null
+/** The chain beginning at [operator]'s right token, when the operand may continue past it. */
+private fun KotlinCode.rightOperandAfter(operator: KtToken): Operand? {
+    val token = nextToken(operator) ?: return null
     if (!isNameToken(token)) return null
-    val chain = chainStartingAt(startIndex) ?: return null
-    val next = code.getOrNull(chain.tokens.last().index + 1)
+    val chain = chainStartingAt(token) ?: return null
+    val next = nextToken(chain.tokens.last())
     val whole = next == null || !continuesOperand(next)
     return Operand(chain, whole)
 }
 
-private fun continuesOperand(token: KtToken): Boolean = when (token.text) {
-    "(", "[", ".", "!!", "{" -> true
-    else -> token.text == "?" && token.type == KotlinTokenTypes.OPERATION_SIGN
+private fun continuesOperand(token: KtToken): Boolean {
+    if (token.isStringBody) return false
+    return when (token.text) {
+        "(", "[", ".", "!!", "{" -> true
+        else -> token.text == "?" && token.type == KotlinTokenTypes.OPERATION_SIGN
+    }
 }
 
-private fun KotlinCode.whenSubject(keywordIndex: Int): Operand? {
-    val open = code.getOrNull(keywordIndex + 1) ?: return null
+private fun KotlinCode.whenSubject(keyword: KtToken): Operand? {
+    val open = nextToken(keyword) ?: return null
     if (open.text != "(") return null
-    val closeIndex = matchingIndex(open.index)
-    if (closeIndex < 0) return null
-    if (!isNameToken(code.getOrNull(open.index + 1) ?: return null)) return null
-    val chain = chainStartingAt(open.index + 1) ?: return null
-    return Operand(chain, chain.tokens.last().index + 1 == closeIndex)
+    val close = matching(open.index) ?: return null
+    val first = nextToken(open) ?: return null
+    if (!isNameToken(first)) return null
+    val chain = chainStartingAt(first) ?: return null
+    return Operand(chain, nextToken(chain.tokens.last()) === close)
 }
 
-private fun KotlinCode.nullCheckOperand(nameIndex: Int): Operand? {
-    val previous = code.getOrNull(nameIndex - 1) ?: return null
-    if (previous.type != KotlinTokenTypes.DOT) return null
-    val endIndex = if (code.getOrNull(nameIndex - 2)?.text == "?") nameIndex - 3 else nameIndex - 2
-    if (code.getOrNull(endIndex)?.let { isNameToken(it) } != true) return null
-    return Operand(chainEndingAt(endIndex) ?: return null, true)
+private fun KotlinCode.nullCheckOperand(name: KtToken): Operand? {
+    val dot = previousToken(name) ?: return null
+    if (dot.type != KotlinTokenTypes.DOT) return null
+    val beforeDot = previousToken(dot) ?: return null
+    val end = if (beforeDot.text == "?") previousToken(beforeDot) ?: return null else beforeDot
+    if (!isNameToken(end)) return null
+    return Operand(chainEndingAt(end) ?: return null, true)
 }
 
-private fun KotlinCode.assignmentOperand(equalsIndex: Int): Operand? {
-    val previous = code.getOrNull(equalsIndex - 1) ?: return null
+private fun KotlinCode.assignmentOperand(equals: KtToken): Operand? {
+    val previous = previousToken(equals) ?: return null
     if (!isNameToken(previous)) return null
     val local = references.firstOrNull { it.token.index == previous.index }?.resolved ?: return null
     val assignable = local.kind == LocalKind.VAR || (local.kind == LocalKind.VAL && local.initializer == null)
     if (!assignable) return null
-    return Operand(chainStartingAt(previous.index) ?: return null, true)
+    return Operand(chainStartingAt(previous) ?: return null, true)
 }
 
 // --- chains -----------------------------------------------------------------------------------
 
-/** The chain of names ending at [endIndex], joined by `.` or `?.` with a leading `this.` dropped. */
-private fun KotlinCode.chainEndingAt(endIndex: Int): Chain? {
-    val end = code[endIndex]
+/** The chain of names ending at [end], joined by `.` or `?.` with a leading `this.` dropped. */
+private fun KotlinCode.chainEndingAt(end: KtToken): Chain? {
     if (!isNameToken(end)) return null
     val reversedTokens = arrayListOf(end)
     val reversedConnectors = ArrayList<Boolean>()
-    var index = endIndex
+    var cursor = end
     while (true) {
-        val previous = code.getOrNull(index - 1) ?: break
-        val optional: Boolean
-        val beforeIndex: Int
-        when {
-            previous.type == KotlinTokenTypes.DOT && code.getOrNull(index - 2)?.text == "?" -> {
-                optional = true
-                beforeIndex = index - 3
-            }
-            previous.type == KotlinTokenTypes.DOT -> {
-                optional = false
-                beforeIndex = index - 2
-            }
-            else -> break
-        }
-        val before = code.getOrNull(beforeIndex) ?: return null
+        val dot = previousToken(cursor) ?: break
+        if (dot.type != KotlinTokenTypes.DOT) break
+        val beforeDot = previousToken(dot)
+        val optional = beforeDot?.text == "?"
+        val before = if (optional) previousToken(beforeDot) ?: return null else beforeDot ?: return null
         if (before.text == "this" && before.type == KotlinTokenTypes.KEYWORD) break
         if (!isNameToken(before)) return null
         reversedConnectors.add(optional)
         reversedTokens.add(before)
-        index = beforeIndex
+        cursor = before
     }
     val tokens = reversedTokens.reversed()
     val optional = reversedConnectors.reversed()
     val head = tokens.first()
-    val beforeHead = code.getOrNull(head.index - 1)
+    val beforeHead = previousToken(head)
     if (beforeHead != null) {
         if (beforeHead.type == KotlinTokenTypes.DOT || beforeHead.text == "::" || beforeHead.text == "@") return null
-        if (beforeHead.text == "?" && code.getOrNull(head.index - 2)?.type == KotlinTokenTypes.DOT) return null
+        if (beforeHead.text == "?" && previousToken(beforeHead)?.type == KotlinTokenTypes.DOT) return null
     }
     return Chain(tokens, optional)
 }
 
-/** The chain of names beginning at [startIndex]; a leading `this.` is dropped. */
-private fun KotlinCode.chainStartingAt(startIndex: Int): Chain? {
-    val first = code[startIndex]
-    var cursor = startIndex
+/** The chain of names beginning at [first]; a leading `this.` is dropped. */
+private fun KotlinCode.chainStartingAt(first: KtToken): Chain? {
+    var cursor = first
     var headIsThis = false
     if (first.text == "this" && first.type == KotlinTokenTypes.KEYWORD) {
         headIsThis = true
@@ -309,58 +301,57 @@ private fun KotlinCode.chainStartingAt(startIndex: Int): Chain? {
     val optional = ArrayList<Boolean>()
     if (!headIsThis) tokens.add(first)
     while (true) {
-        val next = code.getOrNull(cursor + 1) ?: break
+        val next = nextToken(cursor) ?: break
         val isOptional: Boolean
-        val nameIndex: Int
-        when {
-            next.type == KotlinTokenTypes.DOT -> {
-                isOptional = false
-                nameIndex = cursor + 2
-            }
-            next.text == "?" && code.getOrNull(cursor + 2)?.type == KotlinTokenTypes.DOT -> {
-                isOptional = true
-                nameIndex = cursor + 3
-            }
-            else -> break
+        val dot: KtToken
+        if (next.type == KotlinTokenTypes.DOT) {
+            isOptional = false
+            dot = next
+        } else if (next.text == "?" && nextToken(next)?.type == KotlinTokenTypes.DOT) {
+            isOptional = true
+            dot = nextToken(next)!!
+        } else {
+            break
         }
-        val name = code.getOrNull(nameIndex) ?: return null
+        val name = nextToken(dot) ?: return null
         if (!isNameToken(name)) return null
         if (tokens.isNotEmpty()) optional.add(isOptional)
         tokens.add(name)
-        cursor = nameIndex
+        cursor = name
     }
     if (tokens.isEmpty()) return null
     return Chain(tokens, optional)
 }
 
 /** The arguments of a check call whose expression is exactly a name chain (R2 `<e>` inside them). */
-private fun KotlinCode.checkCallOperands(openIndex: Int, closeIndex: Int): List<Operand> {
+private fun KotlinCode.checkCallOperands(open: KtToken, close: KtToken): List<Operand> {
     val operands = ArrayList<Operand>()
-    var segmentStart = openIndex + 1
-    var index = openIndex + 1
-    fun finish(endIndex: Int) {
-        if (endIndex <= segmentStart) return
-        val first = code.getOrNull(segmentStart) ?: return
+    var segmentStart = open.end
+    var index = open.index + 1
+    fun finish(endOffset: Int, separator: KtToken) {
+        val first = tokenAfter(segmentStart) ?: return
+        if (first.start >= endOffset) return
         if (!isNameToken(first)) return
-        val chain = chainStartingAt(segmentStart) ?: return
-        if (chain.tokens.last().index + 1 == endIndex) operands.add(Operand(chain, true))
+        val chain = chainStartingAt(first) ?: return
+        if (nextToken(chain.tokens.last()) !== separator) return
+        operands.add(Operand(chain, true))
     }
-    while (index < closeIndex) {
+    while (index < close.index) {
         val token = code[index]
         if (isOpener(token)) {
-            val close = matchingIndex(index)
-            if (close in (index + 1) until closeIndex) {
-                index = close + 1
+            val end = matchingIndex(index)
+            if (end in (index + 1) until close.index) {
+                index = end + 1
                 continue
             }
         }
         if (token.text == ",") {
-            finish(index)
-            segmentStart = index + 1
+            finish(token.start, token)
+            segmentStart = token.end
         }
         index++
     }
-    finish(closeIndex)
+    finish(close.start, close)
     return operands
 }
 
@@ -383,16 +374,15 @@ private fun KotlinCode.computeReadChains(): List<KtReadChain> {
     val reads = ArrayList<KtReadChain>()
     for (reference in references) {
         if (isWriteTarget(reference.token)) continue
-        val chain = chainStartingAt(reference.token.index) ?: continue
+        val chain = chainStartingAt(reference.token) ?: continue
         reads.add(KtReadChain(reference.token, reference.resolved, chain.names))
     }
-    for (index in code.indices) {
-        val token = code[index]
+    for (token in code) {
         if (token.type != KotlinTokenTypes.KEYWORD || token.text != "this") continue
-        val before = code.getOrNull(index - 1)
+        val before = previousToken(token)
         if (before != null && (before.type == KotlinTokenTypes.DOT || before.text == "::" || before.text == "@")) continue
-        if (code.getOrNull(index + 1)?.let { it.type != KotlinTokenTypes.DOT } != false) continue
-        val chain = chainStartingAt(index) ?: continue
+        if (nextToken(token)?.type != KotlinTokenTypes.DOT) continue
+        val chain = chainStartingAt(token) ?: continue
         reads.add(KtReadChain(token, null, chain.names))
     }
     return reads

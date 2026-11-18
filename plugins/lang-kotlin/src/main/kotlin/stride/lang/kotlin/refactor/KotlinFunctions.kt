@@ -60,7 +60,7 @@ internal fun computeFunctions(code: KotlinCode): List<KtFunction> {
     val result = ArrayList<KtFunction>()
     for (token in code.code) {
         if (token.type != KotlinTokenTypes.KEYWORD || token.text != "fun") continue
-        val previous = code.code.getOrNull(token.index - 1)
+        val previous = code.previousToken(token)
         if (previous != null && previous.text in ANONYMOUS_FUN_PRECEDERS) continue
         val parsed = parseFunction(code, token.index) ?: continue
         result.add(parsed)

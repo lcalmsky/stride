@@ -133,7 +133,7 @@ internal object KotlinInlineFunction {
         if (statement.startTokenIndex < 0) return null
         val first = code.code.getOrNull(statement.startTokenIndex) ?: return null
         if (first.text == "return") {
-            val value = KotlinInline.nextCodeToken(code, first.end) ?: return null
+            val value = code.nextToken(first) ?: return null
             if (value.start >= statement.end) return null
             return Body(KtRange(value.start, statement.end), false)
         }
@@ -645,7 +645,7 @@ internal object KotlinInlineFunction {
         val tokens = code.code.filter { it.start >= segment.start && it.end <= segment.end }
         if (tokens.size < 2) return null
         if (!isNameToken(tokens[0]) || tokens[1].text != "=") return null
-        val value = KotlinInline.nextCodeToken(code, tokens[1].end) ?: return null
+        val value = code.nextToken(tokens[1]) ?: return null
         if (value.start >= segment.end) return null
         return tokens[0].text.removeSurrounding("`") to KtRange(value.start, segment.end)
     }

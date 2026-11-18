@@ -254,6 +254,13 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `a return body function returning a string inlines one call`() {
+        val text = "private fun greet(): String {\n    return \"hi\"\n}\n\nfun f() {\n    println(greet())\n}\n"
+        val applied = apply(choose(caretAt(text, "println(greet())", delta = 8), 0), text)
+        assertEquals("private fun greet(): String {\n    return \"hi\"\n}\n\nfun f() {\n    println(\"hi\")\n}\n", applied.text)
+    }
+
+    @Test
     fun `a unit statement body function replaces the call statement`() {
         val text = "private fun show(v: Int) {\n    println(v)\n}\n\nfun f() {\n    show(2)\n}\n"
         val applied = apply(choose(caretAt(text, "show(2)"), 0), text)
@@ -356,6 +363,18 @@ class KotlinInlineTest {
         val applied = apply(choose(caretAt(text, "move(to"), 0), text)
         assertEquals(
             "private fun move(from: Int, to: Int) = from + to\n\nfun f() {\n    println(1 + 2)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `named arguments with string values map by name`() {
+        val text = "private fun move(from: Int, to: String) = from.toString() + to\n\n" +
+            "fun f() {\n    println(move(to = \"b\", from = 1))\n}\n"
+        val applied = apply(choose(caretAt(text, "move(to"), 0), text)
+        assertEquals(
+            "private fun move(from: Int, to: String) = from.toString() + to\n\n" +
+                "fun f() {\n    println(1.toString() + \"b\")\n}\n",
             applied.text,
         )
     }
@@ -697,6 +716,22 @@ class KotlinInlineTest {
             "fun g() {\n    println(f(\"a\"))\n    println(f(1))\n}\n"
         assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "fun f", delta = 4)))
         assertEquals("Inline works on local variables and functions declared in this file", refused(caretAt(text, "f(\"a\")")))
+    }
+
+    @Test
+    fun `a function after a string expression body is a call target`() {
+        val text = "fun a() = \"x\"\nfun b() {\n    println(1)\n}\nfun g() {\n    b()\n}\n"
+        val applied = apply(caretAt(text, "b()\n}"), text)
+        assertEquals("fun a() = \"x\"\nfun b() {\n    println(1)\n}\nfun g() {\n    println(1)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a same name function hidden after a string body refuses the call`() {
+        val text = "fun a() = \"x\"\nfun b() {\n    println(1)\n}\nfun b() {\n    println(2)\n}\nfun g() {\n    b()\n}\n"
+        assertEquals(
+            "Inline works on local variables and functions declared in this file",
+            refused(caretAt(text, "b()\n}")),
+        )
     }
 
     @Test
