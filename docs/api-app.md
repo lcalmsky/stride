@@ -2986,19 +2986,24 @@ bindings would steal.
 Inside the diff popup: `F7`/`⇧F7` next and previous change (`NextDiff`, `PreviousDiff`),
 `⌃⇧→`/`⌃⇧←` next and previous file (`Diff.NextChange`, `Diff.PrevChange` on macOS), `F4`/`↩`
 open the line in the editor, `Esc` closes. Inside the Commit window: `⌘↩` commits, `Space` toggles
-the selected file, `↩`/`F4` opens it, `Tab` moves between the file list and the message.
+the selected file while the list has the keyboard, `↩`/`F4` opens it in the editor, `Tab`/`⇧Tab`
+move between the file list and the message, `Esc` hands the keyboard back to the editor, and
+`⇧Esc` hides the window like the other tool windows (the Git window is a list window and already
+has it).
 
 ```kotlin
 // stride.app.vcs — one invocation of the git command line
 data class GitCommand(val args: List<String>,          // argv after `git`; never a shell string
                       val workDir: Path,
                       val timeout: Duration,
-                      val write: Boolean = false)       // writes are serialized (V3)
+                      val write: Boolean = false,       // writes are serialized (V3)
+                      val environment: Map<String, String?> = emptyMap())  // per command; null removes
 class GitResult(val exitCode: Int, val stdout: ByteArray, val stderr: String, val timedOut: Boolean) {
     val ok: Boolean                                     // exitCode == 0 && !timedOut
 }
 fun interface GitExecutor { fun run(command: GitCommand): GitResult }   // blocking; never on the UI thread
-class CliGitExecutor(git: Path, environment: Map<String, String?>) : GitExecutor  // null value = remove
+class CliGitExecutor(git: Path, environment: Map<String, String?>,              // null value = remove
+                     baseEnvironment: Map<String, String> = System.getenv()) : GitExecutor
 object GitBinary { fun resolve(): Path? }               // once per process (V3)
 
 data class GitRepository(val root: Path, val gitDir: Path)               // root = --show-toplevel
@@ -3011,30 +3016,40 @@ data class GitSnapshot(val repository: GitRepository?, val branch: BranchState?,
 sealed interface BaseText {
     data class Text(val content: String) : BaseText    // the file at HEAD; "" for a file added to the index
     data object Untracked : BaseText
-    data class Unavailable(val reason: String) : BaseText                // not a repo, binary, filtered, too large
+    data class Unavailable(val reason: String) : BaseText                // not a repo, binary, filtered, too large, cannot read
 }
 
 @Service(Service.Level.PROJECT)
 class GitService(project: Project) {
     var executor: GitExecutor                           // test seam, like RunManager.starter
+    var timeouts: GitTimeouts                           // test seam: read 15 s, commit 120 s, push 90 s
     val snapshot: GitSnapshot                           // Compose state, replaced whole after each refresh
     val console: List<GitConsoleEntry>                  // newest last, at most 200
     val busy: String?                                   // the write in progress ("Committing…"), else null
     fun refresh()                                       // debounced and single-flight (V3)
+    suspend fun refreshNow(): GitSnapshot               // one refresh, for tests and after writes
+    fun launch(block: suspend CoroutineScope.() -> Unit): Job   // on the service's scope
     suspend fun baseText(file: Path): BaseText
     suspend fun commit(include: List<Path>, message: String): GitWriteResult
     suspend fun pushPlan(): PushPlan
     suspend fun push(plan: PushPlan.Ready): GitWriteResult
     suspend fun log(limit: Int = 200): List<LogEntry>
-    suspend fun fileAt(revision: String, file: Path): BaseText
+    suspend fun fileAt(revision: String, file: Path): BaseText   // Text("") when absent at revision
+    suspend fun changedFiles(revision: String): List<FileChange> // first parent, project root only
 }
 
+fun openWorkingTreeDiff(state: AppState, file: Path, line: Int? = null): Boolean  // HEAD ↔ editor or disk
+
 // stride.app.vcs — pure, no git
-data class LineHunk(val oldStart: Int, val oldCount: Int, val newStart: Int, val newCount: Int) {
+data class LineHunk(val oldStart: Int, val oldCount: Int, val newStart: Int, val newCount: Int) {  // 0-based
     val kind: HunkKind                                  // ADDED (oldCount 0), DELETED (newCount 0), MODIFIED
 }
 object LineDiff {
     fun diff(old: List<String>, new: List<String>, maxEdits: Int = 5_000): List<LineHunk>?  // null over the limit
+    fun split(text: String): List<String>               // on `\n`, one trailing `\r` dropped per line
+    fun lineSeparator(text: String): String             // `\r\n` when the first line break is, else `\n`
+    fun rollback(base: List<String>, current: List<String>, hunks: List<LineHunk>,
+                 selected: List<LineHunk>, lineSeparator: String): String
 }
 ```
 
@@ -3099,13 +3114,16 @@ process against a cached base (V4).
   accepted only when `xcode-select -p` succeeds, because without the command line tools that stub
   opens an install dialog. No git means every action reports `Git is not installed` and no marks
   are drawn.
-- **Arguments.** `GitCommand.args` is an argv list; paths go after `--`. Output that is parsed uses
+- **Arguments.** `GitCommand.args` is an argv list; paths go after `--`, and `GIT_LITERAL_PATHSPECS=1`
+  makes them literal (`a[1].kt` and `*.kt` name one file each). Output that is parsed uses
   NUL-separated forms (`status --porcelain=v2 -z`, `log` with `%x00`/`%x1f` separators,
-  `for-each-ref --format`). Paths from git are relative to the repository root and are resolved
-  against `GitRepository.root`.
+  `for-each-ref --format`). Paths from git are relative to the repository root (measured: also when
+  git runs in a subfolder) and are resolved against `GitRepository.root`, which is a real path, so a
+  project opened through a symlink compares real paths.
 - **Environment.** The inherited environment minus `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
   `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, `GIT_NAMESPACE`
-  and `GIT_PREFIX` (a stride started from inside a hook must not act on another repository), plus
+  `GIT_PREFIX`, `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT` (a stride started from
+  inside a hook must not act on another repository or read its configuration), plus
   `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0` for reads (a status refresh must not rewrite the
   index, which would wake the file watcher and refresh again), `GIT_PAGER=cat` and `GIT_EDITOR=:`.
   When neither `GIT_SSH_COMMAND`, `GIT_SSH` nor `core.sshCommand` is set, writes that reach a
@@ -3124,19 +3142,32 @@ process against a cached base (V4).
   while a write runs except status, which waits for the write and then runs once.
 - **Repository.** `git rev-parse --show-toplevel --absolute-git-dir` in the project root. A
   project inside a repository's subfolder uses that repository, and only changes under the project
-  root are listed and committed (pathspec `:(top)<project root relative>`). A worktree's `.git`
+  root are listed and committed: every command runs in the project root with the literal pathspec
+  `-- .` (the magic `:(top)` form is off under literal pathspecs). A worktree's `.git`
   file works through git itself. Not a repository: `snapshot.repository` is null, no marks, and
   each action reports `Not a Git repository: <project root>`. Nested repositories and submodules
   inside the project are not tracked.
 - **Refresh.** Debounced by 300 ms and single-flight (a request during a refresh runs one more
-  refresh afterwards, not one per request). Triggers: the project opens, file watcher events
+  refresh afterwards, not one per request). Triggers: the project is first shown (a
+  `LaunchedEffect(session)` in `App`, so code that opens a project without showing it, such as the
+  repository acceptance test, runs no git), file watcher events
   (including `.git/HEAD`, `.git/index` and refs written by the user's terminal), the window
   becomes active (a new window focus listener in `Main.kt`), every stride save, and every git
-  write. A refresh is one status call; when it reports a new HEAD commit, open editors fetch their
-  base text again (V4).
+  write. A refresh is one status call; when it reports a new HEAD commit, or a change to an open
+  file's own status entry (its kind, or whether it is listed), that file's editor fetches its base
+  text again (V4).
 - **Console.** Every write and every failed read is appended to `console` with the command line,
   exit code, duration and output (truncated at 64 KB). Successful background reads are not logged,
-  so the Console tab shows what the user did.
+  so the Console tab shows what the user did. Reads whose failure is an expected answer
+  (`rev-parse --show-toplevel` outside a repository, `ls-files`, `check-attr`, `cat-file -s`,
+  `config --get core.sshCommand`, `symbolic-ref`, `for-each-ref`, `remote`, `rev-list`) are not
+  logged either, or a folder outside Git would add a line on every refresh.
+- **Tests.** The app's test task sets `stride.git.disableDefaultExecutor=true`, which makes the
+  default executor `MissingGitExecutor`: a composed `App` in a test never runs git on a real
+  repository. Tests that need git set `executor` to a `CliGitExecutor` with the environment of
+  `TestGitRepo` (no global or system configuration, fixed author, `GIT_CEILING_DIRECTORIES` at the
+  temporary folder), and create every repository with `TestGitRepo.create`, which checks that git
+  resolves the temporary repository and nothing above it.
 
 ### V4 One diff source
 
@@ -3147,11 +3178,15 @@ HEAD against the editor's current text.
   index but not in HEAD has base `""`, so every line is added; an untracked or ignored file is
   `Untracked` and gets no marks; a path with a `filter` attribute (`git check-attr filter`), a
   blob with a NUL byte in its first 8000 bytes, or a blob that is not valid UTF-8 is
-  `Unavailable` and gets no marks. Bases are cached per file and HEAD commit.
+  `Unavailable` and gets no marks. Bases read from HEAD are cached per file and HEAD commit; answers
+  read from the index (`Untracked`, the empty base of a file added but not committed) are read again
+  every time, because `git add` does not move HEAD, and the cache is dropped whenever a status
+  refresh reports a change (`git rm --cached` keeps HEAD too).
 - **Comparison.** `LineDiff.diff` is a line diff (Myers) in process, over lines split on `\n` with
   one trailing `\r` ignored on both sides, so a checkout with `core.autocrlf` does not mark every
   line. It runs off the UI thread 100 ms after the last edit and is cancelled by the next edit.
-  Over `maxEdits` it returns null and the file shows no marks, so a huge rewrite cannot stall the
+  Over `maxEdits` edits (a deleted line and an inserted line count one each) it returns null and the
+  file shows no marks, so a huge rewrite cannot stall the
   editor.
 - **No git call per keystroke.** Typing only reruns the in-process diff.
 - **Correctness test.** The differ is tested by reconstruction: applying every hunk to the base
@@ -3162,7 +3197,7 @@ HEAD against the editor's current text.
 
 | Action | What it changes | ⌘Z |
 |---|---|---|
-| Rollback Lines `⌥⌘Z` | the editor text only: the hunks at the carets or touching the selection become their base lines, as one `setText`/`applyEdits` step; nothing is saved | yes, one step |
+| Rollback Lines `⌥⌘Z` | the editor text only: the hunks at the carets or touching the selection become their base lines, as one `applyEdits` step that replaces only the rolled-back line ranges (every other line keeps its text and terminator); nothing is saved. The hunks are computed again from the text on screen when the key is pressed, so a hunk published for an older text is never applied. A selection ending at the start of a line does not include that line. A deleted hunk is touched by the lines just above and below its boundary; afterwards the primary caret is at the start of the first rolled-back region | yes, one step |
 | Commit `⌘K` | saves the open editors of the included files, then the index and HEAD | no |
 | Push `⇧⌘K` | the remote branch | no |
 | Diff, popups, Log | nothing | — |
@@ -3171,10 +3206,14 @@ HEAD against the editor's current text.
   editors are saved: `git add -- <untracked included>`, then
   `git commit --only -F <message file> -- <included>`. Staging the user did in a terminal for an
   included file is replaced by the file's whole content; staged changes in files that are not
-  included stay staged and are not committed. Deleted and renamed files are included by both paths.
+  included stay staged and are not committed. Deleted and renamed files are included by both paths:
+  `GitService.commit` adds the old path of an included rename itself (when nothing exists there on
+  disk), so checking the `R` row is enough.
 - **Unsaved editors.** The Commit window lists git's changes plus open editors whose text differs
   from the saved file (marked `unsaved`), because an edit that is only in an editor is still a
-  change the user sees. Committing saves exactly the included ones first; excluded editors stay
+  change the user sees. Only files git tracks are added from editors (asked in the background with
+  `baseText`, cached per HEAD and the path's status), so an ignored or nested path never reaches a
+  commit. Committing saves exactly the included ones first; excluded editors stay
   unsaved. A save that fails (read-only, I/O error) stops the commit before git runs.
 - **Message.** Written to a temporary file and passed with `-F`; git's own `commit.cleanup`
   applies. An empty message (after trimming) disables Commit. The message stays in the field when
@@ -3183,7 +3222,10 @@ HEAD against the editor's current text.
   message are on screen when `⌘↩` or the button runs. Push opens a confirmation popup first
   (below); `↩` pushes, `Esc` cancels.
 - **Push.** The current branch only, to its upstream (`for-each-ref` `upstream:remotename` and
-  `upstream:remoteref`): `git push --porcelain <remote> refs/heads/<branch>:<remote ref>`. Without
+  `upstream:remoteref`): `git push --porcelain --no-follow-tags <remote>
+  refs/heads/<branch>:<remote ref>`, so `push.followTags` cannot send tags. When the upstream's
+  remote-tracking ref is gone (the remote branch was deleted and pruned), the branch is pushed again
+  as a new branch to the same remote and ref with `-u`, not reported as `Nothing to push`. Without
   an upstream it pushes to `origin`, or to the only remote when there is one, as a new branch with
   `-u`; several remotes and no `origin` refuses with `No upstream: set one in the terminal`. A
   detached HEAD refuses with `Push needs a branch: HEAD is detached`. No commits ahead reports
@@ -3207,29 +3249,56 @@ HEAD against the editor's current text.
   editor has hunks, so the frame path of a file without changes is unchanged. The three colours have
   light and dark values and keep 3:1 against the gutter surface on both palettes and both desktop
   polarities (non-text contrast), registered in the contrast tests.
-- **Gutter popup.** Clicking a mark opens a `popupPanel` under the hunk with the base lines in the
-  code font (at most 20, then `…`), and `Rollback ⌥⌘Z` and `Show Diff` buttons. `Esc` closes it.
+- **Gutter popup.** Clicking a mark (or `⌃⌥⇧↓`/`⌃⌥⇧↑` arriving at a hunk) opens a `popupPanel` at the
+  top of the window like the other editor popups, headed `Lines <a>–<b> changed`, `<n> lines added`
+  or `<n> lines deleted`, with the hunk's base lines in the code font (at most 20, then `…`), and
+  `Rollback ⌥⌘Z` and `Show Diff` buttons. `⌥⌘Z` (exactly ⌥⌘) rolls that hunk back and `Esc` closes
+  it; it also closes when its editor is no longer the selected tab, and when its hunk is gone it
+  closes with `No changes at the caret`.
 - **Diff popup.** A modal `popupPanel` almost the size of the window, one column (unified): old and
   new line numbers, a `-`/`+` sign column, removed lines on a `vcsDeleted` tint and added lines on a
-  `vcsAdded` tint, unchanged runs longer than six lines folded to `⋯ <n> unchanged lines`. The title
+  `vcsAdded` tint, unchanged runs longer than six lines folded to `⋯ <n> unchanged lines` (three
+  context lines on each side; at the start and end of the file only the inner three are kept), and a
+  click or `↩` on a fold row expands it. The title
   is `<path>  HEAD ↔ Local` for a working-tree diff and `<short hash>  <subject>` for a commit, with
-  a file row when the diff has several files. One column fits the editor's width and needs no
-  synchronized scrolling; IntelliJ's default is two columns.
+  a file row when the diff has several files; a renamed file reads `<old path> → <new path>` and its
+  old side is read at the old path. A side that cannot be compared (binary, not valid UTF-8,
+  filtered, larger than 8 MB, or a working file that cannot be read, which reads
+  `Cannot read <file name>`) becomes one row with that reason. The rows are built off the UI thread (the body is empty until
+  they arrive), the number columns widen with the largest line number, and a file over the edit
+  budget shows the one row `Too many changes to show`. One column fits the editor's width and needs
+  no synchronized scrolling; IntelliJ's default is two columns.
+- **Where the keyboard goes when a popup closes.** Closing the diff popup, the push popup or the VCS
+  popup gives the keyboard back to the tool window it was opened from while that window is still the
+  visible active one (a VCS popup row that focuses something itself, such as `Commit…`, keeps that): the Commit window to the part that had it (the file list after `⌘D` from the list, otherwise
+  the message), the Git window to its Log with the selected row kept. Otherwise the editor gets it.
 - **Commit window `⌘0`.** A bottom tool window `Commit` (the bottom panel, as the other tool
   windows; IntelliJ docks it on the left). Left: files grouped `Changes (<n>)` and
   `Unversioned Files (<n>)` with a checkbox, a status letter (`M`, `A`, `D`, `R`, `U`, `C`) in the
-  mark colours, the file name and its folder dimmed. Right: the message field and a `Commit` capsule
-  with `<checked> of <total>`. Tracked changes start checked and unversioned files unchecked, and a
-  file keeps its checkbox across refreshes. `⌘K` opens the window, refreshes and focuses the
-  message.
+  mark colours (`M` `vcsModified`; `A`, `R` `vcsAdded`; `D`, `U`, `C` `vcsDeleted`), the file name
+  and its folder dimmed; only non-empty groups are shown. Right: the message field (empty, it shows
+  `Commit message`), the last refusal or failure as one error line until the next commit, and a
+  `Commit` capsule with `<checked> of <total>`. Tracked changes start checked and unversioned files unchecked, and a
+  file keeps its checkbox across refreshes, also while it is not listed, until a commit of it
+  succeeds. `⌘K` opens the window, refreshes and focuses the message. Outside a repository the
+  window shows `Not a Git repository: <root>` (or `Git is not installed`) in place of the list; a
+  project not refreshed yet is refreshed once first, with nothing drawn until the answer arrives.
 - **Git window `⌘9`.** A bottom tool window `Git` with two tabs: `Log` (the last 200 commits of
   HEAD: short hash, ref names, subject, author, relative date; `↩` opens the commit in the diff
-  popup, first parent only) and `Console` (V3).
+  popup, first parent only, file texts read eight at a time, at most 50 files and then
+  `… <n> more files`; a commit with no file changes reports `No changes in <short hash>` instead)
+  and `Console` (V3). Before the first snapshot the window refreshes once and draws nothing until it
+  can choose between the log and `Not a Git repository: <root>`. Log
+  dates read `just now`, `<n> minutes ago`, `<n> hours ago`, `<n> days ago` up to 30 days, then the
+  date. A Console entry shows `$ <command>`, its exit code and duration (`<n> ms` under a second,
+  one decimal second above) and the output; a failed entry uses the Problems window's error colour.
 - **VCS popup `⌃V`.** A `popupPanel` list titled `Git` with the branch name, numbered like
   IntelliJ's quick list: `1 Commit…`, `2 Push…`, `3 Rollback Lines`, `4 Show Diff`, `5 Commit
   Window`, `6 Git Log`, each with its shortcut. A digit runs its row. Rows that cannot run are
-  dimmed (Rollback Lines and Show Diff need an editor with changes). Outside a repository the popup
-  has one dimmed row, `Not a Git repository`.
+  dimmed (Rollback Lines and Show Diff need an editor with changes; they start dimmed and enable when
+  the off-thread comparison of HEAD with the editor text answers). Outside a repository the popup
+  has one dimmed row, `Not a Git repository` (`Git is not installed` when there is no git). The
+  digits of the numeric keypad run rows too.
 
 ### Version control messages
 
@@ -3241,13 +3310,16 @@ HEAD against the editor's current text.
 | `No changes to commit` | `⌘K` commit with nothing checked or no changes |
 | `Enter a commit message` | commit with an empty message |
 | `Committed <n> files to <branch>: <short hash> <subject>` | commit succeeded |
-| `Commit failed: <first line>` | git exited non-zero or timed out |
+| `Commit failed: <first line>` | git exited non-zero or timed out, or an included editor could not be saved (`Commit failed: <reason>`, before git runs); after `git add` added new files it ends with ` (<n> new files were added to the index)` (`1 new file was` for one) |
 | `Nothing to push` | no commits ahead of the upstream |
 | `Pushed <n> commits to <remote>/<branch>` | push succeeded |
 | `Push rejected: pull the remote changes first` | the remote refused a non-fast-forward |
 | `Push needs credentials or a passphrase: push from the terminal (⌥F12)` | authentication failed or asked for input |
 | `Push failed: <first line>` | any other push failure |
-| `No changes at the caret` | `⌥⌘Z` with no hunk at a caret or in the selection |
+| `No changes at the caret` | `⌥⌘Z` with no hunk at a caret or in the selection, or the gutter popup's hunk is gone |
+| `File is read-only` | `⌥⌘Z` in a read-only editor |
+| `No changes in <short hash>` | `↩` on a Log commit with no file changes (an empty commit, or a merge identical to its first parent) |
+| `Too many changes to show` | a diff over the edit budget; the popup shows this one row instead of the lines |
 | `No more changes` | `⌃⌥⇧↓/↑` past the last or first hunk |
 
 ### Version control differences

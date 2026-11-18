@@ -21,6 +21,7 @@
 | 찾기 바와 바꾸기 | 기능 › 찾기, 사용법 › 키보드 |
 | Gradle 테스트 실행과 Run 창 | 기능 › Run, 사용법 › 키보드 |
 | 터미널 | 기능 › 터미널, 사용법 › 키보드 |
+| Git 변경 표시·커밋·푸시·diff·Git 창·VCS 팝업 | 기능 › Git, 사용법 › 키보드, 설치 › 필요 조건 |
 | 색·타이포·네온·글래스·애니메이션 | 기능 › 리퀴드 글래스 UI |
 | 단축키와 키맵 | 사용법 › 키보드 |
 | 모듈 구조, 확장점, 디스크립터 | 동작 방식 |
@@ -35,6 +36,7 @@
 | `app/.../editor/find/FindBar.kt` | `find.png` |
 | `app/.../run/` 의 Run 창과 거터 표시 | `run.png` |
 | `app/.../terminal/` 의 터미널 화면과 팔레트 | `terminal.png` |
+| `app/.../vcs/` 의 거터 표시·Commit 창·diff 팝업 | `commit.png`, `diff.png` |
 | `app/.../ui/theme/` 의 색·네온·글래스 | 모두, `editor-light.png` |
 | 어느 그림에 영향이 있는지 판단이 서지 않을 때 | 모두 |
 

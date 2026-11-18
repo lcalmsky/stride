@@ -132,6 +132,23 @@ brew install --cask lcalmsky/stride/stride
 </tr>
 </table>
 
+### Git
+
+<table width="100%">
+<tr>
+<td width="44%" valign="top"><img src="docs/images/commit.png" alt="거터 변경 표시가 있는 에디터와 Commit 창" width="480"><br><br><img src="docs/images/diff.png" alt="HEAD 와 현재 내용을 한 열로 비교하는 diff 팝업" width="480"></td>
+<td valign="top">
+
+- **변경 표시** 프로젝트가 Git 저장소 안에 있으면 거터 오른쪽 끝에 HEAD 와 다른 줄이 표시됩니다. 추가한 줄과 바꾼 줄은 색 막대로, 지운 자리는 작은 삼각형으로 나타나고, 입력이 멈추고 100 ms 뒤에 다시 비교하므로 저장하지 않은 편집도 바로 반영됩니다. 표시를 누르면 HEAD 의 원래 줄과 `Rollback ⌥⌘Z`·`Show Diff` 버튼이 있는 팝업이 뜹니다
+- **줄 되돌리기와 변경 이동** `⌥⌘Z` 는 캐럿이나 선택에 걸친 변경을 HEAD 의 줄로 되돌리고 `⌘Z` 한 번으로 취소됩니다. 파일은 저장하지 않습니다. `⌃⌥⇧↓` / `⌃⌥⇧↑` 는 다음 / 이전 변경으로 이동합니다
+- **커밋** `⌘K` 는 Commit 창을 열고 메시지 칸에 포커스를 둡니다. 변경 파일과 버전 관리되지 않은 파일이 체크박스와 함께 나오고 `⌘↩` 로 체크한 파일만 커밋합니다. 체크한 파일의 저장하지 않은 에디터는 커밋 전에 저장하고, 스테이징 영역은 따로 다루지 않습니다. 창에서 `⌘D` 는 고른 파일의 diff 를 엽니다
+- **푸시** `⇧⌘K` 는 현재 브랜치와 보낼 커밋을 보여 주는 확인 팝업을 띄우고 `↩` 로 푸시합니다. 강제 푸시와 태그 푸시는 하지 않습니다. 인증이 필요한 원격은 프롬프트 없이 실패하고 상태 표시줄에 터미널에서 다시 시도하라고 알립니다
+- **diff 와 Git 창** diff 는 HEAD 와 현재 내용을 한 열로 보여 주고 `F7` / `⇧F7` 로 변경 사이를 이동합니다. `⌘9` Git 창의 Log 탭은 최근 커밋을 보여 주고 `↩` 로 그 커밋의 diff 를 열며, Console 탭은 stride 가 실행한 git 명령과 출력을 보여 줍니다. `⌃V` 는 이 명령들을 번호로 모은 VCS 팝업입니다
+
+</td>
+</tr>
+</table>
+
 ### 리퀴드 글래스 UI
 
 <table width="100%">
@@ -273,7 +290,15 @@ brew install --cask lcalmsky/stride/stride
 | `⌘4` · `⌘R` (Run 창) | Run 창 열기 · Run 창에서 다시 실행 |
 | **터미널** | |
 | `⌥F12` | Terminal 창 열기 |
-| `⇧Esc` | 도구 창 숨기기 (Bookmarks·Find·Run·Problems·Structure·Terminal 창) |
+| `⇧Esc` | 도구 창 숨기기 (Bookmarks·Find·Run·Problems·Structure·Terminal·Commit·Git 창) |
+| **Git** | |
+| `⌘K` | Commit 창 열기 (`⌘↩` 커밋, `Space` 파일 체크, `⌘D` diff, `Tab` 목록과 메시지 사이 이동) |
+| `⇧⌘K` | 푸시 확인 팝업 |
+| `⌃V` | VCS 팝업 (터미널에서는 셸로 전달) |
+| `⌥⌘Z` | 줄 되돌리기 |
+| `⌃⌥⇧↓` / `⌃⌥⇧↑` | 다음 변경 / 이전 변경 |
+| `⌘0` / `⌘9` | Commit / Git 창 |
+| `F7` / `⇧F7` · `⌃⇧→` / `⌃⇧←` (diff) | 다음 / 이전 변경 · 다음 / 이전 파일 |
 | **기타** | |
 | Actions 탭 | Switch UI Font |
 
@@ -308,6 +333,7 @@ JDK 21 이 필요합니다. Gradle toolchain 이 21 을 요구합니다.
 |---|---|
 | macOS Apple Silicon (arm64) | 릴리즈 앱은 arm64 전용입니다. 번들 런타임이 들어 있어 JDK 설치가 필요 없습니다 |
 | macOS 26 이상 (선택) | 시스템 유리를 쓰는 조건입니다. 그보다 낮으면 앱 안에서 그리는 유리로 동작합니다 |
+| Git (선택) | Git 기능은 설치된 `git` 명령을 씁니다. 없으면 Git 동작이 `Git is not installed` 를 알립니다 |
 | JDK 21 | 소스에서 빌드할 때만 필요합니다 |
 | Gatekeeper | zip 을 직접 받아 풀면 첫 실행에서 경고가 뜰 수 있습니다. Finder 에서 앱을 우클릭하고 `열기` 를 고릅니다 |
 
@@ -317,7 +343,7 @@ JDK 21 이 필요합니다. Gradle toolchain 이 21 을 요구합니다.
 
 앱은 여섯 모듈로 나뉩니다. `core` 는 서비스·확장점·`Disposer` 를 제공하고, `lang` 은 언어와 파일 종류·하이라이터·주석 처리·인텐션·import 정리·문제 제공자 API 를 정의합니다. `search` 는 파일 이름 인덱스, Kotlin·Java 선언 인덱스, Search Everywhere 의 모델을, `app` 은 Compose Desktop UI 와 에디터·탐색·북마크·Run·터미널을 담습니다. `plugins/lang-kotlin` 과 `plugins/lang-json` 이 각각 Kotlin 과 JSON 의 렉서·하이라이터·파일 종류와 괄호 짝을 판정하는 문제 제공자를 등록하고, Kotlin 플러그인은 import 퀵픽스와 `val`·`var` 인텐션, import 정리기, 안 쓰는 import 경고도 등록합니다.
 
-모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, import 정리, 문제 제공자, 리팩터링 제공자, 생성 제공자, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 선언 인덱스는 상위 타입과 import, 멤버 범위도 읽고, 계층 탐색 액션은 이 정보로 타입 그래프를 만듭니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
+모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, import 정리, 문제 제공자, 리팩터링 제공자, 생성 제공자, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 선언 인덱스는 상위 타입과 import, 멤버 범위도 읽고, 계층 탐색 액션은 이 정보로 타입 그래프를 만듭니다. Git 기능은 `git` 명령을 자식 프로세스로 실행하는 프로젝트 서비스 `GitService` 가 맡습니다. 상태는 `git status --porcelain=v2` 로 읽고, 거터 표시는 HEAD 의 파일 내용과 에디터 텍스트를 프로세스 안에서 줄 단위로 비교해 만듭니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다.
 
 에디터는 스크롤 뷰포트와 크롬 인셋을 따로 둡니다. 내용은 창 가장자리까지 이어지고 유리 캡슐과 사이드바가 그 위에 떠 있으며, 인셋은 캐럿 스크롤·거터·스크롤바 여백에 반영됩니다. 1,000줄 이상 문서는 내용을 별도 스크롤 레이어에 배치하고 800줄 아래로 내려가면 레이어를 풉니다.
 

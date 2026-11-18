@@ -132,6 +132,23 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 </tr>
 </table>
 
+### Git
+
+<table width="100%">
+<tr>
+<td width="44%" valign="top"><img src="docs/images/commit.png" alt="The editor with gutter change marks and the Commit window" width="480"><br><br><img src="docs/images/diff.png" alt="The diff popup comparing HEAD with the current text in one column" width="480"></td>
+<td valign="top">
+
+- **Change marks** inside a Git repository, lines that differ from HEAD are marked at the right edge of the gutter. Added and changed lines get a colored bar and a deleted spot gets a small triangle; the comparison runs again 100 ms after typing stops, so unsaved edits show at once. Clicking a mark opens a popup with the HEAD lines and `Rollback ⌥⌘Z` and `Show Diff` buttons
+- **Rollback and change navigation** `⌥⌘Z` returns the changes at the carets or in the selection to their HEAD lines, and one `⌘Z` undoes it. Nothing is saved. `⌃⌥⇧↓` / `⌃⌥⇧↑` move to the next / previous change
+- **Commit** `⌘K` opens the Commit window with the message field focused. Changed and unversioned files are listed with checkboxes, and `⌘↩` commits only the checked ones. Unsaved editors of the checked files are saved first, and there is no separate staging area. In the window, `⌘D` opens the diff of the selected file
+- **Push** `⇧⌘K` shows a confirmation popup with the current branch and the outgoing commits, and `↩` pushes. There is no force push and no tag push. A remote that needs credentials fails without a prompt, and the status bar says to retry in the terminal
+- **Diff and the Git window** the diff shows HEAD and the current text in one column, and `F7` / `⇧F7` move between changes. In the `⌘9` Git window, the Log tab lists recent commits and `↩` opens a commit's diff; the Console tab shows the git commands stride ran and their output. `⌃V` is the VCS popup with these commands numbered
+
+</td>
+</tr>
+</table>
+
 ### Liquid glass UI
 
 <table width="100%">
@@ -273,7 +290,15 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌘4` · `⌘R` (Run window) | Open the Run window · rerun from the Run window |
 | **Terminal** | |
 | `⌥F12` | Open the Terminal window |
-| `⇧Esc` | Hide the tool window (Bookmarks, Find, Run, Problems, Structure and Terminal windows) |
+| `⇧Esc` | Hide the tool window (Bookmarks, Find, Run, Problems, Structure, Terminal, Commit and Git windows) |
+| **Git** | |
+| `⌘K` | Open the Commit window (`⌘↩` commit, `Space` check a file, `⌘D` diff, `Tab` between the list and the message) |
+| `⇧⌘K` | Push confirmation popup |
+| `⌃V` | VCS popup (passed to the shell in the terminal) |
+| `⌥⌘Z` | Rollback lines |
+| `⌃⌥⇧↓` / `⌃⌥⇧↑` | Next change / previous change |
+| `⌘0` / `⌘9` | Commit / Git window |
+| `F7` / `⇧F7` · `⌃⇧→` / `⌃⇧←` (diff) | Next / previous change · next / previous file |
 | **Other** | |
 | Actions tab | Switch UI Font |
 
@@ -308,6 +333,7 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 |---|---|
 | macOS Apple Silicon (arm64) | The release app is arm64 only. The bundled runtime means no JDK installation is needed |
 | macOS 26 or later (optional) | Needed for the system glass; below that the app draws its own glass in the window |
+| Git (optional) | The Git features use the installed `git` command. Without it, Git actions report `Git is not installed` |
 | JDK 21 | Needed only to build from source |
 | Gatekeeper | When you download and unzip the app yourself, the first launch may show a warning. Right-click the app in Finder and choose `Open` |
 
@@ -317,7 +343,7 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 
 The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, intention, import optimizer, and problem provider APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, file types, and bracket-matching problem providers, and the Kotlin plugin also registers the import quick fixes, the `val`/`var` intention, the import optimizer, and the unused import warning.
 
-Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, problem provider, refactoring provider, generate provider, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The declaration index also reads supertypes, imports and member ranges, from which the hierarchy actions build a type graph. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
+Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, problem provider, refactoring provider, generate provider, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The declaration index also reads supertypes, imports and member ranges, from which the hierarchy actions build a type graph. The Git features belong to the project service `GitService`, which runs the `git` command as a child process. It reads status with `git status --porcelain=v2`, and the gutter marks come from an in-process line diff of the file at HEAD against the editor text. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md).
 
 The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 
