@@ -2013,6 +2013,54 @@ class ActionDispatcherTest {
         assertEquals("a.kt", requireNotNull(state.navigationBar).segment.name)
     }
 
+    @Test
+    fun `each refactoring action starts its own refactoring`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("Main.kt")
+        val editor = session.editors.selected as TextFileEditor
+        val text = "fun total(a: Int, b: Int, c: Int): Int {\n" +
+            "    println(a)\n" +
+            "    val sum = b + c\n" +
+            "    return sum\n" +
+            "}\n"
+        val expression = text.indexOf("b + c")
+        val statement = text.indexOf("println(a)")
+        val target = text.indexOf("sum", text.indexOf("return"))
+
+        editor.updateValue(TextFieldValue(text, TextRange(target)))
+        assertTrue(dispatchAction(ActionId.REFACTOR_THIS, state) { null })
+        val request = requireNotNull(state.refactorThis)
+        assertEquals(listOf("Rename…", "Introduce Variable…", "Inline…"), request.rows.map { it.text })
+        assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+        assertNull(state.refactoringName)
+        assertEquals(text, editor.value.text)
+
+        state.refactorThis = null
+        editor.updateValue(TextFieldValue(text, TextRange(expression, expression + "b + c".length)))
+        assertTrue(dispatchAction(ActionId.INTRODUCE_VARIABLE, state) { null })
+        assertEquals("Introduce Variable", state.refactoringName?.step?.title)
+        assertNull(state.refactorThis)
+        assertEquals(text, editor.value.text)
+
+        state.refactoringName = null
+        editor.updateValue(
+            TextFieldValue(text, TextRange(statement, statement + "println(a)".length)),
+        )
+        assertTrue(dispatchAction(ActionId.EXTRACT_METHOD, state) { null })
+        assertEquals("Extract Method", state.refactoringName?.step?.title)
+        assertNull(state.refactorThis)
+        assertEquals(text, editor.value.text)
+
+        state.refactoringName = null
+        editor.updateValue(TextFieldValue(text, TextRange(target)))
+        assertTrue(dispatchAction(ActionId.INLINE, state) { null })
+        assertEquals(
+            "fun total(a: Int, b: Int, c: Int): Int {\n    println(a)\n    return b + c\n}\n",
+            editor.value.text,
+        )
+        assertEquals("Inlined sum (1 use)", state.statusMessage)
+    }
+
     private fun openProjectWith(vararg names: String): ProjectSession {
         val root = temp.resolve("project")
         Files.createDirectories(root)

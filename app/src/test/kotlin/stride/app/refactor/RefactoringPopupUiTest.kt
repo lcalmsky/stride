@@ -34,6 +34,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
@@ -200,6 +201,66 @@ class RefactoringPopupUiTest {
         assertNotNull(state.refactoringName)
         assertEquals("alpha beta\n", editor.value.text)
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the occurrence chooser follows the arrows, opens the name popup and escape restores the text`() =
+        runComposeUiTest {
+            val text = "fun total(a: Int, b: Int): Int {\n    val x = a + b\n    return a + b\n}\n"
+            val editor = prepareProject(text)
+            val first = text.indexOf("a + b")
+            val second = text.indexOf("a + b", first + 1)
+
+            setContent { RefactoringHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            editor.updateValue(TextFieldValue(text, TextRange(first, first + "a + b".length)))
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.refactoringChoose != null }
+            waitForIdle()
+            onNodeWithText("Occurrences").assertExists()
+            onNodeWithText("Replace this occurrence only").assertExists()
+            onNodeWithText("Replace all 2 occurrences").assertExists()
+            assertEquals(listOf(first until first + 5), editor.usageHighlights)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitForIdle()
+            assertEquals(
+                listOf(first until first + 5, second until second + 5),
+                editor.usageHighlights,
+            )
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.refactoringChoose == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            waitForIdle()
+            assertTrue(editor.usageHighlights.isEmpty())
+            assertEquals(text, editor.value.text)
+
+            // The popup taking focus collapses the editor's selection, so the second run selects again.
+            editor.updateValue(TextFieldValue(text, TextRange(first, first + "a + b".length)))
+            onRoot().performKeyInput {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.refactoringChoose != null }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.refactoringName != null }
+            waitForIdle()
+            onNodeWithText("Introduce Variable").assertExists()
+            onNodeWithTag(REFACTORING_NAME_FIELD_TAG).assertIsFocused()
+            assertTrue(editor.usageHighlights.isEmpty())
+            assertEquals(text, editor.value.text)
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.refactoringName == null }
+            assertTrue(editor.usageHighlights.isEmpty())
+            assertEquals(text, editor.value.text)
+        }
 
     private fun namingStep(): RefactoringStep.AskName =
         RefactoringStep.AskName("Introduce Variable", "value") { name ->
