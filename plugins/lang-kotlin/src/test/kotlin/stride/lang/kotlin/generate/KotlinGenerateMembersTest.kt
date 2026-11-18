@@ -344,6 +344,86 @@ class KotlinGenerateMembersTest {
     }
 
     @Test
+    fun `a private class body does not implement`() {
+        val b = "package demo\n\nopen class B {\n    private fun f(): Int = 1\n}"
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val files = mapOf(P_PATH to p, BASE_PATH to b)
+        for (supertypes in listOf("B(), P", "P, B()")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("fun f(): Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+            val text = run(implementKind, source, currentTypes(source, files), setOf("fun f(): Int")).text
+                ?: error("refused")
+            assertTrue(text.contains("override fun f(): Int {\n        TODO(\"Not yet implemented\")\n    }"), text)
+        }
+    }
+
+    @Test
+    fun `a private class property body does not implement`() {
+        val b = "package demo\n\nopen class B {\n    private val x: Int = 1\n}"
+        val p = "package demo\n\ninterface P {\n    val x: Int\n}"
+        val files = mapOf(P_PATH to p, BASE_PATH to b)
+        for (supertypes in listOf("B(), P", "P, B()")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("val x: Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+            val text = run(implementKind, source, currentTypes(source, files), setOf("val x: Int")).text
+                ?: error("refused")
+            assertTrue(text.contains("override val x: Int\n        get() = TODO(\"Not yet implemented\")"), text)
+        }
+    }
+
+    @Test
+    fun `two interface bodies that do not override each other are listed`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n}"
+        val r = "package demo\n\ninterface R : P {\n    override fun f(): Int = 7\n}"
+        val files = mapOf(P_PATH to p, Q_PATH to q, R_PATH to r)
+        for (supertypes in listOf("Q, R", "R, Q")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("fun f(): Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+            val text = run(implementKind, source, currentTypes(source, files), setOf("fun f(): Int")).text
+                ?: error("refused")
+            assertTrue(text.contains("override fun f(): Int {\n        TODO(\"Not yet implemented\")\n    }"), text)
+        }
+    }
+
+    @Test
+    fun `two interface bodies without an abstract declaration are listed`() {
+        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n}"
+        val s = "package demo\n\ninterface S {\n    fun f(): Int = 8\n}"
+        val files = mapOf(Q_PATH to q, S_PATH to s)
+        for (supertypes in listOf("Q, S", "S, Q")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("fun f(): Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+            val text = run(implementKind, source, currentTypes(source, files), setOf("fun f(): Int")).text
+                ?: error("refused")
+            assertTrue(text.contains("override fun f(): Int {\n        TODO(\"Not yet implemented\")\n    }"), text)
+        }
+    }
+
+    @Test
+    fun `an interface body overriding another body is not listed`() {
+        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n}"
+        val r = "package demo\n\ninterface R : Q {\n    override fun f(): Int = 8\n}"
+        val files = mapOf(Q_PATH to q, R_PATH to r)
+        for (supertypes in listOf("Q, R", "R, Q")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            assertEquals(
+                "No members to implement in project sources",
+                run(implementKind, source, currentTypes(source, files)).status,
+                supertypes,
+            )
+        }
+    }
+
+    @Test
     fun `a default import type needs no import`() {
         val base = "package demo\n\nabstract class Store {\n    abstract fun at(t: Thread)\n}"
         val source = "package demo\n\nclass OrderService : Store() {\n}"
@@ -400,5 +480,6 @@ class KotlinGenerateMembersTest {
         const val P_PATH = "/project/src/main/kotlin/demo/P.kt"
         const val Q_PATH = "/project/src/main/kotlin/demo/Q.kt"
         const val R_PATH = "/project/src/main/kotlin/demo/R.kt"
+        const val S_PATH = "/project/src/main/kotlin/demo/S.kt"
     }
 }

@@ -60,8 +60,14 @@ private fun generateMembers(klass: KtClazz, context: GenerateContext, override: 
         return RefactoringStep.Refused("${walked.unreadClass} is not in project sources; it may implement these members")
     }
     // G6: Override lists Any's members with the other candidates, not only when there are none.
-    val candidates = collectCandidates(klass, context, walked.nodes, walked.ancestors, walked.providerCount, override) +
-        if (override) anyCandidates(klass, walked.nodes) else emptyList()
+    val candidates = collectCandidates(
+        klass,
+        context,
+        walked.nodes,
+        walked.providerCount,
+        walked.bodies,
+        override,
+    ) + if (override) anyCandidates(klass, walked.nodes) else emptyList()
     val title = if (walked.unreadInterfaces.isEmpty()) {
         kind.title
     } else {
@@ -100,6 +106,7 @@ private class Walked(
     /** For each node key, every node key above it along the walk. */
     val ancestors: Map<String, Set<String>>,
     val providerCount: Map<String, Set<String>>,
+    val bodies: MemberBodies,
     val unreadClass: String?,
     val unreadInterfaces: List<String>,
 )
@@ -153,7 +160,8 @@ private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, 
             providers.getOrPut("prop:$name") { HashSet() }.add(node.directName)
         }
     }
-    return Walked(nodes, ancestorKeys(nodes, edges), providers, unreadClass, unreadInterfaces)
+    val ancestors = ancestorKeys(nodes, edges)
+    return Walked(nodes, ancestors, providers, memberBodies(nodes, ancestors), unreadClass, unreadInterfaces)
 }
 
 private fun ancestorKeys(nodes: List<WalkNode>, edges: Map<String, Set<String>>): Map<String, Set<String>> {
@@ -241,8 +249,8 @@ private fun collectCandidates(
     klass: KtClazz,
     context: GenerateContext,
     nodes: List<WalkNode>,
-    ancestors: Map<String, Set<String>>,
     providers: Map<String, Set<String>>,
+    bodies: MemberBodies,
     override: Boolean,
 ): List<CandidateMember> {
     val existingFunctions = klass.functions.map { function ->
@@ -250,7 +258,6 @@ private fun collectCandidates(
             function.parameters.joinToString(",") { (it.type ?: "").filterNot { ch -> ch.isWhitespace() } } + ")"
     }.toSet()
     val existingProperties = klass.properties.mapNotNull { it.name }.toSet()
-    val implemented = implementedKeys(nodes, ancestors)
     val seen = HashSet<String>()
     val result = ArrayList<CandidateMember>()
     for (node in nodes) {
@@ -258,45 +265,76 @@ private fun collectCandidates(
         for (function in declaration.functions) {
             val key = functionKey(function, node.substitution)
             val abstractMember = isAbstractFunction(function, declaration.isInterface)
+            val independentBody = !override && key in bodies.independent
+            val todoBody = abstractMember || independentBody
             // Implement lists the abstract declaration even when a body of the same member comes first.
-            if (!override && !abstractMember) continue
+            if (!override && !todoBody) continue
+            val overridable = overridableFunction(function, declaration.isInterface)
+            if (!override && !overridable) continue
             if (!seen.add(key)) continue
             if (key in existingFunctions) continue
-            if (!overridableFunction(function, declaration.isInterface)) continue
-            if (!override && key in implemented) continue
-            result.add(functionCandidate(klass, context, node, function, key, abstractMember, providers, !override))
+            if (!overridable) continue
+            if (!override && key in bodies.implemented && !independentBody) continue
+            result.add(functionCandidate(klass, context, node, function, key, todoBody, providers, !override))
         }
         for (property in declaration.properties) {
             val name = property.name ?: continue
             val key = propertyKey(property, node.substitution)
             val abstractMember = isAbstractProperty(property, declaration.isInterface)
-            if (!override && !abstractMember) continue
+            val independentBody = !override && key in bodies.independent
+            val todoBody = abstractMember || independentBody
+            if (!override && !todoBody) continue
+            val overridable = overridableProperty(property, declaration.isInterface)
+            if (!override && !overridable) continue
             if (!seen.add(key)) continue
             if (name in existingProperties) continue
-            if (!overridableProperty(property, declaration.isInterface)) continue
-            if (!override && key in implemented) continue
-            result.add(propertyCandidate(klass, context, node, property, key, abstractMember, providers, !override))
+            if (!overridable) continue
+            if (!override && key in bodies.implemented && !independentBody) continue
+            result.add(propertyCandidate(klass, context, node, property, key, todoBody, providers, !override))
         }
     }
     return result
 }
 
+private class MemberBodies(
+    /** Member keys a body in the walk implements. */
+    val implemented: Set<String>,
+    /** Member keys two interface bodies provide with neither overriding the other. */
+    val independent: Set<String>,
+)
+
 /**
  * Members the walk implements (G6): a class body counts wherever it sits in the walk, an interface
- * body only when the interface inherits the abstract declaration it overrides.
+ * body only when the interface inherits the abstract declaration it overrides. A `private` body
+ * implements nothing, and two interface bodies that do not override each other leave the member
+ * to the class.
  */
-private fun implementedKeys(nodes: List<WalkNode>, ancestors: Map<String, Set<String>>): Set<String> {
+private fun memberBodies(nodes: List<WalkNode>, ancestors: Map<String, Set<String>>): MemberBodies {
     val abstractDeclarers = HashMap<String, MutableSet<String>>()
+    val bodies = HashMap<String, MutableList<WalkNode>>()
+    val classBodies = HashSet<String>()
     for (node in nodes) {
         val interfaceMember = node.declaration.isInterface
         for (function in node.declaration.functions) {
-            if (!isAbstractFunction(function, interfaceMember)) continue
-            abstractDeclarers.getOrPut(functionKey(function, node.substitution)) { HashSet() }.add(node.key)
+            val key = functionKey(function, node.substitution)
+            if (isAbstractFunction(function, interfaceMember)) {
+                abstractDeclarers.getOrPut(key) { HashSet() }.add(node.key)
+                continue
+            }
+            if (!function.hasBody || "private" in function.modifiers) continue
+            bodies.getOrPut(key) { ArrayList() }.add(node)
+            if (!interfaceMember) classBodies.add(key)
         }
         for (property in node.declaration.properties) {
             if (property.name == null) continue
-            if (!isAbstractProperty(property, interfaceMember)) continue
-            abstractDeclarers.getOrPut(propertyKey(property, node.substitution)) { HashSet() }.add(node.key)
+            val key = propertyKey(property, node.substitution)
+            if (isAbstractProperty(property, interfaceMember)) {
+                abstractDeclarers.getOrPut(key) { HashSet() }.add(node.key)
+                continue
+            }
+            if ("private" in property.modifiers) continue
+            bodies.getOrPut(key) { ArrayList() }.add(node)
+            if (!interfaceMember) classBodies.add(key)
         }
     }
     fun counts(node: WalkNode, key: String): Boolean {
@@ -304,21 +342,24 @@ private fun implementedKeys(nodes: List<WalkNode>, ancestors: Map<String, Set<St
         val declarers = abstractDeclarers[key] ?: return false
         return ancestors[node.key].orEmpty().any { it in declarers }
     }
-    val implemented = HashSet<String>()
-    for (node in nodes) {
-        for (function in node.declaration.functions) {
-            if (!function.hasBody) continue
-            val key = functionKey(function, node.substitution)
-            if (counts(node, key)) implemented.add(key)
-        }
-        for (property in node.declaration.properties) {
-            if (property.name == null) continue
-            if (isAbstractProperty(property, node.declaration.isInterface)) continue
-            val key = propertyKey(property, node.substitution)
-            if (counts(node, key)) implemented.add(key)
-        }
+    val byKey = nodes.associateBy { it.key }
+    fun declaration(node: WalkNode): String = (node.source?.path ?: "") + "@" + (node.source?.nameOffset ?: -1)
+    fun covers(above: WalkNode, below: WalkNode): Boolean {
+        val target = declaration(below)
+        return ancestors[above.key].orEmpty().any { key -> byKey[key]?.let(::declaration) == target }
     }
-    return implemented
+    val implemented = HashSet<String>()
+    for ((key, nodeList) in bodies) {
+        if (nodeList.any { counts(it, key) }) implemented.add(key)
+    }
+    val independent = HashSet<String>()
+    for ((key, nodeList) in bodies) {
+        if (key in classBodies) continue
+        val interfaces = nodeList.filter { it.declaration.isInterface }.distinctBy(::declaration)
+        if (interfaces.size < 2) continue
+        if (interfaces.none { candidate -> interfaces.all { it === candidate || covers(candidate, it) } }) independent.add(key)
+    }
+    return MemberBodies(implemented, independent)
 }
 
 private fun overridableFunction(function: SigFunction, interfaceMember: Boolean): Boolean {
