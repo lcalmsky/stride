@@ -1,7 +1,12 @@
 package stride.app.vcs
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.seconds
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -182,6 +187,147 @@ class GitCommitTest {
         }
 
         assertEquals("Git is not installed", message)
+    }
+
+    @Test
+    fun `cancelling a commit stops the hook process`() {
+        val repo = repoWithCommit()
+        val hook = writeHook(repo, "pre-commit", "#!/bin/sh\nsleep 30 && echo done\n")
+        val file = repo.write("src/New.kt", "new\n")
+
+        withService(repo) { service ->
+            val job = service.launch { service.commit(listOf(file), "Slow hook") }
+            assertTrue(eventually(10_000) { hookRunning(hook) }, "the hook never started")
+
+            job.cancel()
+
+            assertTrue(eventually(5_000) { job.isCompleted }, "the cancelled commit did not finish")
+            assertTrue(eventually(5_000) { !hookRunning(hook) }, "the hook is still running")
+        }
+    }
+
+    @Test
+    fun `a commit failing after add names the new files it added`() {
+        val repo = repoWithCommit()
+        writeHook(repo, "pre-commit", "#!/bin/sh\necho 'hook refused the commit' >&2\nexit 1\n")
+        val file = repo.write("src/New.kt", "new\n")
+
+        val result = withService(repo) { it.commit(listOf(file), "Blocked") }
+
+        assertFalse(result.ok)
+        assertTrue(result.message.endsWith("(1 new file was added to the index)"), result.message)
+        assertEquals(1, result.addedToIndex)
+    }
+
+    @Test
+    fun `a refresh requested during a commit runs once after it`() {
+        val repo = repoWithCommit()
+        val file = repo.write("src/Kept.kt", "changed\n")
+
+        withService(repo) { service ->
+            val executor = BlockingCommitExecutor(CliGitExecutor(TEST_GIT, repo.environment))
+            service.executor = executor
+            val job = service.launch { service.commit(listOf(file), "Change") }
+            assertTrue(executor.commitEntered.await(5, TimeUnit.SECONDS), "the commit never started")
+
+            service.refresh()
+            Thread.sleep(500)
+            executor.release.countDown()
+
+            assertTrue(eventually(10_000) { job.isCompleted }, "the commit did not finish")
+            assertTrue(eventually { executor.statusCalls.get() >= 2 }, "the status after the commit never ran")
+            Thread.sleep(700)
+            assertEquals(2, executor.statusCalls.get())
+            val commitIndex = executor.commands.indexOfFirst { it.firstOrNull() == "commit" }
+            assertTrue(commitIndex >= 0, "no commit reached git")
+            val statusIndexes = executor.commands.withIndex()
+                .filter { it.value.firstOrNull() == "status" }
+                .map { it.index }
+            assertTrue(statusIndexes.all { it > commitIndex }, "status ran while the commit held the gate")
+        }
+    }
+
+    @Test
+    fun `a failing message file write is a commit failure, not an exception`() {
+        val repo = repoWithCommit()
+        val head = repo.git("rev-parse", "HEAD").trim()
+        val file = repo.write("src/Kept.kt", "changed\n")
+
+        val result = withService(repo) { service ->
+            service.messageFileWriter = { _, _ -> throw IOException("No space left on device") }
+            service.commit(listOf(file), "Change")
+        }
+
+        assertFalse(result.ok)
+        assertEquals("Commit failed: No space left on device", result.message)
+        assertEquals(head, repo.git("rev-parse", "HEAD").trim())
+    }
+
+    @Test
+    fun `an unstaged rename of the included paths is committed as one rename`() {
+        val repo = repoWithCommit()
+        val original = repo.root.resolve("src/Kept.kt")
+        Files.delete(original)
+        val renamed = repo.write("src/Renamed.kt", "kept\n")
+
+        val result = withService(repo) { it.commit(listOf(renamed, original), "Rename") }
+
+        assertTrue(result.ok, result.message)
+        val nameStatus = repo.git("show", "--name-status", "-M", "--format=", "HEAD")
+            .lines().firstOrNull { it.isNotBlank() }.orEmpty()
+        assertTrue(nameStatus.startsWith("R"), nameStatus)
+        assertTrue(nameStatus.endsWith("src/Renamed.kt"), nameStatus)
+    }
+
+    @Test
+    fun `a file whose name has spaces is committed`() {
+        val repo = repoWithCommit()
+        val file = repo.write("src/My File.kt", "spaces\n")
+
+        val result = withService(repo) { it.commit(listOf(file), "Spaces") }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("spaces\n", repo.git("show", "HEAD:src/My File.kt"))
+    }
+
+    @Test
+    fun `a project in a repository subfolder commits under its root`() {
+        val repo = TestGitRepo.create(temp)
+        repo.write("sub/src/App.kt", "app\n")
+        repo.write("outside.txt", "outside\n")
+        repo.commitAll("Initial commit")
+        val file = repo.write("sub/src/App.kt", "app changed\n")
+
+        val result = withService(repo, root = repo.root.resolve("sub")) { it.commit(listOf(file), "Change") }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("app changed\n", repo.git("show", "HEAD:sub/src/App.kt"))
+        assertTrue(repo.git("status", "--porcelain").isBlank())
+    }
+
+    private fun hookRunning(hook: Path): Boolean =
+        ProcessHandle.current().descendants().anyMatch { handle ->
+            val line = handle.info().commandLine().orElse("")
+            line.contains(hook.toString()) || line.contains(".git/hooks/${hook.fileName}")
+        }
+
+    private class BlockingCommitExecutor(private val delegate: GitExecutor) : GitExecutor {
+        val commitEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val statusCalls = AtomicInteger()
+        val commands = CopyOnWriteArrayList<List<String>>()
+
+        override fun run(command: GitCommand): GitResult {
+            commands += command.args
+            when (command.args.firstOrNull()) {
+                "status" -> statusCalls.incrementAndGet()
+                "commit" -> {
+                    commitEntered.countDown()
+                    release.await(10, TimeUnit.SECONDS)
+                }
+            }
+            return delegate.run(command)
+        }
     }
 
     private fun writeHook(repo: TestGitRepo, name: String, content: String): Path {

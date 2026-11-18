@@ -45,12 +45,18 @@ class CliGitExecutorTest {
             "GIT_COMMON_DIR" to "/elsewhere/common",
             "GIT_NAMESPACE" to "namespace",
             "GIT_PREFIX" to "sub/",
+            "GIT_CONFIG" to "/elsewhere/.gitconfig",
+            "GIT_CONFIG_PARAMETERS" to "'core.hooksPath'='/elsewhere/hooks'",
+            "GIT_CONFIG_COUNT" to "1",
         )
         val executor = CliGitExecutor(git, emptyMap(), baseEnvironment = base)
 
         val environment = executor.environmentFor(GitCommand(listOf("status"), temp, 15.seconds))
         assertEquals("/usr/bin:/bin", environment["PATH"])
         for (name in CliGitExecutor.LEAKING_VARIABLES) assertNull(environment[name], name)
+        for (name in listOf("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")) {
+            assertNull(environment[name], name)
+        }
     }
 
     @Test

@@ -81,6 +81,25 @@ class WorkingTreeDiffTest {
     }
 
     @Test
+    fun `the title has the folder before the first refresh`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "fun main() {\n}\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            state.session!!.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+
+            assertTrue(openWorkingTreeDiff(state, file))
+
+            assertTrue(eventually { state.diffRequest != null })
+            assertEquals("src/Main.kt  HEAD ↔ Local", state.diffRequest!!.title)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `outside a repository the status bar gets the reason and no popup opens`(@TempDir temp: Path) {
         val root = temp.resolve("web-dashboard").createDirectories()
         val file = root.resolve("index.kt").also { it.writeText("val x = 1\n") }

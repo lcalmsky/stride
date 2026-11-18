@@ -423,6 +423,8 @@ fun openWorkingTreeDiff(state: AppState, file: Path, line: Int? = null): Boolean
         .firstOrNull { it.file.path.toAbsolutePath().normalize() == path }
         ?.value?.text
     git.launch {
+        // The snapshot is empty until a refresh has run, and the first diff can be asked for before.
+        if (git.snapshot.repository == null) git.refreshNow()
         val old = git.baseText(path)
         val root = git.snapshot.repository?.root
         if (root == null && old is BaseText.Unavailable) {

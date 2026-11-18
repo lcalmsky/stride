@@ -1,8 +1,10 @@
 package stride.app.vcs
 
 import java.nio.file.Path
+import kotlin.time.Duration.Companion.milliseconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class GitBinaryTest {
@@ -58,5 +60,26 @@ class GitBinaryTest {
     @Test
     fun `no candidate means no git`() {
         assertNull(GitBinary.resolve({ null }, { false }, { true }))
+    }
+
+    @Test
+    fun `a shell lookup over its timeout is destroyed and answers null`() {
+        val token = "stride-shell-${System.nanoTime()}"
+        val started = System.nanoTime()
+
+        val resolved = GitBinary.lookupInShell(
+            listOf("/bin/sh", "-c", "sleep 30; echo /stride/late/git $token"),
+            timeout = 500.milliseconds,
+        )
+
+        val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+        assertNull(resolved)
+        assertTrue(elapsedMillis < 5_000, "the lookup took $elapsedMillis ms")
+        assertTrue(
+            eventually(5_000) {
+                ProcessHandle.allProcesses().toList().none { it.info().commandLine().orElse("").contains(token) }
+            },
+            "the login shell is still running",
+        )
     }
 }

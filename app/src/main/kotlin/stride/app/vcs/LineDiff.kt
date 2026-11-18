@@ -32,7 +32,10 @@ object LineDiff {
 
     fun join(lines: List<String>, separator: String): String = lines.joinToString(separator)
 
-    /** The hunks from [old] to [new], or `null` when more than [maxEdits] lines change. */
+    /**
+     * The hunks from [old] to [new], or `null` when more than [maxEdits] edits are needed: one
+     * deleted line and one inserted line are each one edit, so a rewrite of n lines counts 2n.
+     */
     fun diff(old: List<String>, new: List<String>, maxEdits: Int = DEFAULT_MAX_EDITS): List<LineHunk>? {
         val hunks = ArrayList<LineHunk>()
         val budget = EditBudget(maxEdits)
@@ -226,6 +229,7 @@ object LineDiff {
 
     private data class Split(val x: Int, val y: Int)
 
+    /** Counts edits as deleted lines plus inserted lines; [spend] is called with that sum. */
     private class EditBudget(private val maximum: Int) {
         private var used = 0
 

@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** One invocation of the git command line. [args] is an argv list, never a shell string. */
 data class GitCommand(
@@ -118,6 +119,11 @@ class CliGitExecutor(
             "GIT_COMMON_DIR",
             "GIT_NAMESPACE",
             "GIT_PREFIX",
+            // A parent git process sets these for hooks; they would point the child at another
+            // repository's configuration.
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
         )
 
         private fun buildEnvironment(base: Map<String, String>): Map<String, String> {
@@ -201,13 +207,36 @@ object GitBinary {
         return null
     }
 
-    private fun shellLookup(name: String): Path? = runCatching {
+    private fun shellLookup(name: String): Path? {
         val shell = System.getenv("SHELL")?.takeIf { it.isNotBlank() } ?: "/bin/zsh"
-        val process = ProcessBuilder(shell, "-l", "-c", "command -v $name")
+        return lookupInShell(listOf(shell, "-l", "-c", "command -v $name"))
+    }
+
+    /**
+     * The answer of [command]. The output is drained on a second thread, because reading it to
+     * EOF would block past the timeout; a shell still running when [timeout] passes is destroyed
+     * with its descendants and the answer is `null`.
+     */
+    internal fun lookupInShell(
+        command: List<String>,
+        timeout: Duration = SHELL_LOOKUP_TIMEOUT,
+    ): Path? = runCatching {
+        val process = ProcessBuilder(command)
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor(5, TimeUnit.SECONDS)
+        val output = StringBuilder()
+        val reader = Thread { runCatching { output.append(process.inputStream.bufferedReader().readText()) } }
+        reader.isDaemon = true
+        reader.start()
+        val finished = try {
+            process.waitFor(timeout.inWholeMilliseconds.coerceAtLeast(1), TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!finished) destroyTree(process)
+        reader.join(READ_JOIN_MILLIS)
+        if (!finished) return@runCatching null
         // A login shell may print its own startup messages before the answer; the answer is the
         // last absolute path on stdout.
         output.lineSequence()
@@ -215,6 +244,11 @@ object GitBinary {
             .lastOrNull { it.startsWith("/") }
             ?.let(Path::of)
     }.getOrNull()
+
+    private fun destroyTree(process: Process) {
+        runCatching { process.toHandle().descendants().forEach { it.destroyForcibly() } }
+        process.destroyForcibly()
+    }
 
     private fun isExecutable(path: Path): Boolean = Files.isExecutable(path)
 
@@ -226,4 +260,7 @@ object GitBinary {
             .start()
         process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0
     }.getOrDefault(false)
+
+    private const val READ_JOIN_MILLIS = 2_000L
+    private val SHELL_LOOKUP_TIMEOUT = 5.seconds
 }

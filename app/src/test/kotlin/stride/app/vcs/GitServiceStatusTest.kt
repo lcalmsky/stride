@@ -5,6 +5,7 @@ import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
@@ -165,6 +166,34 @@ class GitServiceStatusTest {
     }
 
     @Test
+    fun `a tracked file outside the project root but inside the repository has its head text`() {
+        val repo = TestGitRepo.create(temp)
+        repo.write("sub/tracked.txt", "tracked\n")
+        repo.write("other/a.kt", "outside the project\n")
+        repo.commitAll("Initial commit")
+
+        val base = withService(repo, root = repo.root.resolve("sub")) {
+            it.baseText(repo.root.resolve("other/a.kt"))
+        }
+
+        assertEquals(BaseText.Text("outside the project\n"), base)
+    }
+
+    @Test
+    fun `an index change without a new head invalidates the base text`() {
+        val repo = repoWithCommit()
+        val file = repo.write("src/Later.txt", "later\n")
+
+        withService(repo) { service ->
+            assertEquals(BaseText.Untracked, service.baseText(file))
+            repo.git("add", "--", "src/Later.txt")
+            assertEquals(BaseText.Text(""), service.baseText(file))
+            repo.git("rm", "--cached", "--", "src/Later.txt")
+            assertEquals(BaseText.Untracked, service.baseText(file))
+        }
+    }
+
+    @Test
     fun `a CRLF checkout of an LF blob has no marks`() {
         val repo = TestGitRepo.create(temp)
         repo.git("config", "core.autocrlf", "true")
@@ -285,6 +314,39 @@ class GitServiceStatusTest {
             executor.blockStatus!!.countDown()
 
             assertTrue(eventually { executor.statusCalls.get() == 2 }, "expected one more status")
+            Thread.sleep(700)
+            assertEquals(2, executor.statusCalls.get())
+        }
+    }
+
+    @Test
+    fun `refresh calls racing the debounce hand-over add at most one status`() {
+        val repo = repoWithCommit()
+        withService(repo) { service ->
+            val executor = CountingExecutor(repo)
+            executor.blockStatus = CountDownLatch(1)
+            service.executor = executor
+            val running = AtomicBoolean(true)
+            val threads = (1..8).map {
+                Thread {
+                    while (running.get()) service.refresh()
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+            }
+            try {
+                assertTrue(executor.statusEntered.await(5, TimeUnit.SECONDS), "the first status never started")
+                // The debounce job has handed over by now; a second loop created in the hand-over
+                // window fires its own 300 ms delay inside this pause.
+                Thread.sleep(400)
+            } finally {
+                running.set(false)
+                threads.forEach { it.join() }
+            }
+            executor.blockStatus!!.countDown()
+
+            assertTrue(eventually { executor.statusCalls.get() >= 2 }, "the pending status never ran")
             Thread.sleep(700)
             assertEquals(2, executor.statusCalls.get())
         }

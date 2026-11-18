@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -73,6 +74,11 @@ class GitService(private val project: Project) : Disposable {
     /** Test seam for the three read, commit and push limits. */
     var timeouts: GitTimeouts = GitTimeouts()
 
+    /** Test seam for the message file write, so a full disk can be seen from a test. */
+    internal var messageFileWriter: (Path, String) -> Unit = { file, text ->
+        Files.writeString(file, text, Charsets.UTF_8)
+    }
+
     var snapshot: GitSnapshot by mutableStateOf(GitSnapshot(null, null, emptyList(), null))
         private set
 
@@ -100,6 +106,7 @@ class GitService(private val project: Project) : Disposable {
     private var debounceJob: Job? = null
     private var refreshing = false
     private var pendingRefresh = false
+    private val runningThreads = ConcurrentHashMap.newKeySet<Thread>()
 
     private val lexicalRoot: Path = project.root.toAbsolutePath().normalize()
 
@@ -126,7 +133,6 @@ class GitService(private val project: Project) : Disposable {
             if (debounceJob != null) return
             debounceJob = scope.launch {
                 delay(DEBOUNCE_MILLIS)
-                synchronized(refreshLock) { debounceJob = null }
                 refreshLoop()
             }
         }
@@ -140,8 +146,11 @@ class GitService(private val project: Project) : Disposable {
 
     private suspend fun refreshLoop() {
         while (true) {
+            // Clearing the debounce job and taking the refresh happen in one critical section; a
+            // refresh() between them would start a second loop.
             synchronized(refreshLock) {
                 if (disposed) return
+                debounceJob = null
                 pendingRefresh = false
                 refreshing = true
             }
@@ -161,7 +170,7 @@ class GitService(private val project: Project) : Disposable {
         }
     }
 
-    private fun refreshStatus() {
+    private suspend fun refreshStatus() {
         if (disposed) return
         if (gitMissing()) {
             publish(GitSnapshot(null, null, emptyList(), GIT_NOT_INSTALLED))
@@ -212,9 +221,9 @@ class GitService(private val project: Project) : Disposable {
         val head = headId()
         val key = BaseKey(path, head)
         baseCache[key]?.let { return@withContext it }
-        val value = readBlob(repository, path, head, checkTracked = true)
-        baseCache[key] = value
-        value
+        val read = readBlob(repository, path, head, checkTracked = true)
+        if (read.cacheable) baseCache[key] = read.text
+        read.text
     }
 
     /** [file]'s text at [revision]; `""` when it does not exist there; [baseText]'s rules otherwise. */
@@ -222,7 +231,7 @@ class GitService(private val project: Project) : Disposable {
         val repository = repository() ?: return@withContext repositoryUnavailable()
         val path = normalizePath(file)
         if (!path.startsWith(repository.root)) return@withContext BaseText.Unavailable(OUTSIDE_REASON)
-        readBlob(repository, path, revision, checkTracked = false)
+        readBlob(repository, path, revision, checkTracked = false).text
     }
 
     /** The files a commit changed, against its first parent; all of them for a root commit. */
@@ -277,7 +286,7 @@ class GitService(private val project: Project) : Disposable {
         }
     }
 
-    private fun commitLocked(
+    private suspend fun commitLocked(
         repository: GitRepository,
         paths: List<Path>,
         message: String,
@@ -295,7 +304,7 @@ class GitService(private val project: Project) : Disposable {
             )
             if (!add.ok) {
                 refreshStatus()
-                return GitWriteResult(false, commitFailure(add, timeouts.read), addedToIndex = 0)
+                return GitWriteResult(false, commitFailure(add, timeouts.read, added = 0), addedToIndex = 0)
             }
             added = untracked.size
         }
@@ -303,10 +312,10 @@ class GitService(private val project: Project) : Disposable {
             Files.createTempFile("stride-commit-", ".txt")
         } catch (e: java.io.IOException) {
             refreshStatus()
-            return GitWriteResult(false, "Commit failed: ${e.message ?: "cannot write the message"}")
+            return GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added))
         }
         return try {
-            Files.writeString(messageFile, message, Charsets.UTF_8)
+            messageFileWriter(messageFile, message)
             val result = write(
                 GitCommand(
                     listOf("commit", "--only", "-F", messageFile.toString(), "--") + paths.map { it.toString() },
@@ -317,7 +326,7 @@ class GitService(private val project: Project) : Disposable {
             )
             if (!result.ok) {
                 refreshStatus()
-                return GitWriteResult(false, commitFailure(result, timeouts.commit), addedToIndex = added)
+                return GitWriteResult(false, commitFailure(result, timeouts.commit, added), addedToIndex = added)
             }
             val id = readQuiet(GitCommand(listOf("rev-parse", "HEAD"), projectRoot, timeouts.read))
                 .stdoutText().trim()
@@ -333,6 +342,9 @@ class GitService(private val project: Project) : Disposable {
                 commitId = id,
                 subject = subject,
             )
+        } catch (e: java.io.IOException) {
+            refreshStatus()
+            GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added), addedToIndex = added)
         } finally {
             runCatching { Files.deleteIfExists(messageFile) }
         }
@@ -344,27 +356,43 @@ class GitService(private val project: Project) : Disposable {
         val repository = repository() ?: return@withContext PushPlan.Refused(notRepositoryMessage())
         val branch = currentBranch() ?: return@withContext PushPlan.Refused("Push needs a branch: HEAD is detached")
         val upstream = upstreamOf(branch)
+        val tracksRemote = upstream != null && remoteTrackingExists(upstream.first, upstream.second)
         val remote: String
         val remoteRef: String
         val newBranch: Boolean
         val range: String?
-        if (upstream != null) {
-            remote = upstream.first
-            remoteRef = upstream.second
-            newBranch = false
-            range = "${remote}/${shortRef(remoteRef)}..HEAD"
-        } else {
-            val remotes = remotes()
-            remote = when {
-                "origin" in remotes -> "origin"
-                remotes.size == 1 -> remotes.single()
-                else -> return@withContext PushPlan.Refused("No upstream: set one in the terminal")
+        when {
+            upstream != null && tracksRemote -> {
+                remote = upstream.first
+                remoteRef = upstream.second
+                newBranch = false
+                range = "${remote}/${shortRef(remoteRef)}..HEAD"
             }
-            remoteRef = "refs/heads/$branch"
-            newBranch = true
-            range = null
+            // The upstream setting outlives the remote branch (a prune leaves it behind), so this
+            // is a new branch push to the same place, not a branch with nothing to send.
+            upstream != null -> {
+                remote = upstream.first
+                remoteRef = upstream.second
+                newBranch = true
+                range = null
+            }
+            else -> {
+                val remotes = remotes()
+                remote = when {
+                    "origin" in remotes -> "origin"
+                    remotes.size == 1 -> remotes.single()
+                    else -> return@withContext PushPlan.Refused("No upstream: set one in the terminal")
+                }
+                remoteRef = "refs/heads/$branch"
+                newBranch = true
+                range = null
+            }
         }
-        val total = range?.let { countCommits(it) } ?: countCommits("HEAD")
+        val count = readQuiet(GitCommand(listOf("rev-list", "--count", range ?: "HEAD"), projectRoot, timeouts.read))
+        val total = count.stdoutText().trim().toIntOrNull()
+        if (!count.ok || total == null) {
+            return@withContext PushPlan.Refused("Push failed: ${firstLine(count)}")
+        }
         if (total == 0) return@withContext PushPlan.Refused("Nothing to push")
         val limit = minOf(total, MAX_OUTGOING)
         val logArgs = mutableListOf("log", "-n", limit.toString(), LOG_FORMAT)
@@ -373,7 +401,7 @@ class GitService(private val project: Project) : Disposable {
             .takeIf { it.ok }
             ?.let { parseLog(it.stdoutText()) }
             ?: emptyList()
-        val behind = if (upstream == null) 0 else {
+        val behind = if (!tracksRemote) 0 else {
             readQuiet(
                 GitCommand(
                     listOf("rev-list", "--count", "HEAD..${remote}/${shortRef(remoteRef)}"),
@@ -401,10 +429,13 @@ class GitService(private val project: Project) : Disposable {
         try {
             updateBusy(PUSHING)
             statusGate.withLock {
-                val environment = sshBatchModeEnvironment(executor, projectRoot, timeouts.read)
+                val environment = runInterruptible(Dispatchers.IO) {
+                    sshBatchModeEnvironment(executor, projectRoot, timeouts.read)
+                }
                 val args = buildList {
                     add("push")
                     add("--porcelain")
+                    add("--no-follow-tags")
                     if (plan.newBranch) add("-u")
                     add(plan.remote)
                     add("refs/heads/${plan.branch}:${plan.remoteRef}")
@@ -434,6 +465,9 @@ class GitService(private val project: Project) : Disposable {
             debounceJob = null
         }
         scope.cancel()
+        // Cancels the calls the service launched; the interrupt reaches calls a caller launched
+        // from another scope, so their child processes die with the project too.
+        runningThreads.forEach(Thread::interrupt)
         baseCache.clear()
     }
 
@@ -468,7 +502,7 @@ class GitService(private val project: Project) : Disposable {
     }
 
     /** A read that records a failure in the console; expected misses use [readQuiet]. */
-    private fun read(command: GitCommand): GitResult {
+    private suspend fun read(command: GitCommand): GitResult {
         val started = System.nanoTime()
         val result = runQuietly(command)
         if (!result.ok) record(command, result, System.nanoTime() - started)
@@ -476,20 +510,34 @@ class GitService(private val project: Project) : Disposable {
     }
 
     /** A read whose failure is an expected answer (not a repository, no HEAD, no blob). */
-    private fun readQuiet(command: GitCommand): GitResult = runQuietly(command)
+    private suspend fun readQuiet(command: GitCommand): GitResult = runQuietly(command)
 
-    private fun write(command: GitCommand): GitResult {
+    private suspend fun write(command: GitCommand): GitResult {
         val started = System.nanoTime()
         val result = runQuietly(command)
         record(command, result, System.nanoTime() - started)
         return result
     }
 
-    private fun runQuietly(command: GitCommand): GitResult = runCatching { executor.run(command) }.getOrElse {
-        GitResult(1, ByteArray(0), it.message ?: it.toString(), timedOut = false)
+    // runInterruptible interrupts the blocked thread on cancellation, which is what makes the
+    // executor's interrupt path destroy the child process tree.
+    private suspend fun runQuietly(command: GitCommand): GitResult = try {
+        runInterruptible(Dispatchers.IO) {
+            val thread = Thread.currentThread()
+            runningThreads += thread
+            try {
+                executor.run(command)
+            } finally {
+                runningThreads -= thread
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        GitResult(1, ByteArray(0), e.message ?: e.toString(), timedOut = false)
     }
 
-    private fun repository(): GitRepository? {
+    private suspend fun repository(): GitRepository? {
         if (gitMissing()) return null
         repositoryCache?.let { return it }
         val result = readQuiet(
@@ -510,7 +558,7 @@ class GitService(private val project: Project) : Disposable {
         return repository
     }
 
-    private fun headId(): String? {
+    private suspend fun headId(): String? {
         if (headKnown) return headValue
         val result = readQuiet(GitCommand(listOf("rev-parse", "--verify", "--quiet", "HEAD"), projectRoot, timeouts.read))
         val id = result.stdoutText().trim().takeIf { result.ok && it.isNotEmpty() }
@@ -519,44 +567,46 @@ class GitService(private val project: Project) : Disposable {
         return id
     }
 
-    private fun headExists(): Boolean = readQuiet(
+    private suspend fun headExists(): Boolean = readQuiet(
         GitCommand(listOf("rev-parse", "--verify", "--quiet", "HEAD"), projectRoot, timeouts.read),
     ).ok
 
-    /** The blob rules shared by [baseText] and [fileAt]; [revision] null means no HEAD commit. */
-    private fun readBlob(
+    /**
+     * The blob rules shared by [baseText] and [fileAt]; [revision] null means no HEAD commit.
+     * [cacheable] is false for answers that come from the index or a failed read, because a
+     * `git add` leaves HEAD unchanged and the cached answer would stay stale.
+     */
+    private suspend fun readBlob(
         repository: GitRepository,
         file: Path,
         revision: String?,
         checkTracked: Boolean,
-    ): BaseText {
+    ): BlobRead {
         val repoRelative = repository.root.relativize(file).toString().replace('\\', '/')
-        val projectRelative = if (file.startsWith(projectRoot)) {
-            projectRoot.relativize(file).toString().replace('\\', '/')
-        } else {
-            repoRelative
+        if (checkTracked && !isTracked(repository, repoRelative)) return BlobRead(BaseText.Untracked, false)
+        if (hasFilterAttribute(repository, repoRelative)) {
+            return BlobRead(BaseText.Unavailable(FILTER_REASON), true)
         }
-        if (checkTracked && !isTracked(projectRelative)) return BaseText.Untracked
-        if (hasFilterAttribute(projectRelative)) return BaseText.Unavailable(FILTER_REASON)
-        if (revision == null) return BaseText.Text("")
+        if (revision == null) return BlobRead(BaseText.Text(""), false)
         val spec = "$revision:$repoRelative"
         val size = readQuiet(GitCommand(listOf("cat-file", "-s", spec), projectRoot, timeouts.read))
-        if (!size.ok) return BaseText.Text("")
+        if (!size.ok) return BlobRead(BaseText.Text(""), false)
         val bytes = size.stdoutText().trim().toLongOrNull() ?: 0L
-        if (bytes > MAX_BASE_BYTES) return BaseText.Unavailable(LARGE_REASON)
+        if (bytes > MAX_BASE_BYTES) return BlobRead(BaseText.Unavailable(LARGE_REASON), true)
         val blob = read(GitCommand(listOf("cat-file", "blob", spec), projectRoot, timeouts.read))
-        if (!blob.ok) return BaseText.Unavailable("Cannot read $repoRelative")
-        return decode(blob.stdout)
+        if (!blob.ok) return BlobRead(BaseText.Unavailable("Cannot read $repoRelative"), false)
+        return BlobRead(decode(blob.stdout), true)
     }
 
-    private fun isTracked(projectRelative: String): Boolean {
-        val result = readQuiet(GitCommand(listOf("ls-files", "-z", "--", projectRelative), projectRoot, timeouts.read))
+    /** A per-file command runs in the repository root with the repository-relative path. */
+    private suspend fun isTracked(repository: GitRepository, repoRelative: String): Boolean {
+        val result = readQuiet(GitCommand(listOf("ls-files", "-z", "--", repoRelative), repository.root, timeouts.read))
         return result.ok && result.stdoutText().isNotEmpty()
     }
 
-    private fun hasFilterAttribute(projectRelative: String): Boolean {
+    private suspend fun hasFilterAttribute(repository: GitRepository, repoRelative: String): Boolean {
         val result = readQuiet(
-            GitCommand(listOf("check-attr", "-z", "filter", "--", projectRelative), projectRoot, timeouts.read),
+            GitCommand(listOf("check-attr", "-z", "filter", "--", repoRelative), repository.root, timeouts.read),
         )
         if (!result.ok) return false
         val fields = result.stdoutText().split('\u0000')
@@ -588,7 +638,7 @@ class GitService(private val project: Project) : Disposable {
         return absolute
     }
 
-    private fun untrackedFiles(paths: List<Path>): List<Path> {
+    private suspend fun untrackedFiles(paths: List<Path>): List<Path> {
         val result = readQuiet(
             GitCommand(
                 listOf("ls-files", "-o", "--exclude-standard", "-z", "--") + paths.map { it.toString() },
@@ -610,13 +660,13 @@ class GitService(private val project: Project) : Disposable {
         timeouts.read,
     )
 
-    private fun currentBranch(): String? {
+    private suspend fun currentBranch(): String? {
         val result = readQuiet(GitCommand(listOf("symbolic-ref", "--short", "-q", "HEAD"), projectRoot, timeouts.read))
         return result.stdoutText().trim().takeIf { result.ok && it.isNotEmpty() }
     }
 
     /** The remote and remote ref the branch tracks, or `null` when it has no upstream. */
-    private fun upstreamOf(branch: String): Pair<String, String>? {
+    private suspend fun upstreamOf(branch: String): Pair<String, String>? {
         val result = readQuiet(
             GitCommand(
                 listOf(
@@ -635,16 +685,20 @@ class GitService(private val project: Project) : Disposable {
         return if (remote.isEmpty() || remoteRef.isEmpty()) null else remote to remoteRef
     }
 
-    private fun remotes(): List<String> {
+    private suspend fun remotes(): List<String> {
         val result = readQuiet(GitCommand(listOf("remote"), projectRoot, timeouts.read))
         if (!result.ok) return emptyList()
         return result.stdoutText().lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
     }
 
-    private fun countCommits(range: String): Int {
-        val result = readQuiet(GitCommand(listOf("rev-list", "--count", range), projectRoot, timeouts.read))
-        return result.stdoutText().trim().toIntOrNull() ?: 0
-    }
+    /** Whether the upstream's remote-tracking ref is still in the local repository. */
+    private suspend fun remoteTrackingExists(remote: String, remoteRef: String): Boolean = readQuiet(
+        GitCommand(
+            listOf("rev-parse", "--verify", "--quiet", "refs/remotes/$remote/${shortRef(remoteRef)}"),
+            projectRoot,
+            timeouts.read,
+        ),
+    ).ok
 
     private fun parseNameStatus(repository: GitRepository, output: String): List<FileChange> {
         val tokens = output.split('\u0000')
@@ -712,8 +766,18 @@ class GitService(private val project: Project) : Disposable {
         return text.contains("not a git repository") || text.contains("not a repository")
     }
 
-    private fun commitFailure(result: GitResult, timeout: Duration): String =
-        "Commit failed: ${describe(result, timeout)}"
+    private fun commitFailure(result: GitResult, timeout: Duration, added: Int): String =
+        commitFailureText(describe(result, timeout), added)
+
+    /** A commit that fails after `git add` says how many new files are already in the index. */
+    private fun commitFailureText(reason: String, added: Int): String = buildString {
+        append("Commit failed: ").append(reason)
+        if (added > 0) {
+            append(" (").append(added)
+            append(if (added == 1) " new file was" else " new files were")
+            append(" added to the index)")
+        }
+    }
 
     private fun pushFailure(result: GitResult, plan: PushPlan.Ready): String {
         val text = result.stdoutText() + "\n" + result.stderr
@@ -744,6 +808,8 @@ class GitService(private val project: Project) : Disposable {
     }
 
     private data class BaseKey(val path: Path, val head: String?)
+
+    private class BlobRead(val text: BaseText, val cacheable: Boolean)
 
     companion object {
         /** System property that turns the default executor off; the app's test task sets it. */

@@ -66,7 +66,7 @@ sealed interface PushPlan {
         val branch: String,
         val remote: String,
         val remoteRef: String,
-        /** True when the branch has no upstream and the push creates it with `-u`. */
+        /** True when the push creates the remote branch (no upstream, or its remote ref is gone) with `-u`. */
         val newBranch: Boolean,
         val outgoing: List<LogEntry>,
         val moreOutgoing: Int,
