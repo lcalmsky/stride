@@ -141,7 +141,13 @@ class CommitWindowUiTest {
             pressCommand(Key.D)
             waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
             assertEquals("src/Main.kt  HEAD ↔ Local", state.diffRequest?.title)
-            state.diffRequest = null
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
 
             onRoot().performKeyInput { pressKey(Key.Tab) }
             waitUntil(timeoutMillis = 5_000) {
@@ -160,6 +166,34 @@ class CommitWindowUiTest {
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
             assertTrue(session.editors.selected is TextFileEditor)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `f4 on the window's diff opens the file with the keyboard in the editor`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+
+            pressCommand(Key.D)
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+
+            onRoot().performKeyInput { pressKey(Key.F4) }
+
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            waitForIdle()
+            assertEquals(KeyContext.EDITOR, state.focus)
         } finally {
             state.dispose()
         }

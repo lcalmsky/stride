@@ -24,6 +24,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -42,6 +43,7 @@ import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
 import stride.core.services.Application
+import stride.core.vfs.VFile
 
 @ExtendWith(FixedUiFontExtension::class)
 class DiffPopupUiTest {
@@ -190,6 +192,42 @@ class DiffPopupUiTest {
             assertTrue(state.session!!.editors.openFiles.isEmpty())
 
             onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `escape from a diff opened by the vcs popup gives the keyboard back to the editor`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.commitAll("Initial commit")
+        repo.write("src/Main.kt", "second\n")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val session = requireNotNull(state.session)
+            session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+            runBlocking { session.git.refreshNow() }
+            session.editors.openFile(VFile(repo.root.resolve("src/Main.kt")))
+            setContent { DiffHarness(state) }
+            waitForIdle()
+            state.focusSelectedEditor()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.V) } }
+            waitUntil(timeoutMillis = 5_000) { state.vcsPopup != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            waitUntil(timeoutMillis = 5_000) { state.vcsPopup?.editorRowsEnabled == true }
+            onRoot().performKeyInput { pressKey(Key.Four) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
             waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
         } finally {

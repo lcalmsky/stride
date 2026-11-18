@@ -903,6 +903,9 @@ fun App(
             }
         }
         val diffRequest = state.diffRequest
+        // The keyboard's owner before the popup took it, read in the composition that first sees
+        // the request, before the popup's focus handler moves `state.focus` to CONTEXT_POPUP.
+        val diffReturnContext = remember(diffRequest) { if (diffRequest != null) state.focus else null }
         if (diffRequest != null && session != null) {
             Box(
                 Modifier
@@ -913,11 +916,14 @@ fun App(
             ) {
                 DiffPopup(diffRequest, state) {
                     state.diffRequest = null
-                    refocusEditor(state)
+                    refocusAfterPopup(state, diffReturnContext)
                 }
             }
         }
         val vcsPopup = state.vcsPopup
+        // openVcsPopup moves `state.focus` to the popup in the same call, so this reads
+        // CONTEXT_POPUP and closing the popup keeps handing the editor the keyboard.
+        val vcsReturnContext = remember(vcsPopup) { if (vcsPopup != null) state.focus else null }
         if (vcsPopup != null && session != null) {
             Box(
                 Modifier
@@ -928,11 +934,12 @@ fun App(
             ) {
                 VcsPopup(vcsPopup, state) {
                     state.vcsPopup = null
-                    refocusEditor(state)
+                    refocusAfterPopup(state, vcsReturnContext)
                 }
             }
         }
         val pushRequest = state.pushRequest
+        val pushReturnContext = remember(pushRequest) { if (pushRequest != null) state.focus else null }
         if (pushRequest != null && session != null) {
             Box(
                 Modifier
@@ -943,7 +950,7 @@ fun App(
             ) {
                 PushPopup(pushRequest, state) {
                     state.pushRequest = null
-                    refocusEditor(state)
+                    refocusAfterPopup(state, pushReturnContext)
                 }
             }
         }
@@ -1237,6 +1244,33 @@ private fun popupOwnsFocus(state: AppState): Boolean =
 /** Hands the keyboard back to the editor only when the action left no popup open. */
 private fun refocusEditorUnlessPopup(state: AppState) {
     if (!popupOwnsFocus(state)) refocusEditor(state)
+}
+
+/** The contexts the bottom panel reports while one of its tool windows has the keyboard. */
+private val TOOL_WINDOW_CONTEXTS = setOf(
+    KeyContext.COMMIT_WINDOW,
+    KeyContext.LIST_WINDOW,
+    KeyContext.RUN_WINDOW,
+    KeyContext.TERMINAL,
+)
+
+/**
+ * Hands the keyboard back to the tool window that had it before the popup, when that window is
+ * still the visible active one; the editor takes it otherwise.
+ */
+private fun refocusAfterPopup(state: AppState, returnContext: KeyContext?) {
+    val windows = state.toolWindows
+    val active = windows.active()
+    if (returnContext != null && returnContext in TOOL_WINDOW_CONTEXTS &&
+        windows.visible && active != null && active.context == returnContext
+    ) {
+        state.focus = returnContext
+        // The Commit window takes the keyboard back on its own, so that a popup which opened a
+        // file in the editor does not leave the panel's root holding it.
+        if (returnContext != KeyContext.COMMIT_WINDOW) windows.focusRequests++
+    } else {
+        refocusEditor(state)
+    }
 }
 
 private fun refocusEditor(state: AppState) {

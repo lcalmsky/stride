@@ -105,6 +105,40 @@ class GitToolWindowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `escape from a commit diff gives the log the keyboard back on the same row`() = runComposeUiTest {
+        val repo = threeCommits()
+        val state = openRepository(repo)
+        try {
+            setContent { GitHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Initial commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            val title = requireNotNull(state.diffRequest).title
+            assertTrue(title.endsWith("Initial commit"), title)
+
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitForIdle()
+
+            // The log owns the keyboard again: Enter opens the row it still has selected.
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            assertEquals(title, requireNotNull(state.diffRequest).title)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `the console shows a failed command with its exit code`() = runComposeUiTest {
         val repo = threeCommits()
         val hook = repo.root.resolve(".git/hooks/pre-commit")

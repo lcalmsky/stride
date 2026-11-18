@@ -62,11 +62,14 @@ import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.glass.nativeGlass
+import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.selectionRow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.core.vfs.VFile
+
+private enum class CommitFocusPart { LIST, MESSAGE }
 
 internal const val COMMIT_LIST_TAG: String = "commit-list"
 internal const val COMMIT_MESSAGE_TAG: String = "commit-message"
@@ -125,12 +128,23 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
     val listFocus = remember { FocusRequester() }
     val messageFocus = remember { FocusRequester() }
     var listFocused by remember { mutableStateOf(false) }
+    var lastPart by remember { mutableStateOf(CommitFocusPart.MESSAGE) }
 
     LaunchedEffect(state.toolWindows.focusRequests) {
         if (state.toolWindows.focusRequests > 0) {
             withFrameNanos { }
             runCatching { messageFocus.requestFocus() }
         }
+    }
+
+    // A diff or push popup that closed onto this window gives the keyboard back to the part that
+    // had it; one that closed onto the editor left `state.focus` there and is left alone.
+    val popupOpen = state.diffRequest != null || state.pushRequest != null
+    LaunchedEffect(popupOpen) {
+        if (popupOpen || state.focus != KeyContext.COMMIT_WINDOW) return@LaunchedEffect
+        withFrameNanos { }
+        val target = if (lastPart == CommitFocusPart.LIST) listFocus else messageFocus
+        runCatching { target.requestFocus() }
     }
 
     val ordered = CommitModel.ordered(rows)
@@ -191,7 +205,10 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                 selectedPath = selectedPath,
                 root = root,
                 listFocus = listFocus,
-                onListFocus = { listFocused = it },
+                onListFocus = { focused ->
+                    listFocused = focused
+                    if (focused) lastPart = CommitFocusPart.LIST
+                },
                 onSelect = { window.selectedPath = it.path },
                 onToggle = { window.inclusion.toggle(it) },
                 onOpen = { openCommitRow(state, session, it) },
@@ -225,7 +242,8 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                             .fillMaxSize()
                             .padding(DesignTokens.space4)
                             .testTag(COMMIT_MESSAGE_TAG)
-                            .focusRequester(messageFocus),
+                            .focusRequester(messageFocus)
+                            .onFocusChanged { focus -> if (focus.isFocused) lastPart = CommitFocusPart.MESSAGE },
                         textStyle = DesignTokens.chromeTextStyle.merge(
                             TextStyle(
                                 color = DesignTokens.text,

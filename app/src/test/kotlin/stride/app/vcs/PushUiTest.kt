@@ -15,7 +15,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyInput
@@ -37,6 +39,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
+import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
@@ -151,6 +154,38 @@ class PushUiTest {
                 ).trim(),
             )
             assertTrue(state.statusMessage == null, state.statusMessage ?: "")
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `escape from the push popup gives the commit window the keyboard back`() = runComposeUiTest {
+        val repo = repoWithUpstream()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { PushHarness(state) }
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.K) } }
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+
+            pressPush()
+            waitUntil(timeoutMillis = 10_000) { state.pushRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.pushRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            assertNull(state.statusMessage)
         } finally {
             state.dispose()
         }
