@@ -2855,7 +2855,8 @@ the same tokens and blocks as the current file.
   - an interface body that overrides another (`interface R : Q`): not listed
   - a class body and an abstract interface declaration, `class C : B(), P`: not listed (a final
     class body implements it too)
-  - a class body and an unrelated interface body: listed (`inherits multiple implementations`)
+  - a class body and an unrelated interface body: listed (`inherits multiple implementations`); when
+    the class body is final no override compiles either, so the row is disabled: `f is final in B`
   - an abstract class declaration and an unrelated interface body: listed
   - a `private` body in a class is not a declaration here, so `P.f` is listed Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
