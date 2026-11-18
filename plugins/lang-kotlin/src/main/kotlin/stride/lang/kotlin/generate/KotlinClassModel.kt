@@ -34,6 +34,7 @@ internal class KtPrimaryParameter(
     val type: String?,
     val property: Boolean,
     val isVar: Boolean,
+    val vararg: Boolean,
 )
 
 internal class KtPrimaryConstructor(
@@ -67,6 +68,7 @@ internal class KtProperty(
     val modifiers: Set<String>,
     val receiver: String?,
     val hasCustomGetter: Boolean,
+    val hasCustomSetter: Boolean,
     val start: Int,
     val end: Int,
 )
@@ -140,6 +142,22 @@ internal class KtClazz(
 
     /** The name token as written, with backticks when the declaration uses them. */
     fun writtenName(): String = nameToken?.text ?: name
+
+    /**
+     * Whether the class writes a constructor of its own. Only then can an unparenthesized supertype
+     * be a class: without one the class has no place to delegate `: super(…)` (G4, G5, G6).
+     */
+    fun hasExplicitConstructor(): Boolean = primaryConstructor != null || ownSecondaryConstructors.isNotEmpty()
+
+    /** A member named [name] here: a function, a body property or a primary constructor property. */
+    fun declaresMemberNamed(name: String): Boolean =
+        functions.any { it.name == name } ||
+            properties.any { it.name == name } ||
+            primaryConstructor?.parameters.orEmpty().any { it.property && it.name == name }
+
+    /** Whether [supertype], written in this class's header without `(…)`, may still be a class. */
+    fun supertypeMayBeClass(supertype: KtSupertype): Boolean =
+        supertype.hasCall || hasExplicitConstructor()
 
     override fun toString(): String = "$form $name"
 }
@@ -387,7 +405,7 @@ private fun primaryConstructor(code: KotlinCode, openIndex: Int, closeIndex: Int
                 isVar = true
             }
         }
-        parameters.add(KtPrimaryParameter(parsed.name, parsed.nameToken, parsed.type, property, isVar))
+        parameters.add(KtPrimaryParameter(parsed.name, parsed.nameToken, parsed.type, property, isVar, parsed.vararg))
     }
     return KtPrimaryConstructor(code.code[openIndex], code.code[closeIndex], parameters)
 }
@@ -727,7 +745,8 @@ private fun parseProperty(
         modifiers = segment.filter { it.type == KotlinTokenTypes.KEYWORD && it.text in KotlinCode.MODIFIER_WORDS }
             .map { it.text }.toSet(),
         receiver = receiver?.takeIf { typeParametersEnd < 0 || it.isNotEmpty() },
-        hasCustomGetter = hasGetter || hasSetter,
+        hasCustomGetter = hasGetter,
+        hasCustomSetter = hasSetter,
         start = start,
         end = end,
     )

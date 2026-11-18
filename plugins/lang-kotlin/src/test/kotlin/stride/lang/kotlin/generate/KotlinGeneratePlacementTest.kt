@@ -90,6 +90,22 @@ class KotlinGeneratePlacementTest {
     }
 
     @Test
+    fun `a member on the class opening line keeps the generated member inside the body`() {
+        val text = equalsRun("class A {| val x = 1 }").text ?: error("refused")
+        val close = text.lastIndexOf('}')
+        assertTrue(text.indexOf("override fun equals") in 0 until close, text)
+        assertTrue(text.indexOf("override fun hashCode") in 0 until close, text)
+    }
+
+    @Test
+    fun `a member sharing the class closing line keeps the generated member inside the body`() {
+        val text = equalsRun("class A {\n    fun f() {}|}").text ?: error("refused")
+        val close = text.lastIndexOf('}')
+        assertTrue(text.indexOf("override fun equals") in 0 until close, text)
+        assertTrue(text.indexOf("override fun hashCode") in 0 until close, text)
+    }
+
+    @Test
     fun `an existing blank line is not doubled`() {
         val source = "class A(val x: Int) {\n\n}"
         val text = equalsRun(source).text ?: error("refused")

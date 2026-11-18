@@ -103,6 +103,32 @@ class KotlinClassModelTest {
     }
 
     @Test
+    fun `a custom setter leaves the getter and the backing field alone`() {
+        val declaration = klass(
+            """
+            class A {
+                var x: Int = 0
+                    set(value) {
+                        field = value
+                    }
+                val y: Int
+                    get() = 1
+            }
+            """.trimIndent(),
+        )
+        val x = declaration.properties.first { it.name == "x" }
+        assertFalse(x.hasCustomGetter)
+        assertTrue(x.hasCustomSetter)
+        assertTrue(declaration.properties.first { it.name == "y" }.hasCustomGetter)
+    }
+
+    @Test
+    fun `a primary constructor vararg is read`() {
+        val declaration = klass("class A(vararg xs: Int)")
+        assertTrue(declaration.primaryConstructor!!.parameters.single().vararg)
+    }
+
+    @Test
     fun `enum entries end at the semicolon`() {
         val text = "enum class E {\n    A(1),\n    B(2);\n\n    var value: Int = 0\n}"
         val declaration = klass(text, "E")

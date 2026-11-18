@@ -11,6 +11,7 @@ import stride.lang.TypeSource
 import stride.lang.kotlin.KotlinTokenTypes
 import stride.lang.kotlin.codeTokens
 import stride.lang.kotlin.parseImports
+import stride.lang.kotlin.usedIdentifiersIn
 import stride.lang.kotlin.refactor.KotlinCode
 
 private const val INDEXING_MESSAGE = "Indexing… try again in a moment"
@@ -47,23 +48,33 @@ private fun generateMembers(klass: KtClazz, context: GenerateContext, override: 
     if (types == null) {
         if (klass.supertypes.isNotEmpty()) return RefactoringStep.Refused(INDEXING_MESSAGE)
         if (!override) return RefactoringStep.Refused("No members to implement in project sources")
-        return anyMembers(klass, context, emptyList())
+        val candidates = anyCandidates(klass, emptyList())
+        if (candidates.isEmpty()) return RefactoringStep.Refused("No members to implement in project sources")
+        return chooseMembers(klass, context, candidates, GenerateKind.OVERRIDE_METHODS.title)
     }
 
     val walked = walk(klass, context, types, override)
     if (!override && walked.unreadClass != null) {
         return RefactoringStep.Refused("${walked.unreadClass} is not in project sources; it may implement these members")
     }
-    val candidates = collectCandidates(klass, context, walked.nodes, walked.providerCount, override)
+    // G6: Override lists Any's members with the other candidates, not only when there are none.
+    val candidates = collectCandidates(klass, context, walked.nodes, walked.providerCount, override) +
+        if (override) anyCandidates(klass, walked.nodes) else emptyList()
     val title = if (walked.unreadInterfaces.isEmpty()) {
         kind.title
     } else {
         kind.title + ": " + walked.unreadInterfaces.joinToString(", ") { "$it is not in project sources" }
     }
-    if (candidates.isEmpty()) {
-        if (override) return anyMembers(klass, context, walked.nodes)
-        return RefactoringStep.Refused("No members to implement in project sources")
-    }
+    if (candidates.isEmpty()) return RefactoringStep.Refused("No members to implement in project sources")
+    return chooseMembers(klass, context, candidates, title)
+}
+
+private fun chooseMembers(
+    klass: KtClazz,
+    context: GenerateContext,
+    candidates: List<CandidateMember>,
+    title: String,
+): RefactoringStep {
     val options = candidates.map { it.option }
     return RefactoringStep.ChooseMembers(
         title = title,
@@ -101,10 +112,11 @@ private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, 
     }
     while (queue.isNotEmpty()) {
         val (parent, supertype) = queue.removeFirst()
+        val declaring = parent?.declaration ?: klass
         val path = parent?.source?.path ?: context.path
         val sources = types.resolve(supertype.written, path, supertype.offset)
         if (sources.isEmpty()) {
-            if (supertype.hasCall) {
+            if (declaring.supertypeMayBeClass(supertype)) {
                 if (!override && unreadClass == null) unreadClass = supertype.simpleName
             } else if (!override && supertype.simpleName !in unreadInterfaces) {
                 unreadInterfaces.add(supertype.simpleName)
@@ -215,11 +227,17 @@ private fun collectCandidates(
             function.parameters.joinToString(",") { (it.type ?: "").filterNot { ch -> ch.isWhitespace() } } + ")"
     }.toSet()
     val existingProperties = klass.properties.mapNotNull { it.name }.toSet()
+    // A body anywhere along the walk, an interface's default body included, is an implementation.
     val implemented = HashSet<String>()
     for (node in nodes) {
-        if (node.declaration.isInterface) continue
         for (function in node.declaration.functions) {
             if (function.hasBody) implemented.add(functionKey(function, node.substitution))
+        }
+        for (property in node.declaration.properties) {
+            if (property.name == null) continue
+            if (!isAbstractProperty(property, node.declaration.isInterface)) {
+                implemented.add(propertyKey(property, node.substitution))
+            }
         }
     }
     val seen = HashSet<String>()
@@ -455,17 +473,24 @@ private fun checkTypeImports(
     offset: Int,
 ): ImportCheck {
     val types = context.types ?: return ImportCheck(emptyList(), null)
+    val targetParsed = parseImports(context.text)
+    val sourceParsed = parseImports(node.source?.text ?: "")
+    val targetUsed = usedIdentifiersIn(context.text, targetParsed)
     val imports = LinkedHashSet<String>()
     for (text in typeTexts) {
         for (name in simpleTypeNames(text)) {
             if (name in memberTypeParameters) continue
             if (name in node.substitution) continue
-            if (name in DEFAULT_TYPE_NAMES) continue
             if (klass.code.text.let { declaresSimpleName(it, name) }) continue
-            val targetPackage = parseImports(context.text).packageName
-            val sourcePackage = parseImports(node.source?.text ?: "").packageName
-            val targetImports = parseImports(context.text).imports.filter { !it.star && it.boundName == name }
-            val sourceImports = parseImports(node.source?.text ?: "").imports.filter { !it.star && it.boundName == name }
+            val targetPackage = targetParsed.packageName
+            val sourcePackage = sourceParsed.packageName
+            val targetImports = targetParsed.imports.filter { !it.star && it.boundName == name }
+            val sourceImports = sourceParsed.imports.filter { !it.star && it.boundName == name }
+            // An added import outranks the target's star imports (G6).
+            fun starRefusal(): String? {
+                val star = targetParsed.imports.firstOrNull { it.star && name in targetUsed } ?: return null
+                return "$name may come from import ${star.path}"
+            }
             if (sourceImports.any { it.alias != null }) {
                 return ImportCheck(emptyList(), "refers to another $name here")
             }
@@ -490,6 +515,7 @@ private fun checkTypeImports(
                     if (targetPackage == sourcePackage && sourceNames.singleOrNull()?.substringBeforeLast('.') == targetPackage) {
                         continue
                     }
+                    starRefusal()?.let { return ImportCheck(emptyList(), it) }
                     imports.add(sourceNames.sorted().first())
                 }
                 sourceImports.isNotEmpty() -> {
@@ -499,15 +525,16 @@ private fun checkTypeImports(
                         return ImportCheck(emptyList(), "refers to another $name here")
                     }
                     if (targetResolved.isNotEmpty()) return ImportCheck(emptyList(), "refers to another $name here")
+                    starRefusal()?.let { return ImportCheck(emptyList(), it) }
                     imports.add(path)
                 }
                 else -> {
-                    val hasStar = parseImports(node.source?.text ?: "").imports.any { it.star }
-                    val aliased = parseImports(node.source?.text ?: "").imports.any { it.alias != null }
+                    val hasStar = sourceParsed.imports.any { it.star }
+                    val aliased = sourceParsed.imports.any { it.alias != null }
                     if (targetResolved.isNotEmpty() || targetImports.isNotEmpty() || hasStar || aliased) {
                         return ImportCheck(emptyList(), "refers to another $name here")
                     }
-                    return ImportCheck(emptyList(), "refers to another $name here")
+                    // Nothing resolves it and no explicit import names it: a default import needs no line.
                 }
             }
         }
@@ -536,27 +563,10 @@ internal fun simpleTypeNames(text: String): List<String> {
     return names
 }
 
-internal val DEFAULT_TYPE_NAMES: Set<String> = setOf(
-    "Any", "Unit", "Nothing", "Boolean", "Byte", "Short", "Int", "Long", "Float", "Double", "Char",
-    "String", "CharSequence", "Number", "Comparable", "Enum", "Annotation", "Array", "Throwable",
-    "Exception", "RuntimeException", "Error", "Iterable", "MutableIterable", "Collection",
-    "MutableCollection", "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap",
-    "ArrayList", "HashMap", "HashSet", "LinkedHashMap", "LinkedHashSet", "Pair", "Triple",
-    "Sequence", "Lazy", "Result", "Deprecated", "Suppress", "JvmStatic", "JvmField", "JvmName",
-    "JvmOverloads", "JvmInline", "OptIn", "RequiresOptIn", "AnnotationTarget", "AnnotationRetention",
-    "IntRange", "LongRange", "CharRange", "IntArray", "LongArray", "ShortArray", "ByteArray",
-    "CharArray", "BooleanArray", "FloatArray", "DoubleArray", "Runnable", "Cloneable",
-    "AutoCloseable", "Appendable", "Readable", "StringBuilder", "Regex", "MatchResult",
-    "IllegalArgumentException", "IllegalStateException", "IndexOutOfBoundsException",
-    "UnsupportedOperationException", "ClassCastException", "NullPointerException", "Function",
-    "Supplier", "Consumer", "Predicate", "BiFunction",
-)
-
-private fun anyMembers(
+private fun anyCandidates(
     klass: KtClazz,
-    context: GenerateContext,
     nodes: List<WalkNode>,
-): RefactoringStep {
+): List<CandidateMember> {
     val declared = HashSet<String>()
     var finalEquals = false
     var finalHash = false
@@ -612,18 +622,7 @@ private fun anyMembers(
             ),
         )
     }
-    if (candidates.isEmpty()) return RefactoringStep.Refused("No members to implement in project sources")
-    val options = candidates.map { it.option }
-    return RefactoringStep.ChooseMembers(
-        title = GenerateKind.OVERRIDE_METHODS.title,
-        members = options,
-        complete = { checked ->
-            val selected = candidates.filter { candidate -> checked.any { it === candidate.option } }
-            val members = selected.map { GeneratedMember(it.lines ?: emptyList(), it.caretLine, it.caretColumn) }
-            val edit = applyWithImports(klass, context, members, emptyList())
-            if (edit == null) NameCheck.Invalid("No class at the caret") else NameCheck.Valid(edit)
-        },
-    )
+    return candidates
 }
 
 private fun applyWithImports(
@@ -646,12 +645,21 @@ internal fun importEdits(code: KotlinCode, fqns: List<String>): List<stride.lang
     val parsed = parseImports(code.text)
     val missing = fqns.distinct().sorted().filter { fqn -> parsed.imports.none { it.path == fqn && !it.star } }
     if (missing.isEmpty()) return emptyList()
+    val lineBreak = if (code.text.contains("\r\n")) "\r\n" else "\n"
     if (parsed.imports.isEmpty()) {
         val packageEnd = parsed.packageLineEnd
         return if (parsed.packageName != null && packageEnd != null) {
-            listOf(stride.lang.TextEdit(packageEnd, packageEnd, "\n\n" + missing.joinToString("\n") { "import $it" }))
+            listOf(
+                stride.lang.TextEdit(
+                    packageEnd,
+                    packageEnd,
+                    lineBreak + lineBreak + missing.joinToString(lineBreak) { "import $it" },
+                ),
+            )
         } else {
-            listOf(stride.lang.TextEdit(0, 0, missing.joinToString("\n") { "import $it" } + "\n\n"))
+            listOf(
+                stride.lang.TextEdit(0, 0, missing.joinToString(lineBreak) { "import $it" } + lineBreak + lineBreak),
+            )
         }
     }
     val grouped = LinkedHashMap<Int, MutableList<String>>()
@@ -661,6 +669,6 @@ internal fun importEdits(code: KotlinCode, fqns: List<String>): List<stride.lang
         grouped.getOrPut(offset) { ArrayList() }.add(fqn)
     }
     return grouped.map { (offset, names) ->
-        stride.lang.TextEdit(offset, offset, names.joinToString("") { "import $it\n" })
+        stride.lang.TextEdit(offset, offset, names.joinToString("") { "import $it$lineBreak" })
     }
 }

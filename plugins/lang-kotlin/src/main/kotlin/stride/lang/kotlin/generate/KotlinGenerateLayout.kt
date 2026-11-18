@@ -94,7 +94,10 @@ internal fun placeMembers(code: KotlinCode, klass: KtClazz, caretOffset: Int, me
         else -> {
             val member = klass.members.firstOrNull { caretOffset >= it.start && caretOffset <= it.end }
             if (member != null) {
-                afterLine(code, member.end)
+                // The member may share its last line with the class's `}`; insert before that brace.
+                val close = body.close?.start ?: code.text.length
+                val lineAfter = afterLine(code, member.end)
+                if (lineAfter > close) minOf(member.end, close) else lineAfter
             } else {
                 val next = klass.members.firstOrNull { it.start > caretOffset }
                 if (next != null) code.lineStart(next.start) else body.end
@@ -143,7 +146,8 @@ private fun renderBlock(members: List<GeneratedMember>, indent: String, lb: Stri
     return BlockText(lines.joinToString(lb), caret)
 }
 
-private fun lineBreak(code: KotlinCode): String = code.lineBreak(0)
+/** The target file's line separator: `\r\n` when the file has one anywhere, `\n` otherwise. */
+private fun lineBreak(code: KotlinCode): String = if (code.text.contains("\r\n")) "\r\n" else "\n"
 
 private fun assemble(code: KotlinCode, offset: Int, end: Int, block: String, lb: String): String {
     val bounded = offset.coerceIn(0, code.text.length)

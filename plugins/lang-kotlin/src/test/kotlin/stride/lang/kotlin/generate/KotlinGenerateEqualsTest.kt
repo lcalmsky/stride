@@ -1,6 +1,7 @@
 package stride.lang.kotlin.generate
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import stride.lang.GenerateKind
@@ -47,10 +48,22 @@ class KotlinGenerateEqualsTest {
     }
 
     @Test
-    fun `short and byte hashes are the values themselves`() {
+    fun `short and byte hashes call hashCode`() {
         val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val s: Short, val b: Byte) {\n}").text ?: error("refused")
-        assertTrue(text.contains("var result = s"), text)
-        assertTrue(text.contains("result = 31 * result + b"), text)
+        assertTrue(text.contains("var result = s.hashCode()"), text)
+        assertTrue(text.contains("result = 31 * result + b.hashCode()"), text)
+    }
+
+    @Test
+    fun `one short property hashes with hashCode`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val s: Short) {\n}").text ?: error("refused")
+        assertTrue(text.contains("return s.hashCode()"), text)
+    }
+
+    @Test
+    fun `a nullable short hashes with hashCode and a zero default`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val s: Short?) {\n}").text ?: error("refused")
+        assertTrue(text.contains("return s?.hashCode() ?: 0"), text)
     }
 
     @Test
@@ -155,6 +168,107 @@ class KotlinGenerateEqualsTest {
     }
 
     @Test
+    fun `a project superclass that overrides neither adds no super call`() {
+        val base = "open class Base(val label: String)"
+        val source = "class A(val x: Int) : Base(\"b\") {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertFalse(text.contains("super.equals"), text)
+        assertFalse(text.contains("super.hashCode"), text)
+        assertTrue(text.contains("return x"), text)
+    }
+
+    @Test
+    fun `a superclass that overrides only hashCode starts the hash with super`() {
+        val base = "open class Base {\n    override fun hashCode(): Int = 1\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertFalse(text.contains("super.equals"), text)
+        assertTrue(text.contains("var result = super.hashCode()"), text)
+    }
+
+    @Test
+    fun `a superclass that overrides only equals adds the super check`() {
+        val base = "open class Base {\n    override fun equals(other: Any?): Boolean = false\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertTrue(text.contains("if (!super.equals(other)) return false"), text)
+        assertTrue(text.contains("return x"), text)
+        assertFalse(text.contains("super.hashCode"), text)
+    }
+
+    @Test
+    fun `the superclass chain is walked through project sources`() {
+        val base = "open class Base {\n    override fun equals(other: Any?): Boolean = false\n    override fun hashCode(): Int = 1\n}"
+        val middle = "open class Middle : Base() {\n}"
+        val source = "class A(val x: Int) : Middle() {\n}"
+        val files = mapOf(BASE_PATH to base, MIDDLE_PATH to middle)
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, files)).text ?: error("refused")
+        assertTrue(text.contains("if (!super.equals(other)) return false"), text)
+        assertTrue(text.contains("var result = super.hashCode()"), text)
+    }
+
+    @Test
+    fun `a library class along the chain refuses`() {
+        val middle = "open class Middle : Lib() {\n}"
+        val source = "class A(val x: Int) : Middle() {\n}"
+        val result = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(MIDDLE_PATH to middle)))
+        assertEquals("Lib is not in project sources", result.status)
+    }
+
+    @Test
+    fun `an unparenthesized supertype may be a class when the class has a constructor`() {
+        val source = "class A(val x: Int) : Base {\n}"
+        assertEquals("Base is not in project sources", run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source)).status)
+    }
+
+    @Test
+    fun `an unparenthesized supertype without a constructor needs no super call`() {
+        val source = "class A : Runnable {\n    val x: Int = 0\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source)).text ?: error("refused")
+        assertFalse(text.contains("super"), text)
+    }
+
+    @Test
+    fun `a member named javaClass replaces the class check`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val javaClass: Int) {\n}").text ?: error("refused")
+        assertTrue(text.contains("if (other == null || this::class != other::class) return false"), text)
+        assertFalse(text.contains("javaClass != other?.javaClass"), text)
+    }
+
+    @Test
+    fun `a javaClass member in a superclass replaces the class check`() {
+        val base = "open class Base(val javaClass: Int)"
+        val source = "class A(val x: Int) : Base(1) {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertTrue(text.contains("if (other == null || this::class != other::class) return false"), text)
+    }
+
+    @Test
+    fun `a var with a custom setter keeps its equals and hash`() {
+        val source = """
+            class A {
+                var x: Int = 0
+                    set(value) {
+                        field = value
+                    }
+            }
+        """.trimIndent()
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source).text ?: error("refused")
+        assertTrue(text.contains("if (x != other.x) return false"), text)
+        assertTrue(text.contains("return x"), text)
+    }
+
+    @Test
+    fun `a nested array prints with contentDeepToString`() {
+        val text = run(GenerateKind.TO_STRING, "class A(val grid: Array<Array<Int>>) {\n}").text ?: error("refused")
+        assertTrue(text.contains("grid=\${grid.contentDeepToString()}"), text)
+    }
+
+    @Test
     fun `a final super equals refuses`() {
         val base = "open class Base {\n    final override fun equals(other: Any?): Boolean = false\n}"
         val source = "class A(val x: Int) : Base() {\n}"
@@ -185,6 +299,6 @@ class KotlinGenerateEqualsTest {
 
     private companion object {
         const val BASE_PATH = "/project/src/main/kotlin/demo/Base.kt"
-        const val BASE_IMPORT = ""
+        const val MIDDLE_PATH = "/project/src/main/kotlin/demo/Middle.kt"
     }
 }

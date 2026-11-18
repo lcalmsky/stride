@@ -144,8 +144,8 @@ class KotlinGenerateConstructorTest {
 
     @Test
     fun `a class supertype without parentheses delegates`() {
-        val source = "class OrderService : Base {\n    var count: Int = 0\n}"
-        val base = "/project/src/main/kotlin/demo/Base.kt" to "open class Base(val label: String)"
+        val source = "class OrderService : Base {\n    constructor() : super()\n    var count: Int = 0\n}"
+        val base = "/project/src/main/kotlin/demo/Base.kt" to "open class Base(val label: String = \"\")"
         val result = run(constructor, source, currentTypes(source, mapOf(base)))
         val text = result.text ?: error(result.status ?: "refused")
         assertTrue(text.contains("constructor(label: String, count: Int) : super(label) {"), text)
@@ -153,9 +153,101 @@ class KotlinGenerateConstructorTest {
     }
 
     @Test
+    fun `a super primary vararg is kept and passed with a star`() {
+        val source = "class OrderService : Base {\n    constructor() : super()\n    var count: Int = 0\n}"
+        val base = "/project/src/main/kotlin/demo/Base.kt" to "open class Base(vararg xs: Int)"
+        val result = run(constructor, source, currentTypes(source, mapOf(base)))
+        val text = result.text ?: error(result.status ?: "refused")
+        assertTrue(text.contains("constructor(vararg xs: Int, count: Int) : super(*xs) {"), text)
+    }
+
+    @Test
+    fun `super constructor parameters keep their backticks`() {
+        val source = "class OrderService : Base {\n    constructor() : super()\n    var count: Int = 0\n}"
+        val base = "/project/src/main/kotlin/demo/Base.kt" to "open class Base(val `is`: Int = 0)"
+        val result = run(constructor, source, currentTypes(source, mapOf(base)))
+        val text = result.text ?: error(result.status ?: "refused")
+        assertTrue(text.contains("constructor(`is`: Int, count: Int) : super(`is`) {"), text)
+    }
+
+    @Test
     fun `a class supertype not in project sources refuses`() {
-        val source = "class OrderService : Base {\n    var count: Int = 0\n}"
+        val source = "class OrderService : Base {\n    constructor() : super()\n    var count: Int = 0\n}"
         assertEquals("Base is not in project sources", run(constructor, source, currentTypes(source)).status)
+    }
+
+    @Test
+    fun `an unparenthesized supertype without constructors needs no super call`() {
+        val source = "class OrderService : Lib {\n    var count: Int = 0\n}"
+        val result = run(constructor, source, currentTypes(source))
+        val text = result.text ?: error(result.status ?: "refused")
+        assertFalse(text.contains("super"), text)
+    }
+
+    @Test
+    fun `an interface outside project sources does not block a constructor`() {
+        val source = """
+            class OrderService : Comparable<OrderService> {
+                var count: Int = 0
+                override fun compareTo(other: OrderService): Int = 0
+            }
+        """.trimIndent()
+        val step = prepare(constructor, source, currentTypes(source)) as RefactoringStep.ChooseMembers
+        assertEquals(listOf("count: Int"), step.members.map { it.text })
+    }
+
+    @Test
+    fun `an unparenthesized library class with constructors refuses`() {
+        val source = "class OrderService : Lib, P {\n    constructor() : super()\n    var count: Int = 0\n}"
+        val p = "/project/src/main/kotlin/demo/P.kt" to "interface P {\n    fun f(): Int\n}"
+        val result = run(constructor, source, currentTypes(source, mapOf(p)))
+        assertEquals("Lib is not in project sources", result.status)
+    }
+
+    @Test
+    fun `an abstract property cannot be assigned`() {
+        val source = "abstract class OrderService {\n    abstract val x: Int\n    var y: Int = 0\n}"
+        val step = prepare(constructor, source, currentTypes(source)) as RefactoringStep.ChooseMembers
+        assertEquals(listOf("y: Int"), step.members.map { it.text })
+    }
+
+    @Test
+    fun `a var with a custom setter can be assigned`() {
+        val source = """
+            class OrderService {
+                var count: Int = 0
+                    set(value) {
+                        field = value
+                    }
+            }
+        """.trimIndent()
+        val step = prepare(constructor, source, currentTypes(source)) as RefactoringStep.ChooseMembers
+        assertEquals(listOf("count: Int"), step.members.map { it.text })
+    }
+
+    @Test
+    fun `a companion extension invoke refuses`() {
+        val source = """
+            class OrderService {
+                var count: Int = 0
+                companion object
+            }
+            operator fun OrderService.Companion.invoke(v: Int): OrderService = OrderService().apply { count = v }
+        """.trimIndent()
+        assertEquals(
+            "OrderService's companion invoke() would lose its calls",
+            run(constructor, source, currentTypes(source)).status,
+        )
+    }
+
+    @Test
+    fun `a top-level invoke in project sources refuses when the class has a companion`() {
+        val source = "class OrderService {\n    var count: Int = 0\n    companion object\n}"
+        val other = "/project/src/main/kotlin/demo/Factories.kt" to "fun invoke(): Int = 1"
+        assertEquals(
+            "OrderService's companion invoke() would lose its calls",
+            run(constructor, source, currentTypes(source, mapOf(other))).status,
+        )
     }
 
     @Test

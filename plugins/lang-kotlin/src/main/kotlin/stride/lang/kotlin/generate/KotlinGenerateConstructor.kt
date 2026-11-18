@@ -28,7 +28,7 @@ internal fun constructorCandidates(klass: KtClazz): List<ConstructorCandidate> {
         if (property.receiver != null || property.delegated || property.hasCustomGetter) continue
         if (assignedInInit.contains(name)) continue
         if (!property.isVar && property.initializer != null) continue
-        if (property.const) continue
+        if (property.const || "abstract" in property.modifiers) continue
         result.add(ConstructorCandidate(property, name, property.nameToken?.text ?: name, property.typeText))
     }
     return result
@@ -65,7 +65,7 @@ internal sealed interface SuperConstructorLookup {
 }
 
 private fun superConstructors(klass: KtClazz, context: GenerateContext): SuperConstructorLookup {
-    val ofClass = klass.supertypes.filter { !it.hasCall }
+    val ofClass = klass.supertypes.filter { klass.supertypeMayBeClass(it) && !it.hasCall }
     if (ofClass.isEmpty()) return SuperConstructorLookup.None
     val types = context.types ?: return SuperConstructorLookup.Refused(INDEXING)
     for (supertype in ofClass) {
@@ -84,16 +84,16 @@ private fun superConstructors(klass: KtClazz, context: GenerateContext): SuperCo
         if (primary != null) {
             choices.add(
                 SuperConstructorChoice(
-                    "${supertype.simpleName}(${primary.parameters.joinToString(", ") { parameterText(it.name, it.type, false) }})",
-                    primary.parameters.map { KtParameter(it.name, it.nameToken, it.type, false, null) },
-                    emptySet(),
+                    "${supertype.simpleName}(${primary.parameters.joinToString(", ") { parameterText(it.nameToken.text, it.type, it.vararg) }})",
+                    primary.parameters.map { KtParameter(it.name, it.nameToken, it.type, it.vararg, null) },
+                    primary.parameters.filter { it.vararg }.map { it.name }.toSet(),
                 ),
             )
         }
         for (constructor in found.ownSecondaryConstructors) {
             choices.add(
                 SuperConstructorChoice(
-                    "${supertype.simpleName}(${constructor.parameters.joinToString(", ") { parameterText(it.name, it.type, it.vararg) }})",
+                    "${supertype.simpleName}(${constructor.parameters.joinToString(", ") { parameterText(it.nameToken.text, it.type, it.vararg) }})",
                     constructor.parameters,
                     constructor.parameters.filter { it.vararg }.map { it.name }.toSet(),
                 ),
@@ -120,11 +120,7 @@ internal fun secondaryConstructor(klass: KtClazz, context: GenerateContext): Ref
         val initialized = klass.supertypes.first { it.hasCall }
         return RefactoringStep.Refused("$name initializes ${initialized.simpleName}() in its header")
     }
-    for (nested in klass.nestedClasses) {
-        if (nested.isCompanion && nested.functions.any { it.name == "invoke" && "operator" in it.modifiers }) {
-            return RefactoringStep.Refused("$name's companion invoke() would lose its calls")
-        }
-    }
+    companionInvokeRefusal(klass, types)?.let { return RefactoringStep.Refused(it) }
     if (hasTopLevelFunction(klass, context, types)) {
         return RefactoringStep.Refused("A top-level function $name(…) exists")
     }
@@ -144,6 +140,32 @@ internal fun secondaryConstructor(klass: KtClazz, context: GenerateContext): Ref
         )
         else -> chooser(null)
     }
+}
+
+/**
+ * `A(i)` reaches a companion `invoke` only when the class has a companion object. An extension on
+ * that companion and any top-level `invoke` in project sources may be one, so both refuse (G4).
+ */
+private fun companionInvokeRefusal(klass: KtClazz, types: stride.lang.ProjectTypes): String? {
+    if (klass.nestedClasses.none { it.isCompanion }) return null
+    val name = klass.writtenName()
+    val member = klass.nestedClasses.any { nested ->
+        nested.isCompanion && nested.functions.any { it.name == "invoke" && "operator" in it.modifiers }
+    }
+    val extension = klass.code.functions.any { function ->
+        function.container == FunctionContainer.TOP_LEVEL && function.name == "invoke" &&
+            "operator" in function.modifiers && companionOwner(function.receiver) == klass.name
+    }
+    if (member || extension || types.hasTopLevelFunction("invoke")) {
+        return "$name's companion invoke() would lose its calls"
+    }
+    return null
+}
+
+private fun companionOwner(receiver: String?): String? {
+    val text = receiver ?: return null
+    if (!text.endsWith(".Companion")) return null
+    return text.removeSuffix(".Companion").trim().substringAfterLast('.').removeSurrounding("`")
 }
 
 private fun hasTopLevelFunction(klass: KtClazz, context: GenerateContext, types: stride.lang.ProjectTypes): Boolean {
@@ -244,8 +266,9 @@ private fun constructorEdit(
     val parameters = ArrayList<String>()
     val superArguments = ArrayList<String>()
     for (parameter in superParameters) {
-        parameters.add(parameterText(parameter.name, parameter.type, parameter.vararg))
-        superArguments.add(if (parameter.name in superChoice!!.varargNames) "*${parameter.name}" else parameter.name)
+        parameters.add(parameterText(parameter.nameToken.text, parameter.type, parameter.vararg))
+        val written = parameter.nameToken.text
+        superArguments.add(if (parameter.name in superChoice!!.varargNames) "*$written" else written)
     }
     val assignments = ArrayList<String>()
     for (candidate in checked) {

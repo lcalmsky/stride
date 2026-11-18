@@ -2,6 +2,7 @@ package stride.lang.kotlin.generate
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import stride.lang.GenerateKind
@@ -266,6 +267,93 @@ class KotlinGenerateMembersTest {
         assertEquals("Indexing… try again in a moment", withSuper.status)
     }
 
+    @Test
+    fun `override lists Any members with the other candidates`() {
+        val base = "package demo\n\nabstract class Base {\n    open fun ping(): Int = 1\n}"
+        val source = "package demo\n\nclass OrderService : Base() {\n}"
+        val step = prepare(overrideKind, source, currentTypes(source, mapOf(BASE_PATH to base))) as RefactoringStep.ChooseMembers
+        assertTrue("fun ping(): Int" in step.members.map { it.text }, step.members.map { it.text }.toString())
+        assertEquals(
+            listOf("fun equals(other: Any?): Boolean", "fun hashCode(): Int", "fun toString(): String"),
+            step.members.filter { it.group == "Any" }.map { it.text },
+        )
+    }
+
+    @Test
+    fun `an unparenthesized library class with constructors refuses implement`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val source = "package demo\n\nclass OrderService : Lib, P {\n    constructor() : super()\n}"
+        val result = run(implementKind, source, currentTypes(source, mapOf(P_PATH to p)))
+        assertEquals("Lib is not in project sources; it may implement these members", result.status)
+    }
+
+    @Test
+    fun `an unparenthesized supertype without constructors is an interface`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val source = "package demo\n\nclass OrderService : Lib, P {\n}"
+        val step = prepare(implementKind, source, currentTypes(source, mapOf(P_PATH to p))) as RefactoringStep.ChooseMembers
+        assertTrue(step.title.contains("Lib is not in project sources"), step.title)
+        assertEquals(listOf("fun f(): Int"), step.members.map { it.text })
+    }
+
+    @Test
+    fun `an interface default body counts as implemented in either order`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val r = "package demo\n\ninterface R : P {\n    override fun f(): Int = 7\n}"
+        val files = mapOf(P_PATH to p, R_PATH to r)
+        for (supertypes in listOf("P, R", "R, P")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val result = run(implementKind, source, currentTypes(source, files))
+            assertEquals("No members to implement in project sources", result.status, supertypes)
+        }
+    }
+
+    @Test
+    fun `a default import type needs no import`() {
+        val base = "package demo\n\nabstract class Store {\n    abstract fun at(t: Thread)\n}"
+        val source = "package demo\n\nclass OrderService : Store() {\n}"
+        val files = mapOf(BASE_PATH to base)
+        val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+        assertNull(step.members.single().disabledReason)
+        val text = run(implementKind, source, currentTypes(source, files), setOf("fun at(t: Thread)")).text
+            ?: error("refused")
+        assertFalse(text.contains("import"), text)
+    }
+
+    @Test
+    fun `a target star import that already uses the name disables the member`() {
+        val base = "package demo\n\nimport model.User\n\nabstract class Store {\n    abstract fun save(u: User)\n}"
+        val user = "package model\n\nclass User"
+        val source = "package demo\n\nimport other.*\n\nclass OrderService : Store() {\n    fun show(u: User) = u\n}"
+        val files = mapOf(BASE_PATH to base, USER_PATH to user)
+        val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+        assertEquals("User may come from import other.*", step.members.single().disabledReason)
+    }
+
+    @Test
+    fun `a target star import whose name is unused still gets the import`() {
+        val base = "package demo\n\nimport model.User\n\nabstract class Store {\n    abstract fun save(u: User)\n}"
+        val user = "package model\n\nclass User"
+        val source = "package demo\n\nimport other.*\n\nclass OrderService : Store() {\n}"
+        val files = mapOf(BASE_PATH to base, USER_PATH to user)
+        val text = run(implementKind, source, currentTypes(source, files), setOf("fun save(u: User)")).text
+            ?: error("refused")
+        assertTrue(text.contains("import model.User"), text)
+    }
+
+    @Test
+    fun `imports and members use the target line separator`() {
+        val base = "package demo\n\nimport model.User\n\nabstract class Store {\n    abstract fun save(u: User)\n}"
+        val user = "package model\n\nclass User"
+        val source = "package demo\r\n\r\nclass OrderService : Store() {\r\n}\r\n"
+        val files = mapOf(BASE_PATH to base, USER_PATH to user)
+        val text = run(implementKind, source, currentTypes(source, files), setOf("fun save(u: User)")).text
+            ?: error("refused")
+        val shown = text.replace("\r\n", "<CRLF>")
+        assertTrue(text.contains("import model.User\r\n"), shown)
+        assertFalse(text.replace("\r\n", "").contains("\n"), shown)
+    }
+
     private companion object {
         const val REPO_PATH = "/project/src/main/kotlin/demo/Repo.kt"
         const val USER_PATH = "/project/src/main/kotlin/demo/User.kt"
@@ -274,5 +362,7 @@ class KotlinGenerateMembersTest {
         const val COLLIDING_PATH = "/project/src/main/kotlin/demo/Colliding.kt"
         const val EXT_PATH = "/project/src/main/kotlin/demo/Ext.kt"
         const val BASE_PATH = "/project/src/main/kotlin/demo/Base.kt"
+        const val P_PATH = "/project/src/main/kotlin/demo/P.kt"
+        const val R_PATH = "/project/src/main/kotlin/demo/R.kt"
     }
 }

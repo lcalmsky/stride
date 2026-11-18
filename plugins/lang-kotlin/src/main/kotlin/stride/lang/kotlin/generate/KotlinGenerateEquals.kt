@@ -23,11 +23,7 @@ internal class FieldCandidate(
 
     val string: Boolean get() = typeText?.removeSuffix("?") == "String"
 
-    val intLike: Boolean get() = typeText?.removeSuffix("?") in INT_TYPES
-
-    private companion object {
-        val INT_TYPES = setOf("Int", "Short", "Byte")
-    }
+    val intLike: Boolean get() = typeText?.removeSuffix("?") == "Int"
 }
 
 /** Every property with a backing field, in declaration order, primary constructor ones first. */
@@ -72,33 +68,59 @@ private fun KtClazz.hasMember(name: String): Boolean = functions.any { it.name =
 
 private fun className(klass: KtClazz): String = klass.writtenName()
 
-/** The direct class supertype of [klass] that is declared in project sources, read for equals/hashCode. */
-internal class SuperClassInfo(val name: String, val declaration: KtClazz)
+/** What the project-source superclass chain says equals/hashCode must do (G5). */
+internal class SuperClassFacts(
+    val superEquals: Boolean,
+    val superHash: Boolean,
+    /** Whether a class along the chain declares a member named `javaClass`, hiding the class check. */
+    val javaClassHidden: Boolean,
+)
 
 internal sealed interface SuperClassLookup {
     object None : SuperClassLookup
 
-    class Found(val info: SuperClassInfo) : SuperClassLookup
+    class Found(val facts: SuperClassFacts) : SuperClassLookup
 
     class Refused(val reason: String) : SuperClassLookup
 }
 
-internal fun directSuperClass(klass: KtClazz, context: GenerateContext): SuperClassLookup {
+internal fun superClassFacts(klass: KtClazz, context: GenerateContext): SuperClassLookup {
     val types = context.types ?: return SuperClassLookup.None
-    for (supertype in klass.supertypes) {
-        val sources = types.resolve(supertype.written, context.path, supertype.offset)
-        if (sources.isEmpty()) {
-            // A supertype written with `(…)` is a class call, which must be readable here.
-            if (supertype.hasCall) return SuperClassLookup.Refused("${supertype.simpleName} is not in project sources")
-            continue
-        }
-        for (source in sources) {
-            val declaration = classInSource(source.text, source.nameOffset) ?: continue
-            if (declaration.isInterface) continue
-            return SuperClassLookup.Found(SuperClassInfo(supertype.simpleName, declaration))
+    var superEquals = false
+    var superHash = false
+    var javaClassHidden = false
+    val visited = HashSet<String>()
+    val queue = ArrayDeque<Pair<KtClazz, String>>()
+    queue.add(klass to context.path)
+    while (queue.isNotEmpty()) {
+        val (declaring, path) = queue.removeFirst()
+        if (!visited.add(declaring.name + "@" + path)) continue
+        for (supertype in declaring.supertypes) {
+            // An unparenthesized supertype in a class without explicit constructors is an interface.
+            if (!declaring.supertypeMayBeClass(supertype)) continue
+            val sources = types.resolve(supertype.written, path, supertype.offset)
+            if (sources.isEmpty()) {
+                return SuperClassLookup.Refused("${supertype.simpleName} is not in project sources")
+            }
+            for (source in sources) {
+                val declaration = classInSource(source.text, source.nameOffset) ?: continue
+                if (declaration.isInterface) continue
+                val equals = declaration.functions.firstOrNull { it.name == "equals" }
+                val hash = declaration.functions.firstOrNull { it.name == "hashCode" }
+                if (equals != null && "final" in equals.modifiers) {
+                    return SuperClassLookup.Refused("${declaration.writtenName()} declares equals() final")
+                }
+                if (hash != null && "final" in hash.modifiers) {
+                    return SuperClassLookup.Refused("${declaration.writtenName()} declares hashCode() final")
+                }
+                if (equals != null) superEquals = true
+                if (hash != null) superHash = true
+                if (declaration.declaresMemberNamed("javaClass")) javaClassHidden = true
+                queue.add(declaration to source.path)
+            }
         }
     }
-    return SuperClassLookup.None
+    return SuperClassLookup.Found(SuperClassFacts(superEquals, superHash, javaClassHidden))
 }
 
 internal fun equalsHashCode(
@@ -113,18 +135,12 @@ internal fun equalsHashCode(
     if (klass.hasMember("equals")) return RefactoringStep.Refused("equals() already exists in $name")
     if (klass.hasMember("hashCode")) return RefactoringStep.Refused("hashCode() already exists in $name")
 
-    val superLookup = directSuperClass(klass, context)
+    val superLookup = superClassFacts(klass, context)
     if (superLookup is SuperClassLookup.Refused) return RefactoringStep.Refused(superLookup.reason)
-    val superInfo = (superLookup as? SuperClassLookup.Found)?.info
-    if (superInfo != null) {
-        val declared = superInfo.declaration
-        if (declared.hasMember("equals") && "final" in declared.functions.first { it.name == "equals" }.modifiers) {
-            return RefactoringStep.Refused("${superInfo.name} declares equals() final")
-        }
-        if (declared.hasMember("hashCode") && "final" in declared.functions.first { it.name == "hashCode" }.modifiers) {
-            return RefactoringStep.Refused("${superInfo.name} declares hashCode() final")
-        }
-    }
+    val facts = (superLookup as? SuperClassLookup.Found)?.facts
+    val superEquals = facts?.superEquals == true
+    val superHash = facts?.superHash == true
+    val javaClassHidden = klass.declaresMemberNamed("javaClass") || facts?.javaClassHidden == true
 
     val candidates = fieldCandidates(klass)
     val options = candidates.map { candidate ->
@@ -132,13 +148,15 @@ internal fun equalsHashCode(
         MemberOption(text = display(candidate), checked = disabled == null, disabledReason = disabled)
     }
     if (options.isEmpty()) {
-        val edit = editFor(klass, context, emptyList(), superInfo)
+        val edit = editFor(klass, context, emptyList(), superEquals, superHash, javaClassHidden)
         return edit?.let { RefactoringStep.Apply(it) } ?: RefactoringStep.Refused("No class at the caret")
     }
     return RefactoringStep.ChooseMembers(
         title = "equals() and hashCode()",
         members = options,
-        complete = { checked -> completeEquals(klass, context, candidates, options, checked, superInfo) },
+        complete = { checked ->
+            completeEquals(klass, context, candidates, options, checked, superEquals, superHash, javaClassHidden)
+        },
     )
 }
 
@@ -151,12 +169,14 @@ private fun completeEquals(
     candidates: List<FieldCandidate>,
     options: List<MemberOption>,
     checked: List<MemberOption>,
-    superInfo: SuperClassInfo?,
+    superEquals: Boolean,
+    superHash: Boolean,
+    javaClassHidden: Boolean,
 ): NameCheck {
     val selected = options.withIndex()
         .filter { (_, option) -> checked.any { it === option } }
         .mapNotNull { (index, _) -> candidates.getOrNull(index) }
-    val edit = editFor(klass, context, selected, superInfo)
+    val edit = editFor(klass, context, selected, superEquals, superHash, javaClassHidden)
         ?: return NameCheck.Invalid("No class at the caret")
     return NameCheck.Valid(edit)
 }
@@ -165,22 +185,35 @@ private fun editFor(
     klass: KtClazz,
     context: GenerateContext,
     fields: List<FieldCandidate>,
-    superInfo: SuperClassInfo?,
+    superEquals: Boolean,
+    superHash: Boolean,
+    javaClassHidden: Boolean,
 ): RefactoringEdit? {
     val members = listOf(
-        GeneratedMember(withEqualsBody(klass, fields, superInfo != null), 1, 4),
-        GeneratedMember(hashCodeLines(fields, superInfo != null), 0, 4),
+        GeneratedMember(withEqualsBody(klass, fields, superEquals, javaClassHidden), 1, 4),
+        GeneratedMember(hashCodeLines(fields, superHash), 0, 4),
     )
     return KotlinGenerate.applyMembers(klass, context, members)
 }
 
-private fun withEqualsBody(klass: KtClazz, fields: List<FieldCandidate>, superEquals: Boolean): List<String> {
+private fun withEqualsBody(
+    klass: KtClazz,
+    fields: List<FieldCandidate>,
+    superEquals: Boolean,
+    javaClassHidden: Boolean,
+): List<String> {
     val parameter = uniqueName("other", fields.map { it.name }.toSet())
     val name = className(klass)
     val lines = ArrayList<String>()
     lines.add("override fun equals($parameter: Any?): Boolean {")
     lines.add("    if (this === $parameter) return true")
-    lines.add("    if (javaClass != $parameter?.javaClass) return false")
+    lines.add(
+        if (javaClassHidden) {
+            "    if ($parameter == null || this::class != $parameter::class) return false"
+        } else {
+            "    if (javaClass != $parameter?.javaClass) return false"
+        },
+    )
     if (superEquals) lines.add("    if (!super.equals($parameter)) return false")
     if (fields.isNotEmpty()) {
         lines.add("")
@@ -279,6 +312,7 @@ private fun toStringLines(klass: KtClazz, fields: List<FieldCandidate>): List<St
     }
     val value = fields.joinToString(", ") { field ->
         val printed = when {
+            field.nestedArray -> "\${${field.writtenName}.contentDeepToString()}"
             field.array -> "\${${field.writtenName}.contentToString()}"
             field.writtenName.startsWith("`") -> "\${${field.writtenName}}"
             else -> "\$${field.writtenName}"
