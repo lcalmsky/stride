@@ -144,10 +144,11 @@ internal class KtClazz(
     fun writtenName(): String = nameToken?.text ?: name
 
     /**
-     * Whether the class writes a constructor of its own. Only then can an unparenthesized supertype
-     * be a class: without one the class has no place to delegate `: super(…)` (G4, G5, G6).
+     * Whether an unparenthesized supertype can be a class. A class supertype writes `()` in the
+     * header, so only a class without a primary constructor but with a secondary constructor can
+     * delegate `: super(…)` (G4, G5, G6).
      */
-    fun hasExplicitConstructor(): Boolean = primaryConstructor != null || ownSecondaryConstructors.isNotEmpty()
+    fun mayDelegateSuperCall(): Boolean = primaryConstructor == null && ownSecondaryConstructors.isNotEmpty()
 
     /** A member named [name] here: a function, a body property or a primary constructor property. */
     fun declaresMemberNamed(name: String): Boolean =
@@ -157,7 +158,7 @@ internal class KtClazz(
 
     /** Whether [supertype], written in this class's header without `(…)`, may still be a class. */
     fun supertypeMayBeClass(supertype: KtSupertype): Boolean =
-        supertype.hasCall || hasExplicitConstructor()
+        supertype.hasCall || mayDelegateSuperCall()
 
     override fun toString(): String = "$form $name"
 }

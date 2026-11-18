@@ -64,7 +64,18 @@ internal fun isNestedArrayType(text: String): Boolean {
 
 private val PRIMITIVE_ARRAY_ELEMENTS = setOf("Int", "Long", "Short", "Byte", "Char", "Boolean", "Float", "Double")
 
-private fun KtClazz.hasMember(name: String): Boolean = functions.any { it.name == name }
+private fun isEqualsOverride(function: SigFunction): Boolean =
+    function.name == "equals" && function.receiver == null &&
+        function.parameters.singleOrNull()?.type?.filterNot { it.isWhitespace() } in setOf("Any?", "kotlin.Any?")
+
+private fun isHashCodeOverride(function: SigFunction): Boolean =
+    function.name == "hashCode" && function.receiver == null && function.parameters.isEmpty()
+
+private fun KtClazz.hasEquals(): Boolean = functions.any(::isEqualsOverride)
+
+private fun KtClazz.hasHashCode(): Boolean = functions.any(::isHashCodeOverride)
+
+private fun KtClazz.hasToString(): Boolean = functions.any { it.name == "toString" }
 
 private fun className(klass: KtClazz): String = klass.writtenName()
 
@@ -105,8 +116,8 @@ internal fun superClassFacts(klass: KtClazz, context: GenerateContext): SuperCla
             for (source in sources) {
                 val declaration = classInSource(source.text, source.nameOffset) ?: continue
                 if (declaration.isInterface) continue
-                val equals = declaration.functions.firstOrNull { it.name == "equals" }
-                val hash = declaration.functions.firstOrNull { it.name == "hashCode" }
+                val equals = declaration.functions.firstOrNull(::isEqualsOverride)
+                val hash = declaration.functions.firstOrNull(::isHashCodeOverride)
                 if (equals != null && "final" in equals.modifiers) {
                     return SuperClassLookup.Refused("${declaration.writtenName()} declares equals() final")
                 }
@@ -132,8 +143,8 @@ internal fun equalsHashCode(
         return RefactoringStep.Refused("Indexing… try again in a moment")
     }
     val name = className(klass)
-    if (klass.hasMember("equals")) return RefactoringStep.Refused("equals() already exists in $name")
-    if (klass.hasMember("hashCode")) return RefactoringStep.Refused("hashCode() already exists in $name")
+    if (klass.hasEquals()) return RefactoringStep.Refused("equals() already exists in $name")
+    if (klass.hasHashCode()) return RefactoringStep.Refused("hashCode() already exists in $name")
 
     val superLookup = superClassFacts(klass, context)
     if (superLookup is SuperClassLookup.Refused) return RefactoringStep.Refused(superLookup.reason)
@@ -281,7 +292,7 @@ private fun fieldHash(field: FieldCandidate, parenthesized: Boolean, nullableSuf
 internal fun toStringStep(klass: KtClazz, context: GenerateContext): RefactoringStep {
     availabilityRefusal(klass, GenerateKind.TO_STRING)?.let { return RefactoringStep.Refused(it) }
     val name = className(klass)
-    if (klass.hasMember("toString")) return RefactoringStep.Refused("toString() already exists in $name")
+    if (klass.hasToString()) return RefactoringStep.Refused("toString() already exists in $name")
     val candidates = fieldCandidates(klass)
     val options = candidates.map { candidate ->
         val disabled = if (candidate.typeText == null) "type not written" else null

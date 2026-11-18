@@ -257,7 +257,8 @@ private fun collectCandidates(
         "fun:" + function.name + "(" +
             function.parameters.joinToString(",") { (it.type ?: "").filterNot { ch -> ch.isWhitespace() } } + ")"
     }.toSet()
-    val existingProperties = klass.properties.mapNotNull { it.name }.toSet()
+    val existingProperties = klass.properties.mapNotNull { it.name }.toMutableSet()
+    klass.primaryConstructor?.parameters.orEmpty().filter { it.property }.forEach { existingProperties.add(it.name) }
     val seen = HashSet<String>()
     val result = ArrayList<CandidateMember>()
     for (node in nodes) {
@@ -410,6 +411,9 @@ private fun functionCandidate(
     val memberTypeParameters = function.typeParameterNames.toSet()
     if (function.receiver != null) {
         return disabled(function.name, node, "member extensions are not generated")
+    }
+    if (function.returnType == null && function.expressionBody != null) {
+        return disabled(function.name, node, "type not written")
     }
     val collision = node.substitution.values.filterNotNull()
         .flatMap(::simpleTypeNames)
@@ -671,6 +675,8 @@ private fun anyCandidates(
     klass: KtClazz,
     nodes: List<WalkNode>,
 ): List<CandidateMember> {
+    // An interface may not implement a member of Any, so Kotlin rejects an override there.
+    if (klass.isInterface) return emptyList()
     val declared = HashSet<String>()
     var finalEquals = false
     var finalHash = false

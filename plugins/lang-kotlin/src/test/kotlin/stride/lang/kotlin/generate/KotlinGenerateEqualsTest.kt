@@ -200,6 +200,33 @@ class KotlinGenerateEqualsTest {
     }
 
     @Test
+    fun `an equals or hashCode overload in a superclass is not an override`() {
+        val base = "open class Base {\n    fun equals(o: Base): Boolean = false\n    fun hashCode(bits: Int): Int = bits\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertFalse(text.contains("super.equals"), text)
+        assertFalse(text.contains("super.hashCode"), text)
+    }
+
+    @Test
+    fun `a final equals overload in a superclass is not a final override`() {
+        val base = "open class Base {\n    final fun equals(o: Base): Boolean = false\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base))).text
+            ?: error("refused")
+        assertFalse(text.contains("super.equals"), text)
+    }
+
+    @Test
+    fun `an equals or hashCode overload in the class is not the member`() {
+        val source = "class A(val x: Int) {\n    fun equals(o: A): Boolean = false\n    fun hashCode(bits: Int): Int = bits\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source).text ?: error("refused")
+        assertTrue(text.contains("override fun equals(other: Any?)"), text)
+        assertTrue(text.contains("override fun hashCode(): Int"), text)
+    }
+
+    @Test
     fun `the superclass chain is walked through project sources`() {
         val base = "open class Base {\n    override fun equals(other: Any?): Boolean = false\n    override fun hashCode(): Int = 1\n}"
         val middle = "open class Middle : Base() {\n}"
@@ -219,9 +246,32 @@ class KotlinGenerateEqualsTest {
     }
 
     @Test
-    fun `an unparenthesized supertype may be a class when the class has a constructor`() {
-        val source = "class A(val x: Int) : Base {\n}"
-        assertEquals("Base is not in project sources", run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source)).status)
+    fun `an unparenthesized supertype may be a class only with a secondary constructor and no primary`() {
+        val refused = "class A : Base {\n    constructor(x: Int) : super()\n}"
+        assertEquals("Base is not in project sources", run(GenerateKind.EQUALS_HASH_CODE, refused, currentTypes(refused)).status)
+        val accepted = "class A(val x: Int) : Base {\n}"
+        assertTrue(run(GenerateKind.EQUALS_HASH_CODE, accepted, currentTypes(accepted)).text != null)
+    }
+
+    @Test
+    fun `an unparenthesized supertype of a class with a primary constructor is an interface`() {
+        for (supertype in listOf("Comparable<A>", "Serializable")) {
+            val source = "class A(val id: Int) : $supertype {\n}"
+            val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source)).text
+                ?: error("refused: $supertype")
+            assertFalse(text.contains("super.equals"), text)
+            assertFalse(text.contains("super.hashCode"), text)
+        }
+    }
+
+    @Test
+    fun `the primary constructor rule holds along the superclass chain`() {
+        val middle = "open class Middle(val y: Int) : Lib"
+        val source = "class A(val x: Int) : Middle(1) {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(MIDDLE_PATH to middle))).text
+            ?: error("refused")
+        assertFalse(text.contains("super.equals"), text)
+        assertFalse(text.contains("super.hashCode"), text)
     }
 
     @Test

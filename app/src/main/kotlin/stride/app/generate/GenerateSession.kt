@@ -47,7 +47,7 @@ internal class MemberChooseRequest(
     var errorMessage: String? by mutableStateOf(null)
 }
 
-/** ⌘N and ⌃↩: the generators available at the caret, in IntelliJ's order. */
+/** ⌘N and ⌃↩: the generators available at the caret, in the documented menu order (G7). */
 fun openGenerate(
     state: AppState,
     keymap: Keymap = Keymap.forPlatform(KeyRouter.isMacOs()),

@@ -34,7 +34,10 @@ class KotlinGenerateProviderTest {
         )
         val funInterface = "fun interface A {\n    fun f()\n    |\n}"
         val funInterfaceStep = prepare(GenerateKind.OVERRIDE_METHODS, funInterface, currentTypes(funInterface))
-        assertTrue(funInterfaceStep is RefactoringStep.ChooseMembers, funInterfaceStep.toString())
+        assertEquals(
+            "No members to implement in project sources",
+            (funInterfaceStep as RefactoringStep.Refused).reason,
+        )
         assertRefused(GenerateKind.IMPLEMENT_METHODS, "Implement Methods is not available in an interface", "fun interface A {\n    fun f()\n    |\n}")
         val overrideStep = prepare(GenerateKind.OVERRIDE_METHODS, "object A {\n    |\n}", currentTypes("object A {\n}"))
         assertTrue(overrideStep is RefactoringStep.ChooseMembers, overrideStep.toString())

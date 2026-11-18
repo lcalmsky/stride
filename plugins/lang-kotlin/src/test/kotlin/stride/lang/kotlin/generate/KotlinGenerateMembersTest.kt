@@ -165,6 +165,52 @@ class KotlinGenerateMembersTest {
     }
 
     @Test
+    fun `a primary constructor property is left out of implement and override`() {
+        val p = "package demo\n\ninterface P {\n    val x: Int\n    var count: Int\n}"
+        val source = "package demo\n\nclass OrderService(override val x: Int, override var count: Int) : P {\n}"
+        val files = mapOf(P_PATH to p)
+        assertEquals(
+            "No members to implement in project sources",
+            run(implementKind, source, currentTypes(source, files)).status,
+        )
+        val override = prepare(overrideKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+        assertFalse(override.members.any { it.text == "val x: Int" }, override.members.map { it.text }.toString())
+        assertFalse(override.members.any { it.text == "var count: Int" }, override.members.map { it.text }.toString())
+    }
+
+    @Test
+    fun `a supertype function with an expression body and no return type is disabled`() {
+        val base = "package demo\n\nabstract class Base {\n    open fun name() = \"x\"\n}"
+        val source = "package demo\n\nclass OrderService : Base() {\n}"
+        val step = prepare(overrideKind, source, currentTypes(source, mapOf(BASE_PATH to base))) as RefactoringStep.ChooseMembers
+        assertEquals("type not written", step.members.first { it.text.contains("name") }.disabledReason)
+    }
+
+    @Test
+    fun `an unrelated interface expression body without a return type is disabled for implement`() {
+        val b = "package demo\n\nopen class B {\n    open fun name() = \"x\"\n}"
+        val q = "package demo\n\ninterface Q {\n    fun name() = \"y\"\n}"
+        val source = "package demo\n\nclass OrderService : B(), Q {\n}"
+        val step = prepare(implementKind, source, currentTypes(source, mapOf(BASE_PATH to b, Q_PATH to q))) as RefactoringStep.ChooseMembers
+        assertEquals("type not written", step.members.first { it.text.contains("name") }.disabledReason)
+    }
+
+    @Test
+    fun `an interface lists no Any group`() {
+        val base = "package demo\n\ninterface Base {\n    fun ping(): Int\n}"
+        val source = "package demo\n\ninterface OrderService : Base {\n}"
+        val step = prepare(overrideKind, source, currentTypes(source, mapOf(BASE_PATH to base))) as RefactoringStep.ChooseMembers
+        assertEquals(listOf("fun ping(): Int"), step.members.map { it.text })
+    }
+
+    @Test
+    fun `an interface without supertypes has no members to implement`() {
+        val source = "package demo\n\ninterface OrderService {\n}"
+        assertEquals("No members to implement in project sources", run(overrideKind, source, currentTypes(source)).status)
+        assertEquals("No members to implement in project sources", run(overrideKind, source, null).status)
+    }
+
+    @Test
     fun `the nearest declaration along the walk wins`() {
         val middle = "package demo\n\nabstract class Middle : Repo<User>() {\n    override fun save(x: User) {\n    }\n}"
         val source = "package demo\n\nclass OrderService : Middle() {\n}"
@@ -285,6 +331,15 @@ class KotlinGenerateMembersTest {
         val source = "package demo\n\nclass OrderService : Lib, P {\n    constructor() : super()\n}"
         val result = run(implementKind, source, currentTypes(source, mapOf(P_PATH to p)))
         assertEquals("Lib is not in project sources; it may implement these members", result.status)
+    }
+
+    @Test
+    fun `a class with a primary constructor treats an unparenthesized library type as an interface`() {
+        val p = "package demo\n\ninterface ProjectIface {\n    fun f(): Int\n}"
+        val source = "package demo\n\nclass Impl(val r: Repo) : ProjectIface, Serializable {\n}"
+        val step = prepare(implementKind, source, currentTypes(source, mapOf(P_PATH to p))) as RefactoringStep.ChooseMembers
+        assertTrue(step.title.contains("Serializable is not in project sources"), step.title)
+        assertEquals(listOf("fun f(): Int"), step.members.map { it.text })
     }
 
     @Test
