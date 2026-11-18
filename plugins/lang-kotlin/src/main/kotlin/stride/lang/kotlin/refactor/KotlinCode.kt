@@ -125,6 +125,12 @@ internal class KotlinCode(val text: String) {
     /** Code token indices of declared names: locals, parameters, destructured and function names. */
     internal val declarationTokens: MutableSet<Int> = HashSet()
 
+    /** Code token indices of class, interface, object, type alias and property names. */
+    internal val declarationNameTokens: MutableSet<Int> = HashSet()
+
+    /** Code token indices of modifier words that modify a declaration rather than name anything. */
+    internal val modifierTokens: MutableSet<Int> = HashSet()
+
     /** `start until end` ranges of annotations, imports and package directives. */
     internal val nonExpressionRanges: MutableList<KtRange> = ArrayList()
 

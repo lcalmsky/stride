@@ -845,4 +845,57 @@ class KotlinInlineTest {
             applied.text,
         )
     }
+
+    @Test
+    fun `a modifier word used as an infix function is a use`() {
+        val text = "fun f() {\n    val value = 3\n    println(value)\n    val p = value to 1\n}\n"
+        val applied = apply(caretAt(text, "value)"), text)
+
+        assertEquals("fun f() {\n    println(3)\n    val p = 3 to 1\n}\n", applied.text)
+        assertEquals("Inlined value (2 uses)", applied.message)
+    }
+
+    @Test
+    fun `a backticked use is a use`() {
+        val text = "fun f() {\n    val value = 3\n    println(value)\n    println(`value`)\n}\n"
+        val applied = apply(caretAt(text, "value ="), text)
+
+        assertEquals("fun f() {\n    println(3)\n    println(3)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a spelling the model cannot place refuses the variable`() {
+        val text = "fun f() {\n    val value = 3\n    println(value)\n    @value\n    println(1)\n}\n"
+        assertEquals(
+            "value appears where this refactoring cannot read it",
+            refused(caretAt(text, "value)")),
+        )
+    }
+
+    @Test
+    fun `a spelling the model cannot place refuses all mode of a function`() {
+        val text = "private fun marker(v: Int) = v * 2\n\nfun f() {\n    println(marker(2))\n    @marker println(1)\n}\n"
+        assertEquals(
+            "marker appears where this refactoring cannot read it",
+            refused(caretAt(text, "fun marker", delta = 4)),
+        )
+        val call = "private fun marker(v: Int) = v * 2\n\nfun f() {\n    println(marker(2))\n    @marker println(1)\n}\n"
+        val applied = apply(caretAt(call, "marker(2)"), call)
+        assertEquals(
+            "private fun marker(v: Int) = v * 2\n\nfun f() {\n    println(2 * 2)\n    @marker println(1)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a comment or a string spelling does not refuse all mode`() {
+        val text = "private fun marker(v: Int) = v * 2\n\nfun f() {\n    println(marker(2))\n" +
+            "    println(\"marker\")\n    // marker\n}\n"
+        val applied = apply(caretAt(text, "fun marker", delta = 4), text)
+
+        assertEquals(
+            "fun f() {\n    println(2 * 2)\n    println(\"marker\")\n    // marker\n}\n",
+            applied.text,
+        )
+    }
 }

@@ -977,4 +977,15 @@ class KotlinExtractMethodTest {
             extract(text, selection).text,
         )
     }
+
+
+
+
+    @Test
+    fun `the file name check counts every spelling`() {
+        val text = "fun f(user: User) {\n    println(user.name)\n    println(1)\n}\n"
+        val question = ask(select(text, "println(1)"))
+        assertEquals(NameCheck.Invalid("'name' is already used in this file"), question.complete("name"))
+        assertEquals(NameCheck.Invalid("'user' is already used in this file"), question.complete("user"))
+    }
 }

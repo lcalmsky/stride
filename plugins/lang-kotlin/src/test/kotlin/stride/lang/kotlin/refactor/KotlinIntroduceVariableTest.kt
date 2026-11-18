@@ -254,7 +254,7 @@ class KotlinIntroduceVariableTest {
     fun `an expression with a call has no other occurrences`() {
         val text = "fun f() {\n    println(a.b())\n    println(a.b())\n}\n"
         val question = ask(select(text, "a.b()"))
-        assertEquals("b", question.suggested)
+        assertEquals("b2", question.suggested)
         val applied = finish(text, question, "result")
         assertEquals("fun f() {\n    val result = a.b()\n    println(result)\n    println(a.b())\n}\n", applied.text)
     }
@@ -476,7 +476,7 @@ class KotlinIntroduceVariableTest {
 
     @Test
     fun `suggested names follow the expression`() {
-        assertEquals("name", ask(select("fun f() {\n    println(user.name)\n}\n", "user.name")).suggested)
+        assertEquals("name2", ask(select("fun f() {\n    println(user.name)\n}\n", "user.name")).suggested)
         assertEquals("name", ask(select("fun f() {\n    println(getName())\n}\n", "getName()")).suggested)
         assertEquals("foo", ask(select("fun f() {\n    println(Foo())\n}\n", "Foo()")).suggested)
         assertEquals("text", ask(select("fun f() {\n    println(\"hello\")\n}\n", "\"hello\"")).suggested)
@@ -560,4 +560,19 @@ class KotlinIntroduceVariableTest {
         val text = "fun f(a: Boolean, b: Boolean) {\n    val v = if (a) if (b) 1 else 2\n}\n"
         assertEquals("Select an expression", refused(select(text, "if (a) if (b) 1 else 2")))
     }
+
+
+
+    @Test
+    fun `a name spelled by an infix use is already used`() {
+        val text = "fun f() {\n    val value = 3\n    println(value)\n    val p = value to 1\n    println(a + b)\n}\n"
+        val question = ask(select(text, "a + b"))
+        assertEquals(
+            NameCheck.Invalid("'value' is already used in this function"),
+            question.complete("value"),
+        )
+    }
+
+
+
 }

@@ -325,6 +325,117 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
     return null
 }
 
+/** True when [token] starts an operand, so a selection may start there (R3 「Expression rules」). */
+private fun KotlinCode.startsOperand(token: KtToken, range: KtRange): Boolean {
+    if (token.isStringBody) return token.text.startsWith("\"")
+    when (token.type) {
+        KotlinTokenTypes.NUMBER, KotlinTokenTypes.CHARACTER -> return true
+        KotlinTokenTypes.OPERATION_SIGN -> return when (token.text) {
+            "!", "++", "--" -> true
+            "-", "+" -> tokenBefore(range.start)?.let { !endsOperand(it) } ?: true
+            else -> false
+        }
+    }
+    if (token.text == "(" || token.text == "{" || token.text == "this" || token.text == "super" ||
+        token.text == "if" || token.text == "when" || token.text == "try" || token.text == "object"
+    ) {
+        return true
+    }
+    if (!isNameToken(token)) return false
+    return references.any { it.token.index == token.index } || isMemberName(token)
+}
+
+/** True when [token] ends an operand, so a selection may end there (R3 「Expression rules」). */
+private fun KotlinCode.endsOperand(token: KtToken): Boolean {
+    if (token.isStringBody) return true
+    when (token.type) {
+        KotlinTokenTypes.NUMBER, KotlinTokenTypes.CHARACTER -> return true
+        KotlinTokenTypes.OPERATION_SIGN -> return token.text == "!!" || token.text == "++" || token.text == "--"
+    }
+    if (token.text == ")" || token.text == "]" || token.text == "}" || token.text == "this" ||
+        token.text == "true" || token.text == "false" || token.text == "null"
+    ) {
+        return true
+    }
+    return isNameToken(token) && token.text !in KEYWORD_OPERATORS
+}
+
+private fun KotlinCode.isMemberName(token: KtToken): Boolean {
+    val before = code.getOrNull(token.index - 1) ?: return false
+    if (before.type == KotlinTokenTypes.DOT) return true
+    return before.text == "?" && code.getOrNull(token.index - 2)?.type == KotlinTokenTypes.DOT
+}
+
+/**
+ * True when a `<…>` type argument list crosses the selection's boundary: opened inside and closed
+ * outside, or the reverse (R3 「Expression rules」).
+ */
+private fun typeArgumentProblem(code: KotlinCode, range: KtRange): Boolean {
+    for (index in code.code.indices) {
+        if (code.code[index].text != "<") continue
+        if (!isTypeArgumentOpen(code, index)) continue
+        val close = typeArgumentClose(code, index)
+        if (close < 0) continue
+        val openInside = code.code[index].start >= range.start && code.code[index].end <= range.end
+        val closeInside = code.code[close].start >= range.start && code.code[close].end <= range.end
+        if (openInside != closeInside) return true
+    }
+    return false
+}
+
+/** Tokens that can follow the `>` closing a type argument list. */
+private val TYPE_ARGUMENT_FOLLOWERS = setOf(
+    "(", ")", "[", "]", "{", "}", ".", ",", ":", "=", ";", "?", ">", "where", "::",
+)
+
+/** Keywords whose `<…>` holds type parameters, so a name may follow the closing `>`. */
+private val TYPE_PARAMETER_HEAD_KEYWORDS = setOf("fun", "class", "interface", "object", "typealias")
+
+/**
+ * True when the `<` at [openIndex] opens a type argument or type parameter list rather than a
+ * comparison. The token after the matching `>` decides: type lists always lead into a call, a
+ * member, a type position or a parameter name.
+ */
+internal fun isTypeArgumentOpen(code: KotlinCode, openIndex: Int): Boolean {
+    val previous = code.code.getOrNull(openIndex - 1) ?: return false
+    val close = typeArgumentClose(code, openIndex)
+    if (close <= openIndex) return false
+    val after = code.code.getOrNull(close + 1)
+    val followed = after == null || after.text in TYPE_ARGUMENT_FOLLOWERS
+    if (isNameToken(previous) || previous.text == ">" || previous.text == "]" || previous.text == ")") {
+        return followed
+    }
+    if (previous.type == KotlinTokenTypes.KEYWORD && previous.text in TYPE_PARAMETER_HEAD_KEYWORDS) {
+        return followed || (after != null && (isNameToken(after) || after.text == "where"))
+    }
+    return false
+}
+
+/**
+ * The index of the token closing the `<` at [openIndex], or `-1`. A lexer token can merge the `>`
+ * with what follows (`?>`, `>>`), so any token holding `>` counts.
+ */
+internal fun typeArgumentClose(code: KotlinCode, openIndex: Int): Int {
+    var depth = 0
+    var index = openIndex
+    while (index < code.code.size) {
+        val text = code.code[index].text
+        var opens = 0
+        var closes = 0
+        for (char in text) {
+            if (char == '<') opens++
+            if (char == '>') closes++
+        }
+        depth += opens
+        if (closes > 0) {
+            depth -= closes
+            if (depth <= 0) return index
+        }
+        index++
+    }
+    return -1
+}
+
 /** The `${…}` template whose code holds [token], or `null` outside template code. */
 private fun KotlinCode.templateRangeOf(token: KtToken): KtRange? {
     if (!token.isCode) return null

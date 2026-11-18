@@ -231,6 +231,7 @@ private fun declarationStarts(code: KotlinCode, funIndex: Int): DeclarationStart
         if (token.type == KotlinTokenTypes.KEYWORD && token.text in KotlinCode.MODIFIER_WORDS) {
             modifiers.add(token.text)
             code.keywordTokens.add(token.index)
+            code.modifierTokens.add(token.index)
             firstTokenIndex = cursor - 1
             cursor--
             continue

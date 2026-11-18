@@ -61,7 +61,7 @@ internal object KotlinInlineFunction {
                 plan.range.start,
                 "Inlined a call of $name",
             )
-            val declarationRefusal = declarationChecks(function, uses)
+            val declarationRefusal = declarationChecks(code, function, uses)
             val all = if (declarationRefusal == null) renderAll(code, function, body, uses.calls) else RenderedAll(emptyList(), declarationRefusal)
             if (all.failure != null) return RefactoringStep.Apply(single)
             val allEdit = allEdit(code, function, uses, all)
@@ -79,13 +79,13 @@ internal object KotlinInlineFunction {
                 ),
             )
         }
-        declarationChecks(function, uses)?.let { return RefactoringStep.Refused(it) }
+        declarationChecks(code, function, uses)?.let { return RefactoringStep.Refused(it) }
         val all = renderAll(code, function, body, uses.calls)
         all.failure?.let { return RefactoringStep.Refused(it) }
         return RefactoringStep.Apply(allEdit(code, function, uses, all))
     }
 
-    private fun declarationChecks(function: KtFunction, uses: Uses): String? {
+    private fun declarationChecks(code: KotlinCode, function: KtFunction, uses: Uses): String? {
         val name = function.name
         if (!function.modifiers.contains("private")) {
             return "$name is not private; other files may call it. Put the caret on a call to inline only that call"
@@ -93,7 +93,20 @@ internal object KotlinInlineFunction {
         if (uses.references.isNotEmpty()) return "$name is used as a reference"
         if (uses.otherObjects.isNotEmpty()) return "$name is also called on other objects"
         if (uses.calls.isEmpty()) return "$name is never used"
+        if (unreadSpelling(code, function, uses) != null) {
+            return "$name appears where this refactoring cannot read it"
+        }
         return null
+    }
+
+    /** A token spelled like the function that is neither its declaration nor a use read above. */
+    private fun unreadSpelling(code: KotlinCode, function: KtFunction, uses: Uses): KtToken? {
+        val read = HashSet<Int>()
+        read.add(function.nameToken.index)
+        for (call in uses.calls) read.add(call.calleeToken.index)
+        for (reference in uses.references) read.add(reference.index)
+        for (token in uses.otherObjects) read.add(token.index)
+        return code.code.firstOrNull { it.spelling() == function.name && it.index !in read }
     }
 
     private fun bodyOf(code: KotlinCode, function: KtFunction): Body? {

@@ -118,6 +118,9 @@ internal object KotlinInline {
         if (!code.isAloneOnLine(statement, trailingSemicolon = true)) {
             return RefactoringStep.Refused("The declaration shares its line with other code")
         }
+        if (code.unreadSpellings(name, local.scope).isNotEmpty()) {
+            return RefactoringStep.Refused("$name appears where this refactoring cannot read it")
+        }
         val initializerText = code.text.substring(initializer.start, initializer.end)
         if (uses.any { it.usage != TemplateUsage.NONE } && initializerText.any { it == '\n' || it == '\r' }) {
             return RefactoringStep.Refused("The inlined code spans several lines and cannot go into a string template")

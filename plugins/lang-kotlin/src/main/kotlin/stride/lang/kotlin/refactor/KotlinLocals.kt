@@ -529,7 +529,10 @@ private fun markDeclarationNames(code: KotlinCode) {
             token.text == "class" || token.text == "interface" || token.text == "object" ||
                 token.text == "typealias" -> {
                 val next = code.code.getOrNull(token.index + 1)
-                if (next != null && isNameToken(next)) code.keywordTokens.add(next.index)
+                if (next != null && isNameToken(next)) {
+                    code.keywordTokens.add(next.index)
+                    code.declarationNameTokens.add(next.index)
+                }
             }
             token.text == "val" || token.text == "var" -> markPropertyNames(code, token)
             token.text == "catch" || token.text == "constructor" || token.text == "init" ||
@@ -541,21 +544,68 @@ private fun markDeclarationNames(code: KotlinCode) {
                 if (!isDotBeforeToken(code, token.index)) code.keywordTokens.add(token.index)
             }
             token.text in KotlinCode.MODIFIER_WORDS -> {
-                val next = code.code.getOrNull(token.index + 1)
-                // `value in range`, `data is Foo`, `if (c) value else …` and `= value` at a line end read a local.
-                if (next != null && next.text !in OPERATOR_KEYWORDS &&
-                    '\n' !in code.text.substring(token.end, next.start) &&
-                    (next.type == KotlinTokenTypes.KEYWORD || isNameToken(next))
-                ) {
+                if (isModifierWord(code, token)) {
                     code.keywordTokens.add(token.index)
+                    code.modifierTokens.add(token.index)
                 }
             }
         }
     }
 }
 
-/** Hard keywords that can follow an expression, so a modifier word before them is a name. */
-private val OPERATOR_KEYWORDS = setOf("in", "is", "as", "else")
+/** Declaration keywords a modifier word can precede. */
+private val DECLARATION_KEYWORDS_AFTER_MODIFIER = setOf(
+    "fun", "val", "var", "class", "interface", "object", "constructor", "typealias", "init",
+    "get", "set",
+)
+
+/** Modifier words that belong to a parameter (`vararg x:`). */
+private val PARAMETER_MODIFIER_WORDS = setOf("vararg", "noinline", "crossinline")
+
+/** Modifier words that belong to a type parameter (`reified T`, `out T`). */
+private val TYPE_PARAMETER_MODIFIER_WORDS = setOf("reified", "out")
+
+/**
+ * True when the modifier word at [token] modifies a declaration, a parameter or a type parameter
+ * rather than being a name (R2 「Locals and references」).
+ */
+private fun isModifierWord(code: KotlinCode, token: KtToken): Boolean {
+    val next = code.code.getOrNull(token.index + 1)
+    if (next != null) {
+        if (next.text == "@") return true
+        if (next.type == KotlinTokenTypes.KEYWORD &&
+            (next.text in DECLARATION_KEYWORDS_AFTER_MODIFIER || next.text in KotlinCode.MODIFIER_WORDS)
+        ) {
+            return !code.splitsAfter(token, next)
+        }
+        if (token.text in PARAMETER_MODIFIER_WORDS && isNameToken(next) &&
+            code.code.getOrNull(next.index + 1)?.text == ":"
+        ) {
+            return true
+        }
+    }
+    return token.text in TYPE_PARAMETER_MODIFIER_WORDS && insideTypeParameterList(code, token.index)
+}
+
+/** True when the token at [index] sits in the `<…>` type parameter list of a declaration. */
+private fun insideTypeParameterList(code: KotlinCode, index: Int): Boolean {
+    var depth = 0
+    var cursor = index - 1
+    while (cursor >= 0) {
+        val token = code.code[cursor]
+        val closes = token.text.count { it == '>' }
+        when {
+            closes > 0 -> depth += closes
+            token.text == "<" -> {
+                if (depth == 0) return isTypeArgumentOpen(code, cursor)
+                depth--
+            }
+            token.text == "{" || token.text == "}" || token.text == ";" -> return false
+        }
+        cursor--
+    }
+    return false
+}
 
 private fun markPropertyNames(code: KotlinCode, keyword: KtToken) {
     val next = code.code.getOrNull(keyword.index + 1) ?: return
@@ -566,10 +616,14 @@ private fun markPropertyNames(code: KotlinCode, keyword: KtToken) {
             val token = code.code[index]
             if (!isNameToken(token)) continue
             val previous = code.code.getOrNull(index - 1)
-            if (previous?.text != ":") code.keywordTokens.add(token.index)
+            if (previous?.text != ":") {
+                code.keywordTokens.add(token.index)
+                code.declarationNameTokens.add(token.index)
+            }
         }
     } else if (isNameToken(next)) {
         code.keywordTokens.add(next.index)
+        code.declarationNameTokens.add(next.index)
     }
 }
 
@@ -624,8 +678,51 @@ private fun resolveLocal(locals: List<KtLocal>, name: String, token: KtToken): K
     return best
 }
 
-/** True when [name] is a reference or a declaration name anywhere in [scope]. */
-internal fun isNameUsedIn(code: KotlinCode, scope: KtRange, name: String): Boolean {
-    if (code.references.any { it.name == name && scope.contains(it.token.start) }) return true
-    return code.locals.any { it.name == name && scope.contains(it.nameToken.start) }
+/** The name a token spells: its text without the backticks a Kotlin identifier may carry. */
+internal fun KtToken.spelling(): String = text.removeSurrounding("`")
+
+/**
+ * True when a code token other than a modifier in [scope] spells [name], so a local of that name
+ * would give the spelling a second meaning (R3 「Name check」).
+ */
+internal fun isNameUsedIn(code: KotlinCode, scope: KtRange, name: String): Boolean =
+    code.code.any {
+        scope.contains(it.start) && it.spelling() == name && it.index !in code.modifierTokens
+    }
+
+/**
+ * Code tokens in [scope] spelled [name] that the model cannot place: not a reference, a
+ * declaration, a member name after `.`, `?.` or `::`, a named argument, a label or a modifier
+ * (R2 「Unread spellings」).
+ */
+internal fun KotlinCode.unreadSpellings(name: String, scope: KtRange): List<KtToken> {
+    val referenceTokens = references.mapTo(HashSet()) { it.token.index }
+    return code.filter { token ->
+        scope.contains(token.start) && token.spelling() == name &&
+            token.index !in referenceTokens &&
+            token.index !in declarationTokens &&
+            token.index !in declarationNameTokens &&
+            token.index !in modifierTokens &&
+            !isPlaceableTokenName(token)
+    }
 }
+
+/** True when [token] is a member name, a named argument, a label or a label use rather than a bare name. */
+private fun KotlinCode.isPlaceableTokenName(token: KtToken): Boolean {
+    val before = code.getOrNull(token.index - 1)
+    if (before != null) {
+        if (before.type == KotlinTokenTypes.DOT || before.text == "::") return true
+        if (before.text == "?" && code.getOrNull(token.index - 2)?.type == KotlinTokenTypes.DOT) return true
+        if (before.text == "@") {
+            val user = code.getOrNull(token.index - 2)
+            return user != null && user.type == KotlinTokenTypes.KEYWORD && user.text in LABEL_USER_KEYWORDS
+        }
+    }
+    val after = code.getOrNull(token.index + 1) ?: return false
+    if (after.text == "@") return true
+    if (after.text != "=") return false
+    return before == null || before.text == "(" || before.text == ","
+}
+
+/** Keywords that take a label after `@`. */
+private val LABEL_USER_KEYWORDS = setOf("return", "break", "continue", "this", "super")

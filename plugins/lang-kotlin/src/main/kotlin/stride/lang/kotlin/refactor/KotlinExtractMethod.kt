@@ -25,8 +25,6 @@ internal object KotlinExtractMethod {
     private val ASSIGNMENTS = setOf("=", "+=", "-=", "*=", "/=", "%=")
     private val LABEL_USERS = setOf("return", "break", "continue", "this", "super")
     private val LITERAL_KEYWORDS = setOf("true", "false", "null")
-    private val DECLARATION_KEYWORDS =
-        setOf("class", "object", "interface", "fun", "val", "var", "typealias", "constructor", "init")
 
     fun prepare(context: RefactoringContext): RefactoringStep =
         prepare(kotlinCodeFor(context.text), context.selectionStart, context.selectionEnd)
@@ -807,17 +805,7 @@ internal object KotlinExtractMethod {
     }
 
     private fun isNameUsedInFile(code: KotlinCode, name: String): Boolean =
-        code.code.any {
-            isNameToken(it) && it.text.removeSurrounding("`") == name && !isModifierUse(code, it)
-        }
-
-    /** A soft keyword written as a declaration modifier (`value class`, `data class`) is not an identifier. */
-    private fun isModifierUse(code: KotlinCode, token: KtToken): Boolean {
-        if (token.type != KotlinTokenTypes.KEYWORD || token.text !in KotlinCode.MODIFIER_WORDS) return false
-        val next = code.code.getOrNull(token.index + 1) ?: return false
-        return next.type == KotlinTokenTypes.KEYWORD &&
-            (next.text in KotlinCode.MODIFIER_WORDS || next.text in DECLARATION_KEYWORDS)
-    }
+        code.code.any { it.spelling() == name && it.index !in code.modifierTokens }
 
     // --- edits --------------------------------------------------------------------------------
 

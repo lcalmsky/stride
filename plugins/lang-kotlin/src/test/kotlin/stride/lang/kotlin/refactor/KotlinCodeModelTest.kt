@@ -567,6 +567,72 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a modifier word before a value is a name`() {
+        val text = "fun f(other: Int) {\n    val value = 3\n    println(value)\n    val p = value to other\n}\n"
+        val code = model(text)
+        val value = code.locals.first { it.name == "value" }
+        assertEquals(2, code.references.count { it.name == "value" && it.resolved == value })
+        assertFalse(code.modifierTokens.any { code.code[it].text == "value" })
+
+        val data = "fun f(other: Int) {\n    val data = 1\n    println(data)\n    val p = data provides other\n}\n"
+        assertEquals(2, model(data).references.count { it.name == "data" && it.resolved != null })
+
+        val open = "fun f(other: Any) {\n    val open = 1\n    val n = open as Int\n    println(n)\n}\n"
+        assertTrue(model(open).references.any { it.name == "open" && it.resolved != null })
+    }
+
+    @Test
+    fun `a modifier word in a declaration position is a modifier`() {
+        val text = "value class Id(val raw: Int)\n\n" +
+            "inline fun <reified T> pick(v: T, vararg rest: Int): T = v\n\n" +
+            "class Box<out T>(private val item: T)\n"
+        val code = model(text)
+        val modifiers = code.modifierTokens.map { code.code[it].text }
+        assertEquals(setOf("value", "inline", "reified", "vararg", "private", "out"), modifiers.toSet())
+        val names = code.references.map { it.name }
+        assertFalse("value" in names)
+        assertFalse("reified" in names)
+        assertFalse("out" in names)
+        assertFalse("vararg" in names)
+    }
+
+    @Test
+    fun `an unread spelling is a token the model cannot place`() {
+        val text = "fun f(value: Int) {\n    println(value)\n    println(other.value)\n    g(value = 1)\n" +
+            "    loop@ while (value > 0) break@loop\n    @value\n    println(1)\n}\n"
+        val code = model(text)
+        val scope = code.nameScope(text.indexOf("println(value)"))
+        val unread = code.unreadSpellings("value", scope!!)
+        assertEquals(listOf(text.indexOf("@value") + 1), unread.map { it.start })
+    }
+
+    @Test
+    fun `a backticked spelling is the same name`() {
+        val text = "fun f() {\n    val value = 3\n    println(value)\n    println(`value`)\n}\n"
+        val code = model(text)
+        val value = code.locals.first { it.name == "value" }
+        assertEquals(2, code.references.count { it.resolved == value })
+        assertTrue(code.unreadSpellings("value", value.scope).isEmpty())
+        assertTrue(isNameUsedIn(code, value.scope, "value"))
+    }
+
+    @Test
+    fun `a name check counts any spelling, member names and named arguments included`() {
+        val text = "fun f() {\n    val user = user()\n    println(user.name)\n    g(name = 1)\n}\n"
+        val code = model(text)
+        val scope = code.nameScope(text.indexOf("println"))!!
+        assertTrue(isNameUsedIn(code, scope, "name"))
+        assertTrue(isNameUsedIn(code, scope, "user"))
+        assertFalse(isNameUsedIn(code, scope, "missing"))
+    }
+
+
+
+
+
+
+
+    @Test
     fun `the model is reused for the same text instance and rebuilt for another`() {
         val text = "fun f() {\n    println(1)\n}\n"
 
