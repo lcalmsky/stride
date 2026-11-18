@@ -2370,7 +2370,9 @@ R3 to R5.
   blocks; `for`, `while` and `do` bodies are loop bodies.
 - **Statements.** A statement block splits at `;` and at newlines at its own depth. A newline does
   not split when the line ends with a token that cannot end an expression (a binary operator, `.`,
-  `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`), when the next
+  `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`; a `>` that
+  closes type arguments or type parameters and a `?` after a type are type syntax, not operators,
+  so `val targets: List<Declaration>` and `val name: String?` end their line), when the next
   line starts with `.`, `?.`, `?:`, `&&`, `||`, `else`, `catch`, `finally`, or with `while` after a
   `do` body, or when the line holds only annotations. It does not split either when the line ends
   with a name that is not a keyword or soft keyword right after a token on the same line that ends
