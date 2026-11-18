@@ -22,7 +22,7 @@ enum class GenerateKind(val title: String) {
 /**
  * A class, interface or object declared in a project source file. [text] is the file's whole
  * text, the open editor's unsaved text when the file is open; [nameOffset] is the offset of the
- * declaration's name in it.
+ * declaration's name token in it, its opening backtick for a backticked name.
  */
 class TypeSource(
     val qualifiedName: String,
@@ -34,9 +34,9 @@ class TypeSource(
 /** Project-wide declarations for generators, answered by the app from the declaration index. */
 interface ProjectTypes {
     /**
-     * The project declarations a type name [written] at [offset] of the file at [path] refers to,
-     * through that file's package, imports and enclosing classes. Empty when the name is not
-     * declared in project sources; more than one when it is ambiguous there.
+     * The project declarations a type name [written] (with or without backticks) at [offset] of the
+     * file at [path] refers to, through that file's package, imports and enclosing classes. Empty
+     * when the name is not declared in project sources; more than one when it is ambiguous there.
      */
     fun resolve(written: String, path: String, offset: Int): List<TypeSource>
 
