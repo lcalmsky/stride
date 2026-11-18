@@ -202,7 +202,9 @@ class GitService(private val project: Project) : Disposable {
         val previousHead = if (headKnown) headValue else null
         headValue = parsed.head
         headKnown = true
-        if (previousHead != parsed.head) baseCache.clear()
+        // The cache is keyed by HEAD alone, but the index decides what a file's base is; a status
+        // change (git add, git rm --cached) must not keep serving the answer it replaced.
+        if (previousHead != parsed.head || changes != snapshot.changes) baseCache.clear()
         publish(
             GitSnapshot(
                 repository = repository,
