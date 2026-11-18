@@ -858,6 +858,18 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a line end comparison after a closed parenthesis still joins the next line`() {
+        assertEquals(
+            listOf("if (a < b) return c >\n        d", "println(1)"),
+            bodyStatements("fun outer(a: Int, b: Int, c: Int, d: Int): Boolean {\n    if (a < b) return c >\n        d\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("val x: List<out Number> = emptyList()", "val y: Map<in String, suspend () -> Unit>", "println(1)"),
+            bodyStatements("fun outer() {\n    val x: List<out Number> = emptyList()\n    val y: Map<in String, suspend () -> Unit>\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
     fun `a next line block joins an anonymous function header`() {
         assertEquals(
             listOf("val f = fun()\n    {\n        println(0)\n    }", "println(1)"),

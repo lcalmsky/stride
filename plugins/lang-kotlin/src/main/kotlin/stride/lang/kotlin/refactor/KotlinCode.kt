@@ -606,10 +606,18 @@ internal class KotlinCode(val text: String) {
 
     /** True when only type syntax sits between the `<` at [openIndex] and [closeIndex]. */
     private fun holdsTypeSyntax(openIndex: Int, closeIndex: Int): Boolean {
+        var parentheses = 0
         for (index in openIndex + 1 until closeIndex) {
             val token = code[index]
             when (token.type) {
-                KotlinTokenTypes.NUMBER, KotlinTokenTypes.STRING, KotlinTokenTypes.CHARACTER -> return false
+                KotlinTokenTypes.NUMBER, KotlinTokenTypes.STRING, KotlinTokenTypes.CHARACTER,
+                KotlinTokenTypes.BRACKETS,
+                -> return false
+                KotlinTokenTypes.KEYWORD -> if (token.text !in TYPE_LIST_KEYWORDS) return false
+                KotlinTokenTypes.PARENTHESES -> {
+                    parentheses += if (token.text == "(") 1 else -1
+                    if (parentheses < 0) return false
+                }
                 KotlinTokenTypes.OPERATION_SIGN ->
                     if (token.text != "->" && token.text.any { it != '<' && it != '>' && it != '?' && it != '*' }) {
                         return false
@@ -617,7 +625,7 @@ internal class KotlinCode(val text: String) {
                 else -> Unit
             }
         }
-        return true
+        return parentheses == 0
     }
 
     /** The `<` whose type list the `>` in the token at [closeIndex] closes, or `-1`. */
@@ -712,6 +720,9 @@ internal class KotlinCode(val text: String) {
         private val CONTROL_HEADER_KEYWORDS = setOf("else", "try", "do", "finally")
         private val CONTROL_PARENTHESES = setOf("if", "for", "while", "catch", "when")
         private val DECLARATION_HEADER_KEYWORDS = setOf("fun", "class", "interface", "object", "init")
+
+        /** Keywords a type argument or type parameter list can hold (`out T`, `suspend () -> Unit`). */
+        private val TYPE_LIST_KEYWORDS = setOf("in", "out", "suspend", "reified")
 
         /** Kotlin hard keywords: never a name. Soft keywords the lexer marks as keywords may be names. */
         val HARD_KEYWORDS: Set<String> = setOf(
