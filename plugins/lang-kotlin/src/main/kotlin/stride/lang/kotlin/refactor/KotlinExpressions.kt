@@ -839,21 +839,6 @@ private fun KotlinCode.forIterableOpen(fromIndex: Int, endIndex: Int, offset: In
     return -1
 }
 
-/** True when two ranges hold the same code tokens, comments and whitespace ignored. */
-internal fun KotlinCode.sameTokens(left: KtRange, right: KtRange): Boolean {
-    val leftTokens = tokens.filter {
-        !it.isComment && it.start >= left.start && it.end <= left.end && (it.isCode || it.isStringBody)
-    }
-    val rightTokens = tokens.filter {
-        !it.isComment && it.start >= right.start && it.end <= right.end && (it.isCode || it.isStringBody)
-    }
-    if (leftTokens.size != rightTokens.size) return false
-    for (index in leftTokens.indices) {
-        if (leftTokens[index].text != rightTokens[index].text) return false
-    }
-    return true
-}
-
 internal fun isValidKotlinIdentifier(name: String): Boolean =
     name.isNotEmpty() && name.any { it != '_' } && (name[0] == '_' || name[0].isLetter()) &&
         name.all { it == '_' || it.isLetterOrDigit() } &&

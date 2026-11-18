@@ -437,7 +437,7 @@ val calls: List<KtCall>; val effects: List<KtEffect>
 fun KotlinCode.callsIn(range) / effectsIn(range) / effectsBefore(range)
 fun KotlinCode.checkExpression(range): ExpressionProblem?
 fun KotlinCode.isStable(range) / isReadOnly(range) / isAtomic(range) / isConditional(range)
-fun KotlinCode.sameTokens(left, right): Boolean
+fun KotlinCode.smartCastShape(local, from, to): KtToken?   // the first R2 smart-cast shape of local
 fun KotlinCode.nameScope(offset): KtRange?; fun KotlinCode.isNameUsedIn(scope, name): Boolean
 enum class LocalKind { VAL, VAR, PARAMETER, LAMBDA_PARAMETER, FOR, CATCH, WHEN_SUBJECT, LOCAL_FUN, LOCAL_CLASS }
 ```
