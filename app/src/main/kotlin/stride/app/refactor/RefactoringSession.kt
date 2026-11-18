@@ -3,6 +3,7 @@ package stride.app.refactor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
 import stride.app.editor.openRename
@@ -25,10 +26,11 @@ internal sealed interface RefactorThisEntry {
     class Prepared(val kind: RefactoringKind, val step: RefactoringStep) : RefactorThisEntry
 }
 
-/** The open `Refactor This` popup and the text its steps were prepared on. */
+/** The open `Refactor This` popup and the text and selection its steps were prepared on. */
 internal class RefactorThisRequest(
     val editor: TextFileEditor,
     val preparedText: String,
+    val preparedSelection: TextRange,
     val rows: List<ChooserRow<RefactorThisEntry>>,
 )
 
@@ -40,6 +42,7 @@ internal class RefactoringChooseRequest(
     val editor: TextFileEditor,
     val kind: RefactoringKind,
     val preparedText: String,
+    val preparedSelection: TextRange,
     val step: RefactoringStep.Choose,
     val restoreHighlights: List<IntRange>,
 )
@@ -49,6 +52,7 @@ internal class RefactoringNameRequest(
     val editor: TextFileEditor,
     val kind: RefactoringKind,
     val preparedText: String,
+    val preparedSelection: TextRange,
     val step: RefactoringStep.AskName,
 ) {
     var errorMessage: String? by mutableStateOf(null)
@@ -71,27 +75,30 @@ internal fun followStep(
     editor: TextFileEditor,
     kind: RefactoringKind,
     preparedText: String,
+    preparedSelection: TextRange,
     step: RefactoringStep,
 ): Boolean = when (step) {
     is RefactoringStep.Refused -> {
         state.statusMessage = step.reason
         true
     }
-    is RefactoringStep.Apply -> applyRefactoringEdit(state, editor, kind, preparedText, step.edit)
+    is RefactoringStep.Apply ->
+        applyRefactoringEdit(state, editor, kind, preparedText, preparedSelection, step.edit)
     is RefactoringStep.AskName -> {
-        state.refactoringName = RefactoringNameRequest(editor, kind, preparedText, step)
+        state.refactoringName = RefactoringNameRequest(editor, kind, preparedText, preparedSelection, step)
         state.focus = KeyContext.CONTEXT_POPUP
         state.statusMessage = null
         true
     }
     is RefactoringStep.Choose -> {
         if (step.options.size == 1) {
-            followStep(state, editor, kind, preparedText, step.options[0].next())
+            followStep(state, editor, kind, preparedText, preparedSelection, step.options[0].next())
         } else {
             state.refactoringChoose = RefactoringChooseRequest(
                 editor = editor,
                 kind = kind,
                 preparedText = preparedText,
+                preparedSelection = preparedSelection,
                 step = step,
                 restoreHighlights = editor.usageHighlights,
             )
@@ -109,12 +116,15 @@ internal fun applyRefactoringEdit(
     editor: TextFileEditor,
     kind: RefactoringKind,
     preparedText: String,
+    preparedSelection: TextRange,
     edit: RefactoringEdit,
 ): Boolean {
     if (editor.value.text != preparedText) {
         state.statusMessage = "The file changed; run ${kind.title} again"
         return true
     }
+    // The undo step records the selection present when the edits land, so put the prepared one back first.
+    restorePreparedSelection(editor, preparedText, preparedSelection)
     if (!editor.applyEdits(edit.edits, edit.caret)) {
         state.statusMessage = "${kind.title} failed: the edits overlap"
         return true
@@ -134,14 +144,22 @@ internal fun chooseRefactoringOption(state: AppState, option: RefactoringOption)
     val request = state.refactoringChoose ?: return false
     state.refactoringChoose = null
     request.editor.usageHighlights = request.restoreHighlights
-    return followStep(state, request.editor, request.kind, request.preparedText, option.next())
+    return followStep(
+        state,
+        request.editor,
+        request.kind,
+        request.preparedText,
+        request.preparedSelection,
+        option.next(),
+    )
 }
 
-/** Closes the chooser and puts back the highlights it replaced. */
+/** Closes the chooser, puts back the highlights it replaced and restores the prepared selection. */
 internal fun closeRefactoringChoose(state: AppState) {
     val request = state.refactoringChoose ?: return
     state.refactoringChoose = null
     request.editor.usageHighlights = request.restoreHighlights
+    restorePreparedSelection(request.editor, request.preparedText, request.preparedSelection)
 }
 
 /** Checks [name] with the step; an invalid name keeps the popup open and shows its reason. */
@@ -154,14 +172,23 @@ internal fun submitRefactoringName(state: AppState, name: String): Boolean {
         }
         is NameCheck.Valid -> {
             state.refactoringName = null
-            applyRefactoringEdit(state, request.editor, request.kind, request.preparedText, check.edit)
+            applyRefactoringEdit(
+                state,
+                request.editor,
+                request.kind,
+                request.preparedText,
+                request.preparedSelection,
+                check.edit,
+            )
         }
     }
 }
 
-/** Closes the name popup without changing the editor. */
+/** Closes the name popup without changing the editor and restores the prepared selection. */
 internal fun closeRefactoringName(state: AppState) {
+    val request = state.refactoringName ?: return
     state.refactoringName = null
+    restorePreparedSelection(request.editor, request.preparedText, request.preparedSelection)
 }
 
 /** Runs the chosen `Refactor This` entry: Rename opens its popup, a prepared kind follows its step. */
@@ -170,12 +197,34 @@ internal fun chooseRefactorThis(state: AppState, entry: RefactorThisEntry): Bool
     state.refactorThis = null
     return when (entry) {
         RefactorThisEntry.Rename -> openRename(state)
-        is RefactorThisEntry.Prepared ->
-            followStep(state, request.editor, entry.kind, request.preparedText, entry.step)
+        is RefactorThisEntry.Prepared -> followStep(
+            state,
+            request.editor,
+            entry.kind,
+            request.preparedText,
+            request.preparedSelection,
+            entry.step,
+        )
     }
 }
 
-/** Closes the `Refactor This` popup without running an entry. */
+/** Closes the `Refactor This` popup without running an entry and restores the prepared selection. */
 internal fun closeRefactorThis(state: AppState) {
+    val request = state.refactorThis ?: return
     state.refactorThis = null
+    restorePreparedSelection(request.editor, request.preparedText, request.preparedSelection)
+}
+
+/**
+ * Puts [preparedSelection] back when the editor still holds [preparedText]. A popup that takes
+ * focus collapses the selection; restoring it is what `Esc` and the undo step rely on.
+ */
+private fun restorePreparedSelection(
+    editor: TextFileEditor,
+    preparedText: String,
+    preparedSelection: TextRange,
+) {
+    if (editor.value.text != preparedText) return
+    if (editor.value.selection == preparedSelection) return
+    editor.updateValue(editor.value.copy(selection = preparedSelection))
 }

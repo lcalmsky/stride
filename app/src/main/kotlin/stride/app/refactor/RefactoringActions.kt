@@ -23,6 +23,7 @@ fun openRefactorThis(
         return true
     }
     val preparedText = editor.value.text
+    val preparedSelection = editor.value.selection
     val rows = ArrayList<ChooserRow<RefactorThisEntry>>()
     if (EditActions.wordAt(preparedText, editor.value.selection.start) != null) {
         rows += ChooserRow(
@@ -45,7 +46,7 @@ fun openRefactorThis(
         state.statusMessage = "No refactorings available at the caret"
         return true
     }
-    state.refactorThis = RefactorThisRequest(editor, preparedText, rows)
+    state.refactorThis = RefactorThisRequest(editor, preparedText, preparedSelection, rows)
     state.focus = KeyContext.CONTEXT_POPUP
     state.statusMessage = null
     return true
@@ -60,7 +61,15 @@ fun startRefactoring(state: AppState, kind: RefactoringKind): Boolean {
     }
     editor.removeSecondaryCarets()
     val preparedText = editor.value.text
-    return followStep(state, editor, kind, preparedText, state.prepareRefactoring(editor, kind))
+    val preparedSelection = editor.value.selection
+    return followStep(
+        state,
+        editor,
+        kind,
+        preparedText,
+        preparedSelection,
+        state.prepareRefactoring(editor, kind),
+    )
 }
 
 /** The action each kind runs as, so Refactor This shows the stroke the keymap binds it to. */

@@ -239,9 +239,8 @@ class RefactoringPopupUiTest {
             waitForIdle()
             assertTrue(editor.usageHighlights.isEmpty())
             assertEquals(text, editor.value.text)
+            assertEquals(TextRange(first, first + "a + b".length), editor.value.selection)
 
-            // The popup taking focus collapses the editor's selection, so the second run selects again.
-            editor.updateValue(TextFieldValue(text, TextRange(first, first + "a + b".length)))
             onRoot().performKeyInput {
                 withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
             }
@@ -258,9 +257,72 @@ class RefactoringPopupUiTest {
 
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { state.refactoringName == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            waitForIdle()
             assertTrue(editor.usageHighlights.isEmpty())
             assertEquals(text, editor.value.text)
+            assertEquals(TextRange(first, first + "a + b".length), editor.value.selection)
         }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `escape in the refactor this popup restores the selected range`() = runComposeUiTest {
+        val text = "alpha beta\n"
+        val editor = prepareProject(text)
+        state.prepareRefactoring = { _, _ -> RefactoringStep.Refused("not available") }
+
+        setContent { RefactoringHarness(state) }
+        onNode(hasSetTextAction()).performClick()
+        waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+
+        onRoot().performKeyInput {
+            withKeyDown(Key.CtrlLeft) { pressKey(Key.T) }
+        }
+        waitUntil(timeoutMillis = 5_000) { state.refactorThis != null }
+        waitForIdle()
+        waitUntil(timeoutMillis = 5_000) { editor.value.selection == TextRange(5) }
+
+        onRoot().performKeyInput { pressKey(Key.Escape) }
+        waitUntil(timeoutMillis = 5_000) { state.refactorThis == null }
+        waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        waitForIdle()
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `applying a typed name undoes to the text and the selected range`() = runComposeUiTest {
+        val text = "alpha beta\n"
+        val editor = prepareProject(text)
+        state.prepareRefactoring = { _, _ -> namingStep() }
+
+        setContent { RefactoringHarness(state) }
+        onNode(hasSetTextAction()).performClick()
+        waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+
+        onRoot().performKeyInput {
+            withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
+        }
+        waitUntil(timeoutMillis = 5_000) { state.refactoringName != null }
+        waitForIdle()
+
+        onNodeWithTag(REFACTORING_NAME_FIELD_TAG).performTextClearance()
+        onNodeWithTag(REFACTORING_NAME_FIELD_TAG).performTextInput("total")
+        onRoot().performKeyInput { pressKey(Key.Enter) }
+        waitUntil(timeoutMillis = 5_000) { state.refactoringName == null }
+        waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        waitForIdle()
+        assertEquals("total beta\n", editor.value.text)
+
+        onRoot().performKeyInput {
+            withKeyDown(Key.MetaLeft) { pressKey(Key.Z) }
+        }
+        waitUntil(timeoutMillis = 5_000) { editor.value.text == text }
+        waitForIdle()
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
 
     private fun namingStep(): RefactoringStep.AskName =
         RefactoringStep.AskName("Introduce Variable", "value") { name ->

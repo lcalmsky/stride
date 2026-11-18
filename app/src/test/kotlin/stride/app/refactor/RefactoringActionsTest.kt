@@ -345,6 +345,120 @@ class RefactoringActionsTest {
         )
     }
 
+    @Test
+    fun `the prepared selection reaches the chooser and the name request`() {
+        val text = "alpha beta\n"
+        val editor = editorWith(text)
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+        state.prepareRefactoring = { _, _ ->
+            RefactoringStep.Choose(
+                "Occurrences",
+                listOf(
+                    RefactoringOption("Replace this occurrence only", listOf(0..4)) {
+                        RefactoringStep.AskName("Introduce Variable", "value") { name ->
+                            NameCheck.Valid(
+                                RefactoringEdit(listOf(TextEdit(0, 5, name)), caret = name.length),
+                            )
+                        }
+                    },
+                    RefactoringOption("Replace all 2 occurrences", listOf(0..4, 6..9)) {
+                        RefactoringStep.Refused("second")
+                    },
+                ),
+            )
+        }
+
+        assertTrue(startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE))
+        val chooser = requireNotNull(state.refactoringChoose)
+        assertEquals(TextRange(0, 5), chooser.preparedSelection)
+
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+        assertTrue(chooseRefactoringOption(state, chooser.step.options[0]))
+        assertEquals(TextRange(0, 5), state.refactoringName?.preparedSelection)
+
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+        closeRefactoringName(state)
+        assertNull(state.refactoringName)
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
+    @Test
+    fun `refactor this carries the prepared selection into the chosen request`() {
+        val text = "alpha beta\n"
+        val editor = editorWith(text)
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+        state.prepareRefactoring = { _, _ ->
+            RefactoringStep.AskName("Introduce Variable", "value") { name ->
+                NameCheck.Valid(RefactoringEdit(listOf(TextEdit(0, 5, name)), caret = name.length))
+            }
+        }
+
+        assertTrue(openRefactorThis(state))
+        val request = requireNotNull(state.refactorThis)
+        assertEquals(TextRange(0, 5), request.preparedSelection)
+
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+        assertTrue(chooseRefactorThis(state, request.rows[1].value))
+        assertEquals(TextRange(0, 5), state.refactoringName?.preparedSelection)
+
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+        closeRefactoringName(state)
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
+    @Test
+    fun `an applied name records the prepared selection for undo`() {
+        val text = "alpha beta\n"
+        val editor = editorWith(text)
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+        state.prepareRefactoring = { _, _ ->
+            RefactoringStep.AskName("Introduce Variable", "value") { name ->
+                NameCheck.Valid(
+                    RefactoringEdit(listOf(TextEdit(0, 5, name)), caret = name.length, message = "Introduced variable $name"),
+                )
+            }
+        }
+
+        assertTrue(startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE))
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+        assertTrue(submitRefactoringName(state, "total"))
+        assertEquals("total beta\n", editor.value.text)
+
+        assertTrue(editor.undo())
+        assertEquals(text, editor.value.text)
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
+    @Test
+    fun `closing refactor this and the chooser returns the prepared selection`() {
+        val text = "alpha beta\n"
+        val editor = editorWith(text)
+        editor.updateValue(TextFieldValue(text, TextRange(0, 5)))
+        state.prepareRefactoring = { _, _ -> RefactoringStep.Refused("not here") }
+        assertTrue(openRefactorThis(state))
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+
+        closeRefactorThis(state)
+        assertNull(state.refactorThis)
+        assertEquals(TextRange(0, 5), editor.value.selection)
+
+        state.prepareRefactoring = { _, _ ->
+            RefactoringStep.Choose(
+                "Occurrences",
+                listOf(
+                    RefactoringOption("first") { RefactoringStep.Refused("first") },
+                    RefactoringOption("second") { RefactoringStep.Refused("second") },
+                ),
+            )
+        }
+        assertTrue(startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE))
+        editor.updateValue(editor.value.copy(selection = TextRange(5)))
+
+        closeRefactoringChoose(state)
+        assertNull(state.refactoringChoose)
+        assertEquals(TextRange(0, 5), editor.value.selection)
+    }
+
     private fun editorWith(text: String): TextFileEditor {
         val root = temp.resolve("project")
         Files.createDirectories(root)
