@@ -2586,6 +2586,328 @@ Messages written by the app; R3 to R5 list the provider's.
 | `<Refactoring> failed: the edits overlap` | `applyEdits` rejected the provider's edits, which overlap or leave the text |
 | `Type a name` | `Enter` with an empty name field |
 
+## Generate
+
+IntelliJ's Generate menu for Kotlin and its two direct actions. Generation adds members to the
+class at the caret and changes no existing text, but a new member can change which declaration an
+existing call reaches, so a generator runs only when the text proves no existing call or
+reference changes meaning, and otherwise refuses with a one-line reason in the status bar.
+
+| Action | `ActionId` | IntelliJ id | Key | Context |
+|---|---|---|---|---|
+| Generate | `GENERATE` | `Generate` | `⌘N`, `⌃↩` | EDITOR |
+| Override Methods | `OVERRIDE_METHODS` | `OverrideMethods` | `⌃O` | EDITOR |
+| Implement Methods | `IMPLEMENT_METHODS` | `ImplementMethods` | `⌃I` | EDITOR |
+
+None of the strokes had a binding: every `bind(` string was compared through `KeyStroke.parse`.
+IntelliJ also binds `⌘N` and `⌃↩` to `NewElement` in the project tree; stride binds them in EDITOR
+only, so the tree keeps them free. The editor field's own key handling must not see `⌃O`, `⌃I` or
+`⌃↩` (a text field may read `⌃O` as a line break and `⌃I` as a tab), so the keymap consumes them.
+
+```kotlin
+// stride.app.generate
+fun openGenerate(state: AppState, keymap: Keymap = Keymap.forPlatform(KeyRouter.isMacOs())): Boolean
+fun startGenerate(state: AppState, kind: GenerateKind): Boolean          // ⌃O and ⌃I
+internal class GenerateRequest(val editor: TextFileEditor, val preparedText: String,
+                               val preparedSelection: TextRange,
+                               val rows: List<ChooserRow<GeneratePrepared>>)
+internal class GeneratePrepared(val kind: GenerateKind, val step: RefactoringStep)
+internal class MemberChooseRequest(val editor: TextFileEditor, val title: String,
+                                   val preparedText: String, val preparedSelection: TextRange,
+                                   val step: RefactoringStep.ChooseMembers) {
+    var errorMessage: String?                    // the last rejected choice's reason
+}
+internal fun prepareGenerateWithProviders(editor: TextFileEditor, kind: GenerateKind,
+                                          types: ProjectTypes?): RefactoringStep
+@Composable fun MemberChooserPopup(title: String, members: List<MemberOption>, error: String?,
+                                   onSubmit: (List<MemberOption>) -> Unit, onClose: () -> Unit)
+
+// stride.app.AppState
+internal var generate: GenerateRequest?
+internal var memberChoose: MemberChooseRequest?
+internal var prepareGenerate: (TextFileEditor, GenerateKind) -> RefactoringStep
+                                                 // defaults to the providers with the project's types
+```
+
+### G1 Where generators live
+
+Generate needs the class at the caret, the members of its supertypes in other files and one undo
+step. Three places were compared.
+
+| | A: more `RefactoringKind` values on `stride.lang.refactoringProvider` | B: new `stride.lang.generateProvider` returning `RefactoringStep` | C: widen `stride.lang.intentionProvider` |
+|---|---|---|---|
+| Cost of a wrong edit | same lexer and model as B | the Kotlin plugin reads the class with the refactoring model (`KotlinCode`), and supertypes with the same model on their files' text | ⌥↩ computes every edit when the menu opens and cannot ask which members |
+| Data outside the file | `RefactoringContext` reads one file by contract (`docs/api-lang.md`); adding a lookup field changes its constructor | `GenerateContext` carries `ProjectTypes`, which the app answers from `TypeGraph` with open editors' text, as `SymbolLookup` does for intentions | `IntentionContext` has only `SymbolLookup` |
+| Files changed | `Refactoring.kt`, Refactor This (which lists every kind), the Kotlin plugin, the app | a new `:lang` file, one descriptor line each in the app and the Kotlin plugin, the Kotlin plugin, the app | `Intention.kt`, the ⌥↩ popup, the Kotlin plugin, the app |
+| Extension point contract | a provider's exhaustive `when` over `RefactoringKind` throws `NoWhenBranchMatchedException` for a new value, which the companion turns into `failed` before later providers answer; the context constructor changes (binary break, major) | additive, minor: a new extension point, and `RefactoringStep` gains `ChooseMembers`, which only the app consumes | `IntentionAction` is a data class; a member list changes its constructor (binary break, major), as R1 found |
+| Frame path | unchanged | unchanged | unchanged |
+
+**B is the contract.** The app's step handling (`followStep`, `applyRefactoringEdit`, the chooser
+and the prepared-selection restore of R7) takes a title instead of a `RefactoringKind`, so
+generators and refactorings share it. IntelliJ checks several members at once and `Choose` picks
+one, so the multi-select is a new step instead of a wider `Choose`: `Choose` keeps its one-row
+meaning, and a provider that never returns `ChooseMembers` is unaffected. The contract is in
+`docs/api-lang.md` 「Generate providers」:
+
+```kotlin
+// stride.lang
+enum class GenerateKind(val title: String) {
+    SECONDARY_CONSTRUCTOR, EQUALS_HASH_CODE, TO_STRING, OVERRIDE_METHODS, IMPLEMENT_METHODS
+}
+class TypeSource(val qualifiedName: String, val path: String, val text: String, val nameOffset: Int)
+interface ProjectTypes {
+    fun resolve(written: String, path: String, offset: Int): List<TypeSource>
+    fun hasTopLevelFunction(name: String): Boolean
+}
+class GenerateContext(val text: String, val caretOffset: Int, val fileName: String, val path: String,
+                      val types: ProjectTypes?)
+interface GenerateProvider { fun prepare(kind: GenerateKind, context: GenerateContext): RefactoringStep? }
+// RefactoringStep gains:
+class ChooseMembers(val title: String, val members: List<MemberOption>,
+                    val complete: (List<MemberOption>) -> NameCheck) : RefactoringStep
+class MemberOption(val text: String, val group: String? = null, val checked: Boolean = false,
+                   val disabledReason: String? = null)
+```
+
+The Kotlin plugin registers `stride.lang.kotlin.generate.KotlinGenerate`. Java has no language
+plugin, so a `.java` file refuses with `<Generator> is not available for .java files`, and
+IntelliJ's Java-only getters and setters are not generated (see 「Generate differences」).
+
+### G2 The class at the caret
+
+The class is the innermost `class`, `object`, `interface`, `enum class` or `companion object`
+declaration whose header or body holds the caret, read with the refactoring model's tokens and
+blocks (R2 「Tokens」, 「Blocks」). An object expression (`object : Runnable { … }`), a function body
+or a file without a class refuses with `No class at the caret`. Every generator also refuses with
+R2's `Brackets do not match in this file`.
+
+| Class | Secondary Constructor | equals() and hashCode() | toString() | Override | Implement |
+|---|---|---|---|---|---|
+| `class`, `open`/`abstract`/`sealed` class | when it has no primary constructor (G4) | yes | yes | yes | yes |
+| `data class` | no (a primary constructor) | yes, as IntelliJ | yes, as IntelliJ | yes | yes |
+| `object`, `companion object`, `data object` | no | no | yes | yes | yes |
+| `enum class` | when it has no primary constructor (G4) | no (`Enum` makes them final) | yes | yes | yes |
+| `interface`, `fun interface` | no | no | no | yes | no (an interface may leave members abstract) |
+| `annotation class` | no | no | no | no | no |
+| `value class`, `inline class` | no (a primary constructor) | no | yes | yes | yes |
+
+The availability follows IntelliJ 2026.1.3's `isValidForClass` checks (measured from its Kotlin
+plugin): Secondary Constructor needs a `KtClass` that is not an interface, annotation or enum
+entry and has no explicit primary constructor; equals/hashCode also refuses enums and value
+classes; toString refuses annotations and interfaces only. A refused kind says why in the status
+bar when run by `⌃O`/`⌃I` and is left out of the `⌘N` menu.
+
+An existing member that the generator would write again refuses: `equals() already exists in A`,
+`hashCode() already exists in A`, `toString() already exists in A`. IntelliJ offers to delete and
+regenerate them; stride never deletes code it did not write (see 「Generate differences」).
+
+### G3 Where generated code goes
+
+- **Place.** When the caret is in the class body at member level (between members, not inside
+  one), the members go at the caret's line: after the member that ends before it, before the
+  member that starts after it. When the caret is inside a member, they go after that member. When
+  the caret is in the header, they go at the end of the body, before its `}`. In an `enum class`
+  they never go before the `;` that ends the entries; entries without a `;` refuse with
+  `Add ; after the enum entries first`.
+- **No body.** A class without `{` (`class A(val x: Int)`, `data class P(val x: Int) : Shape`)
+  gets ` {`, the members and `}` after its header, when the header ends its line and the next code
+  token starts another declaration, closes the enclosing body or ends the file. Otherwise it
+  refuses with `Add a body to A first`.
+- **Layout.** Each member is indented one step deeper than the class's own line. The step is the
+  class body's existing member indentation when there is one, otherwise the file's first indented
+  line's indentation, otherwise four spaces. One blank line separates generated members from each
+  other and from their neighbours; existing blank lines next to the insertion point count, so no
+  run of blank lines grows.
+- **Caret.** After applying, the caret is at the start of the first generated member's first body
+  statement (`TODO(…)`, `return super…`, `if (this === other)`, `this.x = x`), or after the
+  last parameter of a constructor without statements.
+- **Undo.** One `TextFileEditor.applyEdits` call, one undo step, as R7. The edits are inserts at
+  prepared offsets, plus one insert per added import line (G6).
+
+### G4 Secondary Constructor
+
+Runs in a class without an explicit primary constructor (G2). The chooser lists the class's own
+properties that a constructor can assign, all checked: a `var` (also `lateinit var`) or a `val`
+without an initializer, declared in the class body, not `abstract`, not delegated (`by`), not an
+extension, without a custom getter and not assigned in an `init` block. A property whose type is
+not written is listed with `type not written` and cannot be checked. The constructor's
+parameters are the checked properties in declaration order, named like them, typed as written,
+and its body assigns them: `this.x = x`. With no candidate the chooser is skipped and an empty
+constructor is generated.
+
+It refuses when the new constructor can change what an existing call reaches. Measured with
+Kotlin 2.4.21:
+
+| Shape | Effect of adding `constructor(x: Int)` | Rule |
+|---|---|---|
+| an existing constructor with the same parameter types | conflicting overloads | refuse: `constructor(Int) already exists` |
+| an existing constructor that also accepts the same number of arguments through default values or a `vararg` (`constructor(x: Long, y: Int = 0)`, `constructor(vararg xs: Int)`) | `A(1)` silently moves to the new constructor | refuse: `A(…) with 1 argument would call the new constructor` |
+| an existing constructor with the same number of parameters and other types (`constructor(x: Long)`) | `A(1)` silently moves when the literal fits both | refuse with the same message |
+| `operator fun invoke` in the class's companion object | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
+| a top-level function named `A` in project sources (`ProjectTypes.hasTopLevelFunction`) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
+| the class has no explicit constructor at all | the implicit `A()` disappears; `A()` stops compiling, enum entries without arguments stop compiling, and a top-level `fun A()` silently receives `A()` | write `constructor()` first, then the new constructor: `A()`, entries and subclass calls keep their target (measured). A callable reference `::A` without an expected type becomes ambiguous (a compile error, documented) |
+| a supertype initialized in the header (`class A : Base()`) | `supertype initialization is impossible without a primary constructor` | refuse: `A initializes Base() in its header` |
+| a class supertype without parentheses (`class A : Base`) | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first and the body delegates `: super(a, b)`; otherwise refuse: `Base is not in project sources` |
+| `types == null` with a class supertype or a top-level-function check pending | the index is not ready | refuse: `Indexing… try again in a moment` |
+
+The empty constructor body follows IntelliJ's template, which is a comment; stride writes no
+comment and leaves `{}` out, as Kotlin allows.
+
+### G5 equals() and hashCode(), toString()
+
+The chooser lists the class's properties with a backing field, all checked: primary-constructor
+`val`/`var` parameters and body properties that have an initializer or `lateinit`, no delegate
+(`by`), no custom getter, not `const`, not `abstract`, not extensions. The
+type decides the comparison, so a property whose type is not written, a literal or a constructor
+call (H4) is listed with `type not written` and cannot be checked. The generated text follows the
+templates of IntelliJ's Kotlin plugin for the JVM (`defaultEquals.vm`, `defaultHashcode.vm` and
+the four toString templates of its `k2/codeinsight/generate` package), for example:
+
+```kotlin
+override fun equals(other: Any?): Boolean {
+    if (this === other) return true
+    if (javaClass != other?.javaClass) return false
+
+    other as A
+
+    if (x != other.x) return false
+    if (!names.contentEquals(other.names)) return false
+
+    return true
+}
+
+override fun hashCode(): Int {
+    var result = x
+    result = 31 * result + (label?.hashCode() ?: 0)
+    result = 31 * result + names.contentHashCode()
+    return result
+}
+
+override fun toString(): String {
+    return "A(x=$x, label=$label, names=${names.contentToString()})"
+}
+```
+
+- Arrays (`Array<…>`, `IntArray` and the other primitive arrays, nullable or not) compare with
+  `contentEquals`, hash with `contentHashCode` and print with `contentToString`; an array of arrays
+  uses the `contentDeep…` forms. A nullable property hashes as `(p?.hashCode() ?: 0)`; an `Int`,
+  `Short` or `Byte` property's hash is the value itself, other types call `hashCode()`. With one
+  property and no super hash the body is `return p.hashCode()`; with none it is
+  `return javaClass.hashCode()`. A generic class casts `other as A<*>`.
+- A name that needs backticks prints as `${`name`}` (measured: both template forms compile, and
+  the braced form leaves no doubt where the name ends).
+- The locals `other` and `result` must not be the name of a checked property, which would compare
+  or hash the wrong value without a compile error: the parameter becomes `other1` and the local
+  `result1`, as IntelliJ's unique-name helper does, when such a property is checked.
+- **Supertypes.** A superclass in project sources that overrides `equals` (or `hashCode`) adds
+  `if (!super.equals(other)) return false` (and starts `var result = super.hashCode()`); one that
+  declares them `final` refuses: `Base declares equals() final`. A class supertype that is not in
+  project sources refuses equals/hashCode with `Base is not in project sources`: whether its
+  `equals` compares fields cannot be read, and a wrong super call makes every comparison false.
+  toString never calls super, as IntelliJ's default.
+- Choosing no property is allowed, as in IntelliJ: equals keeps its identity and class checks and
+  toString writes `"A()"`.
+
+### G6 Override Methods and Implement Methods
+
+Members come from the class's supertypes in project sources: each written supertype is resolved
+with `ProjectTypes.resolve` at its header offset, and the walk continues through each resolved
+declaration's own header, resolved at the offsets of its own file. Each supertype file is read with
+the same tokens and blocks as the current file.
+
+- **Candidates.** Functions and properties of the supertypes that the class can override: not
+  `private`, not `final` (`final override` included), not constructors, `init` blocks or nested
+  types; interface members are open; class members need `open`, `abstract` or `override`. The
+  nearest declaration along the walk wins. A member the class already declares with the same
+  name and the same written parameter types after substitution is left out. Override also lists
+  `equals(other: Any?): Boolean`, `hashCode(): Int` and `toString(): String` of `Any` under the
+  group `Any` unless the class or a project supertype declares them, or declares them `final`.
+- **Override** lists every candidate grouped by supertype, none checked. A concrete member's body
+  calls super: `return super.f(a, b)` (block body; `Unit` members drop the `return`), a `vararg`
+  parameter passes as `*xs` (measured: without `*` the array arrives as one element), and when
+  more than one direct supertype provides the member the call is `super<Owner>.f(…)` (measured: a
+  bare `super` does not compile there). An abstract member's body is `TODO("Not yet implemented")`.
+  A property becomes `override val x: T get() = super.x`, and a `var` adds
+  `set(value) { super.x = value }` (measured: same behaviour as inheriting it).
+- **Implement** lists the abstract candidates that no class along the walk implements, all
+  checked. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+  and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
+  walk is not in project sources: `Base is not in project sources; it may implement these members`
+  (measured: `class C : Lib(), P` compiles without overriding when `Lib` has `f()`, so a
+  generated `TODO()` would replace working code). A written supertype that is an interface outside
+  project sources only drops its members, and the chooser title says
+  `Runnable is not in project sources`; Kotlin requires an explicit override when two interfaces
+  supply the same member, so an unread interface cannot implement a project member silently.
+  Nothing to implement refuses with `No members to implement in project sources`, and the same for
+  Override.
+- **Signatures.** The header is copied from the supertype's text: modifiers `suspend`, `operator`,
+  `infix` and `vararg` stay; visibility, `open`, `abstract`, `override`, `final`, annotations, KDoc
+  and default values go (measured: an override may not declare defaults, and an omitted visibility
+  keeps `protected`). Member type parameters, their bounds and `where` clauses stay.
+- **Type arguments.** A generic supertype's type parameters are replaced, token by token outside
+  qualified names, with the type arguments the subclass writes (`class A : Repo<User>` turns
+  `save(x: T)` into `save(x: User)`), composed along the walk. A member refuses (it is listed with
+  a reason and cannot be checked) when its signature uses a type parameter whose argument is
+  missing, `*` or a projection (`out T`, `in T`), or when a member type parameter has the name of a
+  type the substitution writes. A wrong substitution cannot compile silently: `override` on a
+  signature that matches nothing is a compile error (measured), so these rules are exact rather
+  than broad.
+- **Imports.** Every simple type name the signature writes is checked in the target file: when it
+  resolves there to the same project declaration it stays; when it resolves to nothing and the
+  supertype's file resolves it to a project declaration, an import of that declaration's qualified
+  name is added in sorted position (as the import quick fix of the third round); when the supertype
+  file imports it explicitly (a library type), the same import line is added unless the target
+  imports or declares that simple name otherwise; a name that comes from a star import or an alias
+  in the supertype file, or that the target resolves to another declaration, makes the member
+  `refers to another X here` and it cannot be checked. Default imports (`kotlin.*`,
+  `kotlin.collections.*` and the rest of Kotlin's JVM defaults) need nothing.
+- **Index.** With `types == null`, both refuse with `Indexing… try again in a moment` when the
+  class has a supertype; with no supertype they list only `Any`'s members (Override) or refuse
+  (Implement).
+- Member extensions (`fun String.f()` inside a supertype) are listed with `member extensions are
+  not generated` and cannot be checked.
+
+### G7 Showing and choosing
+
+- **⌘N** prepares every kind and lists those that did not refuse in IntelliJ's order: Secondary
+  Constructor…, equals() and hashCode()…, toString()…, Override Methods… `⌃O`, Implement
+  Methods… `⌃I`, in the `TargetChooserPopup` of R6 (`popupPanel`). Choosing a row follows the step
+  it prepared. With nothing available the status bar says `Nothing to generate here`.
+- **⌃O / ⌃I** prepare their kind and follow it; a refusal goes to the status bar.
+- **Member chooser** (`MemberChooserPopup`, `popup-member-chooser`, a `popupPanel` popup registered
+  in `PopupNativeLegibilityTest`): group headings, one row per member with a check mark, the
+  disabled reason in the secondary text role. `↑`/`↓` move, `Space` toggles the row, `⌘A` checks
+  every enabled row (again: unchecks them), `↵` submits the checked rows or, when none is checked,
+  the row under the cursor, and `Esc` closes and restores the prepared selection (R7). A
+  `NameCheck.Invalid` keeps the popup open with its message in `errorOnPopupPlate`.
+- Read-only editors say `File is read-only`. A file that changed between preparing and applying
+  says `The file changed; run <Generator> again`.
+
+### Generate messages
+
+| Message | When it appears |
+|---|---|
+| `Nothing to generate here` | ⌘N with every kind refused |
+| `No class at the caret` | the caret is not in a class declaration (G2) |
+| `<Generator> is not available for .<ext> files` | a file whose language has no generate provider |
+| `<Generator> failed: <Exception>` | the provider threw; the exception is logged |
+| `The file changed; run <Generator> again` | the text changed between preparing and applying |
+| `Indexing… try again in a moment` | supertypes or top-level functions are needed before the index is ready |
+| `File is read-only` | any of the three in a read-only editor |
+
+G2 to G6 list the provider's other messages.
+
+### Generate differences
+
+- Getters and setters, Test, Copyright, Delegate Methods and IntelliJ's equals/hashCode wizard
+  options (choose different properties for each, non-null fields) are not generated; Kotlin has no
+  getters to write and stride has no Java plugin.
+- Members of library supertypes are not listed (the tenth round does not read libraries), and
+  Implement refuses when a library class sits in the hierarchy (G6).
+- Existing `equals`, `hashCode` and `toString` refuse instead of being deleted and regenerated.
+- Enum classes and object expressions: Secondary Constructor follows G4 in enums; object
+  expressions are not classes for G2.
+
 ## Declaration navigation, tests and bookmarks
 
 ```kotlin

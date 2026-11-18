@@ -84,6 +84,10 @@ internal fun followStep(
     }
     is RefactoringStep.Apply ->
         applyRefactoringEdit(state, editor, kind, preparedText, preparedSelection, step.edit)
+    is RefactoringStep.ChooseMembers -> {
+        state.statusMessage = "${kind.title} failed: no member chooser"
+        true
+    }
     is RefactoringStep.AskName -> {
         state.refactoringName = RefactoringNameRequest(editor, kind, preparedText, preparedSelection, step)
         state.focus = KeyContext.CONTEXT_POPUP

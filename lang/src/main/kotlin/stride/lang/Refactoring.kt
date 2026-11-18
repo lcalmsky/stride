@@ -46,7 +46,28 @@ sealed interface RefactoringStep {
 
     /** Ready to apply without more input. */
     class Apply(val edit: RefactoringEdit) : RefactoringStep
+
+    /**
+     * The user checks any number of [members]; [complete] gets the checked ones in list order and
+     * answers like [AskName.complete]: [NameCheck.Invalid] keeps the chooser open with its message.
+     */
+    class ChooseMembers(
+        val title: String,
+        val members: List<MemberOption>,
+        val complete: (List<MemberOption>) -> NameCheck,
+    ) : RefactoringStep
 }
+
+/**
+ * One row of [RefactoringStep.ChooseMembers]. Rows with the same [group] follow each other under
+ * that heading; a row with a [disabledReason] shows the reason and cannot be checked.
+ */
+class MemberOption(
+    val text: String,
+    val group: String? = null,
+    val checked: Boolean = false,
+    val disabledReason: String? = null,
+)
 
 /** One row of [RefactoringStep.Choose]. [highlights] are `start until end` ranges of the prepared text. */
 class RefactoringOption(

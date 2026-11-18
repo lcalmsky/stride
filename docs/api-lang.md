@@ -354,6 +354,73 @@ first non-null step. A provider that throws is logged and the result is
 implementing the kind, the result is `Refused(notAvailable(kind, fileName))`, which reads
 `<title> is not available for .<ext> files`, or `for this file` for a name without an extension.
 
+### Generate providers
+
+Language plugins provide the members of IntelliJ's Generate menu through the bean extension point
+`stride.lang.generateProvider`, keyed by `language` like `lang.refactoringProvider`. A provider
+reads the document text, the caret and the file, and the declarations of other project files
+only through `ProjectTypes`, which the app answers from its declaration index with the unsaved
+text of open editors. It answers with the same `RefactoringStep` values as a refactoring
+provider; `ChooseMembers` lets the user check several members.
+
+```kotlin
+enum class GenerateKind(val title: String) {
+    SECONDARY_CONSTRUCTOR("Secondary Constructor"), EQUALS_HASH_CODE("equals() and hashCode()"),
+    TO_STRING("toString()"), OVERRIDE_METHODS("Override Methods"), IMPLEMENT_METHODS("Implement Methods")
+}
+
+class TypeSource(val qualifiedName: String, val path: String, val text: String, val nameOffset: Int)
+
+interface ProjectTypes {
+    fun resolve(written: String, path: String, offset: Int): List<TypeSource>
+    fun hasTopLevelFunction(name: String): Boolean
+}
+
+class GenerateContext(val text: String, val caretOffset: Int, val fileName: String, val path: String,
+                      val types: ProjectTypes?)
+
+interface GenerateProvider {
+    fun prepare(kind: GenerateKind, context: GenerateContext): RefactoringStep?
+    companion object {
+        const val EP_NAME = "stride.lang.generateProvider"
+        val EP: BeanExtensionPointName<GenerateProviderBean>
+        fun forLanguage(language: Language, area: ExtensionArea = Application.extensionArea): List<GenerateProvider>
+        fun prepare(language: Language?, kind: GenerateKind, context: GenerateContext,
+                    area: ExtensionArea = Application.extensionArea): RefactoringStep
+        fun notAvailable(kind: GenerateKind, fileName: String): String
+    }
+}
+
+class GenerateProviderBean : ExtensionBean() {
+    override val key: String?                       // attributes["language"]
+    val language: String?
+    fun provider(): GenerateProvider
+}
+
+// in RefactoringStep
+class ChooseMembers(val title: String, val members: List<MemberOption>,
+                    val complete: (List<MemberOption>) -> NameCheck) : RefactoringStep
+class MemberOption(val text: String, val group: String? = null, val checked: Boolean = false,
+                   val disabledReason: String? = null)
+```
+
+`types` is `null` while the index is not ready; a provider that needs other files refuses then.
+`resolve` takes a type name as written (`Repo`, `Outer.Inner`) at an offset of the file at `path`,
+that file being the current one or a `TypeSource.path`, and resolves it through that file's
+package, imports and enclosing classes; it never reads libraries. `TypeSource.text` is the whole
+file and `nameOffset` the declaration's name in it. `hasTopLevelFunction` answers for every
+project file, whatever the package. More `GenerateKind` values may come in a minor release, so a
+provider's `when` over the enum ends in `else -> null`.
+
+`ChooseMembers.complete` receives the checked rows in list order and is pure like
+`AskName.complete`; `NameCheck.Invalid` keeps the chooser open with its message, `Valid` carries
+the edit. A row with a `disabledReason` cannot be checked. The companion `prepare` behaves like
+`RefactoringProvider.prepare`: first non-null step in extension-point order, a throwing provider
+gives `Refused("<title> failed: <Exception>")`, no provider gives
+`Refused(notAvailable(kind, fileName))`. Adding `ChooseMembers` to `RefactoringStep` is additive:
+providers produce steps and only the app consumes them. The rules are in `docs/api-app.md`
+「Generate」 G1 to G7.
+
 ## `stride.lang.kotlin`
 
 ```kotlin
