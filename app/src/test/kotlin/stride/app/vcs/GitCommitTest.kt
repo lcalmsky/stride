@@ -254,9 +254,10 @@ class GitCommitTest {
 
             val result = runBlocking { withTimeout(10.seconds) { commit.await() } }
             assertFalse(result.ok, result.message)
-            assertFalse(
-                executor.flagOnNextCall == true,
-                "the commit's next git call ran on the interrupted thread with its flag still set",
+            assertEquals(
+                false,
+                executor.flagOnNextCall,
+                "the commit's next git call must run, and not on the interrupted thread with its flag still set",
             )
         } finally {
             scope.cancel()
