@@ -1,6 +1,6 @@
 cask "stride" do
-  version "1.15.0"
-  sha256 "e5732365e11ef51e1ee83bde23ee34dbc0ca9108f077cb4626ba979d83a8625d"
+  version "1.16.0"
+  sha256 "4a96bca99200c5568fbb9a3b9c20c7806de87aff4dbd7f65c1a5bd6892f80fb1"
 
   url "https://github.com/lcalmsky/stride/releases/download/v#{version}/strIDE-#{version}-arm64.zip"
   name "strIDE"
