@@ -162,8 +162,14 @@ private fun applyRollback(
             }
             oldCount == 0 -> {
                 val from = lineStartOffset(text, start)
-                val to = lineStartOffset(text, start + count).coerceAtMost(text.length)
-                if (to > from) edits += TextEdit(from, to, "")
+                if (start + count >= lineCount && from > 0) {
+                    // No line follows the hunk, so the break before it goes too.
+                    val terminator = if (from > 1 && text[from - 2] == '\r') from - 2 else from - 1
+                    edits += TextEdit(terminator, text.length, "")
+                } else {
+                    val to = lineStartOffset(text, start + count).coerceAtMost(text.length)
+                    if (to > from) edits += TextEdit(from, to, "")
+                }
             }
             else -> {
                 val from = lineStartOffset(text, start)

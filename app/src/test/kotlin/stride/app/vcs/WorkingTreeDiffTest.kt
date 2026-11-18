@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -15,6 +16,7 @@ import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
@@ -96,6 +98,35 @@ class WorkingTreeDiffTest {
             assertEquals("src/Main.kt  HEAD ↔ Local", state.diffRequest!!.title)
         } finally {
             state.dispose()
+        }
+    }
+
+    @Test
+    fun `a working file that cannot be read opens with its unavailable row`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Secret.txt", "alpha\n")
+        repo.commitAll("Initial commit")
+        withState(repo) { state ->
+            val permissions = Files.getPosixFilePermissions(file)
+            Files.setPosixFilePermissions(file, emptySet())
+            try {
+                assumeTrue(
+                    runCatching { Files.readString(file) }.isFailure,
+                    "the process can still read the file",
+                )
+
+                assertTrue(openWorkingTreeDiff(state, file))
+
+                assertTrue(eventually { state.diffRequest != null }, "the popup never opened")
+                val diff = state.diffRequest!!.files.single()
+                assertTrue(diff.new is BaseText.Unavailable, diff.new.toString())
+                val reason = (diff.new as BaseText.Unavailable).reason
+                assertEquals("Cannot read Secret.txt", reason)
+                val row = DiffRows.build(diff).single()
+                assertTrue(row is DiffRow.Message && row.text == reason, row.toString())
+            } finally {
+                Files.setPosixFilePermissions(file, permissions)
+            }
         }
     }
 

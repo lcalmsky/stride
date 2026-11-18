@@ -73,6 +73,7 @@ import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrimSurface
 import stride.core.vfs.VFile
+import java.io.IOException
 import java.nio.charset.CharacterCodingException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -485,13 +486,18 @@ fun openWorkingTreeDiff(state: AppState, file: Path, line: Int? = null): Boolean
     return true
 }
 
-private fun workingText(path: Path): BaseText = when {
-    !Files.exists(path) -> BaseText.Text("")
-    Files.size(path) > GitService.MAX_BASE_BYTES -> BaseText.Unavailable("Larger than 8 MB")
-    else -> try {
-        BaseText.Text(Files.readString(path))
+private fun workingText(path: Path): BaseText {
+    if (!Files.exists(path)) return BaseText.Text("")
+    return try {
+        if (Files.size(path) > GitService.MAX_BASE_BYTES) {
+            BaseText.Unavailable("Larger than 8 MB")
+        } else {
+            BaseText.Text(Files.readString(path))
+        }
     } catch (_: CharacterCodingException) {
         BaseText.Unavailable("Not valid UTF-8")
+    } catch (_: IOException) {
+        BaseText.Unavailable("Cannot read ${path.fileName}")
     }
 }
 

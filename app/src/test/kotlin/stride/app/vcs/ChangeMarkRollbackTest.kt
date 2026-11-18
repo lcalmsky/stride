@@ -262,6 +262,80 @@ class ChangeMarkRollbackTest {
         }
     }
 
+    @Test
+    fun `a line added after a file without a trailing newline rolls back`(@TempDir temp: Path) {
+        rollbackTest(temp, "alpha\nbeta", "alpha\nbeta\n") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.length)))
+        }
+    }
+
+    @Test
+    fun `a CRLF line added after a file without a trailing newline rolls back`(@TempDir temp: Path) {
+        rollbackTest(temp, "alpha\nbeta", "alpha\r\nbeta\r\n") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.length)))
+        }
+    }
+
+    @Test
+    fun `lines appended to a file without a trailing newline roll back`(@TempDir temp: Path) {
+        rollbackTest(temp, "a\nb", "a\nb\nc\nd") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("c"))))
+        }
+    }
+
+    @Test
+    fun `lines appended after a final newline keep that newline`(@TempDir temp: Path) {
+        rollbackTest(temp, "a\nb\n", "a\nb\nc\nd\n") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("c"))))
+        }
+    }
+
+    @Test
+    fun `deleted lines at the end of a file roll back with their break`(@TempDir temp: Path) {
+        withCleanEditor(temp, "alpha\nbeta\n") { editor, state ->
+            editor.setText("alpha")
+            assertTrue(eventually { editor.vcsHunks.size == 1 }, "hunks: ${editor.vcsHunks}")
+            editor.updateValue(TextFieldValue("alpha", TextRange(0)))
+
+            assertTrue(rollbackLines(state))
+
+            assertEquals("alpha\nbeta\n", editor.value.text)
+            assertNull(state.statusMessage)
+        }
+    }
+
+    @Test
+    fun `a modified last line without a newline rolls back to the base`(@TempDir temp: Path) {
+        rollbackTest(temp, "alpha\nbeta\n", "alpha\nBETA") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.indexOf("BETA"))))
+        }
+    }
+
+    @Test
+    fun `the popup rollback removes a line added at the end`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val git = state.session!!.git
+            git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+            runBlocking { git.refreshNow() }
+            val editor = state.session!!.editors.openFile(VFile(file)) as TextFileEditor
+            assertTrue(eventually { ChangeMarks.trackerOf(editor)?.baseState() != null })
+            editor.setText("alpha\nbeta\n")
+            assertTrue(eventually { editor.vcsHunks.isNotEmpty() }, "hunks: ${editor.vcsHunks}")
+            val hunk = editor.vcsHunks.single()
+
+            assertTrue(rollbackHunk(state, editor, hunk))
+            assertEquals("alpha\nbeta", editor.value.text)
+            assertNull(state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
     /**
      * Opens [initial] committed in a tracked file through a tracker that has published the clean
      * document, and hands the editor and state to [block] without waiting for a recompute.
