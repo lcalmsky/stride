@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.nio.file.Path
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.glass.nativeGlass
@@ -87,9 +90,37 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
         )
         return
     }
+    val git = session.git
+    val snapshot = git.snapshot
+    val cold = snapshot.repository == null && snapshot.error == null
+    var settled by remember(session) { mutableStateOf(!cold) }
+    if (cold && !settled) {
+        LaunchedEffect(session) {
+            withContext(Dispatchers.IO) { git.refreshNow() }
+            Snapshot.withMutableSnapshot { settled = true }
+        }
+        return
+    }
+    val empty = snapshot.error ?: if (snapshot.repository == null) notRepositoryMessage(session) else null
+    if (empty != null) {
+        ToolWindowEmptyState(
+            empty,
+            modifier,
+            focusRequests = state.toolWindows.focusRequests,
+            onEscape = { state.focusSelectedEditor() },
+        )
+        return
+    }
+
     val window = session.commit
-    val rows = commitRows(session)
+    val head = snapshot.branch?.head
+    val root = realProjectRoot(session.project.root)
+    val rows = commitRows(session, window)
     LaunchedEffect(rows) { window.syncRows(rows) }
+    val modifiedEditors = modifiedEditorPaths(session)
+    LaunchedEffect(head, modifiedEditors, snapshot.changes) {
+        withContext(Dispatchers.IO) { resolveTracked(session, window) }
+    }
 
     val listFocus = remember { FocusRequester() }
     val messageFocus = remember { FocusRequester() }
@@ -158,7 +189,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                 groups = CommitModel.groups(rows),
                 selectedIndex = index,
                 selectedPath = selectedPath,
-                root = session.project.root,
+                root = root,
                 listFocus = listFocus,
                 onListFocus = { listFocused = it },
                 onSelect = { window.selectedPath = it.path },

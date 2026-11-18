@@ -20,7 +20,10 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -56,6 +59,13 @@ fun PushPopup(request: PushRequest, state: AppState, onClose: () -> Unit) {
     val plan = request.plan
     val focusRequester = remember { FocusRequester() }
     val shape = RoundedCornerShape(DesignTokens.radiusPopup)
+    var fired by remember { mutableStateOf(false) }
+    val confirm = {
+        if (!fired) {
+            fired = true
+            push(state, plan, onClose)
+        }
+    }
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { focusRequester.requestFocus() }
@@ -84,7 +94,7 @@ fun PushPopup(request: PushRequest, state: AppState, onClose: () -> Unit) {
                                 true
                             }
                             Key.Enter, Key.NumPadEnter -> {
-                                push(state, plan, onClose)
+                                confirm()
                                 true
                             }
                             else -> false
@@ -139,7 +149,7 @@ fun PushPopup(request: PushRequest, state: AppState, onClose: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Spacer(Modifier.weight(1f))
-                    ReplaceTextButton("Push", onClick = { push(state, plan, onClose) })
+                    ReplaceTextButton("Push", onClick = confirm)
                     ReplaceTextButton("Cancel", onClick = onClose)
                 }
                 PopupHintBar("↵ Push", "Esc Close")

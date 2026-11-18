@@ -34,9 +34,16 @@ object CommitModel {
 
     /**
      * [changes] in [root], plus every path in [modifiedEditors] under [root] that git did not
-     * report, as `MODIFIED` and unsaved; a reported change with a modified editor is unsaved too.
+     * report and [tracked] calls tracked, as `MODIFIED` and unsaved; a reported change with a
+     * modified editor is unsaved too. [tracked] answers `null` while git has not said yet, and
+     * the path is left out then.
      */
-    fun rows(changes: List<FileChange>, root: Path, modifiedEditors: List<Path>): List<CommitRow> {
+    fun rows(
+        changes: List<FileChange>,
+        root: Path,
+        modifiedEditors: List<Path>,
+        tracked: (Path) -> Boolean? = { null },
+    ): List<CommitRow> {
         val normalizedRoot = root.toAbsolutePath().normalize()
         val byPath = LinkedHashMap<Path, CommitRow>()
         for (change in changes) {
@@ -47,10 +54,10 @@ object CommitModel {
             val path = editor.toAbsolutePath().normalize()
             if (!path.startsWith(normalizedRoot)) continue
             val reported = byPath[path]
-            byPath[path] = if (reported == null) {
-                CommitRow(path, ChangeKind.MODIFIED, unsaved = true)
-            } else {
-                reported.copy(unsaved = true)
+            if (reported != null) {
+                byPath[path] = reported.copy(unsaved = true)
+            } else if (tracked(path) == true) {
+                byPath[path] = CommitRow(path, ChangeKind.MODIFIED, unsaved = true)
             }
         }
         return byPath.values.sortedBy { it.path.toString() }
@@ -68,7 +75,7 @@ object CommitModel {
 
 /**
  * The checked files. A row's kind decides its default, so only the user's own choices are kept;
- * a path keeps its choice while the window lists it and is forgotten once it disappears.
+ * a path keeps its choice while it is away from the list and gets it back when it returns.
  */
 class CommitInclusion {
     private val overrides = mutableStateMapOf<Path, Boolean>()
@@ -79,11 +86,14 @@ class CommitInclusion {
         overrides[row.path] = !isChecked(row)
     }
 
-    fun retain(rows: List<CommitRow>) {
-        val listed = rows.mapTo(HashSet()) { it.path }
-        overrides.keys.retainAll(listed)
+    /** Drops the choices of [paths]; the next time a path is listed its default applies again. */
+    fun forget(paths: Collection<Path>) {
+        overrides.keys.removeAll(paths.toSet())
     }
 }
+
+/** git's answer for one path, with the HEAD and status it was asked under. */
+private data class TrackedAnswer(val head: String?, val status: ChangeKind?, val tracked: Boolean)
 
 /** The Commit window's rows, selection, message and last error; it outlives a hidden window. */
 class CommitWindowState {
@@ -100,14 +110,38 @@ class CommitWindowState {
 
     val inclusion = CommitInclusion()
 
+    /** A commit this window asked for and has not seen finish; blocks a second request. */
+    var committing by mutableStateOf(false)
+
+    private val trackedAnswers = mutableStateMapOf<Path, TrackedAnswer>()
+
     fun syncRows(rows: List<CommitRow>) {
         this.rows = rows
-        inclusion.retain(rows)
     }
 
-    fun selectedIndex(): Int = CommitModel.ordered(rows)
-        .indexOfFirst { it.path == selectedPath }
-        .takeIf { it >= 0 } ?: 0
+    /** Whether git tracks [path]; `null` until asked, and once HEAD or the path's status moved. */
+    fun tracked(path: Path, head: String?, status: ChangeKind?): Boolean? {
+        val answer = trackedAnswers[path] ?: return null
+        return if (answer.head == head && answer.status == status) answer.tracked else null
+    }
+
+    fun recordTracked(path: Path, head: String?, status: ChangeKind?, tracked: Boolean) {
+        trackedAnswers[path] = TrackedAnswer(head, status, tracked)
+    }
+
+    /** Drops answers that [head] or the path's status has invalidated. */
+    fun dropStaleTracked(head: String?, statuses: Map<Path, ChangeKind?>) {
+        for (path in trackedAnswers.keys.toList()) {
+            val answer = trackedAnswers[path] ?: continue
+            if (answer.head != head || answer.status != statuses[path]) trackedAnswers.remove(path)
+        }
+    }
+
+    /** `null` selects the first row; a selected path that is no longer listed selects nothing. */
+    fun selectedIndex(): Int {
+        val selected = selectedPath ?: return 0
+        return CommitModel.ordered(rows).indexOfFirst { it.path == selected }
+    }
 
     fun selectedRow(): CommitRow? = CommitModel.ordered(rows).getOrNull(selectedIndex())
 

@@ -23,9 +23,13 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -152,6 +156,94 @@ class PushUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `two returns in the push popup push once`() = runComposeUiTest {
+        val repo = repoWithUpstream()
+        val state = AppState()
+        val gate = CountDownLatch(1)
+        try {
+            open(repo, state)
+            val counting = GatedPushExecutor(CliGitExecutor(TEST_GIT, repo.environment), gate)
+            requireNotNull(state.session).git.executor = counting
+            setContent { PushHarness(state) }
+
+            pressPush()
+            waitUntil(timeoutMillis = 10_000) { state.pushRequest != null }
+
+            onRoot().performKeyInput {
+                pressKey(Key.Enter)
+                pressKey(Key.Enter)
+            }
+
+            assertTrue(eventually { counting.pushes.get() == 1 })
+            assertFalse(
+                eventually(1_500) { state.statusMessage?.startsWith("Git is busy") == true },
+                "the second Enter must not start a second write: ${state.statusMessage}",
+            )
+            gate.countDown()
+            waitUntil(timeoutMillis = 15_000) { state.statusMessage == "Pushed 1 commits to origin/main" }
+            assertEquals(1, counting.pushes.get())
+        } finally {
+            gate.countDown()
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the popup names the commits the remote has while the branch is behind`() = runComposeUiTest {
+        val plan = PushPlan.Ready(
+            branch = "main",
+            remote = "origin",
+            remoteRef = "refs/heads/main",
+            newBranch = false,
+            outgoing = emptyList(),
+            moreOutgoing = 0,
+            behind = 2,
+        )
+        val state = AppState()
+        try {
+            setContent { PushPopup(PushRequest(plan), state, onClose = {}) }
+
+            onNodeWithText("The remote has 2 commits you don't have; the push will be rejected").assertExists()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `a detached head and several remotes without origin refuse the push`() {
+        val detached = TestGitRepo.create(temp)
+        detached.write("src/Main.kt", "first\n")
+        detached.commitAll("Initial commit")
+        detached.git("checkout", "--detach")
+        val state = AppState()
+        try {
+            open(detached, state)
+            openPush(state)
+            assertTrue(eventually { state.statusMessage == "Push needs a branch: HEAD is detached" }, state.statusMessage)
+            assertNull(state.pushRequest)
+        } finally {
+            state.dispose()
+        }
+
+        val several = TestGitRepo.create(temp, name = "web-dashboard")
+        several.write("src/Main.kt", "first\n")
+        several.commitAll("Initial commit")
+        several.bareRemote("one")
+        several.bareRemote("two")
+        val other = AppState()
+        try {
+            open(several, other)
+            openPush(other)
+            assertTrue(eventually { other.statusMessage == "No upstream: set one in the terminal" }, other.statusMessage)
+            assertNull(other.pushRequest)
+        } finally {
+            other.dispose()
+        }
+    }
+
     private fun repoWithUpstream(): TestGitRepo {
         val repo = TestGitRepo.create(temp)
         repo.write("src/Main.kt", "first\n")
@@ -180,6 +272,19 @@ class PushUiTest {
                 }
             }
         }
+    }
+}
+
+/** Counts `git push` runs and holds the first one until [gate] opens, so a second request overlaps. */
+private class GatedPushExecutor(private val inner: GitExecutor, private val gate: CountDownLatch) : GitExecutor {
+    val pushes = AtomicInteger()
+
+    override fun run(command: GitCommand): GitResult {
+        if (command.args.firstOrNull() == "push") {
+            pushes.incrementAndGet()
+            gate.await(10, TimeUnit.SECONDS)
+        }
+        return inner.run(command)
     }
 }
 

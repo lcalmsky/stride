@@ -2,6 +2,7 @@ package stride.app.vcs
 
 import androidx.compose.runtime.snapshots.Snapshot
 import java.io.IOException
+import java.nio.file.Path
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextFileEditor
@@ -10,18 +11,30 @@ import stride.app.keys.KeyContext
 /** The id the data layer registers the Commit window under. */
 internal const val COMMIT_TOOL_WINDOW_ID: String = "commit"
 
-/** Opens the Commit window and asks for a refresh; outside a repository it reports the root. */
+/**
+ * Opens the Commit window and asks for a refresh. A cold snapshot is left to that refresh before
+ * it reports the root, because until then it cannot tell a new project from a non-repository one.
+ */
 fun openCommit(state: AppState): Boolean {
     val session = state.session ?: return false
     val git = session.git
-    val snapshot = git.snapshot
-    if (snapshot.repository == null) {
-        state.statusMessage = snapshot.error ?: notRepositoryMessage(session)
-        return true
-    }
     state.statusMessage = null
     state.toolWindows.activate(COMMIT_TOOL_WINDOW_ID)
     git.refresh()
+    val snapshot = git.snapshot
+    if (snapshot.repository != null) return true
+    if (snapshot.error != null) {
+        state.statusMessage = snapshot.error
+        return true
+    }
+    git.launch {
+        val refreshed = git.refreshNow()
+        if (refreshed.repository == null) {
+            Snapshot.withMutableSnapshot {
+                state.statusMessage = refreshed.error ?: notRepositoryMessage(session)
+            }
+        }
+    }
     return true
 }
 
@@ -51,15 +64,64 @@ fun showSelectedDiff(state: AppState): Boolean {
     return openWorkingTreeDiff(state, row.path)
 }
 
-/** The window's list for the current snapshot and the open editors. */
-internal fun commitRows(session: ProjectSession): List<CommitRow> = CommitModel.rows(
-    changes = session.git.snapshot.changes,
-    root = session.project.root,
-    modifiedEditors = session.editors.openFiles
+/** The project root git itself works in; a project opened through a symlink is the same place. */
+internal fun realProjectRoot(root: Path): Path {
+    val lexical = root.toAbsolutePath().normalize()
+    return runCatching { lexical.toRealPath() }.getOrDefault(lexical)
+}
+
+/** git reports real paths, so an editor under a symlinked project root is moved to the same form. */
+private fun realPathOf(path: Path, lexicalRoot: Path, realRoot: Path): Path {
+    val absolute = path.toAbsolutePath().normalize()
+    return if (lexicalRoot != realRoot && absolute.startsWith(lexicalRoot)) {
+        realRoot.resolve(lexicalRoot.relativize(absolute)).normalize()
+    } else {
+        absolute
+    }
+}
+
+/** The open editors with unsaved text, as paths git would report them. */
+internal fun modifiedEditorPaths(session: ProjectSession): List<Path> {
+    val lexicalRoot = session.project.root.toAbsolutePath().normalize()
+    val realRoot = realProjectRoot(lexicalRoot)
+    return session.editors.openFiles
         .filterIsInstance<TextFileEditor>()
         .filter { it.isModified }
-        .map { it.file.path },
-)
+        .map { realPathOf(it.file.path, lexicalRoot, realRoot) }
+}
+
+/** The window's list for the current snapshot and the answers git has given about its editors. */
+internal fun commitRows(session: ProjectSession, window: CommitWindowState = session.commit): List<CommitRow> {
+    val snapshot = session.git.snapshot
+    val head = snapshot.branch?.head
+    val changes = snapshot.changes.associate { it.path.toAbsolutePath().normalize() to it.kind }
+    return CommitModel.rows(
+        changes = snapshot.changes,
+        root = realProjectRoot(session.project.root),
+        modifiedEditors = modifiedEditorPaths(session),
+        tracked = { path -> window.tracked(path, head, changes[path]) },
+    )
+}
+
+/**
+ * Asks git which modified editors it tracks and records each answer for the window. Runs off the
+ * UI thread; a path is left out of the list until its answer arrives.
+ */
+internal suspend fun resolveTracked(session: ProjectSession, window: CommitWindowState) {
+    val snapshot = session.git.snapshot
+    val head = snapshot.branch?.head
+    val changes = snapshot.changes.associate { it.path.toAbsolutePath().normalize() to it.kind }
+    Snapshot.withMutableSnapshot { window.dropStaleTracked(head, changes) }
+    for (path in modifiedEditorPaths(session)) {
+        if (path in changes) continue
+        if (window.tracked(path, head, null) != null) continue
+        val tracked = when (session.git.baseText(path)) {
+            is BaseText.Text, is BaseText.Unavailable -> true
+            else -> false
+        }
+        Snapshot.withMutableSnapshot { window.recordTracked(path, head, null, tracked) }
+    }
+}
 
 /**
  * Saves the checked files' editors and commits them. Refusals and save failures land in the
@@ -68,7 +130,8 @@ internal fun commitRows(session: ProjectSession): List<CommitRow> = CommitModel.
 fun commitFromWindow(state: AppState) {
     val session = state.session ?: return
     val window = session.commit
-    window.syncRows(commitRows(session))
+    if (window.committing || session.git.busy != null) return
+    window.syncRows(commitRows(session, window))
     window.error = null
     val message = window.message
     if (message.isBlank()) {
@@ -81,9 +144,11 @@ fun commitFromWindow(state: AppState) {
         return
     }
     val checked = paths.toSet()
+    val lexicalRoot = session.project.root.toAbsolutePath().normalize()
+    val realRoot = realProjectRoot(lexicalRoot)
     val editors: List<TextFileEditor> = session.editors.openFiles
         .filterIsInstance<TextFileEditor>()
-        .filter { it.isModified && it.file.path.toAbsolutePath().normalize() in checked }
+        .filter { it.isModified && realPathOf(it.file.path, lexicalRoot, realRoot) in checked }
     for (editor in editors) {
         try {
             editor.save()
@@ -93,19 +158,25 @@ fun commitFromWindow(state: AppState) {
             return
         }
     }
+    window.committing = true
     session.git.launch {
-        val result = session.git.commit(paths, message)
-        Snapshot.withMutableSnapshot {
-            state.statusMessage = result.message
-            if (result.ok) {
-                if (window.message == message) window.message = ""
-                window.error = null
-                window.syncRows(commitRows(session))
-            } else {
-                window.error = result.message
+        try {
+            val result = session.git.commit(paths, message)
+            Snapshot.withMutableSnapshot {
+                state.statusMessage = result.message
+                if (result.ok) {
+                    if (window.message == message) window.message = ""
+                    window.error = null
+                    window.inclusion.forget(paths)
+                    window.syncRows(commitRows(session, window))
+                } else {
+                    window.error = result.message
+                }
             }
+            if (result.ok) session.git.refresh()
+        } finally {
+            Snapshot.withMutableSnapshot { window.committing = false }
         }
-        if (result.ok) session.git.refresh()
     }
 }
 

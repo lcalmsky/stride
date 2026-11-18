@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -34,14 +35,18 @@ class CommitFlowTest {
     }
 
     @Test
-    fun `a checked file's unsaved editor is saved first and its text is committed`() {
+    fun `a tracked clean file edited and unsaved is listed, saved and committed`() {
         val repo = repoWithSources()
         val file = repo.root.resolve("src/Main.kt")
         withState(repo) { state, session ->
             val editor = session.editors.openFile(VFile(file)) as TextFileEditor
             editor.setText("committed text\n")
+            runBlocking { resolveTracked(session, session.commit) }
             val window = session.commit
-            window.syncRows(commitRows(session))
+            window.syncRows(commitRows(session, window))
+            assertEquals(listOf(file), window.rows.map { it.path })
+            assertTrue(window.inclusion.isChecked(window.rows.single()))
+            assertTrue(window.rows.single().unsaved)
             window.message = "Change the text"
 
             commitFromWindow(state)
@@ -55,6 +60,77 @@ class CommitFlowTest {
     }
 
     @Test
+    fun `an ignored file edited without saving is not listed and the commit still succeeds`() {
+        val repo = repoWithSources()
+        repo.write(".gitignore", "build/\n")
+        repo.commitAll("Ignore build output")
+        val ignored = repo.write("build/out.txt", "on disk\n")
+        repo.write("src/Main.kt", "second\n")
+        withState(repo) { state, session ->
+            val ignoredEditor = session.editors.openFile(VFile(ignored)) as TextFileEditor
+            ignoredEditor.setText("typed\n")
+            runBlocking { resolveTracked(session, session.commit) }
+            val window = session.commit
+            window.syncRows(commitRows(session, window))
+            assertEquals(listOf(repo.root.resolve("src/Main.kt")), window.rows.map { it.path })
+            window.message = "Commit the tracked file"
+
+            commitFromWindow(state)
+
+            assertTrue(eventually { state.statusMessage?.startsWith("Committed 1 files to main: ") == true }, state.statusMessage)
+            assertEquals("second\n", repo.git("show", "HEAD:src/Main.kt"))
+            assertTrue(ignoredEditor.isModified)
+            assertEquals("on disk\n", Files.readString(ignored))
+            assertFalse(repo.git("ls-tree", "-r", "--name-only", "HEAD").contains("build/out.txt"))
+        }
+    }
+
+    @Test
+    fun `a project opened through a symlink lists each file once`() {
+        val repo = repoWithSources()
+        val link = temp.resolve("web-dashboard-link")
+        Files.createSymbolicLink(link, repo.root)
+        repo.write("src/Main.kt", "second\n")
+        val state = AppState()
+        try {
+            state.openFolder(link)
+            val session = requireNotNull(state.session)
+            session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+            runBlocking { session.git.refreshNow() }
+            val editor = session.editors.openFile(VFile(link.resolve("src/Main.kt"))) as TextFileEditor
+            editor.setText("typed\n")
+            runBlocking { resolveTracked(session, session.commit) }
+
+            val rows = commitRows(session, session.commit)
+
+            assertEquals(listOf(repo.root.resolve("src/Main.kt")), rows.map { it.path })
+            assertTrue(rows.single().unsaved)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `command K on a cold snapshot opens the window and waits for the refresh`() {
+        val repo = repoWithSources()
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val session = requireNotNull(state.session)
+            session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+
+            assertTrue(openCommit(state))
+
+            assertTrue(state.toolWindows.visible)
+            assertEquals("commit", state.toolWindows.activeId)
+            assertTrue(eventually { session.git.snapshot.repository != null })
+            assertNull(state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `an unchecked unsaved editor stays unsaved and its file is not committed`() {
         val repo = repoWithSources()
         val tracked = repo.root.resolve("src/Main.kt")
@@ -64,8 +140,9 @@ class CommitFlowTest {
             trackedEditor.setText("changed\n")
             val untrackedEditor = session.editors.openFile(VFile(untracked)) as TextFileEditor
             untrackedEditor.setText("typed\n")
+            runBlocking { resolveTracked(session, session.commit) }
             val window = session.commit
-            window.syncRows(commitRows(session))
+            window.syncRows(commitRows(session, window))
             window.message = "Only the tracked file"
 
             commitFromWindow(state)
@@ -89,8 +166,9 @@ class CommitFlowTest {
         withState(repo) { state, session ->
             val editor = session.editors.openFile(VFile(file)) as TextFileEditor
             editor.setText("blocked\n")
+            runBlocking { resolveTracked(session, session.commit) }
             val window = session.commit
-            window.syncRows(commitRows(session))
+            window.syncRows(commitRows(session, window))
             window.message = "Blocked"
             val checked = window.checkedPaths()
 
@@ -126,7 +204,7 @@ class CommitFlowTest {
     }
 
     @Test
-    fun `outside a repository the window reports the root`() {
+    fun `outside a repository the window opens and reports the root`() {
         val root = Files.createDirectories(temp.resolve("web-dashboard"))
         root.resolve("Main.kt").writeText("val x = 1\n")
         val state = AppState()
@@ -141,8 +219,85 @@ class CommitFlowTest {
 
             openCommit(state)
 
-            assertEquals("Not a Git repository: $root", state.statusMessage)
-            assertFalse(state.toolWindows.visible)
+            assertTrue(state.toolWindows.visible)
+            assertEquals("commit", state.toolWindows.activeId)
+            assertTrue(eventually { state.statusMessage == "Not a Git repository: $root" }, state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `a checked untracked file is added and committed`() {
+        val repo = repoWithSources()
+        val newFile = repo.write("src/New.kt", "on disk\n")
+        withState(repo) { state, session ->
+            val window = session.commit
+            window.syncRows(commitRows(session, window))
+            val row = window.rows.single { it.path == newFile }
+            assertFalse(window.inclusion.isChecked(row))
+            window.inclusion.toggle(row)
+            window.message = "Add the new file"
+
+            commitFromWindow(state)
+
+            assertTrue(eventually { state.statusMessage?.startsWith("Committed 1 files to main: ") == true })
+            assertEquals("on disk\n", repo.git("show", "HEAD:src/New.kt"))
+            assertTrue(repo.git("ls-files", "--", "src/New.kt").contains("src/New.kt"))
+        }
+    }
+
+    @Test
+    fun `a save that fails stops the commit before git runs`() {
+        val repo = repoWithSources()
+        val file = repo.root.resolve("src/Main.kt")
+        file.toFile().setWritable(false)
+        val headBefore = repo.git("rev-parse", "HEAD").trim()
+        try {
+            withState(repo) { state, session ->
+                val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+                editor.setText("cannot be saved\n")
+                runBlocking { resolveTracked(session, session.commit) }
+                val window = session.commit
+                window.syncRows(commitRows(session, window))
+                window.message = "Will not run"
+
+                commitFromWindow(state)
+
+                assertTrue(window.error?.startsWith("Commit failed:") == true, window.error)
+                assertEquals(window.error, state.statusMessage)
+                assertEquals(headBefore, repo.git("rev-parse", "HEAD").trim())
+                assertTrue(editor.isModified)
+            }
+        } finally {
+            file.toFile().setWritable(true)
+        }
+    }
+
+    @Test
+    fun `a new project starts from the default checkboxes`() {
+        val repo = repoWithSources()
+        repo.write("src/Main.kt", "second\n")
+        val state = AppState()
+        try {
+            withState(repo) { _, session ->
+                val window = session.commit
+                window.syncRows(commitRows(session, window))
+                window.inclusion.toggle(window.rows.single())
+                assertFalse(window.inclusion.isChecked(window.rows.single()))
+            }
+            val next = TestGitRepo.create(temp, name = "web-dashboard")
+            next.write("src/Main.kt", "first\n")
+            next.commitAll("Initial commit")
+            state.openFolder(next.root)
+            val session = requireNotNull(state.session)
+            session.git.executor = CliGitExecutor(TEST_GIT, next.environment)
+            runBlocking { session.git.refreshNow() }
+            next.write("src/Main.kt", "second\n")
+            runBlocking { session.git.refreshNow() }
+            val window = session.commit
+            window.syncRows(commitRows(session, window))
+            assertTrue(window.inclusion.isChecked(window.rows.single()))
         } finally {
             state.dispose()
         }

@@ -18,6 +18,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -26,14 +27,19 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -159,6 +165,188 @@ class CommitWindowUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `two command enters commit once`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val gate = CountDownLatch(1)
+        try {
+            open(repo, state)
+            val session = requireNotNull(state.session)
+            val counting = GatedCommitExecutor(CliGitExecutor(TEST_GIT, repo.environment), gate)
+            session.git.executor = counting
+            setContent { KeyHarness(state) }
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput("Change")
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { pressKey(Key.Enter) }
+                withKeyDown(Key.MetaLeft) { pressKey(Key.Enter) }
+            }
+
+            assertTrue(eventually { counting.commits.get() == 1 })
+            assertFalse(
+                eventually(1_500) { session.commit.error != null },
+                "the second Enter must not reach the service: ${session.commit.error}",
+            )
+            gate.countDown()
+            waitUntil(timeoutMillis = 15_000) {
+                state.statusMessage?.startsWith("Committed 1 files to main: ") == true
+            }
+            assertEquals(1, counting.commits.get())
+        } finally {
+            gate.countDown()
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `space and return with the message focused insert into it and do not act on the list`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(repo.root.resolve("src/Main.kt")))
+            setContent { KeyHarness(state) }
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+            val checkedBefore = session.commit.checkedCount()
+            val selectedBefore = session.editors.selected?.file?.path
+
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput(" ")
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performKeyInput {
+                pressKey(Key.Spacebar)
+                pressKey(Key.Enter)
+            }
+            waitForIdle()
+
+            assertEquals(" \n", session.commit.message)
+            assertEquals(checkedBefore, session.commit.checkedCount())
+            assertEquals(selectedBefore, session.editors.selected?.file?.path)
+            assertEquals(KeyContext.COMMIT_WINDOW, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `return, F4 and a double click open the selected row`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(repo.root.resolve("src/Main.kt")))
+            setContent { KeyHarness(state) }
+            val target = repo.root.resolve("src/Main.kt")
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+            focusList()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals(target, session.editors.selected?.file?.path)
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.activeId == "commit" && state.toolWindows.visible }
+            focusList()
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals(target, session.editors.selected?.file?.path)
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.activeId == "commit" && state.toolWindows.visible }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+            row().performTouchInput { doubleClick() }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals(target, session.editors.selected?.file?.path)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the capsule click commits`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) { commitRowsShown() }
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput("Change")
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_CAPSULE_TAG).assertIsEnabled() }.isSuccess
+            }
+
+            onNodeWithTag(COMMIT_CAPSULE_TAG).performClick()
+
+            waitUntil(timeoutMillis = 15_000) {
+                state.statusMessage?.startsWith("Committed 1 files to main: ") == true
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command 0 outside a repository shows the message in place of the list`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("web-dashboard"))
+        Files.writeString(root.resolve("Main.kt"), "val x = 1\n")
+        Files.createDirectories(temp.resolve("web-dashboard-home"))
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            requireNotNull(state.session).git.executor = CliGitExecutor(
+                TEST_GIT,
+                TestGitRepo.isolatedEnvironment(ceiling = temp, home = temp.resolve("web-dashboard-home")),
+            )
+            setContent { KeyHarness(state) }
+
+            pressCommand(Key.Zero)
+
+            waitUntil(timeoutMillis = 10_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 10_000) {
+                onAllNodes(hasText("Not a Git repository: $root")).fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /** Tabs from the message field to the file list, as the window's own binding does. */
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.focusList() {
+        waitUntil(timeoutMillis = 5_000) {
+            runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+        }
+        onRoot().performKeyInput { pressKey(Key.Tab) }
+        waitUntil(timeoutMillis = 5_000) {
+            runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.row() = onNode(hasText("Main.kt") and hasAnyAncestor(hasTestTag(COMMIT_LIST_TAG)))
+
     private fun changedRepo(): TestGitRepo {
         val repo = TestGitRepo.create(temp)
         repo.write("src/Main.kt", "first\n")
@@ -184,6 +372,19 @@ class CommitWindowUiTest {
         onAllNodes(hasText("Main.kt") and hasAnyAncestor(hasTestTag(COMMIT_LIST_TAG)))
             .fetchSemanticsNodes()
             .isNotEmpty()
+}
+
+/** Counts `git commit` runs and holds the first one until [gate] opens, so a second request overlaps. */
+private class GatedCommitExecutor(private val inner: GitExecutor, private val gate: CountDownLatch) : GitExecutor {
+    val commits = AtomicInteger()
+
+    override fun run(command: GitCommand): GitResult {
+        if (command.args.firstOrNull() == "commit") {
+            commits.incrementAndGet()
+            gate.await(10, TimeUnit.SECONDS)
+        }
+        return inner.run(command)
+    }
 }
 
 @Composable

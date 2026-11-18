@@ -3,6 +3,7 @@ package stride.app.vcs
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -34,11 +35,12 @@ class CommitModelTest {
     }
 
     @Test
-    fun `a modified open editor marks its row and an unreported file becomes a modified unsaved row`() {
+    fun `a modified open editor marks its row and a tracked unreported file becomes a modified unsaved row`() {
         val rows = CommitModel.rows(
             changes = listOf(FileChange(path("src/Main.kt"), ChangeKind.MODIFIED)),
             root = root,
             modifiedEditors = listOf(path("src/Main.kt"), path("src/Typed.kt")),
+            tracked = { true },
         )
 
         val main = rows.single { it.path.fileName.toString() == "Main.kt" }
@@ -48,6 +50,27 @@ class CommitModelTest {
         assertTrue(typed.unsaved)
         assertEquals(ChangeKind.MODIFIED, typed.kind)
         assertTrue(rows.all { it.unsaved })
+    }
+
+    @Test
+    fun `an unreported editor is listed only when git says it is tracked`() {
+        val editor = path("src/Typed.kt")
+
+        val ignored = CommitModel.rows(
+            changes = emptyList(),
+            root = root,
+            modifiedEditors = listOf(editor),
+            tracked = { false },
+        )
+        assertTrue(ignored.isEmpty())
+
+        val unknown = CommitModel.rows(
+            changes = emptyList(),
+            root = root,
+            modifiedEditors = listOf(editor),
+            tracked = { null },
+        )
+        assertTrue(unknown.isEmpty())
     }
 
     @Test
@@ -78,20 +101,20 @@ class CommitModelTest {
     }
 
     @Test
-    fun `a choice survives a refresh and a path that disappears is forgotten`() {
-        val kept = CommitRow(path("src/Main.kt"), ChangeKind.MODIFIED)
-        val unversioned = CommitRow(path("notes.txt"), ChangeKind.UNTRACKED)
+    fun `a choice survives a refresh, a path that leaves the list keeps it and forget drops it`() {
+        val row = CommitRow(path("src/Main.kt"), ChangeKind.MODIFIED)
         val inclusion = CommitInclusion()
-        inclusion.toggle(kept)
-        inclusion.toggle(unversioned)
+        inclusion.toggle(row)
+        assertFalse(inclusion.isChecked(row))
 
-        inclusion.retain(listOf(kept))
-        assertEquals(false, inclusion.isChecked(kept))
+        inclusion.forget(emptyList())
+        assertFalse(inclusion.isChecked(row))
 
-        inclusion.retain(emptyList())
-        inclusion.retain(listOf(kept, unversioned))
-        assertTrue(inclusion.isChecked(kept))
-        assertFalse(inclusion.isChecked(unversioned))
+        inclusion.forget(listOf(path("notes.txt")))
+        assertFalse(inclusion.isChecked(row))
+
+        inclusion.forget(listOf(row.path))
+        assertTrue(inclusion.isChecked(row))
     }
 
     @Test
@@ -109,5 +132,34 @@ class CommitModelTest {
         window.inclusion.toggle(unversioned)
         assertEquals(2, window.checkedCount())
         assertEquals(listOf(unversioned.path, tracked.path), window.checkedPaths())
+    }
+
+    @Test
+    fun `a selected path that is no longer listed selects nothing`() {
+        val window = CommitWindowState()
+        val tracked = CommitRow(path("src/Main.kt"), ChangeKind.MODIFIED)
+        window.syncRows(listOf(tracked))
+        assertEquals(0, window.selectedIndex())
+
+        window.selectedPath = path("src/Gone.kt")
+        assertEquals(-1, window.selectedIndex())
+        assertNull(window.selectedRow())
+
+        window.selectedPath = null
+        assertEquals(0, window.selectedIndex())
+        assertEquals(tracked, window.selectedRow())
+    }
+
+    @Test
+    fun `a tracked answer is dropped when HEAD or the path's status changes`() {
+        val window = CommitWindowState()
+        val file = path("src/Main.kt")
+        window.recordTracked(file, head = "a", status = null, tracked = true)
+        assertEquals(true, window.tracked(file, "a", null))
+        assertNull(window.tracked(file, "b", null), "a new HEAD invalidates the answer")
+        assertNull(window.tracked(file, "a", ChangeKind.MODIFIED), "a new status invalidates the answer")
+
+        window.dropStaleTracked("b", emptyMap())
+        assertNull(window.tracked(file, "a", null))
     }
 }
