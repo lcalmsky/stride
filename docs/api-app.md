@@ -2393,7 +2393,8 @@ R3 to R5.
 - **Unread spellings.** The model reads tokens, not a parse tree, so a refactoring that renames,
   removes or adds a name first looks at every code token spelled like it. A token the model cannot
   place (not a reference it resolved, a declaration, a member name after `.`, `?.` or `::`, a
-  named argument, a label or a modifier) refuses the refactoring instead of being skipped. Extract
+  named argument, a label, a modifier, or `by` after a declared name or type in a delegated
+  declaration) refuses the refactoring instead of being skipped. Extract
   Method moves names into a new scope, so a name token in its selection that the model cannot place
   refuses it with the same message. Letters attached to a number (`1u`, `2UL`, `1f`) belong to the
   literal and are no name, and a name directly followed by `@` is a label, so the code after it
