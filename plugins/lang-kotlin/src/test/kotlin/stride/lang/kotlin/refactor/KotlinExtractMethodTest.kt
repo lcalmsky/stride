@@ -86,6 +86,40 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `a two line local declaration is extracted without a broken header`() {
+        val text = "fun goTo(state: Any) {\n" +
+            "    val targets: List<Declaration>\n" +
+            "    val name: String\n" +
+            "    val named = nameAtCaret()\n" +
+            "    println(named)\n" +
+            "}\n"
+        assertEquals(
+            "fun goTo(state: Any) {\n" +
+                "    extracted()\n" +
+                "    val named = nameAtCaret()\n" +
+                "    println(named)\n" +
+                "}\n\n" +
+                "private fun extracted() {\n" +
+                "    val targets: List<Declaration>\n" +
+                "    val name: String\n" +
+                "}\n",
+            extract(text, "val targets: List<Declaration>\n    val name: String").text,
+        )
+        assertEquals(
+            "fun goTo(state: Any) {\n" +
+                "    val targets: List<Declaration>\n" +
+                "    extracted()\n" +
+                "}\n\n" +
+                "private fun extracted() {\n" +
+                "    val name: String\n" +
+                "    val named = nameAtCaret()\n" +
+                "    println(named)\n" +
+                "}\n",
+            extract(text, "val name: String\n    val named = nameAtCaret()\n    println(named)").text,
+        )
+    }
+
+    @Test
     fun `a member function places the new function after it in the class body`() {
         val text = "class A {\n    fun f() {\n        println(1)\n    }\n}\n"
         val applied = extract(text, "println(1)")

@@ -564,9 +564,57 @@ internal class KotlinCode(val text: String) {
     private fun cannotEndExpression(token: KtToken): Boolean = when (token.type) {
         KotlinTokenTypes.DOT, KotlinTokenTypes.COMMA -> true
         KotlinTokenTypes.PARENTHESES, KotlinTokenTypes.BRACKETS -> token.text == "(" || token.text == "["
-        KotlinTokenTypes.OPERATION_SIGN -> token.text != "++" && token.text != "--" && token.text != "!!"
+        KotlinTokenTypes.OPERATION_SIGN ->
+            token.text != "++" && token.text != "--" && token.text != "!!" && !endsTypeSyntax(token)
         KotlinTokenTypes.KEYWORD -> token.text == "as" || token.text == "is" || token.text == "in"
         else -> false
+    }
+
+    /**
+     * True when [token] is type syntax that can end an expression: the `?` after a type, or the
+     * `>` closing a type argument or type parameter list. A comparison `>` stays an operator
+     * (R2 「Statements」).
+     */
+    private fun endsTypeSyntax(token: KtToken): Boolean {
+        if (token.text == "?") return true
+        if (token.text == "->" || !token.text.contains('>')) return false
+        val open = typeOpenFor(token.index)
+        if (open < 0 || !holdsTypeSyntax(open, token.index)) return false
+        return isTypeArgumentOpen(this, open, atLineEnd = true)
+    }
+
+    /** True when only type syntax sits between the `<` at [openIndex] and [closeIndex]. */
+    private fun holdsTypeSyntax(openIndex: Int, closeIndex: Int): Boolean {
+        for (index in openIndex + 1 until closeIndex) {
+            val token = code[index]
+            when (token.type) {
+                KotlinTokenTypes.NUMBER, KotlinTokenTypes.STRING, KotlinTokenTypes.CHARACTER -> return false
+                KotlinTokenTypes.OPERATION_SIGN ->
+                    if (token.text != "->" && token.text.any { it != '<' && it != '>' && it != '?' && it != '*' }) {
+                        return false
+                    }
+                else -> Unit
+            }
+        }
+        return true
+    }
+
+    /** The `<` whose type list the `>` in the token at [closeIndex] closes, or `-1`. */
+    private fun typeOpenFor(closeIndex: Int): Int {
+        var depth = 0
+        for (index in closeIndex downTo 0) {
+            val token = code[index]
+            if (token.text == "{" || token.text == "}" || token.text == ";") return -1
+            var opens = 0
+            var closes = 0
+            for (char in token.text) {
+                if (char == '<') opens++
+                if (char == '>') closes++
+            }
+            depth += closes - opens
+            if (opens > 0 && depth <= 0) return index
+        }
+        return -1
     }
 
     private fun continuesExpression(next: KtToken): Boolean {

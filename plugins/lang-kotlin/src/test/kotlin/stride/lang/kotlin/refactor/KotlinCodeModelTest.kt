@@ -734,6 +734,74 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a type argument at the end of a line ends the statement`() {
+        assertEquals(
+            listOf("val targets: List<Declaration>", "val name: String"),
+            bodyStatements("fun f() {\n    val targets: List<Declaration>\n    val name: String\n}\n"),
+        )
+        assertEquals(
+            listOf("val m: Map<List<Int>, String>", "val n: Int"),
+            bodyStatements("fun f() {\n    val m: Map<List<Int>, String>\n    val n: Int\n}\n"),
+        )
+    }
+
+    @Test
+    fun `nested type arguments at the end of a line end the statement`() {
+        assertEquals(
+            listOf("val m: Map<String, List<Int>>", "val n: Int"),
+            bodyStatements("fun f() {\n    val m: Map<String, List<Int>>\n    val n: Int\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a nullable type at the end of a line ends the statement`() {
+        assertEquals(
+            listOf("val name: String?", "val other: Int"),
+            bodyStatements("fun f() {\n    val name: String?\n    val other: Int\n}\n"),
+        )
+        assertEquals(
+            listOf("val m: List<Int>?", "val n: Int"),
+            bodyStatements("fun f() {\n    val m: List<Int>?\n    val n: Int\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a cast or a type check with type arguments ends the statement`() {
+        assertEquals(
+            listOf("val y = x as List<String>", "val z = 1"),
+            bodyStatements("fun f(x: Any) {\n    val y = x as List<String>\n    val z = 1\n}\n"),
+        )
+        assertEquals(
+            listOf("val y = x is Map<*, *>", "val z = 1"),
+            bodyStatements("fun f(x: Any) {\n    val y = x is Map<*, *>\n    val z = 1\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a type parameter list at the end of a line ends the statement`() {
+        assertEquals(
+            listOf("fun <T>", "g(x: T) = x", "val y = 1"),
+            bodyStatements("fun f() {\n    fun <T>\n        g(x: T) = x\n    val y = 1\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a comparison at the end of a line continues the statement`() {
+        assertEquals(
+            listOf("val y = a >\n        b"),
+            bodyStatements("fun f(a: Int) {\n    val y = a >\n        b\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a comparison inside a line ends the statement`() {
+        assertEquals(
+            listOf("val y = a > b", "val z = 1"),
+            bodyStatements("fun f(a: Int) {\n    val y = a > b\n    val z = 1\n}\n"),
+        )
+    }
+
+    @Test
     fun `a next line block joins a call or a header`() {
         assertEquals(
             listOf("foo()\n    { }", "println(1)"),

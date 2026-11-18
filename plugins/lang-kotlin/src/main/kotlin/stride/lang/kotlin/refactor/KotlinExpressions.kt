@@ -370,14 +370,16 @@ private val TYPE_PARAMETER_HEAD_KEYWORDS = setOf("fun", "class", "interface", "o
 /**
  * True when the `<` at [openIndex] opens a type argument or type parameter list rather than a
  * comparison. The token after the matching `>` decides: type lists always lead into a call, a
- * member, a type position or a parameter name.
+ * member, a type position or a parameter name. With [atLineEnd] a list closed at the end of its
+ * line is a type list whatever starts the next line (R2 「Statements」).
  */
-internal fun isTypeArgumentOpen(code: KotlinCode, openIndex: Int): Boolean {
+internal fun isTypeArgumentOpen(code: KotlinCode, openIndex: Int, atLineEnd: Boolean = false): Boolean {
     val previous = code.code.getOrNull(openIndex - 1) ?: return false
     val close = typeArgumentClose(code, openIndex)
     if (close <= openIndex) return false
     val after = code.code.getOrNull(close + 1)
-    val followed = after == null || after.text in TYPE_ARGUMENT_FOLLOWERS
+    val followed = after == null || after.text in TYPE_ARGUMENT_FOLLOWERS ||
+        (atLineEnd && code.lineIndex(after.start) > code.lineIndex(code.code[close].start))
     if (isNameToken(previous) || previous.text == ">" || previous.text == "]" || previous.text == ")") {
         return followed
     }
