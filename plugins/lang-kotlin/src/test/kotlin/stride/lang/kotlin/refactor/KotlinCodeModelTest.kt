@@ -858,6 +858,18 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a next line block joins an anonymous function header`() {
+        assertEquals(
+            listOf("val f = fun()\n    {\n        println(0)\n    }", "println(1)"),
+            bodyStatements("fun outer() {\n    val f = fun()\n    {\n        println(0)\n    }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("val g = fun(): String?\n    {\n        return null\n    }", "println(1)"),
+            bodyStatements("fun outer() {\n    val g = fun(): String?\n    {\n        return null\n    }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
     fun `a next line block joins a local function header ending with its type`() {
         val nullable = "fun outer() {\n    fun f(): String?\n    {\n        return null\n    }\n    println(1)\n}\n"
         assertEquals(

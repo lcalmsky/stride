@@ -424,7 +424,7 @@ internal class KotlinCode(val text: String) {
         if (openIndex < 0 || code[openIndex].text != "(") return false
         val head = code.getOrNull(openIndex - 1) ?: return false
         if (isNameToken(head)) return true
-        if (head.type == KotlinTokenTypes.KEYWORD && head.text in CONTROL_PARENTHESES) return true
+        if (head.type == KotlinTokenTypes.KEYWORD && (head.text in CONTROL_PARENTHESES || head.text == "fun")) return true
         return head.text == ")" || head.text == "]" || closesTypeArguments(head)
     }
 
