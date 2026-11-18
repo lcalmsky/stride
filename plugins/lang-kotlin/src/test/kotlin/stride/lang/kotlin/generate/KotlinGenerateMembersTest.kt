@@ -440,15 +440,16 @@ class KotlinGenerateMembersTest {
     }
 
     @Test
-    fun `a final class body and an unrelated interface body are listed`() {
-        val b = "package demo\n\nopen class B {\n    fun f(): Int = 1\n}"
-        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n}"
+    fun `a final class body and an unrelated interface body are listed but disabled`() {
+        // Kotlin requires an override here and rejects one, since B.f is final: no generated text compiles.
+        val b = "package demo\n\nopen class B {\n    fun f(): Int = 1\n    val x: Int = 1\n}"
+        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n    val x: Int get() = 7\n}"
         val files = mapOf(BASE_PATH to b, Q_PATH to q)
         for (supertypes in listOf("B(), Q", "Q, B()")) {
             val source = "package demo\n\nclass OrderService : $supertypes {\n}"
             val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
-            assertEquals(listOf("fun f(): Int"), step.members.map { it.text }, supertypes)
-            assertTrue(step.members.single().checked, supertypes)
+            assertEquals(listOf("f is final in B", "x is final in B"), step.members.map { it.disabledReason }, supertypes)
+            assertTrue(step.members.none { it.checked }, supertypes)
         }
     }
 

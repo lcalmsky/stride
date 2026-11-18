@@ -272,6 +272,11 @@ private fun collectCandidates(
             if (!seen.add(key)) continue
             if (key in existingFunctions) continue
             if (!overridable) continue
+            val finalOwner = if (override) null else bodies.finalIn[key]
+            if (finalOwner != null) {
+                result.add(disabled(function.name, node, "${function.name} is final in $finalOwner"))
+                continue
+            }
             result.add(functionCandidate(klass, context, node, function, key, todoBody, providers, !override))
         }
         for (property in declaration.properties) {
@@ -285,6 +290,11 @@ private fun collectCandidates(
             if (!seen.add(key)) continue
             if (name in existingProperties) continue
             if (!overridable) continue
+            val finalOwner = if (override) null else bodies.finalIn[key]
+            if (finalOwner != null) {
+                result.add(disabled(name, node, "$name is final in $finalOwner"))
+                continue
+            }
             result.add(propertyCandidate(klass, context, node, property, key, todoBody, providers, !override))
         }
     }
@@ -294,9 +304,11 @@ private fun collectCandidates(
 private class MemberBodies(
     /** Member keys Implement lists: Kotlin requires the class to override them. */
     val listed: Set<String>,
+    /** Listed keys a remaining class declaration makes final, to the class's name: no override compiles. */
+    val finalIn: Map<String, String>,
 )
 
-private class WalkDeclaration(val hasBody: Boolean, val inClass: Boolean)
+private class WalkDeclaration(val hasBody: Boolean, val inClass: Boolean, val finalIn: String?)
 
 /**
  * Members Kotlin requires the class to override (G6): take a member's non-`private` declarations
@@ -318,7 +330,11 @@ private fun memberBodies(nodes: List<WalkNode>, ancestors: Map<String, Set<Strin
             val key = functionKey(function, node.substitution)
             byKey.getOrPut(key) { LinkedHashMap() }.putIfAbsent(
                 id,
-                WalkDeclaration(!isAbstractFunction(function, interfaceMember), !interfaceMember),
+                WalkDeclaration(
+                    !isAbstractFunction(function, interfaceMember),
+                    !interfaceMember,
+                    node.declaration.writtenName().takeUnless { overridableFunction(function, interfaceMember) },
+                ),
             )
         }
         for (property in node.declaration.properties) {
@@ -326,7 +342,11 @@ private fun memberBodies(nodes: List<WalkNode>, ancestors: Map<String, Set<Strin
             val key = propertyKey(property, node.substitution)
             byKey.getOrPut(key) { LinkedHashMap() }.putIfAbsent(
                 id,
-                WalkDeclaration(!isAbstractProperty(property, interfaceMember), !interfaceMember),
+                WalkDeclaration(
+                    !isAbstractProperty(property, interfaceMember),
+                    !interfaceMember,
+                    node.declaration.writtenName().takeUnless { overridableProperty(property, interfaceMember) },
+                ),
             )
         }
     }
@@ -339,15 +359,18 @@ private fun memberBodies(nodes: List<WalkNode>, ancestors: Map<String, Set<Strin
         }
     }
     val listed = HashSet<String>()
+    val finalIn = HashMap<String, String>()
     for ((key, declarations) in byKey) {
         val remaining = declarations.filter { (id, _) ->
             declarations.keys.none { other -> other != id && id in inherited[other].orEmpty() }
         }
         val bodies = remaining.values.filter { it.hasBody }
         val implemented = bodies.size == 1 && (bodies[0].inClass || remaining.size == 1)
-        if (!implemented) listed.add(key)
+        if (implemented) continue
+        listed.add(key)
+        remaining.values.firstNotNullOfOrNull { it.finalIn }?.let { finalIn[key] = it }
     }
-    return MemberBodies(listed)
+    return MemberBodies(listed, finalIn)
 }
 
 private fun overridableFunction(function: SigFunction, interfaceMember: Boolean): Boolean {
