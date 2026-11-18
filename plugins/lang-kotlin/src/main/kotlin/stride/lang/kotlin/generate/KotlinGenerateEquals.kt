@@ -64,19 +64,21 @@ internal fun isNestedArrayType(text: String): Boolean {
 
 private val PRIMITIVE_ARRAY_ELEMENTS = setOf("Int", "Long", "Short", "Byte", "Char", "Boolean", "Float", "Double")
 
-private fun isEqualsOverride(function: SigFunction): Boolean =
+internal fun isEqualsOverride(function: SigFunction): Boolean =
     function.name == "equals" && function.receiver == null &&
         function.parameters.singleOrNull()?.type?.filterNot { it.isWhitespace() } in setOf("Any?", "kotlin.Any?")
 
-private fun isHashCodeOverride(function: SigFunction): Boolean =
+internal fun isHashCodeOverride(function: SigFunction): Boolean =
     function.name == "hashCode" && function.receiver == null && function.parameters.isEmpty()
 
 private fun KtClazz.hasEquals(): Boolean = functions.any(::isEqualsOverride)
 
 private fun KtClazz.hasHashCode(): Boolean = functions.any(::isHashCodeOverride)
 
-private fun KtClazz.hasToString(): Boolean =
-    functions.any { it.name == "toString" && it.receiver == null && it.parameters.isEmpty() }
+internal fun isToStringOverride(function: SigFunction): Boolean =
+    function.name == "toString" && function.receiver == null && function.parameters.isEmpty()
+
+private fun KtClazz.hasToString(): Boolean = functions.any(::isToStringOverride)
 
 private fun className(klass: KtClazz): String = klass.writtenName()
 
@@ -108,7 +110,7 @@ internal fun superClassFacts(klass: KtClazz, context: GenerateContext): SuperCla
         val (declaring, path) = queue.removeFirst()
         if (!visited.add(declaring.name + "@" + path)) continue
         for (supertype in declaring.supertypes) {
-            // An unparenthesized supertype in a class without explicit constructors is an interface.
+            // An unparenthesized supertype is an interface unless the class may delegate `: super()`.
             if (!declaring.supertypeMayBeClass(supertype)) continue
             val sources = types.resolve(supertype.written, path, supertype.offset)
             if (sources.isEmpty()) {

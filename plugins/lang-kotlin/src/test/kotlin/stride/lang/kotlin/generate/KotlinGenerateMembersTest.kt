@@ -326,6 +326,17 @@ class KotlinGenerateMembersTest {
     }
 
     @Test
+    fun `overloads of Any members keep the Any rows`() {
+        val base = "package demo\n\nabstract class Base {\n    fun equals(o: Base): Boolean = false\n}"
+        val source = "package demo\n\nclass OrderService : Base() {\n    fun toString(prefix: String): String = prefix\n}"
+        val step = prepare(overrideKind, source, currentTypes(source, mapOf(BASE_PATH to base))) as RefactoringStep.ChooseMembers
+        assertEquals(
+            listOf("fun equals(other: Any?): Boolean", "fun hashCode(): Int", "fun toString(): String"),
+            step.members.filter { it.group == "Any" }.map { it.text },
+        )
+    }
+
+    @Test
     fun `an unparenthesized library class with constructors refuses implement`() {
         val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
         val source = "package demo\n\nclass OrderService : Lib, P {\n    constructor() : super()\n}"

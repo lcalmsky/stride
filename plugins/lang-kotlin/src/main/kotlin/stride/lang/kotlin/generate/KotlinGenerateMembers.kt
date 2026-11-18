@@ -681,12 +681,20 @@ private fun anyCandidates(
     var finalEquals = false
     var finalHash = false
     var finalToString = false
+    // Only Any's own signatures count; an overload such as toString(prefix: String) leaves the row.
+    fun anyName(function: SigFunction): String? = when {
+        isEqualsOverride(function) -> "equals"
+        isHashCodeOverride(function) -> "hashCode"
+        isToStringOverride(function) -> "toString"
+        else -> null
+    }
     for (node in nodes) {
-        val names = node.declaration.functions.filter { it.container == SigContainer.CLASS }
-        for (function in names) {
-            declared.add(function.name)
+        val members = node.declaration.functions.filter { it.container == SigContainer.CLASS }
+        for (function in members) {
+            val name = anyName(function) ?: continue
+            declared.add(name)
             if ("final" in function.modifiers) {
-                when (function.name) {
+                when (name) {
                     "equals" -> finalEquals = true
                     "hashCode" -> finalHash = true
                     "toString" -> finalToString = true
@@ -694,7 +702,7 @@ private fun anyCandidates(
             }
         }
     }
-    klass.functions.forEach { declared.add(it.name) }
+    klass.functions.forEach { function -> anyName(function)?.let { declared.add(it) } }
     val candidates = ArrayList<CandidateMember>()
     if (!finalEquals && "equals" !in declared) {
         candidates.add(
