@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -58,6 +59,14 @@ import stride.search.FileNameIndex
 import stride.search.SearchTab
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
+import stride.app.vcs.CliGitExecutor
+import stride.app.vcs.DiffRow
+import stride.app.vcs.DiffRows
+import stride.app.vcs.HunkKind
+import stride.app.vcs.TEST_GIT
+import stride.app.vcs.TestGitRepo
+import stride.app.vcs.commitRows
+import stride.app.vcs.openWorkingTreeDiff
 
 /**
  * Renders the real [App] composable through [ImageComposeScene] and writes the result to
@@ -1099,6 +1108,72 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(37)
+    fun `commit window snapshot`() {
+        val repo = retryProject()
+        val state = AppState()
+        try {
+            val session = openGitProject(repo, state)
+            val policy = repo.root.resolve(POLICY_PATH)
+            val editor = openEditor(session, policy)
+            editor.setText(EDITED_POLICY)
+            editor.save()
+            repo.write(CLIENT_PATH, EDITED_CLIENT)
+            repo.write(BACKOFF_PATH, BACKOFF)
+            runBlocking { session.git.refreshNow() }
+            waitForChangeHunks(editor)
+
+            assertTrue(dispatchAction(ActionId.COMMIT, state) { null })
+            val commit = session.commit
+            commit.syncRows(commitRows(session))
+            commit.message = "Cap retry delay at 30 seconds"
+            val backoff = requireNotNull(commit.rows.firstOrNull { it.path.fileName.toString() == "Backoff.kt" }) {
+                "the untracked file did not reach the Commit window"
+            }
+            commit.inclusion.toggle(backoff)
+            state.toolWindows.height = 360.dp
+
+            renderApp("26-commit-window.png", state, renderMillis = 1_200)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("26-commit-window.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    @Order(38)
+    fun `diff popup snapshot`() {
+        val repo = retryProject()
+        val state = AppState()
+        try {
+            val session = openGitProject(repo, state)
+            val policy = repo.root.resolve(POLICY_PATH)
+            val editor = openEditor(session, policy)
+            editor.setText(EDITED_POLICY)
+            editor.save()
+            repo.write(CLIENT_PATH, EDITED_CLIENT)
+            repo.write(BACKOFF_PATH, BACKOFF)
+            runBlocking { session.git.refreshNow() }
+            waitForChangeHunks(editor)
+
+            assertTrue(openWorkingTreeDiff(state, policy, line = MODIFIED_LINE))
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline && state.diffRequest == null) Thread.sleep(20)
+            val request = checkNotNull(state.diffRequest) { "the diff popup did not open" }
+            val rows = DiffRows.build(request.files.single())
+            assertTrue(
+                rows.any { it is DiffRow.Code && it.sign == '+' && it.text.contains("minOf(delayMillis, capMillis)") },
+                "the popup has no row for the changed line",
+            )
+
+            renderApp("27-diff.png", state, renderMillis = 1_200)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("27-diff.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
@@ -1314,6 +1389,36 @@ class UiSnapshotTest {
         return root
     }
 
+    /** A committed repository holding a small retry client, its policy and a README. */
+    private fun retryProject(): TestGitRepo {
+        val repo = TestGitRepo.create(temp, "api-server")
+        repo.write("README.md", "# api-server\n\nA small service client that retries failed requests.\n")
+        repo.write(POLICY_PATH, RETRY_POLICY)
+        repo.write(CLIENT_PATH, CLIENT)
+        repo.commitAll("Add the retry client")
+        return repo
+    }
+
+    private fun openGitProject(repo: TestGitRepo, state: AppState): ProjectSession {
+        state.openFolder(repo.root)
+        val session = requireNotNull(state.session)
+        session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { session.git.refreshNow() }
+        return session
+    }
+
+    /** Waits for the editor's diff against HEAD, then checks the three hunks the picture shows. */
+    private fun waitForChangeHunks(editor: TextFileEditor) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline && editor.vcsHunks.size != 3) Thread.sleep(20)
+        assertEquals(
+            listOf(HunkKind.ADDED, HunkKind.MODIFIED, HunkKind.DELETED),
+            editor.vcsHunks.sortedBy { it.newStart }.map { it.kind },
+            "hunks: ${editor.vcsHunks}",
+        )
+        assertEquals(2, editor.vcsHunks.first { it.kind == HunkKind.ADDED }.newCount)
+    }
+
     private fun openEditor(session: ProjectSession, path: Path): TextFileEditor =
         session.editors.openFile(VFile(path)) as TextFileEditor
 
@@ -1385,7 +1490,110 @@ class UiSnapshotTest {
             "11-run-window-light.png",
             "12-editor-scrolled-light.png",
             "13-search-over-code-light.png",
+            "26-commit-window.png",
+            "27-diff.png",
         )
+
+        private const val POLICY_PATH = "src/main/kotlin/demo/api/RetryPolicy.kt"
+        private const val CLIENT_PATH = "src/main/kotlin/demo/api/Client.kt"
+        private const val BACKOFF_PATH = "src/main/kotlin/demo/api/Backoff.kt"
+        private val RETRY_POLICY = """
+            package demo.api
+
+            /**
+             * How often and how long the client waits between retries.
+             *
+             * The delay doubles after every failed attempt, starting from [delayMillis], so a request
+             * that keeps failing waits longer each time but never for very long.
+             */
+            data class RetryPolicy(
+                val maxAttempts: Int = 4,
+                val delayMillis: Long = 500,
+            ) {
+                /** The wait before [attempt], counting from 1; 0 when there is no wait left. */
+                fun nextDelay(attempt: Int): Long {
+                    if (attempt <= 0) return 0
+                    if (attempt > maxAttempts) return 0
+                    var delay = delayMillis
+                    repeat(attempt - 1) { delay *= 2 }
+                    return delay
+                }
+
+                fun describe(): String = "up to ${'$'}maxAttempts attempts, then give up"
+            }
+        """.trimIndent() + "\n"
+
+        /** The two added lines, the changed line and the removed line stay apart; touching edits merge. */
+        private val EDITED_POLICY = """
+            package demo.api
+
+            /**
+             * How often and how long the client waits between retries.
+             *
+             * The delay doubles after every failed attempt, starting from [delayMillis], so a request
+             * that keeps failing waits longer each time but never for very long.
+             */
+            data class RetryPolicy(
+                val maxAttempts: Int = 4,
+                val delayMillis: Long = 500,
+                val jitterMillis: Long = 50,
+                val capMillis: Long = 30_000,
+            ) {
+                /** The wait before [attempt], counting from 1; 0 when there is no wait left. */
+                fun nextDelay(attempt: Int): Long {
+                    if (attempt <= 0) return 0
+                    if (attempt > maxAttempts) return 0
+                    var delay = minOf(delayMillis, capMillis)
+                    repeat(attempt - 1) { delay *= 2 }
+                    return delay
+                }
+
+            }
+        """.trimIndent() + "\n"
+
+        private val MODIFIED_LINE = EDITED_POLICY.lineSequence().indexOfFirst { "minOf(" in it }
+
+        private val CLIENT = """
+            package demo.api
+
+            /** Sends requests through [RetryPolicy] until one succeeds. */
+            class Client(private val policy: RetryPolicy = RetryPolicy()) {
+
+                fun fetch(url: String): String {
+                    var attempt = 1
+                    while (true) {
+                        val answer = send(url)
+                        if (answer != null) return answer
+                        if (attempt >= policy.maxAttempts) return "failed"
+                        attempt += 1
+                        Thread.sleep(policy.nextDelay(attempt))
+                    }
+                }
+
+                private fun send(url: String): String? = null
+            }
+        """.trimIndent() + "\n"
+
+        private val EDITED_CLIENT = CLIENT.replace(
+            "if (attempt >= policy.maxAttempts) return \"failed\"",
+            "if (attempt >= policy.maxAttempts) return \"gave up\"",
+        )
+
+        private val BACKOFF = """
+            package demo.api
+
+            /** The time the client has spent waiting between attempts. */
+            class Backoff {
+
+                private var sleptMillis = 0L
+
+                fun record(waitMillis: Long) {
+                    sleptMillis += waitMillis
+                }
+
+                fun total(): Long = sleptMillis
+            }
+        """.trimIndent() + "\n"
 
         @BeforeAll
         @JvmStatic
