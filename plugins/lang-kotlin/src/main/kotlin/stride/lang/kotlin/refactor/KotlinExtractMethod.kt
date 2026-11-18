@@ -53,9 +53,6 @@ internal object KotlinExtractMethod {
             return statementsStep(code, selection, enclosing)
         }
         if (code.checkExpression(selection) != null) {
-            if (enclosing.body == null && code.statementAt(selection.start) == null) {
-                return RefactoringStep.Refused(EXPRESSION_BODY)
-            }
             // A lambda or anonymous function is expression-shaped but takes its type from its place.
             if (!isLambdaOrAnonymousFunction(code, selection)) return RefactoringStep.Refused(SHAPE)
         }
@@ -72,7 +69,7 @@ internal object KotlinExtractMethod {
 
     // --- where the selection sits -------------------------------------------------------------
 
-    private class Enclosing(val function: KtFunction, val body: KtBlock?, val indent: String, val unit: String)
+    private class Enclosing(val function: KtFunction, val body: KtBlock, val indent: String, val unit: String)
 
     private class Place(val enclosing: Enclosing? = null, val refusal: String? = null)
 
@@ -115,14 +112,13 @@ internal object KotlinExtractMethod {
         return null
     }
 
-    private fun bound(code: KotlinCode, function: KtFunction, body: KtBlock?): Enclosing {
+    private fun bound(code: KotlinCode, function: KtFunction, body: KtBlock): Enclosing {
         val indent = code.indentation(function.funToken.start)
         return Enclosing(function, body, indent, indentUnit(code, function, body, indent))
     }
 
     /** The first body line's indentation beyond the function's own, four spaces when unknown. */
-    private fun indentUnit(code: KotlinCode, function: KtFunction, body: KtBlock?, indent: String): String {
-        if (body == null) return FOUR_SPACES
+    private fun indentUnit(code: KotlinCode, function: KtFunction, body: KtBlock, indent: String): String {
         val first = code.code.firstOrNull { it.start > body.open.start && it.start < body.end } ?: return FOUR_SPACES
         if (code.lineStart(first.start) <= body.open.start) return FOUR_SPACES
         val bodyIndent = code.indentation(first.start)
@@ -135,7 +131,6 @@ internal object KotlinExtractMethod {
 
     /** The new function follows the enclosing function's line, which holds nothing else (R4 Placement). */
     private fun placementRefusal(code: KotlinCode, enclosing: Enclosing): String? {
-        if (enclosing.body == null) return null
         return if (code.lineHoldsCodeAfter(enclosing.function.declarationEnd)) PLACEMENT else null
     }
 
