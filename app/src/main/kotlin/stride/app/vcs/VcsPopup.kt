@@ -55,7 +55,7 @@ import java.nio.file.Path
 
 /**
  * The open VCS Operations popup. [branch] is `null` on a detached HEAD and shown as `HEAD`;
- * [error] (no git) and [outsideRepository] each replace the six rows with one dimmed message row,
+ * [error] (no git) and [outsideRepository] each replace the rows with one dimmed message row,
  * and [editorRowsEnabled] stays false until the working-tree comparison has answered.
  */
 class VcsPopupRequest internal constructor() {
@@ -144,7 +144,7 @@ private class VcsRow(
 )
 
 /**
- * The VCS Operations quick list: the branch in the title and the six numbered commands with their
+ * The VCS Operations quick list: the branch in the title and the eight numbered commands with their
  * shortcuts. A digit runs its row, ↑/↓ select, ↵ runs, Esc closes; a dimmed row does nothing.
  */
 @Composable
@@ -178,6 +178,8 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
             VcsRow(6, "Git Log", shortcut(ActionId.ACTIVATE_GIT_TOOL_WINDOW), true) {
                 state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
             },
+            VcsRow(7, "Update Project…", shortcut(ActionId.UPDATE_PROJECT), true) { openUpdate(state) },
+            VcsRow(8, "Fetch", "", true) { fetchFromVcs(state) },
         )
     }
     val index = selected.coerceIn(0, rows.lastIndex.coerceAtLeast(0))
@@ -239,6 +241,8 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
                             Key.Four, Key.NumPad4 -> { runDigit(4); true }
                             Key.Five, Key.NumPad5 -> { runDigit(5); true }
                             Key.Six, Key.NumPad6 -> { runDigit(6); true }
+                            Key.Seven, Key.NumPad7 -> { runDigit(7); true }
+                            Key.Eight, Key.NumPad8 -> { runDigit(8); true }
                             else -> false
                         }
                     }

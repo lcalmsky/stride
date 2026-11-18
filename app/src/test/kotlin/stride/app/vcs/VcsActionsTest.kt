@@ -34,6 +34,10 @@ class VcsActionsTest {
         assertEquals(ActionId.PREVIOUS_CHANGE, action("control alt shift UP", KeyContext.EDITOR))
         assertEquals(ActionId.SHOW_DIFF, action("meta D", KeyContext.COMMIT_WINDOW))
         assertEquals(ActionId.EDITOR_DUPLICATE, action("meta D", KeyContext.EDITOR))
+        assertEquals(ActionId.COMMIT_AND_PUSH, action("meta alt K", KeyContext.COMMIT_WINDOW))
+        assertEquals(ActionId.COMMIT_AND_PUSH, action("meta alt K", KeyContext.EDITOR))
+        assertEquals(ActionId.UPDATE_PROJECT, action("meta T", KeyContext.EDITOR))
+        assertEquals(ActionId.UPDATE_PROJECT, action("meta T", KeyContext.TERMINAL))
         assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.COMMIT_WINDOW))
         assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.LIST_WINDOW))
     }
@@ -50,12 +54,33 @@ class VcsActionsTest {
             KeyStroke.parse("control alt shift DOWN") to KeyContext.EDITOR,
             KeyStroke.parse("control alt shift UP") to KeyContext.EDITOR,
             KeyStroke.parse("meta D") to KeyContext.COMMIT_WINDOW,
+            KeyStroke.parse("meta alt K") to KeyContext.GLOBAL,
+            KeyStroke.parse("meta T") to KeyContext.GLOBAL,
         )
         for ((stroke, context) in expected) {
             val inContext = keymap.bindings[stroke].orEmpty().filter { it.context == context }
             assertEquals(1, inContext.size, "$stroke is bound ${inContext.size} times in $context")
         }
         assertEquals(2, keymap.bindings[KeyStroke.parse("meta D")].orEmpty().size)
+        for (stroke in listOf("meta alt K", "meta T")) {
+            val parsed = KeyStroke.parse(stroke)
+            assertEquals(1, keymap.bindings[parsed].orEmpty().size, "$parsed is bound more than once in all contexts")
+        }
+    }
+
+    @Test
+    fun `commit and push and update project resolve through the router`() {
+        val router = KeyRouter(Keymap.forPlatform(true))
+
+        for (focus in listOf(KeyContext.COMMIT_WINDOW, KeyContext.EDITOR)) {
+            val action = router.route(KeyEventType.DOWN, Key.K, meta = true, alt = true, focus = focus)
+            assertEquals(ActionId.COMMIT_AND_PUSH, action, "meta alt K in $focus")
+        }
+        for (focus in listOf(KeyContext.EDITOR, KeyContext.TERMINAL, KeyContext.LIST_WINDOW)) {
+            val action = router.route(KeyEventType.DOWN, Key.T, meta = true, focus = focus)
+            assertEquals(ActionId.UPDATE_PROJECT, action, "meta T in $focus")
+        }
+        assertTrue(keymap.strokesFor(ActionId.FETCH).isEmpty(), "Fetch has no stroke")
     }
 
     @Test
@@ -149,6 +174,9 @@ class VcsActionsTest {
             assertFalse(dispatchAction(ActionId.COMMIT, state) { null })
             assertFalse(dispatchAction(ActionId.PUSH, state) { null })
             assertFalse(dispatchAction(ActionId.SHOW_DIFF, state) { null })
+            assertFalse(dispatchAction(ActionId.COMMIT_AND_PUSH, state) { null })
+            assertFalse(dispatchAction(ActionId.UPDATE_PROJECT, state) { null })
+            assertFalse(dispatchAction(ActionId.FETCH, state) { null })
             assertNull(state.statusMessage)
             assertFalse(state.toolWindows.visible)
         } finally {

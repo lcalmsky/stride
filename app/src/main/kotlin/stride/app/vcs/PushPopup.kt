@@ -225,5 +225,5 @@ private fun push(state: AppState, plan: PushPlan.Ready, onClose: () -> Unit) {
     }
 }
 
-private fun shortRef(ref: String): String =
+internal fun shortRef(ref: String): String =
     ref.removePrefix("refs/heads/").removePrefix("refs/tags/").removePrefix("refs/remotes/")

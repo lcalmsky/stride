@@ -144,6 +144,9 @@ object ActionNames {
         ActionId.NEXT_CHANGE to "Next Change",
         ActionId.PREVIOUS_CHANGE to "Previous Change",
         ActionId.SHOW_DIFF to "Show Diff",
+        ActionId.COMMIT_AND_PUSH to "Commit and Push…",
+        ActionId.UPDATE_PROJECT to "Update Project…",
+        ActionId.FETCH to "Fetch",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

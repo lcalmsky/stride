@@ -31,6 +31,7 @@ enum class ActionId {
     GENERATE, OVERRIDE_METHODS, IMPLEMENT_METHODS,
     COMMIT, PUSH, VCS_POPUP, ACTIVATE_GIT_TOOL_WINDOW, ACTIVATE_COMMIT_TOOL_WINDOW,
     ROLLBACK_LINES, NEXT_CHANGE, PREVIOUS_CHANGE, SHOW_DIFF,
+    COMMIT_AND_PUSH, UPDATE_PROJECT, FETCH,
 }
 
 enum class KeyContext {
@@ -359,4 +360,9 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control alt shift DOWN", ActionId.NEXT_CHANGE, KeyContext.EDITOR)
     // Diff.ShowDiff control D (→meta) in the Commit window only; the editor keeps EditorDuplicate
     bind("meta D", ActionId.SHOW_DIFF, KeyContext.COMMIT_WINDOW)
+    // Git.Commit.And.Push.Executor control alt K (→meta)
+    bind("meta alt K", ActionId.COMMIT_AND_PUSH, KeyContext.GLOBAL)
+    // Vcs.UpdateProject control T (→meta)
+    bind("meta T", ActionId.UPDATE_PROJECT, KeyContext.GLOBAL)
+    // Git.Fetch has no stroke in IntelliJ; VCS popup row 8 runs it.
 }

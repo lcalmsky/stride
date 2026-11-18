@@ -86,6 +86,10 @@ import stride.app.vcs.BaseText
 import stride.app.vcs.DiffFile
 import stride.app.vcs.DiffPopup
 import stride.app.vcs.DiffRequest
+import stride.app.vcs.UpdatePlan
+import stride.app.vcs.UpdatePopup
+import stride.app.vcs.UpdateRequest
+import stride.app.vcs.UpdateStrategy
 import stride.app.vcs.VcsPopup
 import stride.app.vcs.VcsPopupRequest
 import stride.core.services.Application
@@ -785,6 +789,48 @@ class PopupNativeLegibilityTest {
                             ),
                             moreOutgoing = 3,
                             behind = 1,
+                        ),
+                    ),
+                    state = AppState(),
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "update",
+                key = "popup-update",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                UpdatePopup(
+                    request = UpdateRequest(
+                        UpdatePlan.Ready(
+                            branch = "main",
+                            remote = "origin",
+                            remoteRef = "refs/heads/main",
+                            incoming = listOf(
+                                LogEntry(
+                                    id = "2".repeat(40),
+                                    shortId = "9a8b7c6",
+                                    author = "Test Author",
+                                    time = Instant.parse("2026-01-01T00:00:00Z"),
+                                    refs = emptyList(),
+                                    subject = "Change the check",
+                                ),
+                                LogEntry(
+                                    id = "3".repeat(40),
+                                    shortId = "6c5d4e3",
+                                    author = "Test Author",
+                                    time = Instant.parse("2026-01-01T00:00:00Z"),
+                                    refs = emptyList(),
+                                    subject = "Add the dashboard",
+                                ),
+                            ),
+                            moreIncoming = 2,
+                            ahead = 2,
+                            strategies = listOf(UpdateStrategy.MERGE, UpdateStrategy.REBASE),
+                            defaultStrategy = UpdateStrategy.MERGE,
+                            unsavedEditors = 1,
                         ),
                     ),
                     state = AppState(),

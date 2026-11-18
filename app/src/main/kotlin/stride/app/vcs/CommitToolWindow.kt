@@ -74,6 +74,7 @@ private enum class CommitFocusPart { LIST, MESSAGE }
 internal const val COMMIT_LIST_TAG: String = "commit-list"
 internal const val COMMIT_MESSAGE_TAG: String = "commit-message"
 internal const val COMMIT_CAPSULE_TAG: String = "commit-capsule"
+internal const val COMMIT_AND_PUSH_CAPSULE_TAG: String = "commit-and-push-capsule"
 internal const val COMMIT_ERROR_TAG: String = "commit-error"
 
 /**
@@ -271,9 +272,22 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                     Modifier.fillMaxWidth().padding(top = DesignTokens.space8),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    CommitCapsule(enabled = enabled, checked = checked, total = rows.size) {
-                        commitFromWindow(state)
-                    }
+                    CommitCapsule(
+                        enabled = enabled,
+                        checked = checked,
+                        total = rows.size,
+                        onClick = { commitFromWindow(state) },
+                    )
+                    Spacer(Modifier.width(DesignTokens.space8))
+                    CommitCapsule(
+                        enabled = enabled,
+                        checked = checked,
+                        total = rows.size,
+                        onClick = { commitFromWindow(state, push = true) },
+                        label = "Commit and Push…",
+                        tag = COMMIT_AND_PUSH_CAPSULE_TAG,
+                        showCount = false,
+                    )
                 }
             }
         }
@@ -474,33 +488,43 @@ private fun letterColor(kind: ChangeKind): Color = when (kind) {
 }
 
 @Composable
-private fun CommitCapsule(enabled: Boolean, checked: Int, total: Int, onClick: () -> Unit) {
+private fun CommitCapsule(
+    enabled: Boolean,
+    checked: Int,
+    total: Int,
+    onClick: () -> Unit,
+    label: String = "Commit",
+    tag: String = COMMIT_CAPSULE_TAG,
+    showCount: Boolean = true,
+) {
     val shape = RoundedCornerShape(percent = 50)
     Row(
         Modifier
             .height(DesignTokens.capsuleHeight)
             .capsuleGlass(shape)
-            .nativeGlass("commit-capsule", shape, tint = DesignTokens.nativeGlassTint)
+            .nativeGlass(tag, shape, tint = DesignTokens.nativeGlassTint)
             .clickable(enabled = enabled, onClick = onClick)
-            .testTag(COMMIT_CAPSULE_TAG)
+            .testTag(tag)
             .padding(horizontal = DesignTokens.space16),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
             Text(
-                "Commit",
+                label,
                 color = if (enabled) DesignTokens.accent2 else DesignTokens.muted,
                 fontSize = DesignTokens.uiTextSize,
                 fontFamily = DesignTokens.uiFont,
                 fontWeight = FontWeight.SemiBold,
             )
-            Spacer(Modifier.width(DesignTokens.space8))
-            Text(
-                "$checked of $total",
-                color = if (enabled) DesignTokens.text else DesignTokens.muted,
-                fontSize = DesignTokens.smallTextSize,
-                fontFamily = DesignTokens.uiFont,
-            )
+            if (showCount) {
+                Spacer(Modifier.width(DesignTokens.space8))
+                Text(
+                    "$checked of $total",
+                    color = if (enabled) DesignTokens.text else DesignTokens.muted,
+                    fontSize = DesignTokens.smallTextSize,
+                    fontFamily = DesignTokens.uiFont,
+                )
+            }
         }
     }
 }

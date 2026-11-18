@@ -81,6 +81,7 @@ import stride.app.vcs.DiffRequest
 import stride.app.vcs.GitService
 import stride.app.vcs.GitToolWindowContent
 import stride.app.vcs.PushRequest
+import stride.app.vcs.UpdateRequest
 import stride.app.vcs.VcsPopupRequest
 import stride.core.Disposable
 import stride.core.extensions.ExtensionPointName
@@ -295,6 +296,9 @@ class AppState {
 
     /** The open push confirmation popup; `null` when it is closed. */
     internal var pushRequest by mutableStateOf<PushRequest?>(null)
+
+    /** The open update confirmation popup; `null` when it is closed. */
+    internal var updateRequest by mutableStateOf<UpdateRequest?>(null)
 
     /** The open gutter change popup; `null` when it is closed. */
     internal var changeMarkPopup by mutableStateOf<ChangeMarkPopupRequest?>(null)
@@ -705,6 +709,7 @@ class AppState {
         diffRequest = null
         vcsPopup = null
         pushRequest = null
+        updateRequest = null
         changeMarkPopup = null
         statusMessage = null
         projectTreeVisible = true

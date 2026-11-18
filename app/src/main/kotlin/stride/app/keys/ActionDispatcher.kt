@@ -48,9 +48,12 @@ import stride.app.run.openContextActions
 import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
 import stride.app.run.runMain
+import stride.app.vcs.commitAndPush
+import stride.app.vcs.fetchFromVcs
 import stride.app.vcs.gotoChange
 import stride.app.vcs.openCommit
 import stride.app.vcs.openPush
+import stride.app.vcs.openUpdate
 import stride.app.vcs.openVcsPopup
 import stride.app.vcs.rollbackLines
 import stride.app.vcs.showSelectedDiff
@@ -146,6 +149,9 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.COMMIT -> openCommit(state)
     ActionId.PUSH -> openPush(state)
+    ActionId.COMMIT_AND_PUSH -> commitAndPush(state)
+    ActionId.UPDATE_PROJECT -> openUpdate(state)
+    ActionId.FETCH -> fetchFromVcs(state)
     ActionId.VCS_POPUP -> {
         // Control letters belong to the shell, so the popup declines the stroke in the terminal.
         if (state.focus == KeyContext.TERMINAL) return false
