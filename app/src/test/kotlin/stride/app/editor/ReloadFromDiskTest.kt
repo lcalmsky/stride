@@ -17,8 +17,10 @@ import stride.core.services.service
 import stride.core.vfs.VFS_CHANGES
 import stride.core.vfs.VFile
 import stride.core.vfs.VFileEvent
+import java.awt.EventQueue
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicReference
 
 class ReloadFromDiskTest {
     @TempDir
@@ -145,12 +147,14 @@ class ReloadFromDiskTest {
 
         write("a.kt", "two\n")
         project.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Changed(VFile(path))))
+        flushEventQueue()
 
         assertEquals("two\n", editor.value.text)
         assertFalse(editor.isModified)
 
         Files.delete(path)
         project.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Deleted(VFile(path))))
+        flushEventQueue()
 
         assertSame(editor, manager.openFiles.single())
         assertEquals("two\n", editor.value.text)
@@ -165,11 +169,31 @@ class ReloadFromDiskTest {
         val saved = editor.value
 
         project.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Changed(VFile(path))))
+        flushEventQueue()
 
         assertEquals(saved, editor.value)
         assertFalse(editor.isModified)
         assertTrue(editor.undo())
         assertEquals("one\n", editor.value.text)
+    }
+
+    @Test
+    fun `a change published from the watcher thread is applied on the dispatch thread`() {
+        val path = write("a.kt", "one\n")
+        val editor = manager.openFile(VFile(path)) as TextFileEditor
+        val reloadThread = AtomicReference<Boolean>()
+        editor.onDocumentTextChanged = { reloadThread.set(EventQueue.isDispatchThread()) }
+
+        write("a.kt", "two\n")
+        val watcher = Thread {
+            project.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Changed(VFile(path))))
+        }
+        watcher.start()
+        watcher.join()
+        flushEventQueue()
+
+        assertEquals("two\n", editor.value.text)
+        assertEquals(true, reloadThread.get())
     }
 
     @Test
@@ -202,6 +226,8 @@ class ReloadFromDiskTest {
 
         assertEquals(1, calls)
     }
+
+    private fun flushEventQueue() = EventQueue.invokeAndWait {}
 
     private fun write(name: String, content: String): Path {
         val path = temp.resolve(name)

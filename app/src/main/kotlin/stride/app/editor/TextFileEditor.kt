@@ -36,7 +36,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1419,7 +1418,8 @@ class TextFileEditor(
      * Replaces the text with the file's current content, as one undo step, when the file changed
      * on disk and the editor has no unsaved text; the saved text becomes the disk text and the
      * primary caret keeps its line and column. Unsaved text is left as it is, as is an editor
-     * whose file cannot be read as UTF-8. Safe to call from any thread.
+     * whose file cannot be read as UTF-8. Call on the UI thread, like the other edit functions;
+     * the file is read there, as when the tab opens.
      */
     fun reloadFromDisk(): ReloadResult {
         if (isReadOnly) return ReloadResult.FAILED
@@ -1439,23 +1439,16 @@ class TextFileEditor(
     }
 
     private fun applyDiskText(disk: String): ReloadResult {
-        var result = ReloadResult.FAILED
-        Snapshot.withMutableSnapshot {
-            result = when {
-                disk == savedText -> ReloadResult.UNCHANGED
-                isModified -> ReloadResult.KEPT_UNSAVED
-                else -> {
-                    val change = computeTextChange(text, disk)
-                    val applied = applyEdits(
-                        listOf(TextEdit(change.offset, change.offset + change.oldLength, change.newText)),
-                        caret = reloadCaret(text, disk, value.selection.start),
-                    )
-                    if (applied) savedText = disk
-                    if (applied) ReloadResult.RELOADED else ReloadResult.FAILED
-                }
-            }
-        }
-        return result
+        if (disk == savedText) return ReloadResult.UNCHANGED
+        if (isModified) return ReloadResult.KEPT_UNSAVED
+        val change = computeTextChange(text, disk)
+        val applied = applyEdits(
+            listOf(TextEdit(change.offset, change.offset + change.oldLength, change.newText)),
+            caret = reloadCaret(text, disk, value.selection.start),
+        )
+        if (!applied) return ReloadResult.FAILED
+        savedText = disk
+        return ReloadResult.RELOADED
     }
 
     /**

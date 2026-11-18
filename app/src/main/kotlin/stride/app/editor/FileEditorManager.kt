@@ -14,6 +14,7 @@ import stride.core.vfs.VFS_CHANGES
 import stride.core.vfs.VFile
 import stride.core.vfs.VFileEvent
 import stride.core.vfs.VfsListener
+import java.awt.EventQueue
 import java.io.IOException
 import java.nio.file.Path
 
@@ -52,8 +53,8 @@ class FileEditorManager(private val project: Project) : Disposable {
         project.messageBus.connect(this).subscribe(
             VFS_CHANGES,
             object : VfsListener {
-                // The watcher publishes from its own thread, so the reload's blocking read stays
-                // off the UI thread.
+                // The watcher publishes from its own thread; the reload edits the editor's
+                // Compose state like every other edit, so only the event filter runs there.
                 override fun after(events: List<VFileEvent>) = reloadTouchedEditors(events)
             },
         )
@@ -65,9 +66,13 @@ class FileEditorManager(private val project: Project) : Disposable {
             if (event is VFileEvent.Created || event is VFileEvent.Changed) paths.add(canonical(event.file.path))
         }
         if (paths.isEmpty()) return
-        for (editor in openFilesState.toList()) {
-            if (editor is TextFileEditor && canonical(editor.file.path) in paths) editor.reloadFromDisk()
+        val reload = Runnable {
+            if (disposed) return@Runnable
+            for (editor in openFilesState.toList()) {
+                if (editor is TextFileEditor && canonical(editor.file.path) in paths) editor.reloadFromDisk()
+            }
         }
+        if (EventQueue.isDispatchThread()) reload.run() else EventQueue.invokeLater(reload)
     }
 
     /** The path both the watcher and an editor agree on; a project opened through a link is compared by its real path. */
@@ -82,7 +87,7 @@ class FileEditorManager(private val project: Project) : Disposable {
 
     /**
      * Reloads every open text editor from disk: one with no unsaved text takes the disk text,
-     * one with unsaved text keeps its own.
+     * one with unsaved text keeps its own. Call on the UI thread.
      */
     fun reloadChangedFromDisk(): ReloadSummary {
         var reloaded = 0
