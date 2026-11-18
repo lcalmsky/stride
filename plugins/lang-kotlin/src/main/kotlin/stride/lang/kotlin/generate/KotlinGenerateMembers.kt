@@ -24,6 +24,8 @@ internal class WalkNode(
     val directName: String,
     val substitution: Map<String, String?>,
     val depth: Int,
+    /** Identifies the node along the walk; two paths through different direct supertypes differ. */
+    val key: String,
 )
 
 internal class CandidateMember(
@@ -58,7 +60,7 @@ private fun generateMembers(klass: KtClazz, context: GenerateContext, override: 
         return RefactoringStep.Refused("${walked.unreadClass} is not in project sources; it may implement these members")
     }
     // G6: Override lists Any's members with the other candidates, not only when there are none.
-    val candidates = collectCandidates(klass, context, walked.nodes, walked.providerCount, override) +
+    val candidates = collectCandidates(klass, context, walked.nodes, walked.ancestors, walked.providerCount, override) +
         if (override) anyCandidates(klass, walked.nodes) else emptyList()
     val title = if (walked.unreadInterfaces.isEmpty()) {
         kind.title
@@ -95,6 +97,8 @@ private fun chooseMembers(
 
 private class Walked(
     val nodes: List<WalkNode>,
+    /** For each node key, every node key above it along the walk. */
+    val ancestors: Map<String, Set<String>>,
     val providerCount: Map<String, Set<String>>,
     val unreadClass: String?,
     val unreadInterfaces: List<String>,
@@ -103,6 +107,7 @@ private class Walked(
 private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, override: Boolean): Walked {
     val nodes = ArrayList<WalkNode>()
     val providers = HashMap<String, MutableSet<String>>()
+    val edges = HashMap<String, MutableSet<String>>()
     val seen = HashSet<String>()
     var unreadClass: String? = null
     val unreadInterfaces = ArrayList<String>()
@@ -128,8 +133,9 @@ private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, 
             val substitution = substitutionFor(declaration, supertype, parent?.substitution.orEmpty())
             val directName = parent?.directName ?: supertype.simpleName
             val key = declaration.name + "@" + source.path + "@" + directName
+            if (parent != null) edges.getOrPut(parent.key) { HashSet() }.add(key)
             if (!seen.add(key)) continue
-            val node = WalkNode(declaration, source, directName, substitution, (parent?.depth ?: -1) + 1)
+            val node = WalkNode(declaration, source, directName, substitution, (parent?.depth ?: -1) + 1, key)
             nodes.add(node)
             for (member in declaration.supertypes) {
                 queue.add(node to member)
@@ -147,7 +153,23 @@ private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, 
             providers.getOrPut("prop:$name") { HashSet() }.add(node.directName)
         }
     }
-    return Walked(nodes, providers, unreadClass, unreadInterfaces)
+    return Walked(nodes, ancestorKeys(nodes, edges), providers, unreadClass, unreadInterfaces)
+}
+
+private fun ancestorKeys(nodes: List<WalkNode>, edges: Map<String, Set<String>>): Map<String, Set<String>> {
+    val result = HashMap<String, Set<String>>()
+    for (node in nodes) {
+        val reached = HashSet<String>()
+        val stack = ArrayDeque<String>()
+        edges[node.key]?.let { stack.addAll(it) }
+        while (stack.isNotEmpty()) {
+            val key = stack.removeLast()
+            if (!reached.add(key)) continue
+            edges[key]?.let { stack.addAll(it) }
+        }
+        result[node.key] = reached
+    }
+    return result
 }
 
 private fun substitutionFor(
@@ -219,6 +241,7 @@ private fun collectCandidates(
     klass: KtClazz,
     context: GenerateContext,
     nodes: List<WalkNode>,
+    ancestors: Map<String, Set<String>>,
     providers: Map<String, Set<String>>,
     override: Boolean,
 ): List<CandidateMember> {
@@ -227,46 +250,75 @@ private fun collectCandidates(
             function.parameters.joinToString(",") { (it.type ?: "").filterNot { ch -> ch.isWhitespace() } } + ")"
     }.toSet()
     val existingProperties = klass.properties.mapNotNull { it.name }.toSet()
-    // A body anywhere along the walk, an interface's default body included, is an implementation.
-    val implemented = HashSet<String>()
-    for (node in nodes) {
-        for (function in node.declaration.functions) {
-            if (function.hasBody) implemented.add(functionKey(function, node.substitution))
-        }
-        for (property in node.declaration.properties) {
-            if (property.name == null) continue
-            if (!isAbstractProperty(property, node.declaration.isInterface)) {
-                implemented.add(propertyKey(property, node.substitution))
-            }
-        }
-    }
+    val implemented = implementedKeys(nodes, ancestors)
     val seen = HashSet<String>()
     val result = ArrayList<CandidateMember>()
     for (node in nodes) {
         val declaration = node.declaration
         for (function in declaration.functions) {
             val key = functionKey(function, node.substitution)
+            val abstractMember = isAbstractFunction(function, declaration.isInterface)
+            // Implement lists the abstract declaration even when a body of the same member comes first.
+            if (!override && !abstractMember) continue
             if (!seen.add(key)) continue
             if (key in existingFunctions) continue
             if (!overridableFunction(function, declaration.isInterface)) continue
-            val abstractMember = isAbstractFunction(function, declaration.isInterface)
-            if (!override && !abstractMember) continue
             if (!override && key in implemented) continue
             result.add(functionCandidate(klass, context, node, function, key, abstractMember, providers, !override))
         }
         for (property in declaration.properties) {
             val name = property.name ?: continue
             val key = propertyKey(property, node.substitution)
+            val abstractMember = isAbstractProperty(property, declaration.isInterface)
+            if (!override && !abstractMember) continue
             if (!seen.add(key)) continue
             if (name in existingProperties) continue
             if (!overridableProperty(property, declaration.isInterface)) continue
-            val abstractMember = isAbstractProperty(property, declaration.isInterface)
-            if (!override && !abstractMember) continue
             if (!override && key in implemented) continue
             result.add(propertyCandidate(klass, context, node, property, key, abstractMember, providers, !override))
         }
     }
     return result
+}
+
+/**
+ * Members the walk implements (G6): a class body counts wherever it sits in the walk, an interface
+ * body only when the interface inherits the abstract declaration it overrides.
+ */
+private fun implementedKeys(nodes: List<WalkNode>, ancestors: Map<String, Set<String>>): Set<String> {
+    val abstractDeclarers = HashMap<String, MutableSet<String>>()
+    for (node in nodes) {
+        val interfaceMember = node.declaration.isInterface
+        for (function in node.declaration.functions) {
+            if (!isAbstractFunction(function, interfaceMember)) continue
+            abstractDeclarers.getOrPut(functionKey(function, node.substitution)) { HashSet() }.add(node.key)
+        }
+        for (property in node.declaration.properties) {
+            if (property.name == null) continue
+            if (!isAbstractProperty(property, interfaceMember)) continue
+            abstractDeclarers.getOrPut(propertyKey(property, node.substitution)) { HashSet() }.add(node.key)
+        }
+    }
+    fun counts(node: WalkNode, key: String): Boolean {
+        if (!node.declaration.isInterface) return true
+        val declarers = abstractDeclarers[key] ?: return false
+        return ancestors[node.key].orEmpty().any { it in declarers }
+    }
+    val implemented = HashSet<String>()
+    for (node in nodes) {
+        for (function in node.declaration.functions) {
+            if (!function.hasBody) continue
+            val key = functionKey(function, node.substitution)
+            if (counts(node, key)) implemented.add(key)
+        }
+        for (property in node.declaration.properties) {
+            if (property.name == null) continue
+            if (isAbstractProperty(property, node.declaration.isInterface)) continue
+            val key = propertyKey(property, node.substitution)
+            if (counts(node, key)) implemented.add(key)
+        }
+    }
+    return implemented
 }
 
 private fun overridableFunction(function: SigFunction, interfaceMember: Boolean): Boolean {

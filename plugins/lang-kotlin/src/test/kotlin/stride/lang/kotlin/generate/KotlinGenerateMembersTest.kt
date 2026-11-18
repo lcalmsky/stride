@@ -309,6 +309,41 @@ class KotlinGenerateMembersTest {
     }
 
     @Test
+    fun `an independent interface default body does not implement`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val q = "package demo\n\ninterface Q {\n    fun f(): Int = 7\n}"
+        val files = mapOf(P_PATH to p, Q_PATH to q)
+        for (supertypes in listOf("P, Q", "Q, P")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("fun f(): Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+        }
+    }
+
+    @Test
+    fun `an independent interface property default body does not implement`() {
+        val p = "package demo\n\ninterface P {\n    val x: Int\n}"
+        val q = "package demo\n\ninterface Q {\n    val x: Int get() = 1\n}"
+        val files = mapOf(P_PATH to p, Q_PATH to q)
+        for (supertypes in listOf("P, Q", "Q, P")) {
+            val source = "package demo\n\nclass OrderService : $supertypes {\n}"
+            val step = prepare(implementKind, source, currentTypes(source, files)) as RefactoringStep.ChooseMembers
+            assertEquals(listOf("val x: Int"), step.members.map { it.text }, supertypes)
+            assertTrue(step.members.single().checked, supertypes)
+        }
+    }
+
+    @Test
+    fun `a class body implements an interface member without an override chain`() {
+        val p = "package demo\n\ninterface P {\n    fun f(): Int\n}"
+        val b = "package demo\n\nabstract class B {\n    fun f(): Int = 1\n}"
+        val source = "package demo\n\nclass OrderService : B(), P {\n}"
+        val result = run(implementKind, source, currentTypes(source, mapOf(P_PATH to p, BASE_PATH to b)))
+        assertEquals("No members to implement in project sources", result.status)
+    }
+
+    @Test
     fun `a default import type needs no import`() {
         val base = "package demo\n\nabstract class Store {\n    abstract fun at(t: Thread)\n}"
         val source = "package demo\n\nclass OrderService : Store() {\n}"
@@ -363,6 +398,7 @@ class KotlinGenerateMembersTest {
         const val EXT_PATH = "/project/src/main/kotlin/demo/Ext.kt"
         const val BASE_PATH = "/project/src/main/kotlin/demo/Base.kt"
         const val P_PATH = "/project/src/main/kotlin/demo/P.kt"
+        const val Q_PATH = "/project/src/main/kotlin/demo/Q.kt"
         const val R_PATH = "/project/src/main/kotlin/demo/R.kt"
     }
 }
