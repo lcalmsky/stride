@@ -41,7 +41,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 <td valign="top">
 
 - **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
-- **Tabbed editor** open files become tabs, and opening the same file again selects its tab. Close with `⌘W` and switch with `⌘⇧]`·`⌃→` and `⌘⇧[`·`⌃←`. `Reopen Closed Tab` and `Close Other Tabs` in the Actions tab bring back a closed tab or close the rest
+- **Tabbed editor** open files become tabs, and opening the same file again selects its tab. Close with `⌘W` and switch with `⌘⇧]`·`⌃→` and `⌘⇧[`·`⌃←`. `Reopen Closed Tab` and `Close Other Tabs` in the Actions tab bring back a closed tab or close the rest. When git in the terminal or another program changes a file, a tab with no unsaved edits reads the disk again (`⌘Z` returns to the previous text), and a tab with unsaved edits is left alone
 - **Syntax highlighting** the Kotlin and JSON plugins each provide a lexer and a highlighter. Files larger than 2 MB open read-only without highlighting
 - **Editing** duplicate, delete, and move lines, toggle line and block comments, indent, and undo or redo from the keyboard. `⌘L` jumps to a `line` or `line:column`. With no selection, `⌘C`·`⌘X` copy or cut the whole line, and `⌘⇧V` pastes one of the last 20 copied texts
 - **Statement editing** `⌘⇧↑`·`⌘⇧↓` swap a statement, together with its block and the comments and annotations right above it, with its neighbor in the same block. `⌘⇧↩` closes open brackets and opens a block on lines such as `if` or `fun` to finish the statement, and `⌘⇧⌦` unwraps the `if`, `else`, `for`, `while`, `do`, or `try` around the caret and keeps only its body. `⌘⌥T` surrounds the selected lines with a template such as `if` or `try / catch` (Kotlin and Java)
@@ -143,6 +143,9 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Rollback and change navigation** `⌥⌘Z` returns the changes at the carets or in the selection to their HEAD lines, and one `⌘Z` undoes it. Nothing is saved. `⌃⌥⇧↓` / `⌃⌥⇧↑` move to the next / previous change
 - **Commit** `⌘K` opens the Commit window with the message field focused. Changed and unversioned files are listed with checkboxes, and `⌘↩` commits only the checked ones. Unsaved editors of the checked files are saved first, and there is no separate staging area. In the window, `⌘D` opens the diff of the selected file
 - **Push** `⇧⌘K` shows a confirmation popup with the current branch and the outgoing commits, and `↩` pushes. There is no force push and no tag push. A remote that needs credentials fails without a prompt, and the status bar says to retry in the terminal
+- **Commit and push** `⌥⌘K` or the `Commit and Push…` button in the Commit window commits the checked files and then opens the same push confirmation. Outside the Commit window, `⌥⌘K` opens it like `⌘K`
+- **Update project** `⌘T` fetches the current branch's upstream remote, shows the incoming commits in a confirmation popup, and `↩` updates the branch. A branch that is only behind is fast-forwarded; for a branch that has diverged, `Tab` chooses between Merge and Rebase, defaulting to git's `branch.<name>.rebase` and `pull.rebase` settings. Unsaved editors are saved first, and tabs of files the update changed read the new content. No stash is created: a fast-forward stops when git would overwrite local changes, and a merge or rebase runs only with no uncommitted changes. A conflict puts everything back as it was and the status bar says to update from the terminal
+- **Fetch** `8 Fetch` in the VCS popup fetches every remote without touching branches or files. While git runs, the status bar shows progress such as `Fetching…`, `Updating…` or `Pushing…`
 - **Diff and the Git window** the diff shows HEAD and the current text in one column, and `F7` / `⇧F7` move between changes. In the `⌘9` Git window, the Log tab lists recent commits and `↩` opens a commit's diff; the Console tab shows the git commands stride ran and their output. `⌃V` is the VCS popup with these commands numbered
 
 </td>
@@ -294,6 +297,8 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | **Git** | |
 | `⌘K` | Open the Commit window (`⌘↩` commit, `Space` check a file, `⌘D` diff, `Tab` between the list and the message) |
 | `⇧⌘K` | Push confirmation popup |
+| `⌥⌘K` | Commit and push (outside the Commit window, open it) |
+| `⌘T` | Update project (`Tab` Merge/Rebase, `↩` run) |
 | `⌃V` | VCS popup (passed to the shell in the terminal) |
 | `⌥⌘Z` | Rollback lines |
 | `⌃⌥⇧↓` / `⌃⌥⇧↑` | Next change / previous change |

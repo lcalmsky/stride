@@ -3356,13 +3356,13 @@ sealed interface UpdatePlan {
                      val incoming: List<LogEntry>, val moreIncoming: Int, val ahead: Int,
                      val strategies: List<UpdateStrategy>,   // [FAST_FORWARD] when ahead == 0, else [MERGE, REBASE]
                      val defaultStrategy: UpdateStrategy,
-                     val unsavedEditors: Int) : UpdatePlan   // filled in by the app before the popup
+                     val unsavedEditors: Int = 0) : UpdatePlan   // the count the app passed in
     data class Refused(val message: String) : UpdatePlan
 }
 suspend fun GitService.fetch(): GitWriteResult                 // every remote
-suspend fun GitService.updatePlan(): UpdatePlan                // fetches the upstream's remote first
+suspend fun GitService.updatePlan(unsavedEditors: Int = 0): UpdatePlan   // fetches the upstream's remote first
 suspend fun GitService.update(plan: UpdatePlan.Ready, strategy: UpdateStrategy): GitWriteResult
-fun GitService.operationInProgress(): String?                 // "merge", "rebase", "cherry-pick", "revert", or null
+suspend fun GitService.operationInProgress(): String?         // "merge", "rebase", "cherry-pick", "revert", or null
 // GitTimeouts gains fetch = 90 s and update = 120 s, with defaults
 ```
 
@@ -3382,10 +3382,12 @@ and `Tab` switches; a branch that is only behind shows `Fast-forward` and has no
 **Steps.**
 
 1. **Refusals before the network**, in this order: `Git is not installed`, `Not a Git repository`,
-   `Git is busy: <what>`, `Update needs a branch: HEAD is detached`,
+   `Git is busy: <what>`,
    `A <operation> is in progress: finish it in the terminal (⌥F12)` (the git directory has
-   `MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD` or `REVERT_HEAD`, or the status
-   lists a conflicted file; a check that cannot read the git directory counts as in progress),
+   `MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD` or `REVERT_HEAD`, or
+   `git ls-files -u` lists a conflicted file; a check that cannot read the git directory counts as
+   in progress; it comes before the detached check because HEAD is detached during a rebase),
+   `Update needs a branch: HEAD is detached`,
    `No upstream: set one in the terminal` (the branch has no `branch.<b>.remote`/`merge`).
 2. **Fetch the upstream's remote**: `git fetch <remote>` with the push environment (ssh BatchMode,
    V3), `timeouts.fetch`. A failure ends here; nothing but remote-tracking refs can have changed.
@@ -3427,7 +3429,9 @@ merge`).
   --porcelain=v2 -z --untracked-files=no` at the repository root (not the project-scoped snapshot,
   because a merge touches files outside the project folder too), plus the open editors with unsaved
   text. Otherwise the plan refuses: `Update needs a clean working tree to merge or rebase: commit your
-  <n> changed files first`. Untracked files may stay; git refuses before touching one.
+  <n> changed files first`. Untracked files may stay; git refuses before touching one. A status read
+  that fails or times out refuses too (`Update failed: <first line>`), since an abort cannot bring
+  back an uncommitted edit.
 - **On any failure of a merge or rebase** (a conflict, a hook, a timeout), when the git directory
   shows the operation in progress, stride runs `git merge --abort` or `git rebase --abort`. With a
   clean tree beforehand, the abort restores HEAD, the index and the files exactly. A conflict
@@ -3450,7 +3454,9 @@ and the next `⌘S` wrote the old text back over the change without a word.
 **Before an update** the unsaved editors are saved, as IntelliJ saves all documents before a VCS
 update and as Commit saves its included editors (V5). The popup says how many; a save that fails
 stops the update before git runs. For a merge or rebase, unsaved editors count as changed files
-(V9), so they refuse the plan instead.
+(V9), so they refuse the plan instead; an editor changed while the popup is open refuses at `↩`
+without saving, and `update` itself reads the repository's tree again right before git merges or
+rebases, so a file changed in the terminal meanwhile refuses too.
 
 **After the disk changes:**
 
@@ -3461,7 +3467,11 @@ stops the update before git runs. For a merge or rebase, unsaved editors count a
 | Cost | one pass after the update | one VFS subscription and the same reload function |
 
 **B is the contract**, plus an explicit pass right after an update so the result does not wait for
-the file watcher. `TextFileEditor.reloadFromDisk()` reads the file as the tab does; when the text
+the file watcher. `TextFileEditor.reloadFromDisk()` and `FileEditorManager.reloadChangedFromDisk()`
+run on the UI thread like every other edit (the undo stack and the highlighter are not shared
+state), so the watcher's listener only filters the events and hands the reload to the event
+queue, and the update waits for it with `invokeAndWait`. `reloadFromDisk()` reads the file as the
+tab does; when the text
 differs from the last saved text and the editor has no unsaved text, the new text replaces it as one
 undo step (`⌘Z` brings the old text back, as an unsaved change), the saved text becomes the disk
 text, and carets keep their line and column where the line still exists. An editor with unsaved
@@ -3519,7 +3529,7 @@ change through the paths of V3 and V4.
 | `Update failed: <first line> (undone)` | a merge or rebase failed for another reason and was aborted |
 | `Update left a <operation> in progress: finish or abort it in the terminal (⌥F12)` | the abort itself failed |
 | `Update needs credentials or a passphrase: update from the terminal (⌥F12)` | the fetch of `⌘T` failed authentication |
-| `Update failed: <first line>` | the fetch of `⌘T` failed otherwise, or a save before the update failed |
+| `Update failed: <first line>` | the fetch of `⌘T` failed otherwise, the clean-tree status read failed or timed out, or a save before the update failed |
 
 ### Version control differences
 
