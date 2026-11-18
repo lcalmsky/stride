@@ -391,13 +391,18 @@ internal fun isTypeArgumentOpen(code: KotlinCode, openIndex: Int, atLineEnd: Boo
 
 /**
  * The index of the token closing the `<` at [openIndex], or `-1`. A lexer token can merge the `>`
- * with what follows (`?>`, `>>`), so any token holding `>` counts.
+ * with what follows (`?>`, `>>`), so any token holding `>` counts. A function type's `->` right
+ * after a `)` closes nothing (R2 「Statements」).
  */
 internal fun typeArgumentClose(code: KotlinCode, openIndex: Int): Int {
     var depth = 0
     var index = openIndex
     while (index < code.code.size) {
         val text = code.code[index].text
+        if (text == "->" && code.code.getOrNull(index - 1)?.text == ")") {
+            index++
+            continue
+        }
         var opens = 0
         var closes = 0
         for (char in text) {

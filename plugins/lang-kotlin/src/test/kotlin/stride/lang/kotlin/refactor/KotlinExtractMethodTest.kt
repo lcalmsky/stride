@@ -460,6 +460,13 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `a local function header ending with its type keeps its next line body`() {
+        val text = "fun outer() {\n    fun f(): String?\n    {\n        val x = 1\n        println(x)\n        return null\n    }\n    f()\n}\n"
+        assertEquals("The selection is inside a local function", refused(select(text, "val x = 1\n        println(x)")))
+        assertEquals("The selection is inside a local function", refused(select(text, "println(x)")))
+    }
+
+    @Test
     fun `a selection inside an initializer is refused`() {
         val text = "class A {\n    init {\n        println(1)\n    }\n}\n"
         assertEquals("Extract Method works inside a function body", refused(select(text, "println(1)")))

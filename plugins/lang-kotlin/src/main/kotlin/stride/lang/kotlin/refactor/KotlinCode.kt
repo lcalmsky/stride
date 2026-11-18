@@ -401,7 +401,12 @@ internal class KotlinCode(val text: String) {
      * starts a statement of its own.
      */
     private fun joinsBlockOnNextLine(previous: KtToken): Boolean {
-        if (previous.text == "->" || previous.text == ">") return true
+        if (previous.text == "->") return true
+        if (endsNullableType(previous)) {
+            if (lineHoldsDeclarationHeader(previous)) return true
+        } else if (closesTypeArguments(previous)) {
+            return true
+        }
         if (previous.text == ")" && closesCallOrHeader(previous)) return true
         if (isControlHeaderEnd(previous)) return true
         if (previous.type == KotlinTokenTypes.KEYWORD && previous.text == "init") return true
@@ -420,8 +425,24 @@ internal class KotlinCode(val text: String) {
         val head = code.getOrNull(openIndex - 1) ?: return false
         if (isNameToken(head)) return true
         if (head.type == KotlinTokenTypes.KEYWORD && head.text in CONTROL_PARENTHESES) return true
-        return head.text == ")" || head.text == "]" || head.text == ">"
+        return head.text == ")" || head.text == "]" || closesTypeArguments(head)
     }
+
+    /**
+     * True when [token] is the `>` closing type arguments or type parameters, also when the lexer
+     * merged it with `*`, `?` or another `>` (`>>`, `*>`, `?>`, `>?`).
+     */
+    private fun closesTypeArguments(token: KtToken): Boolean =
+        token.type == KotlinTokenTypes.OPERATION_SIGN && token.text.any { it == '>' } &&
+            token.text.all { it == '>' || it == '*' || it == '?' }
+
+    /** True when [token] ends a nullable type: a `?`, or a merged type close followed by `?`. */
+    private fun endsNullableType(token: KtToken): Boolean =
+        token.text == "?" || (token.text.endsWith("?") && closesTypeArguments(token))
+
+    /** True when the token at [index] is a function type's `->`, whose `>` closes no list. */
+    private fun isFunctionTypeArrow(index: Int): Boolean =
+        code[index].text == "->" && code.getOrNull(index - 1)?.text == ")"
 
     /**
      * True when the line holding [token] is a `fun`, `class`, `object`, `interface` or `init`
@@ -605,6 +626,7 @@ internal class KotlinCode(val text: String) {
         for (index in closeIndex downTo 0) {
             val token = code[index]
             if (token.text == "{" || token.text == "}" || token.text == ";") return -1
+            if (isFunctionTypeArrow(index)) continue
             var opens = 0
             var closes = 0
             for (char in token.text) {

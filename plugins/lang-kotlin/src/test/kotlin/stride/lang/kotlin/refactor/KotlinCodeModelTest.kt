@@ -858,6 +858,96 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a next line block joins a local function header ending with its type`() {
+        val nullable = "fun outer() {\n    fun f(): String?\n    {\n        return null\n    }\n    println(1)\n}\n"
+        assertEquals(
+            listOf("fun f(): String?\n    {\n        return null\n    }", "println(1)"),
+            bodyStatements(nullable),
+        )
+        assertEquals(
+            listOf(BlockKind.FUNCTION_BODY, BlockKind.FUNCTION_BODY),
+            model(nullable).blocks.map { it.kind },
+        )
+        assertEquals(
+            listOf("fun f(): List<List<Int>>\n    {\n        return emptyList()\n    }", "println(1)"),
+            bodyStatements("fun outer() {\n    fun f(): List<List<Int>>\n    {\n        return emptyList()\n    }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("fun f(): List<Int>?\n    {\n        return null\n    }", "println(1)"),
+            bodyStatements("fun outer() {\n    fun f(): List<Int>?\n    {\n        return null\n    }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a next line block joins a local class header ending with type arguments`() {
+        val supertypeCall = "fun outer() {\n    class L : Base<List<Int>>()\n    {\n        val x = 1\n    }\n    println(1)\n}\n"
+        assertEquals(
+            listOf("class L : Base<List<Int>>()\n    {\n        val x = 1\n    }", "println(1)"),
+            bodyStatements(supertypeCall),
+        )
+        assertEquals(
+            listOf(BlockKind.FUNCTION_BODY, BlockKind.CLASS_BODY),
+            model(supertypeCall).blocks.map { it.kind },
+        )
+        assertEquals(
+            listOf("class L : I<List<Int>>\n    {\n        val x = 1\n    }", "println(1)"),
+            bodyStatements("fun outer() {\n    class L : I<List<Int>>\n    {\n        val x = 1\n    }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a top level header ending with its type keeps its next line body`() {
+        val nullable = "fun top(): String?\n{\n    return null\n}\n"
+        val function = model(nullable).functions.single()
+        assertEquals("String?", function.returnType)
+        assertEquals("\n    return null\n", function.bodyRange?.let { nullable.substring(it.start, it.end) })
+        assertEquals(
+            listOf(BlockKind.FUNCTION_BODY),
+            model(nullable).blocks.map { it.kind },
+        )
+        val generic = "fun top(): List<List<Int>>\n{\n    return emptyList()\n}\n"
+        val genericFunction = model(generic).functions.single()
+        assertEquals("List<List<Int>>", genericFunction.returnType)
+        assertEquals("\n    return emptyList()\n", genericFunction.bodyRange?.let { generic.substring(it.start, it.end) })
+    }
+
+    @Test
+    fun `a function type inside type arguments ends the statement at the line end`() {
+        assertEquals(
+            listOf("val x: List<(Int) -> String>", "val y = 1"),
+            bodyStatements("fun f() {\n    val x: List<(Int) -> String>\n    val y = 1\n}\n"),
+        )
+        assertEquals(
+            listOf("val m: Map<String, (Int) -> Unit>", "val y = 1"),
+            bodyStatements("fun f() {\n    val m: Map<String, (Int) -> Unit>\n    val y = 1\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a nullable type before a next line block still starts a lambda`() {
+        assertEquals(
+            listOf("val x: String?", "{ println() }", "println(1)"),
+            bodyStatements("fun f() {\n    val x: String?\n    { println() }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
+    fun `comparisons in when branches, if bodies and lambdas keep their statements`() {
+        assertEquals(
+            listOf("when (a) {\n        a < b -> foo(c > d)\n    }"),
+            bodyStatements("fun f(a: Int, b: Int, c: Int, d: Int) {\n    when (a) {\n        a < b -> foo(c > d)\n    }\n}\n"),
+        )
+        assertEquals(
+            listOf("if (a < b) c > d"),
+            bodyStatements("fun f(a: Int, b: Int, c: Int, d: Int) {\n    if (a < b) c > d\n}\n"),
+        )
+        assertEquals(
+            listOf("x.filter { it < 3 }.map { it -> it > 1 }"),
+            bodyStatements("fun f(x: List<Int>) {\n    x.filter { it < 3 }.map { it -> it > 1 }\n}\n"),
+        )
+    }
+
+    @Test
     fun `a declaration after a string expression body is a function`() {
         assertEquals(
             listOf("a", "b"),
