@@ -117,6 +117,12 @@ internal class KotlinCode(val text: String) {
 
     val effects: List<KtEffect>
 
+    /** The file's R2 smart casts, built on first use (see `KotlinSmartCasts.kt`). */
+    internal var smartCastCache: List<KtSmartCast>? = null
+
+    /** The name chains the file reads, built on first use (see `KotlinSmartCasts.kt`). */
+    internal var readChainCache: List<KtReadChain>? = null
+
     /** Code token indices that a reference scan must not treat as references. */
     internal val keywordTokens: MutableSet<Int> = HashSet()
 

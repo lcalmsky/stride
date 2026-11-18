@@ -58,9 +58,9 @@ internal object KotlinIntroduceVariable {
         if (!code.isStable(expression) && code.effectsBefore(expression).isNotEmpty()) {
             return RefactoringStep.Refused("Code before $written in this statement would run after it")
         }
-        code.smartCastShapeReadBy(expression, code.lineStart(statement.start), expression.start)?.let { shape ->
+        code.smartCastNarrowing(expression, code.lineStart(statement.start), expression.start)?.let { cast ->
             return RefactoringStep.Refused(
-                "${shape.first.name} may be smart-cast at line ${code.lineIndex(shape.second.start) + 1}; " +
+                "${cast.chain} may be smart-cast at line ${code.lineIndex(cast.token.start) + 1}; " +
                     "the variable would keep its unchecked type",
             )
         }
@@ -182,7 +182,7 @@ internal object KotlinIntroduceVariable {
                 index += template.size
                 continue
             }
-            if (code.smartCastShapeReadBy(range, insertion, range.start) != null) {
+            if (code.smartCastNarrowing(range, insertion, range.start) != null) {
                 index += template.size
                 continue
             }

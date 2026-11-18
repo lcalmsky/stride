@@ -403,14 +403,13 @@ internal object KotlinExtractMethod {
                 return InputResult.Refused("${local.name} is a vararg parameter")
             }
             val type = typeOf(code, local) ?: return InputResult.Refused(inferMessage(local.name))
-            val shape = code.smartCastShape(local, function.funToken.start, selection.start)
-            if (shape != null) {
-                return InputResult.Refused(
-                    "${local.name} may be smart-cast at line ${code.lineIndex(shape.start) + 1}; " +
-                        "the extracted function would see its declared type",
-                )
-            }
             parameters.add(Parameter(local.nameToken.text, type))
+        }
+        code.smartCastNarrowing(selection, function.funToken.start, selection.start)?.let { cast ->
+            return InputResult.Refused(
+                "${cast.chain} may be smart-cast at line ${code.lineIndex(cast.token.start) + 1}; " +
+                    "the extracted function would see its declared type",
+            )
         }
         return InputResult.Found(parameters)
     }

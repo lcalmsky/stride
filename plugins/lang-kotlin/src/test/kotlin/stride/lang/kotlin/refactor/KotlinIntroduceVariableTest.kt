@@ -658,6 +658,24 @@ class KotlinIntroduceVariableTest {
     }
 
     @Test
+    fun `a selection read after a reassignment on the same line is refused`() {
+        val text = "fun f() {\n    val b: Any\n    println(\n        run { b = \"t\" },\n        b,\n    )\n}\n"
+        assertEquals(
+            "b may be smart-cast at line 4; the variable would keep its unchecked type",
+            refused(select(text, "b", 2)),
+        )
+    }
+
+    @Test
+    fun `a selection read of a narrowed member is refused`() {
+        val text = "class C(val p: Any) {\n    fun f() {\n        show(p!!, p)\n    }\n}\n"
+        assertEquals(
+            "p may be smart-cast at line 3; the variable would keep its unchecked type",
+            refused(select(text, "p", 2)),
+        )
+    }
+
+    @Test
     fun `a smart cast before the insertion point does not refuse`() {
         val text = "fun f(x: Any) {\n    if (x !is String) return\n    show(x)\n}\n"
         val x = text.indexOf("show(x)") + "show(".length

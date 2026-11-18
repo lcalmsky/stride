@@ -158,26 +158,20 @@ internal object KotlinInline {
         return RefactoringStep.Apply(variableEdit(code, local, statement, initializer, uses))
     }
 
-    /** A local the initializer reads may be smart-cast before a reference (R5 「Other initializers」). */
+    /** A read in the initializer may be smart-cast before a reference (R5 「Other initializers」). */
     private fun smartCastRefusal(
         code: KotlinCode,
         statement: KtStatement,
         initializer: KtRange,
         uses: List<KtReference>,
     ): String? {
-        val reads = code.references
-            .filter { it.token.start >= initializer.start && it.token.end <= initializer.end }
-            .mapNotNull { it.resolved }
-        if (reads.isEmpty()) return null
-        var best: Pair<KtLocal, KtToken>? = null
+        var best: KtSmartCast? = null
         for (use in uses) {
-            for (read in reads) {
-                val shape = code.smartCastShape(read, statement.end, use.token.start) ?: continue
-                if (best == null || shape.start < best.second.start) best = read to shape
-            }
+            val cast = code.smartCastNarrowing(initializer, statement.end, use.token.start) ?: continue
+            if (best == null || cast.token.start < best.token.start) best = cast
         }
-        val pair = best ?: return null
-        return "${pair.first.name} may be smart-cast at line ${code.lineIndex(pair.second.start) + 1}; " +
+        val cast = best ?: return null
+        return "${cast.chain} may be smart-cast at line ${code.lineIndex(cast.token.start) + 1}; " +
             "the inlined expression could get a different type"
     }
 

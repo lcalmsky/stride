@@ -359,7 +359,7 @@ private fun parseParameter(code: KotlinCode, startIndex: Int, endIndex: Int): Kt
     return KtParameter(nameToken.text.removeSurrounding("`"), nameToken, type, vararg, defaultRange)
 }
 
-private fun parseTypeParameterNames(code: KotlinCode, openIndex: Int, closeIndex: Int): List<String> {
+internal fun parseTypeParameterNames(code: KotlinCode, openIndex: Int, closeIndex: Int): List<String> {
     val names = ArrayList<String>()
     var segmentStart = openIndex + 1
     var index = openIndex + 1

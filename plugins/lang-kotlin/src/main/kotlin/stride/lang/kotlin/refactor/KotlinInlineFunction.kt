@@ -509,8 +509,8 @@ internal object KotlinInlineFunction {
                     val reference = singleReference(code, binding.range)
                     val local = reference?.resolved
                     if (local != null && local.writtenType?.trim() == type.trim()) {
-                        val shape = code.smartCastShape(local, functionStart, site.calleeStart) ?: continue
-                        return "${local.name} may be smart-cast at line ${code.lineIndex(shape.start) + 1}; " +
+                        val cast = code.smartCastShape(local, functionStart, site.calleeStart) ?: continue
+                        return "${cast.chain} may be smart-cast at line ${code.lineIndex(cast.token.start) + 1}; " +
                             "the inlined expression could get a different type"
                     }
                     if (KotlinInline.fitsDeclaredType(code, type, binding.range)) continue

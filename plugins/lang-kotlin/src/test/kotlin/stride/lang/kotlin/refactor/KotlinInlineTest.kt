@@ -992,6 +992,26 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `a narrow member chain read by the initializer is refused`() {
+        val text = "class H(val q: Any)\n\nfun f() {\n    val h = H(\"s\")\n    val v = h.q\n" +
+            "    if (h.q is String) return\n    println(v)\n}\n"
+        assertEquals(
+            "h.q may be smart-cast at line 6; the inlined expression could get a different type",
+            refused(caretAt(text, "v = h.q")),
+        )
+    }
+
+    @Test
+    fun `a reassigned reference argument is refused`() {
+        val text = "fun show(a: Any) = println(a)\n\nprivate fun g(a: Any) = show(a)\n\n" +
+            "fun f() {\n    var b: Any = 1\n    b = \"t\"\n    g(b)\n}\n"
+        assertEquals(
+            "b may be smart-cast at line 7; the inlined expression could get a different type",
+            refused(caretAt(text, "g(b)")),
+        )
+    }
+
+    @Test
     fun `a smart cast inside the initializer does not refuse`() {
         val text = "fun f(x: Any?) {\n    val v = x!!\n    show(v)\n}\n"
         val applied = apply(caretAt(text, "v = x!!"), text)

@@ -1212,6 +1212,48 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `an input reassigned before the selection is refused`() {
+        val text = "fun show(a: Any) = println(\"any\")\nfun show(s: String) = println(\"string\")\n\n" +
+            "fun f() {\n    var b: Any = 1\n    b = \"t\"\n    show(b)\n}\n"
+        assertEquals(
+            "b may be smart-cast at line 6; the extracted function would see its declared type",
+            refused(select(text, "show(b)")),
+        )
+    }
+
+    @Test
+    fun `an input in an equality branch is refused`() {
+        val text = "fun showN(a: Any?) = 0\nfun showN(a: Any) = 1\n\n" +
+            "fun f(x: String?) {\n    if (x == \"a\") {\n        showN(x)\n    }\n}\n"
+        assertEquals(
+            "x may be smart-cast at line 5; the extracted function would see its declared type",
+            refused(select(text, "showN(x)")),
+        )
+    }
+
+    @Test
+    fun `a member read with a smart cast before the selection is refused`() {
+        val text = "fun show(a: Any) = println(a)\n\nclass C(val p: Any) {\n    fun f() {\n" +
+            "        if (p is String) {\n            show(p)\n        }\n    }\n}\n"
+        assertEquals(
+            "p may be smart-cast at line 5; the extracted function would see its declared type",
+            refused(select(text, "show(p)")),
+        )
+    }
+
+    @Test
+    fun `an equality does not narrow a non-nullable input`() {
+        val text = "fun f(x: Any) {\n    if (x == \"a\") {\n        val y = x\n    }\n}\n"
+        val applied = finish(text, ask(select(text, "x", 2)))
+
+        assertEquals(
+            "fun f(x: Any) {\n    if (x == \"a\") {\n        val y = extracted(x)\n    }\n}\n\n" +
+                "private fun extracted(x: Any) = x\n",
+            applied.text,
+        )
+    }
+
+    @Test
     fun `a smart cast inside the selection moves with it`() {
         val text = "fun f(x: Any) {\n    println(x!!)\n}\n"
         val applied = extract(text, "x!!")

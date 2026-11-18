@@ -809,7 +809,7 @@ class KotlinCodeModelTest {
     private fun shapeOf(text: String): String? {
         val code = model(text)
         val local = code.locals.first { it.name == "x" }
-        return code.smartCastShape(local, 0, text.length)?.text
+        return code.smartCastShape(local, 0, text.length)?.token?.text
     }
 
     @Test
@@ -819,11 +819,11 @@ class KotlinCodeModelTest {
             "fun f(x: Any) {\n    if (x !is String) println(x)\n}\n" to "!",
             "fun f(x: Any) {\n    val y = x as String\n}\n" to "as",
             "fun f(x: Any) {\n    val y = x!!\n}\n" to "!!",
-            "fun f(x: Any) {\n    if (x == null) return\n}\n" to "==",
-            "fun f(x: Any) {\n    if (x != null) return\n}\n" to "!=",
-            "fun f(x: Any) {\n    if (x === null) return\n}\n" to "===",
-            "fun f(x: Any) {\n    if (x !== null) return\n}\n" to "!==",
-            "fun f(x: Any) {\n    if (null == x) return\n}\n" to "==",
+            "fun f(x: Any?) {\n    if (x == null) return\n}\n" to "==",
+            "fun f(x: Any?) {\n    if (x != null) return\n}\n" to "!=",
+            "fun f(x: Any?) {\n    if (x === null) return\n}\n" to "===",
+            "fun f(x: Any?) {\n    if (x !== null) return\n}\n" to "!==",
+            "fun f(x: Any?) {\n    if (null == x) return\n}\n" to "==",
             "fun f(x: Any) {\n    println(x ?: \"\")\n}\n" to "?:",
             "fun f(x: Any) {\n    when (x) {\n        else -> 1\n    }\n}\n" to "when",
             "fun f(x: Any) {\n    println(x.isNullOrEmpty())\n}\n" to "isNullOrEmpty",
@@ -846,7 +846,7 @@ class KotlinCodeModelTest {
 
         val parameter = code.locals.first { it.name == "x" && it.kind == LocalKind.PARAMETER }
         val inner = code.locals.first { it.name == "x" && it.kind == LocalKind.VAL }
-        assertEquals("is", code.smartCastShape(parameter, 0, text.length)?.text)
+        assertEquals("is", code.smartCastShape(parameter, 0, text.length)?.token?.text)
         assertNull(code.smartCastShape(inner, 0, text.length))
     }
 
@@ -856,9 +856,115 @@ class KotlinCodeModelTest {
         val code = model(text)
         val local = code.locals.first { it.name == "x" }
 
-        assertEquals("is", code.smartCastShape(local, 0, text.length)?.text)
-        assertNull(code.smartCastShape(local, text.indexOf("is String"), text.length))
+        assertEquals("is", code.smartCastShape(local, 0, text.length)?.token?.text)
+        assertNull(code.smartCastShape(local, text.indexOf("String"), text.length))
         assertNull(code.smartCastShape(local, 0, text.indexOf("x is")))
+    }
+
+    /** The narrowed chain for the read starting at the first [read] of [text], or `null`. */
+    private fun narrowingOf(text: String, read: String): String? {
+        val start = text.indexOf(read)
+        check(start >= 0) { "missing snippet: $read" }
+        return model(text).smartCastNarrowing(KtRange(start, start + read.length), 0, text.length)?.chain
+    }
+
+    @Test
+    fun `reassigning a local narrows it`() {
+        val text = "fun f() {\n    var b: Any = 1\n    b = \"t\"\n    show(b)\n}\n"
+        assertEquals("b", narrowingOf(text, "show(b)"))
+    }
+
+    @Test
+    fun `assigning a val declared without an initializer narrows it`() {
+        val text = "fun f() {\n    val b: Any\n    b = \"t\"\n    show(b)\n}\n"
+        assertEquals("b", narrowingOf(text, "show(b)"))
+    }
+
+    @Test
+    fun `a written var declaration initializer is not a shape`() {
+        val text = "fun f() {\n    var b: Any = \"t\"\n    show(b)\n}\n"
+        assertNull(narrowingOf(text, "show(b)"))
+    }
+
+    @Test
+    fun `a written val declaration initializer is not a shape`() {
+        val text = "fun f() {\n    val b: Any = \"t\"\n    show(b)\n}\n"
+        assertNull(narrowingOf(text, "show(b)"))
+    }
+
+    @Test
+    fun `the part before a safe call of an elvis operand is narrowed`() {
+        val text = "fun f(x: String?) {\n    val l = x?.length ?: return\n    showN(x)\n}\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `an identity comparison narrows its operand`() {
+        val text = "fun f(x: String?) = if (x === \"a\") showN(x) else \"-\"\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `a member val is narrowed by a type check`() {
+        val text = "class C(val p: Any) {\n    fun f() {\n        if (p is String) show(p)\n    }\n}\n"
+        assertEquals("p", narrowingOf(text, "show(p)"))
+    }
+
+    @Test
+    fun `a chain of members is narrowed`() {
+        val text = "class H(val q: Any)\n\nfun f() {\n    val h = H(\"s\")\n    if (h.q is String) show(h.q)\n}\n"
+        assertEquals("h.q", narrowingOf(text, "show(h.q)"))
+    }
+
+    @Test
+    fun `an equality whose operand ends in a call narrows the part before its safe call`() {
+        val text = "fun f(x: String?) = if (x?.let { it.isNotEmpty() } == true) showN(x) else \"-\"\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `an equality on a safe call narrows the part before it`() {
+        val text = "fun f(x: String?) = if (x?.length != null) showN(x) else \"-\"\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `an equality with another nullable local narrows it`() {
+        val text = "fun f(x: String?, y: String) = if (x == y) showN(x) else \"-\"\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `a safe call in an elvis condition narrows the part before it`() {
+        val text = "fun f(x: String?) {\n    if (x?.isEmpty() ?: true) return\n    showN(x)\n}\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `the else of an inequality narrows its operand`() {
+        val text = "fun f(x: String?) = if (x != \"a\") \"-\" else showN(x)\n"
+        assertEquals("x", narrowingOf(text, "showN(x)"))
+    }
+
+    @Test
+    fun `an equality does not narrow a non-nullable local`() {
+        val text = "fun f(x: Any) = if (x == \"a\") show(x) else \"-\"\n"
+        assertNull(narrowingOf(text, "show(x)"))
+    }
+
+    @Test
+    fun `an assignment target is written, not read`() {
+        val text = "fun f() {\n    var b: Any = 1\n    b = \"t\"\n    b = 2\n}\n"
+        assertNull(narrowingOf(text, "b = 2"))
+    }
+
+    @Test
+    fun `a narrowed member chain does not narrow a sibling member`() {
+        val text = "class S(val focus: String?, val size: Int)\n\n" +
+            "fun f(state: S, k: Any) {\n    if (state.focus == k) {\n" +
+            "        println(state.focus.name)\n        println(state.size)\n    }\n}\n"
+        assertEquals("state.focus", narrowingOf(text, "state.focus.name"))
+        assertNull(narrowingOf(text, "state.size"))
     }
 
     @Test
