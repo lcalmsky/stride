@@ -492,7 +492,8 @@ internal object KotlinInlineFunction {
     ): String? {
         val functionStart = enclosingFunctionStart(code, site.calleeStart)
         for (binding in bindings) {
-            val type = binding.parameter.type ?: continue
+            val type = binding.parameter.type
+                ?: return "${binding.parameter.name} appears where this refactoring cannot read it"
             val argument = KotlinInline.oneLine(code.text.substring(binding.range.start, binding.range.end))
             val narrower = "The argument $argument may have a narrower type than ${binding.parameter.name}: $type"
             when (argumentType(code, type)) {

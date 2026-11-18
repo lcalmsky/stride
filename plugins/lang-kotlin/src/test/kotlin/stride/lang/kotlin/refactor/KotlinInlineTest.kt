@@ -509,6 +509,12 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `a parameter whose type cannot be read refuses its argument`() {
+        val text = "private fun show(v) = println(v)\n\nfun f() {\n    show(1)\n}\n"
+        assertEquals("v appears where this refactoring cannot read it", refused(caretAt(text, "show(1)")))
+    }
+
+    @Test
     fun `an argument used after a marker inside the first if condition is refused`() {
         val text = "private fun f(a: Boolean, p: Boolean) = if (a && p) 1 else 2\n\n" +
             "fun g(c: Boolean) {\n    println(f(c, check()))\n}\n"
