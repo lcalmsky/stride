@@ -309,7 +309,7 @@ internal fun parseParameterList(code: KotlinCode, openIndex: Int, closeIndex: In
 
 private val PARAMETER_MODIFIERS = setOf("vararg", "noinline", "crossinline")
 
-private fun parseParameter(code: KotlinCode, startIndex: Int, endIndex: Int): KtParameter? {
+internal fun parseParameter(code: KotlinCode, startIndex: Int, endIndex: Int): KtParameter? {
     if (startIndex >= endIndex) return null
     var colon = -1
     var defaultValue = -1

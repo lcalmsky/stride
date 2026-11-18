@@ -1,0 +1,190 @@
+package stride.lang.kotlin.generate
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import stride.lang.GenerateKind
+import stride.lang.RefactoringStep
+
+class KotlinGenerateEqualsTest {
+    @Test
+    fun `equals and hashCode follow the template`() {
+        val source = """
+            class Order(val x: Int, val label: String?, val names: Array<String>) {
+            }
+        """.trimIndent()
+        val result = run(GenerateKind.EQUALS_HASH_CODE, source)
+        val text = result.text ?: error(result.status ?: "refused")
+        assertTrue(text.contains("if (this === other) return true"), text)
+        assertTrue(text.contains("if (javaClass != other?.javaClass) return false"), text)
+        assertTrue(text.contains("other as Order"), text)
+        assertTrue(text.contains("if (x != other.x) return false"), text)
+        assertTrue(text.contains("if (!names.contentEquals(other.names)) return false"), text)
+        assertTrue(text.contains("result = 31 * result + (label?.hashCode() ?: 0)"), text)
+        assertTrue(text.contains("result = 31 * result + names.contentHashCode()"), text)
+        assertTrue(text.contains("var result = x"), text)
+    }
+
+    @Test
+    fun `one property and no super hashes without the multiplier`() {
+        val source = "class A(val x: String) {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source).text ?: error("refused")
+        assertTrue(text.contains("return x.hashCode()"), text)
+    }
+
+    @Test
+    fun `no properties keeps equals identity and hashes the class`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A {\n}").text ?: error("refused")
+        assertTrue(text.contains("return javaClass.hashCode()"), text)
+        assertTrue(!text.contains("other as"), text)
+    }
+
+    @Test
+    fun `int hash is the value itself`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val x: Int, val y: Int) {\n}").text ?: error("refused")
+        assertTrue(text.contains("var result = x"), text)
+        assertTrue(text.contains("result = 31 * result + y"), text)
+    }
+
+    @Test
+    fun `short and byte hashes are the values themselves`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val s: Short, val b: Byte) {\n}").text ?: error("refused")
+        assertTrue(text.contains("var result = s"), text)
+        assertTrue(text.contains("result = 31 * result + b"), text)
+    }
+
+    @Test
+    fun `nested arrays compare and hash deeply`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val grid: Array<Array<Int>>) {\n}").text ?: error("refused")
+        assertTrue(text.contains("!grid.contentDeepEquals(other.grid)"), text)
+        assertTrue(text.contains("grid.contentDeepHashCode()"), text)
+    }
+
+    @Test
+    fun `a generic class casts with a star`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A<T>(val x: T) {\n}").text ?: error("refused")
+        assertTrue(text.contains("other as A<*>"), text)
+    }
+
+    @Test
+    fun `a property named other renames the parameter`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val other: Int) {\n}").text ?: error("refused")
+        assertTrue(text.contains("equals(other1: Any?)"), text)
+        assertTrue(text.contains("if (this === other1) return true"), text)
+        assertTrue(text.contains("if (other != other1.other) return false"), text)
+    }
+
+    @Test
+    fun `a property named result renames the local`() {
+        val text = run(GenerateKind.EQUALS_HASH_CODE, "class A(val result: Int, val y: Int) {\n}").text ?: error("refused")
+        assertTrue(text.contains("var result1 = result"), text)
+        assertTrue(text.contains("return result1"), text)
+    }
+
+    @Test
+    fun `backticked names print braced templates`() {
+        val text = run(GenerateKind.TO_STRING, "class A(val `some name`: Int) {\n}").text ?: error("refused")
+        assertTrue(text.contains("some name=\${`some name`}"), text)
+    }
+
+    @Test
+    fun `toString quotes non-null strings and prints arrays`() {
+        val text = run(GenerateKind.TO_STRING, "class A(val s: String, val maybe: String?, val xs: Array<Int>) {\n}").text ?: error("refused")
+        assertTrue(text.contains("return \"A(s='\$s', maybe=\$maybe, xs=\${xs.contentToString()})\""), text)
+    }
+
+    @Test
+    fun `toString of no properties writes empty parentheses`() {
+        val text = run(GenerateKind.TO_STRING, "class A {\n}").text ?: error("refused")
+        assertTrue(text.contains("return \"A()\""), text)
+    }
+
+    @Test
+    fun `types not written cannot be checked`() {
+        val step = prepare(GenerateKind.EQUALS_HASH_CODE, "class A(val x = 1) {\n}")
+        assertTrue(step is RefactoringStep.ChooseMembers, step.toString())
+        step as RefactoringStep.ChooseMembers
+        assertEquals("type not written", step.members.single().disabledReason)
+    }
+
+    @Test
+    fun `an existing equals refuses`() {
+        val result = run(GenerateKind.EQUALS_HASH_CODE, "class A(val x: Int) {\n    override fun equals(other: Any?) = false\n}")
+        assertEquals("equals() already exists in A", result.status)
+    }
+
+    @Test
+    fun `an existing hashCode refuses`() {
+        val result = run(GenerateKind.EQUALS_HASH_CODE, "class A {\n    override fun hashCode() = 1\n}")
+        assertEquals("hashCode() already exists in A", result.status)
+    }
+
+    @Test
+    fun `an existing toString refuses`() {
+        val result = run(GenerateKind.TO_STRING, "class A {\n    override fun toString() = \"A\"\n}")
+        assertEquals("toString() already exists in A", result.status)
+    }
+
+    @Test
+    fun `equals and hashCode are refused for objects enums and value classes`() {
+        assertEquals("equals() and hashCode() is not available in an object", run(GenerateKind.EQUALS_HASH_CODE, "object A {\n}").status)
+        assertEquals(
+            "equals() and hashCode() is not available in an enum class",
+            run(GenerateKind.EQUALS_HASH_CODE, "enum class A {\n}").status,
+        )
+        assertEquals(
+            "equals() and hashCode() is not available in a value class",
+            run(GenerateKind.EQUALS_HASH_CODE, "value class A(val x: Int) {\n}").status,
+        )
+    }
+
+    @Test
+    fun `toString is refused for interfaces and annotations`() {
+        assertEquals("toString() is not available in an interface", run(GenerateKind.TO_STRING, "interface A {\n}").status)
+        assertEquals("toString() is not available in an annotation class", run(GenerateKind.TO_STRING, "annotation class A").status)
+    }
+
+    @Test
+    fun `a super equals adds the super check and starts the hash with super`() {
+        val base = "open class Base {\n    override fun equals(other: Any?): Boolean = false\n    override fun hashCode(): Int = 1\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val result = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base)))
+        val text = result.text ?: error(result.status ?: "refused")
+        assertTrue(text.contains("if (!super.equals(other)) return false"), text)
+        assertTrue(text.contains("var result = super.hashCode()"), text)
+    }
+
+    @Test
+    fun `a final super equals refuses`() {
+        val base = "open class Base {\n    final override fun equals(other: Any?): Boolean = false\n}"
+        val source = "class A(val x: Int) : Base() {\n}"
+        val result = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source, mapOf(BASE_PATH to base)))
+        assertEquals("Base declares equals() final", result.status)
+    }
+
+    @Test
+    fun `a library class supertype refuses equals`() {
+        val source = "class A(val x: Int) : Base() {\n}"
+        val result = run(GenerateKind.EQUALS_HASH_CODE, source, currentTypes(source))
+        assertEquals("Base is not in project sources", result.status)
+    }
+
+    @Test
+    fun `a supertype without an index refuses`() {
+        val source = "class A(val x: Int) : Base() {\n}"
+        assertEquals("Indexing… try again in a moment", run(GenerateKind.EQUALS_HASH_CODE, source, null).status)
+    }
+
+    @Test
+    fun `the caret starts at the first body statement`() {
+        val source = "class A(val x: Int) {\n}"
+        val text = run(GenerateKind.EQUALS_HASH_CODE, source).text ?: error("refused")
+        val caret = run(GenerateKind.EQUALS_HASH_CODE, source).caret ?: error("no caret")
+        assertTrue(text.substring(caret).startsWith("if (this === other)"), text.substring(caret))
+    }
+
+    private companion object {
+        const val BASE_PATH = "/project/src/main/kotlin/demo/Base.kt"
+        const val BASE_IMPORT = ""
+    }
+}

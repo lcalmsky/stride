@@ -14,5 +14,6 @@
     <lang.importOptimizer language="kotlin" implementationClass="stride.lang.kotlin.KotlinImportOptimizer"/>
     <lang.problemProvider language="kotlin" implementationClass="stride.lang.kotlin.KotlinProblemProvider"/>
     <lang.refactoringProvider language="kotlin" implementationClass="stride.lang.kotlin.refactor.KotlinRefactorings"/>
+    <lang.generateProvider language="kotlin" implementationClass="stride.lang.kotlin.generate.KotlinGenerate"/>
   </extensions>
 </stride-plugin>

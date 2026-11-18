@@ -1,0 +1,297 @@
+package stride.lang.kotlin.generate
+
+import stride.lang.GenerateContext
+import stride.lang.GenerateKind
+import stride.lang.MemberOption
+import stride.lang.NameCheck
+import stride.lang.RefactoringEdit
+import stride.lang.RefactoringStep
+import stride.lang.TextEdit
+
+/** One property the equals/hashCode/toString chooser lists. */
+internal class FieldCandidate(
+    val name: String,
+    val writtenName: String,
+    val typeText: String?,
+    val isVar: Boolean,
+) {
+    val array: Boolean get() = typeText?.let(::isArrayType) == true
+
+    val nestedArray: Boolean get() = typeText?.let(::isNestedArrayType) == true
+
+    val nullable: Boolean get() = typeText?.endsWith("?") == true
+
+    val string: Boolean get() = typeText?.removeSuffix("?") == "String"
+
+    val intLike: Boolean get() = typeText?.removeSuffix("?") in INT_TYPES
+
+    private companion object {
+        val INT_TYPES = setOf("Int", "Short", "Byte")
+    }
+}
+
+/** Every property with a backing field, in declaration order, primary constructor ones first. */
+internal fun fieldCandidates(klass: KtClazz): List<FieldCandidate> {
+    val result = ArrayList<FieldCandidate>()
+    klass.primaryConstructor?.parameters?.filter { it.property }?.forEach { parameter ->
+        result.add(
+            FieldCandidate(
+                parameter.name,
+                parameter.nameToken.text,
+                parameter.type,
+                parameter.isVar,
+            ),
+        )
+    }
+    for (property in klass.properties) {
+        if (property.receiver != null) continue
+        if (property.delegated || property.hasCustomGetter) continue
+        if (property.const || "abstract" in property.modifiers) continue
+        if (property.initializer == null && !property.lateinit) continue
+        val name = property.name ?: continue
+        result.add(FieldCandidate(name, property.nameToken?.text ?: name, property.typeText, property.isVar))
+    }
+    return result
+}
+
+internal fun isArrayType(text: String): Boolean {
+    val base = text.removeSuffix("?").trim()
+    if (base.endsWith("Array") && base.removeSuffix("Array") in PRIMITIVE_ARRAY_ELEMENTS) return true
+    return base.startsWith("Array<") && base.endsWith(">")
+}
+
+internal fun isNestedArrayType(text: String): Boolean {
+    val base = text.removeSuffix("?").trim()
+    if (!base.startsWith("Array<") || !base.endsWith(">")) return false
+    return isArrayType(base.substring("Array<".length, base.length - 1))
+}
+
+private val PRIMITIVE_ARRAY_ELEMENTS = setOf("Int", "Long", "Short", "Byte", "Char", "Boolean", "Float", "Double")
+
+private fun KtClazz.hasMember(name: String): Boolean = functions.any { it.name == name }
+
+private fun className(klass: KtClazz): String = klass.writtenName()
+
+/** The direct class supertype of [klass] that is declared in project sources, read for equals/hashCode. */
+internal class SuperClassInfo(val name: String, val declaration: KtClazz)
+
+internal sealed interface SuperClassLookup {
+    object None : SuperClassLookup
+
+    class Found(val info: SuperClassInfo) : SuperClassLookup
+
+    class Refused(val reason: String) : SuperClassLookup
+}
+
+internal fun directSuperClass(klass: KtClazz, context: GenerateContext): SuperClassLookup {
+    val types = context.types ?: return SuperClassLookup.None
+    for (supertype in klass.supertypes) {
+        val sources = types.resolve(supertype.written, context.path, supertype.offset)
+        if (sources.isEmpty()) {
+            // A supertype written with `(…)` is a class call, which must be readable here.
+            if (supertype.hasCall) return SuperClassLookup.Refused("${supertype.simpleName} is not in project sources")
+            continue
+        }
+        for (source in sources) {
+            val declaration = classInSource(source.text, source.nameOffset) ?: continue
+            if (declaration.isInterface) continue
+            return SuperClassLookup.Found(SuperClassInfo(supertype.simpleName, declaration))
+        }
+    }
+    return SuperClassLookup.None
+}
+
+internal fun equalsHashCode(
+    klass: KtClazz,
+    context: GenerateContext,
+): RefactoringStep {
+    availabilityRefusal(klass, GenerateKind.EQUALS_HASH_CODE)?.let { return RefactoringStep.Refused(it) }
+    if (context.types == null && klass.supertypes.isNotEmpty()) {
+        return RefactoringStep.Refused("Indexing… try again in a moment")
+    }
+    val name = className(klass)
+    if (klass.hasMember("equals")) return RefactoringStep.Refused("equals() already exists in $name")
+    if (klass.hasMember("hashCode")) return RefactoringStep.Refused("hashCode() already exists in $name")
+
+    val superLookup = directSuperClass(klass, context)
+    if (superLookup is SuperClassLookup.Refused) return RefactoringStep.Refused(superLookup.reason)
+    val superInfo = (superLookup as? SuperClassLookup.Found)?.info
+    if (superInfo != null) {
+        val declared = superInfo.declaration
+        if (declared.hasMember("equals") && "final" in declared.functions.first { it.name == "equals" }.modifiers) {
+            return RefactoringStep.Refused("${superInfo.name} declares equals() final")
+        }
+        if (declared.hasMember("hashCode") && "final" in declared.functions.first { it.name == "hashCode" }.modifiers) {
+            return RefactoringStep.Refused("${superInfo.name} declares hashCode() final")
+        }
+    }
+
+    val candidates = fieldCandidates(klass)
+    val options = candidates.map { candidate ->
+        val disabled = if (candidate.typeText == null) "type not written" else null
+        MemberOption(text = display(candidate), checked = disabled == null, disabledReason = disabled)
+    }
+    if (options.isEmpty()) {
+        val edit = editFor(klass, context, emptyList(), superInfo)
+        return edit?.let { RefactoringStep.Apply(it) } ?: RefactoringStep.Refused("No class at the caret")
+    }
+    return RefactoringStep.ChooseMembers(
+        title = "equals() and hashCode()",
+        members = options,
+        complete = { checked -> completeEquals(klass, context, candidates, options, checked, superInfo) },
+    )
+}
+
+private fun display(candidate: FieldCandidate): String =
+    candidate.name + (candidate.typeText?.let { ": $it" } ?: "")
+
+private fun completeEquals(
+    klass: KtClazz,
+    context: GenerateContext,
+    candidates: List<FieldCandidate>,
+    options: List<MemberOption>,
+    checked: List<MemberOption>,
+    superInfo: SuperClassInfo?,
+): NameCheck {
+    val selected = options.withIndex()
+        .filter { (_, option) -> checked.any { it === option } }
+        .mapNotNull { (index, _) -> candidates.getOrNull(index) }
+    val edit = editFor(klass, context, selected, superInfo)
+        ?: return NameCheck.Invalid("No class at the caret")
+    return NameCheck.Valid(edit)
+}
+
+private fun editFor(
+    klass: KtClazz,
+    context: GenerateContext,
+    fields: List<FieldCandidate>,
+    superInfo: SuperClassInfo?,
+): RefactoringEdit? {
+    val members = listOf(
+        GeneratedMember(withEqualsBody(klass, fields, superInfo != null), 1, 4),
+        GeneratedMember(hashCodeLines(fields, superInfo != null), 0, 4),
+    )
+    return KotlinGenerate.applyMembers(klass, context, members)
+}
+
+private fun withEqualsBody(klass: KtClazz, fields: List<FieldCandidate>, superEquals: Boolean): List<String> {
+    val parameter = uniqueName("other", fields.map { it.name }.toSet())
+    val name = className(klass)
+    val lines = ArrayList<String>()
+    lines.add("override fun equals($parameter: Any?): Boolean {")
+    lines.add("    if (this === $parameter) return true")
+    lines.add("    if (javaClass != $parameter?.javaClass) return false")
+    if (superEquals) lines.add("    if (!super.equals($parameter)) return false")
+    if (fields.isNotEmpty()) {
+        lines.add("")
+        val wildcards = if (klass.typeParameters.isNotEmpty()) "<*>" else ""
+        lines.add("    $parameter as $name$wildcards")
+        lines.add("")
+        for (field in fields) {
+            val access = "$parameter.${field.writtenName}"
+            val condition = when {
+                field.nestedArray -> "!${field.writtenName}.contentDeepEquals($access)"
+                field.array -> "!${field.writtenName}.contentEquals($access)"
+                else -> "${field.writtenName} != $access"
+            }
+            lines.add("    if ($condition) return false")
+        }
+        lines.add("")
+    }
+    lines.add("    return true")
+    lines.add("}")
+    return lines
+}
+
+private fun hashCodeLines(fields: List<FieldCandidate>, superHash: Boolean): List<String> {
+    val lines = ArrayList<String>()
+    lines.add("override fun hashCode(): Int {")
+    if (fields.isEmpty() && !superHash) {
+        lines.add("    return javaClass.hashCode()")
+    } else if (fields.isEmpty()) {
+        lines.add("    return super.hashCode()")
+    } else if (fields.size == 1 && !superHash) {
+        lines.add("    return ${fieldHash(fields[0], parenthesized = false, nullableSuffix = true)}")
+    } else {
+        val local = uniqueName("result", fields.map { it.name }.toSet())
+        if (superHash) {
+            lines.add("    var $local = super.hashCode()")
+            for (field in fields) {
+                lines.add("    $local = 31 * $local + ${fieldHash(field, parenthesized = true, nullableSuffix = true)}")
+            }
+        } else {
+            val first = fields.first()
+            lines.add("    var $local = ${fieldHash(first, parenthesized = false, nullableSuffix = true)}")
+            for (field in fields.drop(1)) {
+                lines.add("    $local = 31 * $local + ${fieldHash(field, parenthesized = true, nullableSuffix = true)}")
+            }
+        }
+        lines.add("    return $local")
+    }
+    lines.add("}")
+    return lines
+}
+
+private fun fieldHash(field: FieldCandidate, parenthesized: Boolean, nullableSuffix: Boolean): String {
+    val dot = if (field.nullable) "?." else "."
+    val call = when {
+        field.nestedArray -> "${field.writtenName}${dot}contentDeepHashCode()"
+        field.array -> "${field.writtenName}${dot}contentHashCode()"
+        field.intLike -> field.writtenName
+        else -> "${field.writtenName}${dot}hashCode()"
+    }
+    if (!field.nullable || !nullableSuffix) return call
+    return if (parenthesized) "($call ?: 0)" else "$call ?: 0"
+}
+
+/** `toString()` generation (G5). A supertype's own toString is never called. */
+internal fun toStringStep(klass: KtClazz, context: GenerateContext): RefactoringStep {
+    availabilityRefusal(klass, GenerateKind.TO_STRING)?.let { return RefactoringStep.Refused(it) }
+    val name = className(klass)
+    if (klass.hasMember("toString")) return RefactoringStep.Refused("toString() already exists in $name")
+    val candidates = fieldCandidates(klass)
+    val options = candidates.map { candidate ->
+        val disabled = if (candidate.typeText == null) "type not written" else null
+        MemberOption(text = display(candidate), checked = disabled == null, disabledReason = disabled)
+    }
+    if (options.isEmpty()) {
+        KotlinGenerate.applyMembers(klass, context, listOf(GeneratedMember(toStringLines(klass, emptyList()), 1, 4)))
+            ?.let { return RefactoringStep.Apply(it) }
+        return RefactoringStep.Refused("No class at the caret")
+    }
+    return RefactoringStep.ChooseMembers(
+        title = "toString()",
+        members = options,
+        complete = { checked ->
+            val selected = options.withIndex()
+                .filter { (_, option) -> checked.any { it === option } }
+                .mapNotNull { (index, _) -> candidates.getOrNull(index) }
+            KotlinGenerate.applyMembers(klass, context, listOf(GeneratedMember(toStringLines(klass, selected), 1, 4)))
+                ?.let { NameCheck.Valid(it) } ?: NameCheck.Invalid("No class at the caret")
+        },
+    )
+}
+
+private fun toStringLines(klass: KtClazz, fields: List<FieldCandidate>): List<String> {
+    val name = className(klass)
+    if (fields.isEmpty()) {
+        return listOf("override fun toString(): String {", "    return \"$name()\"", "}")
+    }
+    val value = fields.joinToString(", ") { field ->
+        val printed = when {
+            field.array -> "\${${field.writtenName}.contentToString()}"
+            field.writtenName.startsWith("`") -> "\${${field.writtenName}}"
+            else -> "\$${field.writtenName}"
+        }
+        val quoted = if (field.string && !field.nullable) "'$printed'" else printed
+        "${field.name}=$quoted"
+    }
+    return listOf("override fun toString(): String {", "    return \"$name($value)\"", "}")
+}
+
+internal fun uniqueName(base: String, used: Set<String>): String {
+    if (base !in used) return base
+    var index = 1
+    while ("$base$index" in used) index++
+    return "$base$index"
+}

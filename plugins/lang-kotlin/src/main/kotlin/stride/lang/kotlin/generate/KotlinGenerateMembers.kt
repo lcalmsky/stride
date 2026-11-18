@@ -1,0 +1,666 @@
+package stride.lang.kotlin.generate
+
+import stride.lang.GenerateContext
+import stride.lang.GenerateKind
+import stride.lang.MemberOption
+import stride.lang.NameCheck
+import stride.lang.ProjectTypes
+import stride.lang.RefactoringEdit
+import stride.lang.RefactoringStep
+import stride.lang.TypeSource
+import stride.lang.kotlin.KotlinTokenTypes
+import stride.lang.kotlin.codeTokens
+import stride.lang.kotlin.parseImports
+import stride.lang.kotlin.refactor.KotlinCode
+
+private const val INDEXING_MESSAGE = "Indexing… try again in a moment"
+private const val TODO_BODY = "TODO(\"Not yet implemented\")"
+
+internal class WalkNode(
+    val declaration: KtClazz,
+    val source: TypeSource?,
+    /** The direct supertype through which this node was reached, the `Owner` of `super<Owner>`. */
+    val directName: String,
+    val substitution: Map<String, String?>,
+    val depth: Int,
+)
+
+internal class CandidateMember(
+    val option: MemberOption,
+    val signature: String?,
+    val lines: List<String>?,
+    val imports: List<String>,
+    val caretLine: Int,
+    val caretColumn: Int,
+)
+
+internal fun overrideMethods(klass: KtClazz, context: GenerateContext): RefactoringStep =
+    generateMembers(klass, context, override = true)
+
+internal fun implementMethods(klass: KtClazz, context: GenerateContext): RefactoringStep =
+    generateMembers(klass, context, override = false)
+
+private fun generateMembers(klass: KtClazz, context: GenerateContext, override: Boolean): RefactoringStep {
+    val kind = if (override) GenerateKind.OVERRIDE_METHODS else GenerateKind.IMPLEMENT_METHODS
+    availabilityRefusal(klass, kind)?.let { return RefactoringStep.Refused(it) }
+    val types = context.types
+    if (types == null) {
+        if (klass.supertypes.isNotEmpty()) return RefactoringStep.Refused(INDEXING_MESSAGE)
+        if (!override) return RefactoringStep.Refused("No members to implement in project sources")
+        return anyMembers(klass, context, emptyList())
+    }
+
+    val walked = walk(klass, context, types, override)
+    if (!override && walked.unreadClass != null) {
+        return RefactoringStep.Refused("${walked.unreadClass} is not in project sources; it may implement these members")
+    }
+    val candidates = collectCandidates(klass, context, walked.nodes, walked.providerCount, override)
+    val title = if (walked.unreadInterfaces.isEmpty()) {
+        kind.title
+    } else {
+        kind.title + ": " + walked.unreadInterfaces.joinToString(", ") { "$it is not in project sources" }
+    }
+    if (candidates.isEmpty()) {
+        if (override) return anyMembers(klass, context, walked.nodes)
+        return RefactoringStep.Refused("No members to implement in project sources")
+    }
+    val options = candidates.map { it.option }
+    return RefactoringStep.ChooseMembers(
+        title = title,
+        members = options,
+        complete = { checked ->
+            val selected = candidates.filter { candidate -> checked.any { it === candidate.option } }
+            if (selected.isEmpty()) {
+                NameCheck.Valid(RefactoringEdit(emptyList(), context.caretOffset))
+            } else {
+                val members = selected.map { GeneratedMember(it.lines ?: emptyList(), it.caretLine, it.caretColumn) }
+                val imports = selected.flatMap { it.imports }.distinct()
+                val edit = applyWithImports(klass, context, members, imports)
+                if (edit == null) NameCheck.Invalid("No class at the caret") else NameCheck.Valid(edit)
+            }
+        },
+    )
+}
+
+private class Walked(
+    val nodes: List<WalkNode>,
+    val providerCount: Map<String, Set<String>>,
+    val unreadClass: String?,
+    val unreadInterfaces: List<String>,
+)
+
+private fun walk(klass: KtClazz, context: GenerateContext, types: ProjectTypes, override: Boolean): Walked {
+    val nodes = ArrayList<WalkNode>()
+    val providers = HashMap<String, MutableSet<String>>()
+    val seen = HashSet<String>()
+    var unreadClass: String? = null
+    val unreadInterfaces = ArrayList<String>()
+    val queue = ArrayDeque<Pair<WalkNode?, KtSupertype>>()
+    for (supertype in klass.supertypes) {
+        queue.add(null to supertype)
+    }
+    while (queue.isNotEmpty()) {
+        val (parent, supertype) = queue.removeFirst()
+        val path = parent?.source?.path ?: context.path
+        val sources = types.resolve(supertype.written, path, supertype.offset)
+        if (sources.isEmpty()) {
+            if (supertype.hasCall) {
+                if (!override && unreadClass == null) unreadClass = supertype.simpleName
+            } else if (!override && supertype.simpleName !in unreadInterfaces) {
+                unreadInterfaces.add(supertype.simpleName)
+            }
+            continue
+        }
+        for (source in sources) {
+            val declaration = classInSource(source.text, source.nameOffset) ?: continue
+            val substitution = substitutionFor(declaration, supertype, parent?.substitution.orEmpty())
+            val directName = parent?.directName ?: supertype.simpleName
+            val key = declaration.name + "@" + source.path + "@" + directName
+            if (!seen.add(key)) continue
+            val node = WalkNode(declaration, source, directName, substitution, (parent?.depth ?: -1) + 1)
+            nodes.add(node)
+            for (member in declaration.supertypes) {
+                queue.add(node to member)
+            }
+        }
+    }
+    // A member is ambiguous for `super` when more than one direct supertype provides it.
+    for (node in nodes) {
+        for (function in node.declaration.functions) {
+            val signature = functionKey(function, node.substitution)
+            providers.getOrPut(signature) { HashSet() }.add(node.directName)
+        }
+        for (property in node.declaration.properties) {
+            val name = property.name ?: continue
+            providers.getOrPut("prop:$name") { HashSet() }.add(node.directName)
+        }
+    }
+    return Walked(nodes, providers, unreadClass, unreadInterfaces)
+}
+
+private fun substitutionFor(
+    declaration: KtClazz,
+    supertype: KtSupertype,
+    outer: Map<String, String?>,
+): Map<String, String?> {
+    val result = HashMap<String, String?>()
+    val arguments = supertype.typeArguments
+    for ((index, parameter) in declaration.typeParameters.withIndex()) {
+        val written = arguments?.getOrNull(index)
+        if (written == null) {
+            result[parameter] = null
+            continue
+        }
+        val substituted = substitute(written, outer, emptySet())
+        val value = substituted.text?.trim()
+        result[parameter] = when {
+            value == null -> null
+            value == "*" -> null
+            value.startsWith("out ") || value.startsWith("in ") -> null
+            else -> value
+        }
+    }
+    return result
+}
+
+internal class Substituted(val text: String?, val reason: String? = null)
+
+/**
+ * Replaces [substitution]'s type parameter names in [text] token by token, outside qualified names.
+ * A parameter whose argument is missing, `*` or a projection makes the whole text unusable.
+ */
+internal fun substitute(text: String, substitution: Map<String, String?>, memberTypeParameters: Set<String>): Substituted {
+    if (substitution.isEmpty()) return Substituted(text)
+    val tokens = codeTokens(text)
+    val out = StringBuilder()
+    var last = 0
+    for ((index, token) in tokens.withIndex()) {
+        val identifier = token.type == KotlinTokenTypes.IDENTIFIER ||
+            (token.type == KotlinTokenTypes.KEYWORD && token.text !in KotlinCode.HARD_KEYWORDS)
+        if (!identifier) continue
+        val name = token.text.removeSurrounding("`")
+        if (name in memberTypeParameters) continue
+        if (name !in substitution) continue
+        val previous = tokens.getOrNull(index - 1)
+        if (previous != null && previous.type == KotlinTokenTypes.DOT) continue
+        val value = substitution[name] ?: return Substituted(null, "\$$name has no type argument")
+        out.append(text, last, token.start)
+        out.append(value)
+        last = token.end
+    }
+    out.append(text, last, text.length)
+    return Substituted(out.toString())
+}
+
+private fun functionKey(function: SigFunction, substitution: Map<String, String?>): String {
+    val parameters = function.parameters.joinToString(",") { parameter ->
+        substitute(parameter.type ?: "", substitution, function.typeParameterNames.toSet()).text ?: "?"
+    }
+    return "fun:" + function.name + "(" + parameters.filterNot { it.isWhitespace() } + ")"
+}
+
+private fun propertyKey(property: KtProperty, substitution: Map<String, String?>): String =
+    "prop:" + (property.name ?: "") + ":" +
+        (substitute(property.typeText ?: "", substitution, emptySet()).text ?: "?").filterNot { it.isWhitespace() }
+
+private fun collectCandidates(
+    klass: KtClazz,
+    context: GenerateContext,
+    nodes: List<WalkNode>,
+    providers: Map<String, Set<String>>,
+    override: Boolean,
+): List<CandidateMember> {
+    val existingFunctions = klass.functions.map { function ->
+        "fun:" + function.name + "(" +
+            function.parameters.joinToString(",") { (it.type ?: "").filterNot { ch -> ch.isWhitespace() } } + ")"
+    }.toSet()
+    val existingProperties = klass.properties.mapNotNull { it.name }.toSet()
+    val implemented = HashSet<String>()
+    for (node in nodes) {
+        if (node.declaration.isInterface) continue
+        for (function in node.declaration.functions) {
+            if (function.hasBody) implemented.add(functionKey(function, node.substitution))
+        }
+    }
+    val seen = HashSet<String>()
+    val result = ArrayList<CandidateMember>()
+    for (node in nodes) {
+        val declaration = node.declaration
+        for (function in declaration.functions) {
+            val key = functionKey(function, node.substitution)
+            if (!seen.add(key)) continue
+            if (key in existingFunctions) continue
+            if (!overridableFunction(function, declaration.isInterface)) continue
+            val abstractMember = isAbstractFunction(function, declaration.isInterface)
+            if (!override && !abstractMember) continue
+            if (!override && key in implemented) continue
+            result.add(functionCandidate(klass, context, node, function, key, abstractMember, providers, !override))
+        }
+        for (property in declaration.properties) {
+            val name = property.name ?: continue
+            val key = propertyKey(property, node.substitution)
+            if (!seen.add(key)) continue
+            if (name in existingProperties) continue
+            if (!overridableProperty(property, declaration.isInterface)) continue
+            val abstractMember = isAbstractProperty(property, declaration.isInterface)
+            if (!override && !abstractMember) continue
+            if (!override && key in implemented) continue
+            result.add(propertyCandidate(klass, context, node, property, key, abstractMember, providers, !override))
+        }
+    }
+    return result
+}
+
+private fun overridableFunction(function: SigFunction, interfaceMember: Boolean): Boolean {
+    if ("private" in function.modifiers) return false
+    if ("final" in function.modifiers) return false
+    if (interfaceMember) return true
+    return "open" in function.modifiers || "abstract" in function.modifiers || "override" in function.modifiers
+}
+
+private fun isAbstractFunction(function: SigFunction, interfaceMember: Boolean): Boolean {
+    if ("abstract" in function.modifiers) return true
+    return interfaceMember && !function.hasBody
+}
+
+private fun overridableProperty(property: KtProperty, interfaceMember: Boolean): Boolean {
+    if ("private" in property.modifiers) return false
+    if ("final" in property.modifiers) return false
+    if (interfaceMember) return true
+    return "open" in property.modifiers || "abstract" in property.modifiers || "override" in property.modifiers
+}
+
+private fun isAbstractProperty(property: KtProperty, interfaceMember: Boolean): Boolean {
+    if ("abstract" in property.modifiers) return true
+    return interfaceMember && property.initializer == null && !property.hasCustomGetter
+}
+
+private fun functionCandidate(
+    klass: KtClazz,
+    context: GenerateContext,
+    node: WalkNode,
+    function: SigFunction,
+    key: String,
+    abstractMember: Boolean,
+    providers: Map<String, Set<String>>,
+    checked: Boolean,
+): CandidateMember {
+    val memberTypeParameters = function.typeParameterNames.toSet()
+    if (function.receiver != null) {
+        return disabled(function.name, node, "member extensions are not generated")
+    }
+    val collision = node.substitution.values.filterNotNull()
+        .flatMap(::simpleTypeNames)
+        .firstOrNull { it in memberTypeParameters }
+    if (collision != null) {
+        return disabled(function.name, node, "member type parameter $collision is already used")
+    }
+    val signature = projectSignature(node, function, memberTypeParameters) ?: return disabled(
+        function.name,
+        node,
+        functionSignatureReason(node, function, memberTypeParameters) ?: "cannot be generated",
+    )
+    val importResult = checkImports(klass, context, node, function, memberTypeParameters)
+    if (importResult.reason != null) return disabled(function.name, node, importResult.reason)
+    val owner = providers[key]?.takeIf { it.size > 1 }?.let { node.directName }
+    val superPrefix = if (owner != null) "super<$owner>" else "super"
+    val lines = if (abstractMember) {
+        listOf("override $signature {", "    $TODO_BODY", "}")
+    } else {
+        val arguments = function.parameters.joinToString(", ") {
+            if (it.vararg) "*${it.nameToken.text}" else it.nameToken.text
+        }
+        val call = "$superPrefix.${function.nameToken.text}($arguments)"
+        val returnsUnit = function.returnType == null || function.returnType == "Unit"
+        if (returnsUnit) {
+            listOf("override $signature {", "    $call", "}")
+        } else {
+            listOf("override $signature {", "    return $call", "}")
+        }
+    }
+    val caretLine = if (abstractMember) 1 else 1
+    val option = MemberOption(
+        text = signature,
+        group = node.declaration.writtenName(),
+        checked = checked,
+    )
+    return CandidateMember(option, signature, lines, importResult.imports, caretLine, 4)
+}
+
+private fun functionSignatureReason(node: WalkNode, function: SigFunction, memberTypeParameters: Set<String>): String? {
+    for (parameter in function.parameters) {
+        val type = parameter.type ?: continue
+        val result = substitute(type, node.substitution, memberTypeParameters)
+        if (result.text == null) return result.reason
+    }
+    return null
+}
+
+private fun disabled(name: String, node: WalkNode, reason: String): CandidateMember = CandidateMember(
+    MemberOption(text = name, group = node.declaration.writtenName(), disabledReason = reason),
+    null,
+    null,
+    emptyList(),
+    0,
+    0,
+)
+
+private fun projectSignature(node: WalkNode, function: SigFunction, memberTypeParameters: Set<String>): String? {
+    val substitutedParameter = function.parameters.map { parameter ->
+        val type = parameter.type ?: return null
+        substitute(type, node.substitution, memberTypeParameters).text ?: return null
+    }
+    val typeParameters = function.typeParametersText?.let {
+        substitute(it, node.substitution, memberTypeParameters).text ?: return null
+    }
+    val receiver = function.receiver?.let { substitute(it, node.substitution, memberTypeParameters).text ?: return null }
+    val returnType = function.returnType?.let { substitute(it, node.substitution, memberTypeParameters).text ?: return null }
+    val where = function.whereText?.let { substitute(it, node.substitution, memberTypeParameters).text ?: return null }
+    val kept = KEPT_MODIFIERS.filter { it in function.modifiers }
+    val builder = StringBuilder()
+    if (kept.isNotEmpty()) builder.append(kept.joinToString(" ")).append(' ')
+    builder.append("fun ")
+    if (typeParameters != null) builder.append(typeParameters).append(' ')
+    if (receiver != null) builder.append(receiver).append('.')
+    builder.append(function.nameToken.text).append('(')
+    builder.append(
+        function.parameters.mapIndexed { index, parameter -> parameterText(parameter, substitutedParameter[index]) }
+            .joinToString(", "),
+    )
+    builder.append(')')
+    if (returnType != null) builder.append(": ").append(returnType)
+    if (where != null) builder.append(' ').append(where)
+    return builder.toString()
+}
+
+private val KEPT_MODIFIERS = listOf("suspend", "operator", "infix")
+
+private fun parameterText(parameter: SigParameter, type: String): String =
+    (if (parameter.vararg) "vararg " else "") + parameter.nameToken.text + ": " + type
+
+private fun propertyCandidate(
+    klass: KtClazz,
+    context: GenerateContext,
+    node: WalkNode,
+    property: KtProperty,
+    key: String,
+    abstractMember: Boolean,
+    providers: Map<String, Set<String>>,
+    checked: Boolean,
+): CandidateMember {
+    val name = property.name ?: return disabled("", node, "unusable")
+    if (property.receiver != null) return disabled(name, node, "member extensions are not generated")
+    val type = property.typeText ?: return disabled(name, node, "type not written")
+    val substituted = substitute(type, node.substitution, emptySet()).text ?: return disabled(name, node, "cannot be generated")
+    val importResult = checkPropertyImports(klass, context, node, property)
+    if (importResult.reason != null) return disabled(name, node, importResult.reason)
+    val writtenName = property.nameToken?.text ?: name
+    val signature = "${if (property.isVar) "var" else "val"} $writtenName: $substituted"
+    val owner = providers[key]?.takeIf { it.size > 1 }?.let { node.directName }
+    val superPrefix = if (owner != null) "super<$owner>" else "super"
+    val lines = ArrayList<String>()
+    lines.add("override $signature")
+    val getter = if (abstractMember) "get() = $TODO_BODY" else "get() = $superPrefix.$writtenName"
+    lines.add("    $getter")
+    if (property.isVar) {
+        if (abstractMember) {
+            lines.add("    set(value) {}")
+        } else {
+            lines.add("    set(value) {")
+            lines.add("        $superPrefix.$writtenName = value")
+            lines.add("    }")
+        }
+    }
+    val option = MemberOption(text = signature, group = node.declaration.writtenName(), checked = checked)
+    return CandidateMember(option, signature, lines, importResult.imports, 1, 4)
+}
+
+private class ImportCheck(val imports: List<String>, val reason: String?)
+
+private fun checkImports(
+    klass: KtClazz,
+    context: GenerateContext,
+    node: WalkNode,
+    function: SigFunction,
+    memberTypeParameters: Set<String>,
+): ImportCheck {
+    val declaration = node.declaration
+    val types = ArrayList<String>()
+    function.receiver?.let { types.add(it) }
+    function.typeParametersText?.let { types.add(it) }
+    function.parameters.forEach { it.type?.let { type -> types.add(type) } }
+    function.returnType?.let { types.add(it) }
+    function.whereText?.let { types.add(it) }
+    val offset = declaration.nameToken?.start ?: 0
+    return checkTypeImports(klass, context, node, types, memberTypeParameters, offset)
+}
+
+private fun checkPropertyImports(
+    klass: KtClazz,
+    context: GenerateContext,
+    node: WalkNode,
+    property: KtProperty,
+): ImportCheck {
+    val types = listOfNotNull(property.typeText)
+    val offset = node.declaration.nameToken?.start ?: 0
+    return checkTypeImports(klass, context, node, types, emptySet(), offset)
+}
+
+private fun checkTypeImports(
+    klass: KtClazz,
+    context: GenerateContext,
+    node: WalkNode,
+    typeTexts: List<String>,
+    memberTypeParameters: Set<String>,
+    offset: Int,
+): ImportCheck {
+    val types = context.types ?: return ImportCheck(emptyList(), null)
+    val imports = LinkedHashSet<String>()
+    for (text in typeTexts) {
+        for (name in simpleTypeNames(text)) {
+            if (name in memberTypeParameters) continue
+            if (name in node.substitution) continue
+            if (name in DEFAULT_TYPE_NAMES) continue
+            if (klass.code.text.let { declaresSimpleName(it, name) }) continue
+            val targetPackage = parseImports(context.text).packageName
+            val sourcePackage = parseImports(node.source?.text ?: "").packageName
+            val targetImports = parseImports(context.text).imports.filter { !it.star && it.boundName == name }
+            val sourceImports = parseImports(node.source?.text ?: "").imports.filter { !it.star && it.boundName == name }
+            if (sourceImports.any { it.alias != null }) {
+                return ImportCheck(emptyList(), "refers to another $name here")
+            }
+            val targetResolved = types.resolve(name, context.path, context.caretOffset)
+            val sourceResolved = types.resolve(name, node.source?.path ?: context.path, offset)
+            if (targetImports.isNotEmpty() && sourceImports.isNotEmpty() &&
+                targetImports.any { t -> sourceImports.any { it.path == t.path } }
+            ) {
+                continue
+            }
+            when {
+                sourceResolved.isNotEmpty() -> {
+                    val sourceNames = sourceResolved.map { it.qualifiedName }.toSet()
+                    if (targetResolved.isNotEmpty()) {
+                        if (targetResolved.any { it.qualifiedName in sourceNames }) continue
+                        return ImportCheck(emptyList(), "refers to another $name here")
+                    }
+                    if (targetImports.isNotEmpty()) {
+                        if (targetImports.any { it.path in sourceNames }) continue
+                        return ImportCheck(emptyList(), "refers to another $name here")
+                    }
+                    if (targetPackage == sourcePackage && sourceNames.singleOrNull()?.substringBeforeLast('.') == targetPackage) {
+                        continue
+                    }
+                    imports.add(sourceNames.sorted().first())
+                }
+                sourceImports.isNotEmpty() -> {
+                    val path = sourceImports.first().path
+                    if (targetImports.isNotEmpty()) {
+                        if (targetImports.any { it.path == path }) continue
+                        return ImportCheck(emptyList(), "refers to another $name here")
+                    }
+                    if (targetResolved.isNotEmpty()) return ImportCheck(emptyList(), "refers to another $name here")
+                    imports.add(path)
+                }
+                else -> {
+                    val hasStar = parseImports(node.source?.text ?: "").imports.any { it.star }
+                    val aliased = parseImports(node.source?.text ?: "").imports.any { it.alias != null }
+                    if (targetResolved.isNotEmpty() || targetImports.isNotEmpty() || hasStar || aliased) {
+                        return ImportCheck(emptyList(), "refers to another $name here")
+                    }
+                    return ImportCheck(emptyList(), "refers to another $name here")
+                }
+            }
+        }
+    }
+    return ImportCheck(imports.toList(), null)
+}
+
+private fun declaresSimpleName(text: String, name: String): Boolean {
+    val escaped = Regex.escape(name)
+    return Regex("""\b(?:class|interface|object|typealias)\s+`?$escaped`?(?![\w`])""").containsMatchIn(text)
+}
+
+internal fun simpleTypeNames(text: String): List<String> {
+    val tokens = codeTokens(text)
+    val names = ArrayList<String>()
+    for ((index, token) in tokens.withIndex()) {
+        if (token.type != KotlinTokenTypes.IDENTIFIER) continue
+        val previous = tokens.getOrNull(index - 1)
+        if (previous != null && previous.type == KotlinTokenTypes.DOT) continue
+        val name = token.text.removeSurrounding("`")
+        if (name.isEmpty()) continue
+        if (index > 0 && (previous?.text == "@")) continue
+        if (name.firstOrNull()?.isLowerCase() == true) continue
+        names.add(name)
+    }
+    return names
+}
+
+internal val DEFAULT_TYPE_NAMES: Set<String> = setOf(
+    "Any", "Unit", "Nothing", "Boolean", "Byte", "Short", "Int", "Long", "Float", "Double", "Char",
+    "String", "CharSequence", "Number", "Comparable", "Enum", "Annotation", "Array", "Throwable",
+    "Exception", "RuntimeException", "Error", "Iterable", "MutableIterable", "Collection",
+    "MutableCollection", "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap",
+    "ArrayList", "HashMap", "HashSet", "LinkedHashMap", "LinkedHashSet", "Pair", "Triple",
+    "Sequence", "Lazy", "Result", "Deprecated", "Suppress", "JvmStatic", "JvmField", "JvmName",
+    "JvmOverloads", "JvmInline", "OptIn", "RequiresOptIn", "AnnotationTarget", "AnnotationRetention",
+    "IntRange", "LongRange", "CharRange", "IntArray", "LongArray", "ShortArray", "ByteArray",
+    "CharArray", "BooleanArray", "FloatArray", "DoubleArray", "Runnable", "Cloneable",
+    "AutoCloseable", "Appendable", "Readable", "StringBuilder", "Regex", "MatchResult",
+    "IllegalArgumentException", "IllegalStateException", "IndexOutOfBoundsException",
+    "UnsupportedOperationException", "ClassCastException", "NullPointerException", "Function",
+    "Supplier", "Consumer", "Predicate", "BiFunction",
+)
+
+private fun anyMembers(
+    klass: KtClazz,
+    context: GenerateContext,
+    nodes: List<WalkNode>,
+): RefactoringStep {
+    val declared = HashSet<String>()
+    var finalEquals = false
+    var finalHash = false
+    var finalToString = false
+    for (node in nodes) {
+        val names = node.declaration.functions.filter { it.container == SigContainer.CLASS }
+        for (function in names) {
+            declared.add(function.name)
+            if ("final" in function.modifiers) {
+                when (function.name) {
+                    "equals" -> finalEquals = true
+                    "hashCode" -> finalHash = true
+                    "toString" -> finalToString = true
+                }
+            }
+        }
+    }
+    klass.functions.forEach { declared.add(it.name) }
+    val candidates = ArrayList<CandidateMember>()
+    if (!finalEquals && "equals" !in declared) {
+        candidates.add(
+            CandidateMember(
+                MemberOption(text = "fun equals(other: Any?): Boolean", group = "Any"),
+                "equals(other: Any?): Boolean",
+                listOf("override fun equals(other: Any?): Boolean {", "    return super.equals(other)", "}"),
+                emptyList(),
+                1,
+                4,
+            ),
+        )
+    }
+    if (!finalHash && "hashCode" !in declared) {
+        candidates.add(
+            CandidateMember(
+                MemberOption(text = "fun hashCode(): Int", group = "Any"),
+                "hashCode(): Int",
+                listOf("override fun hashCode(): Int {", "    return super.hashCode()", "}"),
+                emptyList(),
+                1,
+                4,
+            ),
+        )
+    }
+    if (!finalToString && "toString" !in declared) {
+        candidates.add(
+            CandidateMember(
+                MemberOption(text = "fun toString(): String", group = "Any"),
+                "toString(): String",
+                listOf("override fun toString(): String {", "    return super.toString()", "}"),
+                emptyList(),
+                1,
+                4,
+            ),
+        )
+    }
+    if (candidates.isEmpty()) return RefactoringStep.Refused("No members to implement in project sources")
+    val options = candidates.map { it.option }
+    return RefactoringStep.ChooseMembers(
+        title = GenerateKind.OVERRIDE_METHODS.title,
+        members = options,
+        complete = { checked ->
+            val selected = candidates.filter { candidate -> checked.any { it === candidate.option } }
+            val members = selected.map { GeneratedMember(it.lines ?: emptyList(), it.caretLine, it.caretColumn) }
+            val edit = applyWithImports(klass, context, members, emptyList())
+            if (edit == null) NameCheck.Invalid("No class at the caret") else NameCheck.Valid(edit)
+        },
+    )
+}
+
+private fun applyWithImports(
+    klass: KtClazz,
+    context: GenerateContext,
+    members: List<GeneratedMember>,
+    imports: List<String>,
+): RefactoringEdit? {
+    if (members.isEmpty()) return RefactoringEdit(emptyList(), context.caretOffset)
+    val placement = placeMembers(klass.code, klass, context.caretOffset, members)
+    if (placement !is Placement.At) return null
+    val edits = ArrayList<stride.lang.TextEdit>()
+    edits.add(stride.lang.TextEdit(placement.offset, placement.end, placement.text))
+    edits.addAll(importEdits(klass.code, imports))
+    return RefactoringEdit(edits, placement.caret)
+}
+
+/** Import line inserts in the shape of the import quick fix, one edit per insertion offset. */
+internal fun importEdits(code: KotlinCode, fqns: List<String>): List<stride.lang.TextEdit> {
+    val parsed = parseImports(code.text)
+    val missing = fqns.distinct().sorted().filter { fqn -> parsed.imports.none { it.path == fqn && !it.star } }
+    if (missing.isEmpty()) return emptyList()
+    if (parsed.imports.isEmpty()) {
+        val packageEnd = parsed.packageLineEnd
+        return if (parsed.packageName != null && packageEnd != null) {
+            listOf(stride.lang.TextEdit(packageEnd, packageEnd, "\n\n" + missing.joinToString("\n") { "import $it" }))
+        } else {
+            listOf(stride.lang.TextEdit(0, 0, missing.joinToString("\n") { "import $it" } + "\n\n"))
+        }
+    }
+    val grouped = LinkedHashMap<Int, MutableList<String>>()
+    for (fqn in missing) {
+        val after = parsed.imports.firstOrNull { it.path > fqn }
+        val offset = after?.start ?: parsed.imports.last().end
+        grouped.getOrPut(offset) { ArrayList() }.add(fqn)
+    }
+    return grouped.map { (offset, names) ->
+        stride.lang.TextEdit(offset, offset, names.joinToString("") { "import $it\n" })
+    }
+}
