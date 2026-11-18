@@ -219,6 +219,13 @@ class KotlinGenerateEqualsTest {
     }
 
     @Test
+    fun `a toString overload in the class is not the member`() {
+        val source = "class A(val x: Int) {\n    fun toString(prefix: String): String = prefix\n}"
+        val text = run(GenerateKind.TO_STRING, source).text ?: error("refused")
+        assertTrue(text.contains("override fun toString(): String"), text)
+    }
+
+    @Test
     fun `an equals or hashCode overload in the class is not the member`() {
         val source = "class A(val x: Int) {\n    fun equals(o: A): Boolean = false\n    fun hashCode(bits: Int): Int = bits\n}"
         val text = run(GenerateKind.EQUALS_HASH_CODE, source).text ?: error("refused")

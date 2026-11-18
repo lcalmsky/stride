@@ -75,7 +75,8 @@ private fun KtClazz.hasEquals(): Boolean = functions.any(::isEqualsOverride)
 
 private fun KtClazz.hasHashCode(): Boolean = functions.any(::isHashCodeOverride)
 
-private fun KtClazz.hasToString(): Boolean = functions.any { it.name == "toString" }
+private fun KtClazz.hasToString(): Boolean =
+    functions.any { it.name == "toString" && it.receiver == null && it.parameters.isEmpty() }
 
 private fun className(klass: KtClazz): String = klass.writtenName()
 
