@@ -28,8 +28,6 @@ internal class KtLocal(
     val lateinit: Boolean,
     val declarationStatement: KtStatement?,
 ) {
-    val nameRange: KtRange get() = nameToken.range
-
     fun contains(offset: Int): Boolean = scope.contains(offset)
 }
 

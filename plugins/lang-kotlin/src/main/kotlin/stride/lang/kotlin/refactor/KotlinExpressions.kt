@@ -6,14 +6,9 @@ internal enum class CallKind { PARENTHESES, INDEX, LAMBDA }
 
 /** One call site: the opening bracket and its partner. */
 internal class KtCall(val open: KtToken, val close: KtToken?, val kind: CallKind) {
-    val openOffset: Int get() = open.start
-
     val closeOffset: Int get() = close?.start ?: open.start
 
     val range: KtRange get() = KtRange(open.start, close?.end ?: open.end)
-
-    /** A call with arguments; a lambda call has no argument list. */
-    val isInvocation: Boolean get() = kind != CallKind.LAMBDA
 }
 
 internal enum class EffectKind { CALL, ASSIGNMENT, INCREMENT }
@@ -22,8 +17,6 @@ internal enum class EffectKind { CALL, ASSIGNMENT, INCREMENT }
 internal class KtEffect(val kind: EffectKind, val offset: Int, val range: KtRange)
 
 private val ASSIGNMENT_OPERATORS = setOf("=", "+=", "-=", "*=", "/=", "%=")
-
-private val CONTROL_KEYWORD_PARENS = setOf("catch")
 
 internal fun computeCalls(code: KotlinCode): List<KtCall> {
     val excluded = HashSet<Int>()

@@ -41,8 +41,6 @@ internal class KtFunction(
     val container: FunctionContainer,
     val containerBlock: KtBlock?,
 ) {
-    val isExpressionBody: Boolean get() = expressionRange != null
-
     /** The offsets the body occupies: the block content or the `= expression` range. */
     val bodyRange: KtRange?
         get() = body?.let { KtRange(it.start, it.end) } ?: expressionRange

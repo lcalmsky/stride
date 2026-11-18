@@ -12,8 +12,6 @@ internal data class KtRange(val start: Int, val end: Int) {
 
     fun contains(offset: Int): Boolean = offset in start until end
 
-    fun containsRange(other: KtRange): Boolean = other.start >= start && other.end <= end
-
     fun asIntRange(): IntRange = start until end
 }
 
@@ -224,8 +222,6 @@ internal class KotlinCode(val text: String) {
         return found?.takeIf { offset < it.end }
     }
 
-    fun codeToken(index: Int): KtToken? = code.getOrNull(index)
-
     /** The bracket partner of code token [index], or `null`. */
     fun matching(index: Int): KtToken? {
         val partner = bracketPairs.getOrNull(index) ?: -1
@@ -369,8 +365,6 @@ internal class KotlinCode(val text: String) {
         }
         return false
     }
-
-    fun statementText(statement: KtStatement): String = text.substring(statement.start, statement.end)
 
     /** True when the newline between the two code tokens ends a statement. */
     internal fun splitsAfter(previous: KtToken, next: KtToken): Boolean {
