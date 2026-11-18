@@ -2393,7 +2393,11 @@ R3 to R5.
 - **Unread spellings.** The model reads tokens, not a parse tree, so a refactoring that renames,
   removes or adds a name first looks at every code token spelled like it. A token the model cannot
   place (not a reference it resolved, a declaration, a member name after `.`, `?.` or `::`, a
-  named argument, a label or a modifier) refuses the refactoring instead of being skipped.
+  named argument, a label or a modifier) refuses the refactoring instead of being skipped. Extract
+  Method moves names into a new scope, so a name token in its selection that the model cannot place
+  refuses it with the same message. Letters attached to a number (`1u`, `2UL`, `1f`) belong to the
+  literal and are no name, and a name directly followed by `@` is a label, so the code after it
+  (`loop@ println(x)`) is code, not an annotation.
 - **Calls and effects.** A call is a `(` right after an identifier, `>`, `)` or `]`, a `[` right
   after an identifier, `)` or `]`, or a lambda `{` right after an identifier or `)`; constructor
   calls count, operator overloads written as operators cannot be seen. Effects are calls,
@@ -2435,7 +2439,7 @@ R3 to R5.
 | Not stable and something runs before it (R2) | refuse: `Code before <expr> in this statement would run after it` |
 | Other occurrences | the same token sequence, whitespace and comments ignored, in the rest of the statement's block from the statement start (nested blocks included), each passing the expression rules, with every name in the same role as in the selection (a reference resolving to the same declaration, or not a reference in both), so a declared name, a named argument or a name that resolves to another local is never an occurrence. Occurrences inside a receiver scope the selection is not in follow the R2 receiver rule and are left out when the expression holds `this` or a non-local name. Stable: all of them. Read-only: those before the first effect after the statement start that do not sit, below the statement's block, inside a lambda, a local function, an object expression or class body, a loop body, or after the `while`, `do` or `for` keyword of a statement, since those run later or repeatedly. Anything else: none. With one or more, the `Occurrences` chooser offers `Replace this occurrence only` and `Replace all <n> occurrences` with every occurrence highlighted |
 | Name | suggested from the expression: the last called or read member (`getName()` → `name`, a leading `get` before an uppercase letter dropped), a constructor call's class name with a lowercase first letter, `text` for a string literal, `number` for a number, otherwise `value`; made unique with 2, 3, … The `Introduce Variable` name popup checks it |
-| Name check | a Kotlin identifier (`[A-Za-z_][A-Za-z0-9_]*`) not made only of `_`, which Kotlin reserves, and not a hard keyword (`Not a valid name`), and spelled by no code token other than a modifier anywhere in the enclosing function, initializer or outermost lambda (`'<name>' is already used in this function`), so a new local never hides a member a later line reads |
+| Name check | a Kotlin identifier (`[A-Za-z_][A-Za-z0-9_]*`) not made only of `_`, which Kotlin reserves, and not a hard keyword (`Not a valid name`), and spelled by no code token other than a modifier or a member name after `.` or `?.` (a local cannot capture those) anywhere in the enclosing function, initializer or outermost lambda (`'<name>' is already used in this function`), so a new local never hides a member a later line reads |
 | Result | `val <name> = <expression as written>` on a new line before the statement with its indentation; the expression and the chosen occurrences become `<name>`; the caret goes after the replaced expression; status `Introduced variable <name>` |
 
 stride always writes `val` without a type. IntelliJ's `Declare with var` and `Specify type
