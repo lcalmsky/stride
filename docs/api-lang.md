@@ -409,7 +409,8 @@ class MemberOption(val text: String, val group: String? = null, val checked: Boo
 that file being the current one or a `TypeSource.path`, and resolves it through that file's
 package, imports and enclosing classes; it never reads libraries. `TypeSource.text` is the whole
 file and `nameOffset` the declaration's name in it. `hasTopLevelFunction` answers for every
-project file, whatever the package. More `GenerateKind` values may come in a minor release, so a
+project file, whatever the package, and counts top-level properties too: the index does not tell
+them apart, and `val A: (Int) -> A` is called like a function. More `GenerateKind` values may come in a minor release, so a
 provider's `when` over the enum ends in `else -> null`.
 
 `ChooseMembers.complete` receives the checked rows in list order and is pure like

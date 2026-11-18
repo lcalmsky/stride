@@ -2612,7 +2612,7 @@ internal class GenerateRequest(val editor: TextFileEditor, val preparedText: Str
                                val preparedSelection: TextRange,
                                val rows: List<ChooserRow<GeneratePrepared>>)
 internal class GeneratePrepared(val kind: GenerateKind, val step: RefactoringStep)
-internal class MemberChooseRequest(val editor: TextFileEditor, val title: String,
+internal class MemberChooseRequest(val editor: TextFileEditor, val title: String,   // the generator's name for messages
                                    val preparedText: String, val preparedSelection: TextRange,
                                    val step: RefactoringStep.ChooseMembers) {
     var errorMessage: String?                    // the last rejected choice's reason
@@ -2744,7 +2744,7 @@ Kotlin 2.4.21:
 | an existing constructor that also accepts the same number of arguments through default values or a `vararg` (`constructor(x: Long, y: Int = 0)`, `constructor(vararg xs: Int)`) | `A(1)` silently moves to the new constructor | refuse: `A(…) with 1 argument would call the new constructor` |
 | an existing constructor with the same number of parameters and other types (`constructor(x: Long)`) | `A(1)` silently moves when the literal fits both | refuse with the same message |
 | `operator fun invoke` in the class's companion object | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
-| a top-level function named `A` in project sources (`ProjectTypes.hasTopLevelFunction`) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
+| a top-level function or property named `A` in project sources (`ProjectTypes.hasTopLevelFunction`) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
 | the class has no explicit constructor at all | the implicit `A()` disappears; `A()` stops compiling, enum entries without arguments stop compiling, and a top-level `fun A()` silently receives `A()` | write `constructor()` first, then the new constructor: `A()`, entries and subclass calls keep their target (measured). A callable reference `::A` without an expected type becomes ambiguous (a compile error, documented) |
 | a supertype initialized in the header (`class A : Base()`) | `supertype initialization is impossible without a primary constructor` | refuse: `A initializes Base() in its header` |
 | a class supertype without parentheses (`class A : Base`) | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first and the body delegates `: super(a, b)`; otherwise refuse: `Base is not in project sources` |
