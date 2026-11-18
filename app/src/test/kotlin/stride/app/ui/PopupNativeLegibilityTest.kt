@@ -341,7 +341,6 @@ class PopupNativeLegibilityTest {
                 "alpha(value: Int)",
             ),
         )
-        val popupState = AppState()
         return listOf(
             PopupCase(
                 name = "file-structure",
