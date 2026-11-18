@@ -10,8 +10,15 @@ import stride.core.Disposer
 import stride.core.extensions.ExtensionPointName
 import stride.core.services.Project
 import stride.core.services.Service
+import stride.core.vfs.VFS_CHANGES
 import stride.core.vfs.VFile
+import stride.core.vfs.VFileEvent
+import stride.core.vfs.VfsListener
+import java.io.IOException
 import java.nio.file.Path
+
+/** What [FileEditorManager.reloadChangedFromDisk] did with the open text editors. */
+data class ReloadSummary(val reloaded: Int, val keptUnsaved: Int)
 
 /** Open editor tabs of one project, ordered as they were opened. */
 @Service(Service.Level.PROJECT)
@@ -40,6 +47,55 @@ class FileEditorManager(private val project: Project) : Disposable {
     private val closedFiles = ArrayList<VFile>()
 
     private var disposed = false
+
+    init {
+        project.messageBus.connect(this).subscribe(
+            VFS_CHANGES,
+            object : VfsListener {
+                // The watcher publishes from its own thread, so the reload's blocking read stays
+                // off the UI thread.
+                override fun after(events: List<VFileEvent>) = reloadTouchedEditors(events)
+            },
+        )
+    }
+
+    private fun reloadTouchedEditors(events: List<VFileEvent>) {
+        val paths = HashSet<Path>()
+        for (event in events) {
+            if (event is VFileEvent.Created || event is VFileEvent.Changed) paths.add(canonical(event.file.path))
+        }
+        if (paths.isEmpty()) return
+        for (editor in openFilesState.toList()) {
+            if (editor is TextFileEditor && canonical(editor.file.path) in paths) editor.reloadFromDisk()
+        }
+    }
+
+    /** The path both the watcher and an editor agree on; a project opened through a link is compared by its real path. */
+    private fun canonical(path: Path): Path {
+        val normalized = path.toAbsolutePath().normalize()
+        return try {
+            normalized.toRealPath()
+        } catch (e: IOException) {
+            normalized
+        }
+    }
+
+    /**
+     * Reloads every open text editor from disk: one with no unsaved text takes the disk text,
+     * one with unsaved text keeps its own.
+     */
+    fun reloadChangedFromDisk(): ReloadSummary {
+        var reloaded = 0
+        var keptUnsaved = 0
+        for (editor in openFilesState.toList()) {
+            when ((editor as? TextFileEditor)?.reloadFromDisk()) {
+                ReloadResult.RELOADED -> reloaded++
+                ReloadResult.KEPT_UNSAVED -> keptUnsaved++
+                else -> {}
+            }
+        }
+        return ReloadSummary(reloaded, keptUnsaved)
+    }
 
     /**
      * Opens [file] in a new tab, or selects its existing tab. Returns `null` when no provider

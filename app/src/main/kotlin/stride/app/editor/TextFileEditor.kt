@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,6 +120,9 @@ import stride.lang.TextEdit
 import stride.lang.TokenSpan
 import stride.search.DeclarationParser
 import stride.search.ParsedDeclaration
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.file.Files
 import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.math.roundToInt
@@ -210,6 +214,9 @@ private data class BandKey(
     val bottom: androidx.compose.ui.unit.Dp,
     val left: androidx.compose.ui.unit.Dp,
 )
+
+/** What [TextFileEditor.reloadFromDisk] did with the text. */
+enum class ReloadResult { RELOADED, UNCHANGED, KEPT_UNSAVED, FAILED }
 
 /**
  * Single-file text editor backed by [LineStateHighlighter]. Files larger than
@@ -1406,6 +1413,75 @@ class TextFileEditor(
         if (isReadOnly || !isModified) return
         file.writeText(text)
         savedText = text
+    }
+
+    /**
+     * Replaces the text with the file's current content, as one undo step, when the file changed
+     * on disk and the editor has no unsaved text; the saved text becomes the disk text and the
+     * primary caret keeps its line and column. Unsaved text is left as it is, as is an editor
+     * whose file cannot be read as UTF-8. Safe to call from any thread.
+     */
+    fun reloadFromDisk(): ReloadResult {
+        if (isReadOnly) return ReloadResult.FAILED
+        return applyDiskText(readDiskText() ?: return ReloadResult.FAILED)
+    }
+
+    // Strict UTF-8 and no line-ending or BOM handling: the same text `init` read through VFile.
+    private fun readDiskText(): String? = try {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(Files.readAllBytes(file.path)))
+            .toString()
+    } catch (t: Throwable) {
+        log.log(Level.FINE, "Failed to reload ${file.path}", t)
+        null
+    }
+
+    private fun applyDiskText(disk: String): ReloadResult {
+        var result = ReloadResult.FAILED
+        Snapshot.withMutableSnapshot {
+            result = when {
+                disk == savedText -> ReloadResult.UNCHANGED
+                isModified -> ReloadResult.KEPT_UNSAVED
+                else -> {
+                    val change = computeTextChange(text, disk)
+                    val applied = applyEdits(
+                        listOf(TextEdit(change.offset, change.offset + change.oldLength, change.newText)),
+                        caret = reloadCaret(text, disk, value.selection.start),
+                    )
+                    if (applied) savedText = disk
+                    if (applied) ReloadResult.RELOADED else ReloadResult.FAILED
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * [offset]'s line and column carried into [newText]; a line that got shorter takes its end
+     * and a line that is gone gives the last line.
+     */
+    private fun reloadCaret(oldText: String, newText: String, offset: Int): Int {
+        val caret = offset.coerceIn(0, oldText.length)
+        var line = 0
+        var lineStart = 0
+        var newline = oldText.indexOf('\n')
+        while (newline in 0 until caret) {
+            line++
+            lineStart = newline + 1
+            newline = oldText.indexOf('\n', lineStart)
+        }
+        val column = caret - lineStart
+        var start = 0
+        repeat(line) {
+            val next = newText.indexOf('\n', start)
+            if (next < 0) return newText.length
+            start = next + 1
+        }
+        var end = newText.indexOf('\n', start)
+        if (end < 0) end = newText.length else if (end > start && newText[end - 1] == '\r') end--
+        return (start + column).coerceAtMost(end)
     }
 
     override fun dispose() {
