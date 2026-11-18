@@ -2970,6 +2970,9 @@ Commit, Push) each have one rule for what they change and whether ⌘Z brings it
 | Next Change | `NEXT_CHANGE` | `VcsShowNextChangeMarker` | `⌃⌥⇧↓` | EDITOR |
 | Previous Change | `PREVIOUS_CHANGE` | `VcsShowPrevChangeMarker` | `⌃⌥⇧↑` | EDITOR |
 | Show Diff | `SHOW_DIFF` | `Diff.ShowDiff` | `⌘D` | COMMIT_WINDOW |
+| Commit and Push | `COMMIT_AND_PUSH` | `Git.Commit.And.Push.Executor` | `⌥⌘K` | GLOBAL |
+| Update Project | `UPDATE_PROJECT` | `Vcs.UpdateProject` | `⌘T` | GLOBAL |
+| Fetch | `FETCH` | `Git.Fetch` | none | VCS popup row |
 
 The IntelliJ strokes come from its keymaps: `⌘K`, `⇧⌘K` and `⌥⌘Z` are `$default` entries
 (`control K`, `control shift K`, `control alt Z`) read with control as meta, and `⌃V`, `⌘9`, `⌘0`
@@ -2979,7 +2982,12 @@ EDITOR and is Show Diff only in the Commit window, as IntelliJ resolves the same
 context. `⌃V` is GLOBAL so the project tree has it too, but its handler returns false when the
 focus is TERMINAL, so `dispatchAction` does not consume the stroke and it reaches the terminal:
 control letters belong to the shell, while ⌘ strokes are app keys there as everywhere (`⌘4`
-already works from the terminal). COMMIT_WINDOW is a new
+already works from the terminal). `⌥⌘K` and `⌘T` are `$default` entries of the Git plugin and the
+VCS platform (`control alt K` on `Git.Commit.And.Push.Executor`, `control T` on
+`Vcs.UpdateProject`) read with control as meta; the macOS keymap does not override them, and
+neither stroke had a binding in any context (checked through `KeyStroke.parse`, 14th round).
+`Git.Fetch` and `Git.Pull` have no shortcut in IntelliJ, so Fetch is a VCS popup row only (V7).
+COMMIT_WINDOW is a new
 `KeyContext` for the Commit tool window, because its message field takes typing that LIST_WINDOW
 bindings would steal.
 
@@ -3079,7 +3087,8 @@ are used and they reuse G's hunks with no new data.
 Not in this round (no target in the list asks for them): Commit and Push `⌥⌘K`, reverting whole
 files from the Commit window, Update Project `⌘T`, pull, fetch, branches, stash, amend, file
 history, annotate, the staging area and partial (hunk) commits, and repositories other than the one
-containing the project root.
+containing the project root. Commit and Push, Update Project, pull and fetch came in the 14th
+round (V7 to V11).
 
 ### V2 Where git runs
 
@@ -3200,6 +3209,8 @@ HEAD against the editor's current text.
 | Rollback Lines `⌥⌘Z` | the editor text only: the hunks at the carets or touching the selection become their base lines, as one `applyEdits` step that replaces only the rolled-back line ranges (every other line keeps its text and terminator); nothing is saved. The hunks are computed again from the text on screen when the key is pressed, so a hunk published for an older text is never applied. A selection ending at the start of a line does not include that line. A deleted hunk is touched by the lines just above and below its boundary; afterwards the primary caret is at the start of the first rolled-back region | yes, one step |
 | Commit `⌘K` | saves the open editors of the included files, then the index and HEAD | no |
 | Push `⇧⌘K` | the remote branch | no |
+| Fetch | the remote-tracking refs (`refs/remotes/...`) and tags git fetches by default; no branch, index or file | no |
+| Update Project `⌘T` | after its confirmation: saves the unsaved editors, then HEAD, the index and the working tree of the whole repository (V8 to V10) | no |
 | Diff, popups, Log | nothing | — |
 
 - **What a commit takes.** The working-tree content of the included files, after their open
@@ -3298,7 +3309,176 @@ HEAD against the editor's current text.
   dimmed (Rollback Lines and Show Diff need an editor with changes; they start dimmed and enable when
   the off-thread comparison of HEAD with the editor text answers). Outside a repository the popup
   has one dimmed row, `Not a Git repository` (`Git is not installed` when there is no git). The
-  digits of the numeric keypad run rows too.
+  digits of the numeric keypad run rows too. Rows `7 Update Project…` (`⌘T`) and `8 Fetch` come
+  after the six above (V7), so the numbers of the 13th round do not move.
+
+### V7 What the 14th round includes
+
+The 13th round left Commit and Push `⌥⌘K`, Update Project `⌘T`, pull and fetch out of V1. They reuse
+the runner (V3), the write rules (V5) and push's prompt-free authentication, so they are one round.
+
+**Commit and Push.**
+
+| | A: commit, then the push confirmation of V5 | B: commit, then push at once |
+|---|---|---|
+| IntelliJ | its Commit and Push executor commits and then opens the Push dialog | — |
+| V5 | keeps "Push opens a confirmation popup first" | reverses it |
+| What the user sees before the remote changes | the branch, the target and the outgoing commits | nothing |
+
+**A is the contract.** `⌥⌘K` is GLOBAL. With the keyboard in the Commit window it runs the window's
+commit (the same refusals, saves and git calls as `⌘↩`) and, when the commit succeeds, asks for the
+push plan: a ready plan opens the push popup of V5, whose `Esc` hands the keyboard back to the
+Commit window (V6); a refused plan does not hide the commit, and the status bar reads
+`<commit message>; <refusal>`. A failed commit opens nothing. Anywhere else `⌥⌘K` opens the Commit
+window like `⌘K`, so a second `⌥⌘K` commits and pushes. The window gets a second capsule,
+`Commit and Push…`, next to `Commit`, enabled under the same conditions.
+
+**Update Project and pull.**
+
+| | A: one action, Update Project `⌘T`, which is the pull | B: Update Project and a separate Pull |
+|---|---|---|
+| IntelliJ | Update Project fetches and merges or rebases the tracked branch | Pull asks for a remote and branches to merge |
+| What B needs | — | a remote and branch chooser, which belongs with branches (still out of scope) |
+| VCS popup | one row | two rows that would do the same thing until branches exist |
+
+**A is the contract.** Pulling the tracked branch is Update Project; pulling another branch waits for
+the branch screens. **Fetch** is its own action `FETCH` (no stroke, as in IntelliJ) and the VCS popup
+row `8 Fetch`, because fetching without changing any file is the safe way to see what Update would
+bring.
+
+### V8 The update contract
+
+```kotlin
+// stride.app.vcs — additions to GitService
+enum class UpdateStrategy { FAST_FORWARD, MERGE, REBASE }
+sealed interface UpdatePlan {
+    data class Ready(val branch: String, val remote: String, val remoteRef: String,
+                     val incoming: List<LogEntry>, val moreIncoming: Int, val ahead: Int,
+                     val strategies: List<UpdateStrategy>,   // [FAST_FORWARD] when ahead == 0, else [MERGE, REBASE]
+                     val defaultStrategy: UpdateStrategy,
+                     val unsavedEditors: Int) : UpdatePlan   // filled in by the app before the popup
+    data class Refused(val message: String) : UpdatePlan
+}
+suspend fun GitService.fetch(): GitWriteResult                 // every remote
+suspend fun GitService.updatePlan(): UpdatePlan                // fetches the upstream's remote first
+suspend fun GitService.update(plan: UpdatePlan.Ready, strategy: UpdateStrategy): GitWriteResult
+fun GitService.operationInProgress(): String?                 // "merge", "rebase", "cherry-pick", "revert", or null
+// GitTimeouts gains fetch = 90 s and update = 120 s, with defaults
+```
+
+**Strategy.**
+
+| | A: merge only | B: `--ff-only` only | C: fast-forward when possible, else Merge or Rebase chosen in the popup | D: `git pull` with the user's configuration |
+|---|---|---|---|---|
+| A diverged branch | a merge commit every time | refused; `Push rejected: pull the remote changes first` sends the user to an Update that cannot run | the user's choice, defaulted from their git configuration | depends on `pull.rebase`/`pull.ff`; unset, git 2.27+ stops with "divergent branches" |
+| What the popup shows is what runs | yes | yes | yes | no: `pull` fetches again, after the popup |
+| Settings screen | none | none | none (the default comes from git) | none |
+
+**C is the contract.** The default is REBASE when `git config --get branch.<branch>.rebase`, or when
+that is unset `pull.rebase`, is a true value (`true`, `merges`, `interactive`; stride never runs an
+interactive rebase), and MERGE otherwise, as `git pull` would decide. The popup shows both choices
+and `Tab` switches; a branch that is only behind shows `Fast-forward` and has no choice.
+
+**Steps.**
+
+1. **Refusals before the network**, in this order: `Git is not installed`, `Not a Git repository`,
+   `Git is busy: <what>`, `Update needs a branch: HEAD is detached`,
+   `A <operation> is in progress: finish it in the terminal (⌥F12)` (the git directory has
+   `MERGE_HEAD`, `rebase-merge`, `rebase-apply`, `CHERRY_PICK_HEAD` or `REVERT_HEAD`, or the status
+   lists a conflicted file; a check that cannot read the git directory counts as in progress),
+   `No upstream: set one in the terminal` (the branch has no `branch.<b>.remote`/`merge`).
+2. **Fetch the upstream's remote**: `git fetch <remote>` with the push environment (ssh BatchMode,
+   V3), `timeouts.fetch`. A failure ends here; nothing but remote-tracking refs can have changed.
+   When the upstream's remote-tracking ref is still missing after the fetch, the plan refuses with
+   `The upstream <remote>/<branch> does not exist: set one in the terminal`.
+3. **Count**: `git rev-list --left-right --count HEAD...<remote-tracking ref>`. Nothing incoming
+   reports `Already up to date` (the fetch is still recorded). Otherwise the plan lists the incoming
+   commits (at most 100, then `… <n> more`) and the strategies.
+4. **Confirmation popup** (`popupPanel`, like the push popup): `<branch> ← <remote>/<branch>`, the
+   incoming commits, `<n> local commits` when ahead, the strategy row, and `Saves <n> unsaved
+   editors first` when there are any. `↩` updates, `Tab` switches the strategy, `Esc` cancels.
+5. **Integrate** with the full remote-tracking ref (`refs/remotes/<remote>/<branch>`), never a
+   force option, always `--no-autostash` so `merge.autoStash`/`rebase.autoStash` cannot create a
+   stash stride has no screen for, `timeouts.update`, hooks and signing as configured:
+   FAST_FORWARD `git merge --ff-only --no-autostash <ref>`, MERGE `git merge --no-edit --no-autostash
+   <ref>`, REBASE `git rebase --no-autostash <ref>`.
+6. **Refresh** status inside the write (as push does) and reload editors (V10).
+
+`⌘K` and `⌥⌘K` refuse with the same `A <operation> is in progress…` message before git runs,
+because `git commit --only` fails during a merge (measured: `cannot do a partial commit during a
+merge`).
+
+### V9 Local changes and conflicts
+
+| | A: refuse any local change | B: wrap in a stash (`--autostash`) | C: git's own check for a fast-forward, a clean tree for a merge or rebase, undo on conflict | D: leave conflicts for the terminal |
+|---|---|---|---|---|
+| Pulling while editing unrelated files | refused | runs | runs (fast-forward) | runs |
+| A conflict | cannot happen | the stash pop can conflict and leave a stash entry with no screen to show it | the repository is put back exactly as it was | the repository stays mid-merge; stride's commit cannot run then |
+| Can local work be lost | no | no, but it can sit in a stash the user does not see | no: a fast-forward never overwrites (git refuses), and the abort restores a clean tree | no |
+| New screens | none | a stash screen (later round) | none | a conflict screen (out of scope) |
+
+**C is the contract.**
+
+- **Fast-forward** runs with local changes. git refuses when an incoming file has local changes or
+  an untracked file would be overwritten, and the update reports `Update stopped: local changes to
+  <n> files would be overwritten: commit them first` or `Update stopped: <n> untracked files would
+  be overwritten: move them first`, with git's full list in the Console. Nothing changed.
+- **Merge and rebase** need a clean tracked tree in the whole repository, read with `git status
+  --porcelain=v2 -z --untracked-files=no` at the repository root (not the project-scoped snapshot,
+  because a merge touches files outside the project folder too), plus the open editors with unsaved
+  text. Otherwise the plan refuses: `Update needs a clean working tree to merge or rebase: commit your
+  <n> changed files first`. Untracked files may stay; git refuses before touching one.
+- **On any failure of a merge or rebase** (a conflict, a hook, a timeout), when the git directory
+  shows the operation in progress, stride runs `git merge --abort` or `git rebase --abort`. With a
+  clean tree beforehand, the abort restores HEAD, the index and the files exactly. A conflict
+  reports `Update had conflicts in <n> files and was undone: update from the terminal (⌥F12) to
+  resolve them` (the count is `git diff --name-only --diff-filter=U -z` before the abort); another
+  failure reports `Update failed: <first line> (undone)`. An abort that fails reports `Update left a
+  <operation> in progress: finish or abort it in the terminal (⌥F12)`. The full output of every step
+  is in the Console.
+- Authentication and timeouts during the fetch use push's classification: `Update needs credentials
+  or a passphrase: update from the terminal (⌥F12)`, `Fetch needs credentials or a passphrase: fetch
+  from the terminal (⌥F12)`, otherwise `Update failed: <first line>` and `Fetch failed: <first line>`.
+  Push's own messages stay byte for byte.
+
+### V10 Editors and the disk
+
+The 13th round's editors read their file once, when the tab opens. A file changed on disk by an
+update (or by the user's terminal, a formatter or another program) kept its old text in the editor,
+and the next `⌘S` wrote the old text back over the change without a word.
+
+**Before an update** the unsaved editors are saved, as IntelliJ saves all documents before a VCS
+update and as Commit saves its included editors (V5). The popup says how many; a save that fails
+stops the update before git runs. For a merge or rebase, unsaved editors count as changed files
+(V9), so they refuse the plan instead.
+
+**After the disk changes:**
+
+| | A: reload only after stride's own update | B: reload an editor whenever its file changes on disk and it has no unsaved text |
+|---|---|---|
+| A terminal `git pull`, `git checkout`, `git stash`, a formatter | the old text stays and `⌘S` reverts the change | reloaded |
+| IntelliJ | — | reloads unmodified documents from disk |
+| Cost | one pass after the update | one VFS subscription and the same reload function |
+
+**B is the contract**, plus an explicit pass right after an update so the result does not wait for
+the file watcher. `TextFileEditor.reloadFromDisk()` reads the file as the tab does; when the text
+differs from the last saved text and the editor has no unsaved text, the new text replaces it as one
+undo step (`⌘Z` brings the old text back, as an unsaved change), the saved text becomes the disk
+text, and carets keep their line and column where the line still exists. An editor with unsaved
+text is not touched; the update's message ends with `; <n> editors with unsaved text were not
+reloaded` and a disk change outside an update leaves the status bar alone. A read failure, a file
+that is not valid UTF-8 or a read-only editor is left as it is. A file deleted on disk keeps its tab
+(as before). The change marks, the base text and the Git window follow from HEAD and the text
+change through the paths of V3 and V4.
+
+### V11 What the user sees while it runs
+
+- **Progress.** While a write runs, the status bar shows `busy` (`Committing…`, `Pushing…`,
+  `Fetching…`, `Updating…`) in place of the last message, and the result replaces it. Before the
+  14th round `busy` was not drawn anywhere.
+- **Console.** Every fetch, merge, rebase and abort is a write entry.
+- **Refresh.** The write refreshes status; a new HEAD makes the editors fetch their base again and
+  the Git window read its log again (V3, V6), and V10 reloads the files.
 
 ### Version control messages
 
@@ -3321,14 +3501,37 @@ HEAD against the editor's current text.
 | `No changes in <short hash>` | `↩` on a Log commit with no file changes (an empty commit, or a merge identical to its first parent) |
 | `Too many changes to show` | a diff over the edit budget; the popup shows this one row instead of the lines |
 | `No more changes` | `⌃⌥⇧↓/↑` past the last or first hunk |
+| `<commit message>; <refusal>` | `⌥⌘K` committed but the push plan refused (for example `; Nothing to push`) |
+| `A <operation> is in progress: finish it in the terminal (⌥F12)` | Update, `⌘K` or `⌥⌘K` while a merge, rebase, cherry-pick or revert is in progress |
+| `Update needs a branch: HEAD is detached` | `⌘T` on a detached HEAD |
+| `No upstream: set one in the terminal` | `⌘T` on a branch with no upstream (also push, V5) |
+| `The upstream <remote>/<branch> does not exist: set one in the terminal` | the upstream's remote-tracking ref is missing after the fetch |
+| `No remotes: add one in the terminal` | Fetch in a repository without remotes |
+| `Fetched from <remotes>` | Fetch succeeded; ends with `: <n> new commits on <remote>/<branch>` when the branch is behind its upstream |
+| `Fetch needs credentials or a passphrase: fetch from the terminal (⌥F12)` | Fetch authentication failed or asked for input |
+| `Fetch failed: <first line>` | any other fetch failure |
+| `Already up to date` | `⌘T` found nothing incoming after the fetch |
+| `Update needs a clean working tree to merge or rebase: commit your <n> changed files first` | the branch has diverged and the repository or an editor has changes (V9) |
+| `Updated <branch>: <n> commits from <remote>/<branch> (<fast-forward \| merge \| rebase>)` | Update succeeded; ends with `; <n> editors with unsaved text were not reloaded` when V10 left some |
+| `Update stopped: local changes to <n> files would be overwritten: commit them first` | a fast-forward that git refused for local changes |
+| `Update stopped: <n> untracked files would be overwritten: move them first` | a fast-forward or merge that git refused for untracked files |
+| `Update had conflicts in <n> files and was undone: update from the terminal (⌥F12) to resolve them` | a merge or rebase conflict, after the abort |
+| `Update failed: <first line> (undone)` | a merge or rebase failed for another reason and was aborted |
+| `Update left a <operation> in progress: finish or abort it in the terminal (⌥F12)` | the abort itself failed |
+| `Update needs credentials or a passphrase: update from the terminal (⌥F12)` | the fetch of `⌘T` failed authentication |
+| `Update failed: <first line>` | the fetch of `⌘T` failed otherwise, or a save before the update failed |
 
 ### Version control differences
 
 - One column diff instead of two, and the Commit window in the bottom panel instead of the left.
-- No staging area, changelists, partial commits, amend or Commit and Push; a commit takes whole
-  files (V5).
-- Reverting whole files, update, pull, fetch, branches, stash, history and annotate are not in this
-  round (V1).
+- No staging area, changelists, partial commits or amend; a commit takes whole files (V5).
+- Reverting whole files, branches, stash, history and annotate are not in yet (V1). Pull is Update
+  Project of the tracked branch; there is no Pull dialog for another remote or branch (V7).
+- Update does not stash local changes: a merge or rebase needs a clean tree, and a conflict is
+  undone instead of opening a merge screen (V9). IntelliJ stashes or shelves and opens its conflict
+  dialog.
+- The merge or rebase choice is made in the update popup each time, defaulted from git's
+  configuration; IntelliJ remembers it in its own settings.
 - Marks are computed against HEAD; IntelliJ with the staging area enabled can compare with the
   index instead.
 - Only the repository containing the project root; nested repositories and submodules show as
