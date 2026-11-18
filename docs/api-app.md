@@ -2731,7 +2731,8 @@ regenerate them; stride never deletes code it did not write (see 「Generate dif
 Runs in a class without an explicit primary constructor (G2). The chooser lists the class's own
 properties that a constructor can assign, all checked: a `var` (also `lateinit var`) or a `val`
 without an initializer, declared in the class body, not `abstract`, not delegated (`by`), not an
-extension, without a custom getter and not assigned in an `init` block. A property whose type is
+extension, without a custom getter (a custom setter is fine: `this.x = x` runs it) and not
+assigned in an `init` block. A property whose type is
 not written is listed with `type not written` and cannot be checked. The constructor's
 parameters are the checked properties in declaration order, named like them, typed as written,
 and its body assigns them: `this.x = x`. With no candidate the chooser is skipped and an empty
@@ -2745,11 +2746,11 @@ Kotlin 2.4.21:
 | an existing constructor with the same parameter types | conflicting overloads | refuse: `constructor(Int) already exists` |
 | an existing constructor that also accepts the same number of arguments through default values or a `vararg` (`constructor(x: Long, y: Int = 0)`, `constructor(vararg xs: Int)`) | `A(1)` silently moves to the new constructor | refuse: `A(…) with 1 argument would call the new constructor` |
 | an existing constructor with the same number of parameters and other types (`constructor(x: Long)`) | `A(1)` silently moves when the literal fits both | refuse with the same message |
-| `operator fun invoke` in the class's companion object | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
-| a top-level function or property named `A` in project sources (`ProjectTypes.hasTopLevelFunction`) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
+| `operator fun invoke` in the class's companion object, or an extension `invoke` on it (`operator fun A.Companion.invoke`) in this file or, when the class has a companion object, any top-level `invoke` in project sources | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
+| a top-level function or property named `A` in project sources (`ProjectTypes.hasTopLevelFunction`, private ones included) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
 | the class has no explicit constructor at all | the implicit `A()` disappears; `A()` stops compiling, enum entries without arguments stop compiling, and a top-level `fun A()` silently receives `A()` | write `constructor()` first, then the new constructor: `A()`, entries and subclass calls keep their target (measured). A callable reference `::A` without an expected type becomes ambiguous (a compile error, documented) |
 | a supertype initialized in the header (`class A : Base()`) | `supertype initialization is impossible without a primary constructor` | refuse: `A initializes Base() in its header` |
-| a class supertype without parentheses (`class A : Base`) | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first and the body delegates `: super(a, b)`; otherwise refuse: `Base is not in project sources` |
+| a class supertype without parentheses (`class A : Base`), possible only when the class already has explicit constructors | the constructor must call `super(…)` | when `Base` is in project sources, a `Choose` step lists its constructors (one is taken directly), their parameters come first as written (`vararg` kept, passed on as `*xs`) and the body delegates `: super(a, b)`; when an unparenthesized supertype is not in project sources and the class has explicit constructors, refuse: `Base is not in project sources`. Without explicit constructors every unparenthesized supertype is an interface (a class supertype would need `()`), so it needs no `super` call |
 | `types == null` with a class supertype or a top-level-function check pending | the index is not ready | refuse: `Indexing… try again in a moment` |
 
 The empty constructor body follows IntelliJ's template, which is a comment; stride writes no
@@ -2792,20 +2793,27 @@ override fun toString(): String {
 
 - Arrays (`Array<…>`, `IntArray` and the other primitive arrays, nullable or not) compare with
   `contentEquals`, hash with `contentHashCode` and print with `contentToString`; an array of arrays
-  uses the `contentDeep…` forms. A nullable property hashes as `(p?.hashCode() ?: 0)`; an `Int`,
-  `Short` or `Byte` property's hash is the value itself, other types call `hashCode()`. With one
+  uses the `contentDeep…` forms. A nullable property hashes as `(p?.hashCode() ?: 0)`; an `Int`
+  property's hash is the value itself, other types (`Short` and `Byte` included, whose values are
+  not `Int`) call `hashCode()`. With one
   property and no super hash the body is `return p.hashCode()`; with none it is
   `return javaClass.hashCode()`. A generic class casts `other as A<*>`.
+- A member named `javaClass` hides the class check's `javaClass`, so then the check reads
+  `if (other == null || this::class != other::class) return false`.
 - A name that needs backticks prints as `${`name`}` (measured: both template forms compile, and
   the braced form leaves no doubt where the name ends).
 - The locals `other` and `result` must not be the name of a checked property, which would compare
   or hash the wrong value without a compile error: the parameter becomes `other1` and the local
   `result1`, as IntelliJ's unique-name helper does, when such a property is checked.
-- **Supertypes.** A superclass in project sources that overrides `equals` (or `hashCode`) adds
-  `if (!super.equals(other)) return false` (and starts `var result = super.hashCode()`); one that
-  declares them `final` refuses: `Base declares equals() final`. A class supertype that is not in
+- **Supertypes.** The superclass chain is walked through project sources. When a class along it
+  overrides `equals`, equals adds `if (!super.equals(other)) return false`; independently, when one
+  overrides `hashCode`, hashCode starts `var result = super.hashCode()`. A chain that reaches no
+  override adds neither (`Any`'s versions compare identity, so a super call would make every
+  comparison false). One that declares them `final` refuses: `Base declares equals() final`. A class supertype that is not in
   project sources refuses equals/hashCode with `Base is not in project sources`: whether its
   `equals` compares fields cannot be read, and a wrong super call makes every comparison false.
+  The same holds for an unparenthesized supertype outside project sources when the class has
+  explicit constructors (it may be a class, as in G4).
   toString never calls super, as IntelliJ's default.
 - **Index.** With `types == null` and a supertype, equals/hashCode refuses with
   `Indexing… try again in a moment`, because the supertype rule above reads other files; without a
@@ -2834,17 +2842,21 @@ the same tokens and blocks as the current file.
   bare `super` does not compile there). An abstract member's body is `TODO("Not yet implemented")`.
   A property becomes `override val x: T get() = super.x`, and a `var` adds
   `set(value) { super.x = value }` (measured: same behaviour as inheriting it).
-- **Implement** lists the abstract candidates that no class along the walk implements, all
-  checked. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+- **Implement** lists the abstract candidates that nothing along the walk implements, all
+  checked: a body in any supertype, an interface's default body included, counts as an
+  implementation (measured: `class C : P, R` with `interface R : P { override fun f() = 7 }`
+  compiles without an override and runs `R.f`). Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
-  walk is not in project sources: `Base is not in project sources; it may implement these members`
+  walk is not in project sources (a supertype with `()`, or one without parentheses in a class with
+  explicit constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
   (measured: `class C : Lib(), P` compiles without overriding when `Lib` has `f()`, so a
   generated `TODO()` would replace working code). A written supertype that is an interface outside
   project sources only drops its members, and the chooser title says
   `Runnable is not in project sources`; Kotlin requires an explicit override when two interfaces
   supply the same member, so an unread interface cannot implement a project member silently.
   Nothing to implement refuses with `No members to implement in project sources`, and the same for
-  Override.
+  Override. `Any`'s three members are listed with the other candidates, not only when there are
+  none.
 - **Signatures.** The header is copied from the supertype's text: modifiers `suspend`, `operator`,
   `infix` and `vararg` stay; visibility, `open`, `abstract`, `override`, `final`, annotations, KDoc
   and default values go (measured: an override may not declare defaults, and an omitted visibility
@@ -2864,8 +2876,13 @@ the same tokens and blocks as the current file.
   file imports it explicitly (a library type), the same import line is added unless the target
   imports or declares that simple name otherwise; a name that comes from a star import or an alias
   in the supertype file, or that the target resolves to another declaration, makes the member
-  `refers to another X here` and it cannot be checked. Default imports (`kotlin.*`,
-  `kotlin.collections.*` and the rest of Kotlin's JVM defaults) need nothing.
+  `refers to another X here` and it cannot be checked. An added import outranks the target's star
+  imports, so when the target has a star import and already uses the simple name in code, the member
+  reads `X may come from import a.b.*` and cannot be checked. A name that resolves to nothing, has
+  no explicit import and comes from a supertype file without star imports is a default import
+  (`kotlin.*`, `kotlin.collections.*`, `java.lang.*` and the rest of Kotlin's JVM defaults) and
+  needs nothing; if a target star import shadows it, the copied signature overrides nothing, a
+  compile error. Import lines use the target file's line separator.
 - **Index.** With `types == null`, both refuse with `Indexing… try again in a moment` when the
   class has a supertype; with no supertype they list only `Any`'s members (Override) or refuse
   (Implement).

@@ -41,8 +41,8 @@ interface ProjectTypes {
     fun resolve(written: String, path: String, offset: Int): List<TypeSource>
 
     /**
-     * Whether project sources declare a non-private top-level function or property named [name] in
-     * any file; the index does not tell them apart, and a property of a function type is called
+     * Whether project sources declare a top-level function or property named [name] in any file,
+     * private ones included; the index does not tell them apart, and a property of a function type is called
      * like a function.
      */
     fun hasTopLevelFunction(name: String): Boolean
