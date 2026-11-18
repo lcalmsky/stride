@@ -108,6 +108,26 @@ class VcsActionsTest {
     }
 
     @Test
+    fun `shift escape hides the commit window through the router before the window sees escape`() {
+        val state = AppState()
+        try {
+            val router = KeyRouter(Keymap.forPlatform(true))
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            assertTrue(state.toolWindows.visible)
+            state.focus = KeyContext.COMMIT_WINDOW
+
+            val action = router.route(KeyEventType.DOWN, Key.Escape, shift = true, focus = KeyContext.COMMIT_WINDOW)
+            assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action)
+            assertTrue(dispatchAction(action!!, state) { null })
+            assertFalse(state.toolWindows.visible)
+
+            assertNull(router.route(KeyEventType.DOWN, Key.Escape, focus = KeyContext.COMMIT_WINDOW))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `the change actions need an editor`() {
         val state = AppState()
         try {
