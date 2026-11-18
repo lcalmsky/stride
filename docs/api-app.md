@@ -2695,7 +2695,9 @@ The availability follows IntelliJ 2026.1.3's `isValidForClass` checks (measured 
 plugin): Secondary Constructor needs a `KtClass` that is not an interface, annotation or enum
 entry and has no explicit primary constructor; equals/hashCode also refuses enums and value
 classes; toString refuses annotations and interfaces only. A refused kind says why in the status
-bar when run by `⌃O`/`⌃I` and is left out of the `⌘N` menu.
+bar when run by `⌃O`/`⌃I` and is left out of the `⌘N` menu. The reason reads
+`<Generator> is not available in an interface` (`in an object`, `in an annotation class`,
+`in an enum class`, `in a value class`, `in a class with a primary constructor`).
 
 An existing member that the generator would write again refuses: `equals() already exists in A`,
 `hashCode() already exists in A`, `toString() already exists in A`. IntelliJ offers to delete and
@@ -2805,6 +2807,9 @@ override fun toString(): String {
   project sources refuses equals/hashCode with `Base is not in project sources`: whether its
   `equals` compares fields cannot be read, and a wrong super call makes every comparison false.
   toString never calls super, as IntelliJ's default.
+- **Index.** With `types == null` and a supertype, equals/hashCode refuses with
+  `Indexing… try again in a moment`, because the supertype rule above reads other files; without a
+  supertype it needs no index. toString never reads supertypes.
 - Choosing no property is allowed, as in IntelliJ: equals keeps its identity and class checks and
   toString writes `"A()"`.
 
