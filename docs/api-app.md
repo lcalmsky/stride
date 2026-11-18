@@ -2372,7 +2372,8 @@ R3 to R5.
   not split when the line ends with a token that cannot end an expression (a binary operator, `.`,
   `?.`, `,`, `(`, `[`, `=`, `->`, `&&`, `||`, `?:`, `..`, `as`, `is`, `in`, `::`, `:`; a `>` that
   closes type arguments or type parameters and a `?` after a type are type syntax, not operators,
-  so `val targets: List<Declaration>` and `val name: String?` end their line), when the next
+  so `val targets: List<Declaration>` and `val name: String?` end their line; the `>` of a function
+  type's `->` inside type arguments closes nothing, so `List<(A) -> B>` ends its line too), when the next
   line starts with `.`, `?.`, `?:`, `&&`, `||`, `else`, `catch`, `finally`, or with `while` after a
   `do` body, or when the line holds only annotations. It does not split either when the line ends
   with a name that is not a keyword or soft keyword right after a token on the same line that ends
@@ -2384,8 +2385,10 @@ R3 to R5.
   without braces (a newline after `if (…)`, `for (…)`, `while (…)`, `catch (…)`, `else`, `try`,
   `do`, `finally`), a next line starting with `->` or `:`, and a next line starting with `{` when
   the line ends with a call's `)`, a control or declaration header (`if (…)`, `while (…)`,
-  `when (…)`, `fun f()`, `class A`, `else`, `try`, `finally`, `do`, `init`), a name after `.` or
-  `?.`, `->`, `>` or a token that cannot end an expression (Kotlin reads the block as a trailing
+  `when (…)`, `fun f()`, `class A`, `else`, `try`, `finally`, `do`, `init`, also when the header
+  ends with its type: `fun f(): String?`, `fun f(): List<List<Int>>`, `class A : B<C>`), a name
+  after `.` or `?.`, `->`, `>` (also merged into `>>`, `*>` or `?>`) or a token that cannot end an
+  expression (Kotlin reads the block as a trailing
   lambda or as the body), and text inside strings and templates. After a literal, a string, `]`,
   `!!`, a grouping `)`, a lambda or a bare name a next-line `{` starts a statement of its own, as
   Kotlin 2.4.21 reads it. A member name before a next-line `{` joins although Kotlin joins it only
