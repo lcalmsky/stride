@@ -107,6 +107,7 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
         KeyContext.RUN_WINDOW,
         KeyContext.TERMINAL,
         KeyContext.LIST_WINDOW,
+        KeyContext.COMMIT_WINDOW,
     )
     // Run control R
     bind("control R", ActionId.RUN, KeyContext.GLOBAL)

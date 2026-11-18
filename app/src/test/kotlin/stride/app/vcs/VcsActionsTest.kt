@@ -34,6 +34,8 @@ class VcsActionsTest {
         assertEquals(ActionId.PREVIOUS_CHANGE, action("control alt shift UP", KeyContext.EDITOR))
         assertEquals(ActionId.SHOW_DIFF, action("meta D", KeyContext.COMMIT_WINDOW))
         assertEquals(ActionId.EDITOR_DUPLICATE, action("meta D", KeyContext.EDITOR))
+        assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.COMMIT_WINDOW))
+        assertEquals(ActionId.HIDE_ACTIVE_WINDOW, action("shift ESCAPE", KeyContext.LIST_WINDOW))
     }
 
     @Test
