@@ -112,6 +112,18 @@ class MemberChooserPopupTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `moving the cursor past the last visible row scrolls the list`() = runComposeUiTest {
+        setContent { Chooser(List(30) { MemberOption("member $it") }) }
+        waitForIdle()
+
+        repeat(29) { onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        waitForIdle()
+
+        onNodeWithText("member 29").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `escape closes the popup`() = runComposeUiTest {
         setContent { Chooser(members("alpha", "beta")) }
         waitForIdle()

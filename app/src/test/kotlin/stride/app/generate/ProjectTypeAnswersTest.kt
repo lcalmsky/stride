@@ -122,11 +122,24 @@ class ProjectTypeAnswersTest {
     }
 
     @Test
-    fun `top-level functions are answered for every file and private ones are not`() {
+    fun `a backticked name resolves and its name offset starts at the opening backtick`() {
+        val use = path("demo/Use.kt").toString()
+        val types = requireNotNull(projectTypes(state))
+
+        val found = types.resolve("`A B`", use, 0)
+
+        assertEquals(listOf("demo.A B"), found.map { it.qualifiedName })
+        val source = found.single()
+        assertEquals("`A B`", source.text.substring(source.nameOffset, source.nameOffset + "`A B`".length))
+        assertEquals(found.map { it.path }, types.resolve("A B", use, 0).map { it.path })
+    }
+
+    @Test
+    fun `top-level functions are answered for every file, private ones included`() {
         val types = requireNotNull(projectTypes(state))
 
         assertTrue(types.hasTopLevelFunction("greet"))
-        assertFalse(types.hasTopLevelFunction("hidden"))
+        assertTrue(types.hasTopLevelFunction("hidden"))
         assertFalse(types.hasTopLevelFunction("Greeting"))
     }
 
@@ -152,6 +165,8 @@ class ProjectTypeAnswersTest {
         write("demo/Alpha.kt", "package demo\n\nclass Alpha\n")
         write("demo/Outer.kt", "package demo\n\nclass Outer {\n    class Inner\n}\n")
         write("demo/Holder.kt", "package demo\n\nclass Holder {\n    class Nested\n\n    fun value(): Int = 1\n}\n")
+        write("demo/Spaced.kt", "package demo\n\nclass `A B`\n")
+        write("demo/Use.kt", "package demo\n\nclass Use : `A B`\n")
         write(
             "other/Beta.kt",
             "package other\n\nimport demo.Alpha\nimport demo.Outer\n\nclass Beta\n",

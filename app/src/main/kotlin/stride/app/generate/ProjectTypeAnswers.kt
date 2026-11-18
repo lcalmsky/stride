@@ -50,7 +50,7 @@ internal class ProjectTypeAnswers(
             line = lineOf(text, position),
         )
         val result = ArrayList<TypeSource>()
-        for (declaration in graph.resolveType(written, context)) {
+        for (declaration in graph.resolveType(unquoted(written), context)) {
             if (declaration.kind != DeclarationKind.CLASS) continue
             val declarationPath = declaration.file.path.toAbsolutePath().normalize()
             val declarationText = textOf(declarationPath) ?: continue
@@ -58,7 +58,7 @@ internal class ProjectTypeAnswers(
                 qualifiedName(declaration),
                 declarationPath.toString(),
                 declarationText,
-                offsetOfName(declarationText, declaration.line, declaration.column, declaration.name),
+                nameTokenOffset(declarationText, declaration),
             )
         }
         return result
@@ -66,8 +66,27 @@ internal class ProjectTypeAnswers(
 
     override fun hasTopLevelFunction(name: String): Boolean =
         declarations.any {
-            it.kind == DeclarationKind.SYMBOL && it.container == null && it.name == name && !it.isPrivate
+            it.kind == DeclarationKind.SYMBOL && it.container == null && it.name == name
         }
+
+    /**
+     * The offset of [declaration]'s name token in [text]: the opening backtick of a quoted name,
+     * the offset the Kotlin generator finds the declaration by (`classInSource`).
+     */
+    private fun nameTokenOffset(text: String, declaration: Declaration): Int {
+        val offset = offsetOfName(text, declaration.line, declaration.column, declaration.name)
+        val name = declaration.name
+        if (text.startsWith(name, offset) && text.getOrNull(offset - 1) == '`' &&
+            text.getOrNull(offset + name.length) == '`'
+        ) {
+            return offset - 1
+        }
+        return offset
+    }
+
+    /** [written] with the backticks of each dotted segment removed, the form the graph matches names in. */
+    private fun unquoted(written: String): String =
+        written.split('.').joinToString(".") { it.removeSurrounding("`") }
 
     /** The package, the enclosing classes nearest to [declaration] and its own name, dotted. */
     private fun qualifiedName(declaration: Declaration): String {

@@ -116,6 +116,22 @@ fun MemberChooserPopup(
         runCatching { focusRequester.requestFocus() }
     }
 
+    LaunchedEffect(index, rows) {
+        // Wait for the layout before scrolling: scrollToItem during a measure pass leaves the
+        // lazy list's composition pending.
+        withFrameNanos { }
+        // Rows include group headings, so find the cursor's row rather than its index.
+        val target = rows.indexOfFirst { it is MemberChooserRow.Member && it.index == index }
+        if (target < 0) return@LaunchedEffect
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty()) return@LaunchedEffect
+        when {
+            target < visible.first().index -> listState.scrollToItem(target)
+            target > visible.last().index ->
+                listState.scrollToItem((target - visible.size + 1).coerceAtLeast(0))
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
