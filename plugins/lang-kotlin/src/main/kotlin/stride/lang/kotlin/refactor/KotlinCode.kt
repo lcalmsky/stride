@@ -598,6 +598,7 @@ internal class KotlinCode(val text: String) {
      */
     private fun endsTypeSyntax(token: KtToken): Boolean {
         if (token.text == "?") return true
+        if (token.text == "<*>") return previousToken(token)?.let { isNameToken(it) } == true
         if (token.text == "->" || !token.text.contains('>')) return false
         val open = typeOpenFor(token.index)
         if (open < 0 || !holdsTypeSyntax(open, token.index)) return false
@@ -613,13 +614,15 @@ internal class KotlinCode(val text: String) {
                 KotlinTokenTypes.NUMBER, KotlinTokenTypes.STRING, KotlinTokenTypes.CHARACTER,
                 KotlinTokenTypes.BRACKETS,
                 -> return false
-                KotlinTokenTypes.KEYWORD -> if (token.text !in TYPE_LIST_KEYWORDS) return false
+                KotlinTokenTypes.KEYWORD -> if (token.text in HARD_KEYWORDS && token.text != "in") return false
                 KotlinTokenTypes.PARENTHESES -> {
                     parentheses += if (token.text == "(") 1 else -1
                     if (parentheses < 0) return false
                 }
                 KotlinTokenTypes.OPERATION_SIGN ->
-                    if (token.text != "->" && token.text.any { it != '<' && it != '>' && it != '?' && it != '*' }) {
+                    if (token.text !in TYPE_LIST_OPERATORS &&
+                        token.text.any { it != '<' && it != '>' && it != '?' && it != '*' }
+                    ) {
                         return false
                     }
                 else -> Unit
@@ -721,8 +724,8 @@ internal class KotlinCode(val text: String) {
         private val CONTROL_PARENTHESES = setOf("if", "for", "while", "catch", "when")
         private val DECLARATION_HEADER_KEYWORDS = setOf("fun", "class", "interface", "object", "init")
 
-        /** Keywords a type argument or type parameter list can hold (`out T`, `suspend () -> Unit`). */
-        private val TYPE_LIST_KEYWORDS = setOf("in", "out", "suspend", "reified")
+        /** Operators a type list can hold: `(name: A) -> B`, `T : Bound`, `T & Any`, `@A B`. */
+        private val TYPE_LIST_OPERATORS = setOf("->", ":", "&", "@")
 
         /** Kotlin hard keywords: never a name. Soft keywords the lexer marks as keywords may be names. */
         val HARD_KEYWORDS: Set<String> = setOf(

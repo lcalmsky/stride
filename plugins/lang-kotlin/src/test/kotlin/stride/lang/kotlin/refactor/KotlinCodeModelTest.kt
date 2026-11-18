@@ -867,6 +867,16 @@ class KotlinCodeModelTest {
             listOf("val x: List<out Number> = emptyList()", "val y: Map<in String, suspend () -> Unit>", "println(1)"),
             bodyStatements("fun outer() {\n    val x: List<out Number> = emptyList()\n    val y: Map<in String, suspend () -> Unit>\n    println(1)\n}\n"),
         )
+        for (type in listOf(
+            "List<com.example.data.Item>", "List<dynamic>", "List<*>", "List<(name: String) -> Unit>",
+            "List<T & Any>",
+        )) {
+            assertEquals(
+                listOf("val x: $type", "println(1)"),
+                bodyStatements("fun <T> outer() {\n    val x: $type\n    println(1)\n}\n"),
+                type,
+            )
+        }
     }
 
     @Test
