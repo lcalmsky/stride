@@ -504,6 +504,7 @@ internal fun computeReferences(code: KotlinCode): List<KtReference> {
     for (token in code.code) {
         if (!isNameToken(token)) continue
         if (token.index in code.keywordTokens) continue
+        if (token.index in code.numberSuffixTokens) continue
         val previous = code.code.getOrNull(token.index - 1)
         if (previous != null && (previous.type == KotlinTokenTypes.DOT || previous.text == "::" || previous.text == "@")) continue
         if (isNamedArgument(code, token)) continue
@@ -636,7 +637,7 @@ private fun isDotBeforeToken(code: KotlinCode, index: Int): Boolean {
 private fun markNonExpressionRegions(code: KotlinCode) {
     val seenAt = HashSet<Int>()
     for (token in code.code) {
-        if (token.text == "@" && seenAt.add(token.start)) {
+        if (token.text == "@" && seenAt.add(token.start) && !isLabelDeclaration(code, token)) {
             val end = annotationEnd(code, token.index)
             if (end > token.index) {
                 code.nonExpressionRanges.add(KtRange(token.start, code.code[end].end))
@@ -654,6 +655,12 @@ private fun markNonExpressionRegions(code: KotlinCode) {
             }
         }
     }
+}
+
+/** True when the `@` at [token] closes a label declaration (`loop@`), so what follows is code. */
+private fun isLabelDeclaration(code: KotlinCode, token: KtToken): Boolean {
+    val before = code.code.getOrNull(token.index - 1) ?: return false
+    return isNameToken(before) && before.end == token.start
 }
 
 private fun isNamedArgument(code: KotlinCode, token: KtToken): Boolean {
@@ -682,27 +689,39 @@ private fun resolveLocal(locals: List<KtLocal>, name: String, token: KtToken): K
 internal fun KtToken.spelling(): String = text.removeSurrounding("`")
 
 /**
- * True when a code token other than a modifier in [scope] spells [name], so a local of that name
- * would give the spelling a second meaning (R3 「Name check」).
+ * True when a code token other than a modifier or a member name after `.` or `?.` in [scope]
+ * spells [name], so a local of that name would give the spelling a second meaning (R3 「Name
+ * check」).
  */
 internal fun isNameUsedIn(code: KotlinCode, scope: KtRange, name: String): Boolean =
     code.code.any {
-        scope.contains(it.start) && it.spelling() == name && it.index !in code.modifierTokens
+        scope.contains(it.start) && it.spelling() == name &&
+            it.index !in code.modifierTokens &&
+            it.index !in code.numberSuffixTokens &&
+            !isMemberNameAfterDot(code, it)
     }
+
+private fun isMemberNameAfterDot(code: KotlinCode, token: KtToken): Boolean =
+    code.code.getOrNull(token.index - 1)?.type == KotlinTokenTypes.DOT
 
 /**
  * Code tokens in [scope] spelled [name] that the model cannot place: not a reference, a
  * declaration, a member name after `.`, `?.` or `::`, a named argument, a label or a modifier
  * (R2 「Unread spellings」).
  */
-internal fun KotlinCode.unreadSpellings(name: String, scope: KtRange): List<KtToken> {
+internal fun KotlinCode.unreadSpellings(name: String, scope: KtRange): List<KtToken> =
+    unreadNameTokens(scope).filter { it.spelling() == name }
+
+/** Every name token in [scope] that the model cannot place (R2 「Unread spellings」). */
+internal fun KotlinCode.unreadNameTokens(scope: KtRange): List<KtToken> {
     val referenceTokens = references.mapTo(HashSet()) { it.token.index }
     return code.filter { token ->
-        scope.contains(token.start) && token.spelling() == name &&
+        isNameToken(token) && scope.contains(token.start) &&
             token.index !in referenceTokens &&
             token.index !in declarationTokens &&
             token.index !in declarationNameTokens &&
             token.index !in modifierTokens &&
+            token.index !in numberSuffixTokens &&
             !isPlaceableTokenName(token)
     }
 }

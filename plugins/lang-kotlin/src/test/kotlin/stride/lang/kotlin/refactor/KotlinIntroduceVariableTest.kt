@@ -255,7 +255,7 @@ class KotlinIntroduceVariableTest {
     fun `an expression with a call has no other occurrences`() {
         val text = "fun f() {\n    println(a.b())\n    println(a.b())\n}\n"
         val question = ask(select(text, "a.b()"))
-        assertEquals("b2", question.suggested)
+        assertEquals("b", question.suggested)
         val applied = finish(text, question, "result")
         assertEquals("fun f() {\n    val result = a.b()\n    println(result)\n    println(a.b())\n}\n", applied.text)
     }
@@ -477,7 +477,7 @@ class KotlinIntroduceVariableTest {
 
     @Test
     fun `suggested names follow the expression`() {
-        assertEquals("name2", ask(select("fun f() {\n    println(user.name)\n}\n", "user.name")).suggested)
+        assertEquals("name", ask(select("fun f() {\n    println(user.name)\n}\n", "user.name")).suggested)
         assertEquals("name", ask(select("fun f() {\n    println(getName())\n}\n", "getName()")).suggested)
         assertEquals("foo", ask(select("fun f() {\n    println(Foo())\n}\n", "Foo()")).suggested)
         assertEquals("text", ask(select("fun f() {\n    println(\"hello\")\n}\n", "\"hello\"")).suggested)
@@ -613,6 +613,24 @@ class KotlinIntroduceVariableTest {
 
         val provides = "fun f(tokens: DesignTokens) {\n    val style = LocalTextStyle provides tokens\n    println(style)\n}\n"
         assertEquals(provides, introduceThenInline(provides, "provides"))
+    }
+
+    @Test
+    fun `a member name does not block the name check`() {
+        val text = "fun f() {\n    println(user.name)\n    println(a + b)\n}\n"
+        val question = ask(select(text, "a + b"))
+        assertTrue(question.complete("name") is NameCheck.Valid)
+        val applied = finish(text, question, "name")
+        assertEquals("fun f() {\n    println(user.name)\n    val name = a + b\n    println(name)\n}\n", applied.text)
+    }
+
+    @Test
+    fun `a letter attached to a number is part of the literal`() {
+        val text = "fun f() {\n    println(1u)\n}\n"
+        val question = ask(select(text, "1u"))
+        assertTrue(question.complete("u") is NameCheck.Valid)
+        val applied = finish(text, question, "u")
+        assertEquals("fun f() {\n    val u = 1u\n    println(u)\n}\n", applied.text)
     }
 
     /** Introduce Variable with the suggested name, then Inline it at its only use. */

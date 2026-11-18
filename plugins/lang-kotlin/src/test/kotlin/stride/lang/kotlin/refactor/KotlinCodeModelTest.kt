@@ -250,6 +250,35 @@ class KotlinCodeModelTest {
 
 
     @Test
+    fun `a name directly before an at sign is a label, so the code after it is code`() {
+        val text = "fun f(value: Int) {\n    loop@ println(value)\n}\n"
+        val code = model(text)
+        val value = code.references.filter { it.name == "value" }
+        assertEquals(1, value.size)
+        assertTrue(value.all { it.resolved?.kind == LocalKind.PARAMETER })
+        assertFalse(code.references.any { it.name == "loop" })
+    }
+
+    @Test
+    fun `an annotation is still an annotation`() {
+        val text = "fun f() {\n    @Suppress(\"x\") foo()\n}\n"
+        val names = model(text).references.map { it.name }
+        assertFalse("Suppress" in names)
+        assertFalse("x" in names)
+        assertTrue("foo" in names)
+    }
+
+    @Test
+    fun `letters attached to a number belong to the literal`() {
+        val text = "fun f(u: Int) {\n    println(1u + 2UL + 3uL + 4U + 5L)\n}\n"
+        assertFalse("u" in model(text).references.map { it.name })
+        assertFalse("UL" in model(text).references.map { it.name })
+        assertFalse("uL" in model(text).references.map { it.name })
+        assertFalse("U" in model(text).references.map { it.name })
+        assertTrue("println" in model(text).references.map { it.name })
+    }
+
+    @Test
     fun `calls are parentheses, indexing and trailing lambdas`() {
         val text = "fun f() {\n    foo(1)\n    list[0]\n    list.map { it }\n    Foo()\n}\n"
         val calls = model(text).calls

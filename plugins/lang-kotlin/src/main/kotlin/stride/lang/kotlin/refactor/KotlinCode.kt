@@ -131,6 +131,9 @@ internal class KotlinCode(val text: String) {
     /** Code token indices of modifier words that modify a declaration rather than name anything. */
     internal val modifierTokens: MutableSet<Int> = HashSet()
 
+    /** Code token indices of a name attached to a number literal, which is part of it (`1u`, `2UL`). */
+    internal val numberSuffixTokens: MutableSet<Int> = HashSet()
+
     /** `start until end` ranges of annotations, imports and package directives. */
     internal val nonExpressionRanges: MutableList<KtRange> = ArrayList()
 
@@ -160,6 +163,13 @@ internal class KotlinCode(val text: String) {
             KtToken(codeIndex, token.type, token.start, token.end, token.text)
         }
         code = tokens.filter { it.isCode }
+        for (index in 1 until code.size) {
+            val previous = code[index - 1]
+            val token = code[index]
+            if (previous.type == KotlinTokenTypes.NUMBER && previous.end == token.start && isNameToken(token)) {
+                numberSuffixTokens.add(token.index)
+            }
+        }
 
         lineStarts = buildLineStarts(text)
         rawContinuationStarts = rawContinuations(tokens)
@@ -367,7 +377,7 @@ internal class KotlinCode(val text: String) {
         val head = previousTokens.getOrNull(previous.index) ?: return false
         if (hasNewline(head.end, previous.start)) return false
         // `1u` is a number with a suffix the lexer splits, not `1 u <next line>`.
-        if (head.type == KotlinTokenTypes.NUMBER && head.end == previous.start) return false
+        if (previous.index in numberSuffixTokens) return false
         if (!endsOperandBeforeInfix(head)) return false
         // `0 until rows`: the name before `rows` is already an infix operator, so `rows` completes
         // an operand and the next line is not its right side.

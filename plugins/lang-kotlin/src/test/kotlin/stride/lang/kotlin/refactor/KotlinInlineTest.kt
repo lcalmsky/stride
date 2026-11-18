@@ -864,6 +864,24 @@ class KotlinInlineTest {
     }
 
     @Test
+    fun `a letter attached to a number is part of the literal`() {
+        val text = "fun f() {\n    val u = 5\n    println(1u + u.toUInt())\n}\n"
+        val applied = apply(caretAt(text, "u ="), text)
+
+        assertEquals("fun f() {\n    println(1u + 5.toUInt())\n}\n", applied.text)
+        assertEquals("Inlined u (1 use)", applied.message)
+    }
+
+    @Test
+    fun `a label before code does not hide its references`() {
+        val text = "fun f(value: Int) {\n    val copy = value\n    loop@ println(copy)\n}\n"
+        val applied = apply(caretAt(text, "copy ="), text)
+
+        assertEquals("fun f(value: Int) {\n    loop@ println(value)\n}\n", applied.text)
+        assertEquals("Inlined copy (1 use)", applied.message)
+    }
+
+    @Test
     fun `a spelling the model cannot place refuses the variable`() {
         val text = "fun f() {\n    val value = 3\n    println(value)\n    @value\n    println(1)\n}\n"
         assertEquals(

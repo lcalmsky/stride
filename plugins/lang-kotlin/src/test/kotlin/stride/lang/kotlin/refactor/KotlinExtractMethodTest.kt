@@ -1033,6 +1033,21 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `a letter attached to a number is not an input`() {
+        val text = "fun f(u: Int) {\n    consume(1u)\n}\n"
+        assertEquals(
+            "fun f(u: Int) {\n    consume(extracted())\n}\n\nprivate fun extracted() = 1u\n",
+            extract(text, "1u").text,
+        )
+    }
+
+    @Test
+    fun `a member name still counts in the file name check`() {
+        val text = "fun f() {\n    foo.extracted()\n    println(1)\n}\n"
+        assertEquals("extracted2", ask(select(text, "println(1)")).suggested)
+    }
+
+    @Test
     fun `the file name check counts every spelling`() {
         val text = "fun f(user: User) {\n    println(user.name)\n    println(1)\n}\n"
         val question = ask(select(text, "println(1)"))
