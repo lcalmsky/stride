@@ -380,13 +380,70 @@ internal class KotlinCode(val text: String) {
         if (templateExpressionRanges.any { previous.end >= it.start && previous.end <= it.end && next.start <= it.end }) {
             return false
         }
-        if (next.text == "{") return false
+        if (next.text == "{") return !joinsBlockOnNextLine(previous)
         if (cannotEndExpression(previous)) return false
         if (continuesExpression(next)) return false
         if (lineHoldsOnlyAnnotations(previous)) return false
         if (isControlHeaderEnd(previous)) return false
         if (isInfixNameAtLineEnd(previous)) return false
         return true
+    }
+
+    /**
+     * True when Kotlin reads a `{` on the next line as the block of the line ending with
+     * [previous]: a call's argument list, a declaration or control header, a member name after
+     * `.` or `?.`, a line that cannot end an expression, or an infix call's right operand
+     * (R2 「Statements」). After a literal, a string, `]`, `!!`, a grouping `)` or a lambda it
+     * starts a statement of its own.
+     */
+    private fun joinsBlockOnNextLine(previous: KtToken): Boolean {
+        if (previous.text == "->" || previous.text == ">") return true
+        if (previous.text == ")" && closesCallOrHeader(previous)) return true
+        if (isControlHeaderEnd(previous)) return true
+        if (previous.type == KotlinTokenTypes.KEYWORD && previous.text == "init") return true
+        if (cannotEndExpression(previous)) return true
+        if (isInfixNameAtLineEnd(previous)) return true
+        if (lineHoldsOnlyAnnotations(previous)) return true
+        if (!isNameToken(previous)) return false
+        if (previousTokens.getOrNull(previous.index)?.type == KotlinTokenTypes.DOT) return true
+        return lineHoldsDeclarationHeader(previous)
+    }
+
+    /** True when the `)` closes a call's argument list or a control or declaration header. */
+    private fun closesCallOrHeader(close: KtToken): Boolean {
+        val openIndex = matchingIndex(close.index)
+        if (openIndex < 0 || code[openIndex].text != "(") return false
+        val head = code.getOrNull(openIndex - 1) ?: return false
+        if (isNameToken(head)) return true
+        if (head.type == KotlinTokenTypes.KEYWORD && head.text in CONTROL_PARENTHESES) return true
+        return head.text == ")" || head.text == "]" || head.text == ">"
+    }
+
+    /**
+     * True when the line holding [token] is a `fun`, `class`, `object`, `interface` or `init`
+     * header with no `=` before [token], so a `{` on the next line is its body.
+     */
+    private fun lineHoldsDeclarationHeader(token: KtToken): Boolean {
+        val start = lineStart(token.start)
+        var index = token.index - 1
+        while (index >= 0) {
+            val candidate = code[index]
+            if (candidate.start < start) return false
+            if (isCloser(candidate)) {
+                val open = matchingIndex(index)
+                if (open < 0) return false
+                index = open - 1
+                continue
+            }
+            if (candidate.text == "=" || candidate.text == ";" || candidate.text == "{" || candidate.text == "}") {
+                return false
+            }
+            if (candidate.type == KotlinTokenTypes.KEYWORD && candidate.text in DECLARATION_HEADER_KEYWORDS) {
+                return true
+            }
+            index--
+        }
+        return false
     }
 
     /**
@@ -556,6 +613,8 @@ internal class KotlinCode(val text: String) {
     companion object {
         private val CONTINUATION_KEYWORDS = setOf("else", "catch", "finally")
         private val CONTROL_HEADER_KEYWORDS = setOf("else", "try", "do", "finally")
+        private val CONTROL_PARENTHESES = setOf("if", "for", "while", "catch", "when")
+        private val DECLARATION_HEADER_KEYWORDS = setOf("fun", "class", "interface", "object", "init")
 
         /** Kotlin hard keywords: never a name. Soft keywords the lexer marks as keywords may be names. */
         val HARD_KEYWORDS: Set<String> = setOf(

@@ -728,6 +728,7 @@ internal fun KotlinCode.unreadNameTokens(scope: KtRange): List<KtToken> {
 
 /** True when [token] is a member name, a named argument, a label or a label use rather than a bare name. */
 private fun KotlinCode.isPlaceableTokenName(token: KtToken): Boolean {
+    if (token.type == KotlinTokenTypes.KEYWORD && token.text == "by" && isDelegationBy(token)) return true
     val before = code.getOrNull(token.index - 1)
     if (before != null) {
         if (before.type == KotlinTokenTypes.DOT || before.text == "::") return true
@@ -745,3 +746,33 @@ private fun KotlinCode.isPlaceableTokenName(token: KtToken): Boolean {
 
 /** Keywords that take a label after `@`. */
 private val LABEL_USER_KEYWORDS = setOf("return", "break", "continue", "this", "super")
+
+/**
+ * True when [token] is the `by` of a delegated declaration: a `val`, `var`, `class` or `object`
+ * header with no `=` before it (R2 「Unread spellings」).
+ */
+private fun KotlinCode.isDelegationBy(token: KtToken): Boolean {
+    var index = token.index - 1
+    var guard = 0
+    while (index >= 0 && guard++ < 500) {
+        val candidate = code[index]
+        val next = code.getOrNull(index + 1)
+        if (next != null && splitsAfter(candidate, next)) return false
+        when {
+            candidate.text == "=" || candidate.text == ";" || candidate.text == "{" ||
+                candidate.text == "}" || candidate.text == "->" -> return false
+            isCloser(candidate) -> {
+                val open = matchingIndex(index)
+                if (open < 0) return false
+                index = open - 1
+                continue
+            }
+            candidate.type == KotlinTokenTypes.KEYWORD && candidate.text in DELEGATION_HEADS -> return true
+        }
+        index--
+    }
+    return false
+}
+
+/** Declaration keywords whose header may hold a delegation `by`. */
+private val DELEGATION_HEADS = setOf("val", "var", "class", "object", "interface")

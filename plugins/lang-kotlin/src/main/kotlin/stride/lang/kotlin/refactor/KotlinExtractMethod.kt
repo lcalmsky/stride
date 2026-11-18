@@ -353,6 +353,12 @@ internal object KotlinExtractMethod {
         for (call in code.callsIn(range)) {
             if (call.kind == CallKind.INDEX) continue
             val callee = code.tokenBefore(call.open.start) ?: continue
+            if (callee.text == ">") {
+                // Written type arguments fix the result type, so a receiverless call is safe.
+                val open = angleOpenBefore(code, callee.index)
+                val name = if (open > 0) code.code.getOrNull(open - 1) else null
+                if (name != null && isNameToken(name)) continue
+            }
             if (!isNameToken(callee)) continue
             val before = code.tokenBefore(callee.start)
             if (before != null && before.type == KotlinTokenTypes.DOT) continue

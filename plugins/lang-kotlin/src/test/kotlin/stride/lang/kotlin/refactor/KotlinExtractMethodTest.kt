@@ -1169,4 +1169,35 @@ class KotlinExtractMethodTest {
             "        return it\n    }\n    local()\n}.size\n"
         assertEquals("The selection is inside a local function", refused(select(text, "println(it)")))
     }
+
+    @Test
+    fun `a delegated declaration and its use are extracted`() {
+        val text = "fun f() {\n    var t by lazy { 0 }\n    println(t)\n}\n"
+        val applied = extract(text, "var t by lazy { 0 }\n    println(t)")
+        assertEquals(
+            "fun f() {\n    extracted()\n}\n\n" +
+                "private fun extracted() {\n    var t by lazy { 0 }\n    println(t)\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a receiverless call with written type arguments is extracted`() {
+        val text = "fun f() {\n    val items = emptyList<Int>()\n    println(items)\n}\n"
+        val applied = extract(text, "emptyList<Int>()")
+        assertEquals(
+            "fun f() {\n    val items = extracted()\n    println(items)\n}\n\n" +
+                "private fun extracted() = emptyList<Int>()\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a receiverless call without type arguments is refused`() {
+        val text = "fun f() {\n    val items = emptyList()\n    println(items)\n}\n"
+        assertEquals(
+            "Cannot infer the type of emptyList() without a compiler",
+            refused(select(text, "emptyList()")),
+        )
+    }
 }

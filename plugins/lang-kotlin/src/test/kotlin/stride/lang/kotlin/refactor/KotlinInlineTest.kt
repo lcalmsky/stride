@@ -963,4 +963,13 @@ class KotlinInlineTest {
         val lineApplied = apply(caretAt(line, "x = 1"), line)
         assertEquals("fun f() {\n    println(1)\n}\n", lineApplied.text)
     }
+
+    @Test
+    fun `a block on the next line is a statement of its own`() {
+        val text = "fun f() {\n    val x = 1\n    { }\n    println(x)\n}\n"
+        val applied = apply(caretAt(text, "x = 1"), text)
+
+        assertEquals("fun f() {\n    { }\n    println(1)\n}\n", applied.text)
+        assertEquals("Inlined x (1 use)", applied.message)
+    }
 }

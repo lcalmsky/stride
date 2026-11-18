@@ -734,6 +734,62 @@ class KotlinCodeModelTest {
     }
 
     @Test
+    fun `a next line block joins a call or a header`() {
+        assertEquals(
+            listOf("foo()\n    { }", "println(1)"),
+            bodyStatements("fun f() {\n    foo()\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("x.y\n    { }", "println(1)"),
+            bodyStatements("fun f() {\n    x.y\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("if (c)\n    { }", "println(1)"),
+            bodyStatements("fun f(c: Boolean) {\n    if (c)\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("fun g()\n    { }", "println(1)"),
+            bodyStatements("fun f() {\n    fun g()\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("class B\n    { }", "println(1)"),
+            bodyStatements("fun f() {\n    class B\n    { }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
+    fun `a next line block after a value is a statement of its own`() {
+        assertEquals(
+            listOf("run", "{ }", "println(1)"),
+            bodyStatements("fun f() {\n    run\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("1", "{ }", "println(1)"),
+            bodyStatements("fun f() {\n    1\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("\"s\"", "{ }", "println(1)"),
+            bodyStatements("fun f() {\n    \"s\"\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("(a)", "{ }", "println(1)"),
+            bodyStatements("fun f(a: Int) {\n    (a)\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("a[0]", "{ }", "println(1)"),
+            bodyStatements("fun f(a: List<Int>) {\n    a[0]\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("a!!", "{ }", "println(1)"),
+            bodyStatements("fun f(a: Int?) {\n    a!!\n    { }\n    println(1)\n}\n"),
+        )
+        assertEquals(
+            listOf("{ print(1) }", "{ }", "println(1)"),
+            bodyStatements("fun f() {\n    { print(1) }\n    { }\n    println(1)\n}\n"),
+        )
+    }
+
+    @Test
     fun `a class body property and its accessor are separate lines`() {
         val text = "class C {\n    var x = 0\n    private set\n}\n"
         val code = model(text)
