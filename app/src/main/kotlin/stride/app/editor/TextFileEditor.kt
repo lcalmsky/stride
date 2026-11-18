@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -102,6 +103,8 @@ import stride.app.ui.theme.editorFieldLuminance
 import stride.app.ui.theme.neonBorder
 import stride.app.ui.theme.popupPanel
 import stride.app.ui.theme.scrollEdgeBands
+import stride.app.vcs.HunkKind
+import stride.app.vcs.LineHunk
 import stride.core.vfs.VFile
 import stride.lang.ColorScheme
 import stride.lang.Commenter
@@ -284,6 +287,12 @@ class TextFileEditor(
 
     /** 0-based lines carrying a bookmark mark in the gutter. */
     var bookmarkLines: Set<Int> by mutableStateOf(emptySet())
+
+    /** The document's changes against HEAD, drawn as gutter marks; empty draws nothing. */
+    internal var vcsHunks: List<LineHunk> by mutableStateOf(emptyList())
+
+    /** Called with the hunk under a click on a gutter change mark. */
+    var onChangeMarkClick: ((LineHunk) -> Unit)? = null
 
     /** Called after a jump moved the caret, so the navigation history can record the target. */
     var onJump: (() -> Unit)? = null
@@ -1969,6 +1978,54 @@ class TextFileEditor(
                             drawPath(path, DesignTokens.accent2)
                         }
                     }
+                    val changes = vcsHunks
+                    if (changes.isNotEmpty()) {
+                        val marks = remember(changes, foldView, lineCount) {
+                            changeMarkRows(changes, foldView, lineCount)
+                        }
+                        val onClick = onChangeMarkClick
+                        val rowHeightPx = with(density) { lineHeight.toPx() }
+                        Canvas(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 8.dp)
+                                .width(8.dp)
+                                .height(gutterHeight)
+                                .testTag(CHANGE_MARKS_TAG)
+                                .pointerInput(marks, onClick) {
+                                    detectTapGestures { position ->
+                                        val row = (position.y / rowHeightPx).toInt()
+                                        val mark = marks.firstOrNull { row in it.firstRow..it.lastRow }
+                                            ?: return@detectTapGestures
+                                        onClick?.invoke(mark.hunk)
+                                    }
+                                },
+                        ) {
+                            val linePx = lineHeight.toPx()
+                            val barWidth = 3.dp.toPx()
+                            for (mark in marks) {
+                                val top = mark.firstRow * linePx
+                                when (mark.kind) {
+                                    HunkKind.DELETED -> {
+                                        val middle = top + linePx / 2
+                                        val half = 2.dp.toPx()
+                                        val path = Path().apply {
+                                            moveTo(size.width - half * 2, middle - half)
+                                            lineTo(size.width, middle)
+                                            lineTo(size.width - half * 2, middle + half)
+                                            close()
+                                        }
+                                        drawPath(path, DesignTokens.vcsDeleted)
+                                    }
+                                    else -> drawRect(
+                                        if (mark.kind == HunkKind.ADDED) DesignTokens.vcsAdded else DesignTokens.vcsModified,
+                                        topLeft = Offset(size.width - barWidth, top),
+                                        size = Size(barWidth, (mark.lastRow - mark.firstRow + 1) * linePx),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
             }
@@ -2339,6 +2396,7 @@ class TextFileEditor(
     companion object {
         const val MAX_HIGHLIGHTED_SIZE: Long = 2L * 1024 * 1024
         const val GOTO_LINE_TAG: String = "goto-line"
+        const val CHANGE_MARKS_TAG: String = "change-marks"
         private const val MAX_SELECTION_STEPS: Int = 64
 
         /** The edit actions that run at every caret through [MultiCaret.perCaret]. */
@@ -2579,3 +2637,55 @@ private data class HippieState(
     val candidates: List<String>,
     val index: Int,
 )
+
+/** One drawn change mark: the hunk it belongs to and the gutter rows it covers. */
+internal data class ChangeMarkRow(
+    val hunk: LineHunk,
+    val firstRow: Int,
+    val lastRow: Int,
+    val kind: HunkKind,
+)
+
+/**
+ * The gutter rows [hunks] are drawn on. A folded hunk is drawn on its visible rows; a hunk whose
+ * lines are all inside a fold is one MODIFIED mark on the fold's row.
+ */
+internal fun changeMarkRows(hunks: List<LineHunk>, foldView: FoldView, lineCount: Int): List<ChangeMarkRow> {
+    val rows = ArrayList<ChangeMarkRow>(hunks.size)
+    for (hunk in hunks) {
+        if (hunk.newCount == 0) {
+            val boundary = hunk.newStart.coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+            val row = foldView.rowOf(boundary)
+            rows += ChangeMarkRow(hunk, row, row, HunkKind.DELETED)
+            continue
+        }
+        if (foldView.isEmpty) {
+            rows += ChangeMarkRow(hunk, hunk.newStart, hunk.newStart + hunk.newCount - 1, hunk.kind)
+            continue
+        }
+        var runStart = -1
+        var runEnd = -1
+        for (line in hunk.newStart until hunk.newStart + hunk.newCount) {
+            val row = foldView.visibleRowOf(line) ?: continue
+            when {
+                runStart < 0 -> {
+                    runStart = row
+                    runEnd = row
+                }
+                row == runEnd + 1 -> runEnd = row
+                else -> {
+                    rows += ChangeMarkRow(hunk, runStart, runEnd, hunk.kind)
+                    runStart = row
+                    runEnd = row
+                }
+            }
+        }
+        if (runStart >= 0) {
+            rows += ChangeMarkRow(hunk, runStart, runEnd, hunk.kind)
+        } else {
+            val row = foldView.rowOf(hunk.newStart)
+            rows += ChangeMarkRow(hunk, row, row, HunkKind.MODIFIED)
+        }
+    }
+    return rows
+}

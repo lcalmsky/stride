@@ -252,6 +252,46 @@ class DesignTokensContrastTest {
     }
 
     @Test
+    fun `vcs change marks clear 3 to 1 on the gutter surface in both palettes and on both desktop polarities`() {
+        for (appearance in listOf(Appearance.DARK, Appearance.LIGHT)) {
+            val palette = paletteOf(appearance)
+            // The gutter sits on the editor's own field; on the native path that field is the
+            // palette tint over a white and a black desktop. The only overlays the gutter shows
+            // are the current line's tint and its glow.
+            val tint = Color(palette.editorGlassTint)
+            val bases = listOf(blendOver(tint, Color.White), blendOver(tint, Color.Black))
+            val surfaces = buildList {
+                addAll(bases)
+                for (base in bases) {
+                    add(blendOver(palette.currentLine, base))
+                    add(blendOver(palette.currentLineGlow, base))
+                }
+                add(palette.surface)
+                add(palette.background)
+            }
+            for ((name, color) in listOf(
+                "vcsAdded" to palette.vcsAdded,
+                "vcsModified" to palette.vcsModified,
+                "vcsDeleted" to palette.vcsDeleted,
+            )) {
+                for (surface in surfaces) {
+                    val ratio = contrastRatio(color, surface)
+                    assertTrue(
+                        ratio >= DesignTokens.contrastUi,
+                        "$appearance $name on the gutter surface #%02X%02X%02X = %.3f < %.1f".format(
+                            (surface.red * 255f).roundToInt(),
+                            (surface.green * 255f).roundToInt(),
+                            (surface.blue * 255f).roundToInt(),
+                            ratio,
+                            DesignTokens.contrastUi,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
     fun `ansi backgrounds keep the base colours on glass and inverse video swaps the lists`() {
         val previous = GlassRuntime.active.value
         GlassRuntime.active.value = true

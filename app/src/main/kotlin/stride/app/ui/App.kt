@@ -189,8 +189,10 @@ import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
 import stride.app.vcs.ChangeMarkPopup
 import stride.app.vcs.DiffPopup
+import stride.app.vcs.LineHunk
 import stride.app.vcs.PushPopup
 import stride.app.vcs.VcsPopup
+import stride.app.vcs.openChangeMarkPopup
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.lang.FileTypeRegistry
@@ -336,6 +338,7 @@ fun App(
                                     state.findBar,
                                     onFocusContext = { state.focus = it },
                                     onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
+                                    onChangeMarkClick = { editor, hunk -> openChangeMarkPopup(state, editor, hunk) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
                                     onTextChange = { editor, changes, recorded, recordIndex ->
                                         session.editLocations.changes(
@@ -1559,6 +1562,7 @@ private fun EditorArea(
     findBar: FindBarState,
     onFocusContext: (KeyContext) -> Unit,
     onGoToDeclaration: (TextFileEditor, Int) -> Unit,
+    onChangeMarkClick: (TextFileEditor, LineHunk) -> Unit,
     onJump: (TextFileEditor) -> Unit,
     onTextChange: (TextFileEditor, List<TextChange>, Boolean, Int) -> Unit,
     modifier: Modifier,
@@ -1597,6 +1601,7 @@ private fun EditorArea(
                 if (selected is TextFileEditor) {
                     selected.onFocusContext = onFocusContext
                     selected.onGoToDeclarationAt = { offset -> onGoToDeclaration(selected, offset) }
+                    selected.onChangeMarkClick = { hunk -> onChangeMarkClick(selected, hunk) }
                     selected.onJump = { onJump(selected) }
                     selected.onTextChange = { changes, recorded, recordIndex ->
                         onTextChange(selected, changes, recorded, recordIndex)

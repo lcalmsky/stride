@@ -106,15 +106,15 @@ class VcsActionsTest {
     }
 
     @Test
-    fun `the stub actions report themselves in the status bar`() {
+    fun `the change actions need an editor`() {
         val state = AppState()
         try {
-            assertTrue(dispatchAction(ActionId.ROLLBACK_LINES, state) { null })
-            assertEquals("Rollback Lines is not implemented yet", state.statusMessage)
-            assertTrue(dispatchAction(ActionId.NEXT_CHANGE, state) { null })
-            assertEquals("Next Change is not implemented yet", state.statusMessage)
-            assertTrue(dispatchAction(ActionId.PREVIOUS_CHANGE, state) { null })
-            assertEquals("Previous Change is not implemented yet", state.statusMessage)
+            assertFalse(dispatchAction(ActionId.ROLLBACK_LINES, state) { null })
+            assertNull(state.statusMessage)
+            assertFalse(dispatchAction(ActionId.NEXT_CHANGE, state) { null })
+            assertNull(state.statusMessage)
+            assertFalse(dispatchAction(ActionId.PREVIOUS_CHANGE, state) { null })
+            assertNull(state.statusMessage)
         } finally {
             state.dispose()
         }

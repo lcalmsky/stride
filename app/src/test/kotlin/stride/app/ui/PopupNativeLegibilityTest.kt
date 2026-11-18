@@ -37,6 +37,9 @@ import stride.app.editor.RenamePopup
 import stride.app.editor.SurroundRequest
 import stride.app.editor.SurroundWith
 import stride.app.editor.SurroundWithPopup
+import stride.app.vcs.ChangeMarkPopup
+import stride.app.vcs.ChangeMarkPopupRequest
+import stride.app.vcs.LineHunk
 import stride.app.editor.TextFileEditor
 import stride.app.generate.MemberChooserPopup
 import stride.app.glass.GlassHoles
@@ -288,6 +291,7 @@ class PopupNativeLegibilityTest {
 
     private fun cases(): List<PopupCase> {
         val editor = TextFileEditor(VFile(root.resolve("src/AlphaOne.kt")))
+        val popupState = AppState()
         val recent = listOf("AlphaOne.kt", "AlphaTwo.kt", "BetaOne.kt").map { VFile(root.resolve("src/$it")) }
         val completion = CompletionRequest(
             editor = editor,
@@ -611,6 +615,23 @@ class PopupNativeLegibilityTest {
                             ),
                         ),
                     ),
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "change-mark",
+                key = "popup-change-mark",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                ChangeMarkPopup(
+                    request = ChangeMarkPopupRequest(
+                        editor = editor,
+                        hunk = LineHunk(1, 1, 1, 1),
+                        baseLines = listOf("    val alpha = 1"),
+                    ),
+                    state = popupState,
                     onClose = {},
                 )
             },
