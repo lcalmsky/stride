@@ -2746,7 +2746,7 @@ Kotlin 2.4.21:
 | an existing constructor with the same parameter types | conflicting overloads | refuse: `constructor(Int) already exists` |
 | an existing constructor that also accepts the same number of arguments through default values or a `vararg` (`constructor(x: Long, y: Int = 0)`, `constructor(vararg xs: Int)`) | `A(1)` silently moves to the new constructor | refuse: `A(…) with 1 argument would call the new constructor` |
 | an existing constructor with the same number of parameters and other types (`constructor(x: Long)`) | `A(1)` silently moves when the literal fits both | refuse with the same message |
-| `operator fun invoke` in the class's companion object, or an extension `invoke` on it (`operator fun A.Companion.invoke`) in this file or, when the class has a companion object, any top-level `invoke` in project sources | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
+| `operator fun invoke` in the class's companion object, or an extension `invoke` on it (`operator fun A.Companion.invoke`) in this file or, when the class has a companion object, any top-level `invoke` in project sources (`ProjectTypes` has no receiver lookup, so an unrelated top-level `invoke` refuses too) | `A(i)` silently moves from `invoke` to the constructor | refuse: `A's companion invoke() would lose its calls` |
 | a top-level function or property named `A` in project sources (`ProjectTypes.hasTopLevelFunction`, private ones included) or in this file | same parameter types: conflicting overloads; other types: `A(1)` silently moves to the constructor | refuse: `A top-level function A(…) exists` |
 | the class has no explicit constructor at all | the implicit `A()` disappears; `A()` stops compiling, enum entries without arguments stop compiling, and a top-level `fun A()` silently receives `A()` | write `constructor()` first, then the new constructor: `A()`, entries and subclass calls keep their target (measured). A callable reference `::A` without an expected type becomes ambiguous (a compile error, documented) |
 | a supertype initialized in the header (`class A : Base()`) | `supertype initialization is impossible without a primary constructor` | refuse: `A initializes Base() in its header` |
@@ -2843,9 +2843,12 @@ the same tokens and blocks as the current file.
   A property becomes `override val x: T get() = super.x`, and a `var` adds
   `set(value) { super.x = value }` (measured: same behaviour as inheriting it).
 - **Implement** lists the abstract candidates that nothing along the walk implements, all
-  checked: a body in any supertype, an interface's default body included, counts as an
-  implementation (measured: `class C : P, R` with `interface R : P { override fun f() = 7 }`
-  compiles without an override and runs `R.f`). Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+  checked: a body that overrides the abstract declaration, an interface's default body included,
+  counts as an implementation (measured: `class C : P, R` with `interface R : P { override fun f()
+  = 7 }` compiles without an override and runs `R.f`). A body declared independently, in a
+  supertype that does not inherit the abstract declaration (`interface P { fun f(): Int }` and
+  `interface Q { fun f(): Int = 7 }` in `class C : P, Q`), does not count: Kotlin then requires an
+  explicit override, so `f` is listed. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
   walk is not in project sources (a supertype with `()`, or one without parentheses in a class with
   explicit constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
