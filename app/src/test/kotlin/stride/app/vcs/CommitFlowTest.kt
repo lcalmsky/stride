@@ -248,6 +248,47 @@ class CommitFlowTest {
     }
 
     @Test
+    fun `a checked rename row commits the old path as well`() {
+        val repo = repoWithSources()
+        repo.git("mv", "src/Main.kt", "src/Renamed.kt")
+        withState(repo) { state, session ->
+            val window = session.commit
+            window.syncRows(commitRows(session, window))
+            val row = window.rows.single()
+            assertEquals(ChangeKind.RENAMED, row.kind)
+            assertTrue(window.inclusion.isChecked(row))
+            window.message = "Rename the source"
+
+            commitFromWindow(state)
+
+            assertTrue(eventually { state.statusMessage?.startsWith("Committed 1 files to main: ") == true }, state.statusMessage)
+            val tree = repo.git("ls-tree", "-r", "--name-only", "HEAD").lines().filter { it.isNotBlank() }
+            assertEquals(listOf("src/Renamed.kt"), tree)
+            assertEquals("", repo.git("status", "--porcelain"))
+        }
+    }
+
+    @Test
+    fun `the first commit of a repository without commits`() {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "first\n")
+        withState(repo) { state, session ->
+            val window = session.commit
+            window.syncRows(commitRows(session, window))
+            val row = window.rows.single { it.path == file }
+            assertEquals(ChangeKind.UNTRACKED, row.kind)
+            window.inclusion.toggle(row)
+            window.message = "First commit"
+
+            commitFromWindow(state)
+
+            assertTrue(eventually { state.statusMessage?.startsWith("Committed 1 files to main: ") == true }, state.statusMessage)
+            assertEquals("first\n", repo.git("show", "HEAD:src/Main.kt"))
+            assertEquals("", repo.git("status", "--porcelain"))
+        }
+    }
+
+    @Test
     fun `a save that fails stops the commit before git runs`() {
         val repo = repoWithSources()
         val file = repo.root.resolve("src/Main.kt")

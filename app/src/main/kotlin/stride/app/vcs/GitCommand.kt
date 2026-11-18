@@ -79,9 +79,16 @@ class CliGitExecutor(
         }
         val stdout = ByteArrayOutputStream()
         val stderr = StringBuilder()
+        val stderrLock = Any()
+        fun stderrText(): String = synchronized(stderrLock) { stderr.toString() }
         val stdoutThread = Thread { runCatching { process.inputStream.copyTo(stdout) } }
         val stderrThread = Thread {
-            runCatching { process.errorStream.bufferedReader(Charsets.UTF_8).use { stderr.append(it.readText()) } }
+            runCatching {
+                process.errorStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    val text = reader.readText()
+                    synchronized(stderrLock) { stderr.append(text) }
+                }
+            }
         }
         stdoutThread.isDaemon = true
         stderrThread.isDaemon = true
@@ -91,20 +98,21 @@ class CliGitExecutor(
             process.waitFor(command.timeout.inWholeMilliseconds.coerceAtLeast(1), TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             destroy(process)
-            Thread.currentThread().interrupt()
+            // Restoring the flag before the joins would make them throw and lose this result.
             stdoutThread.join(READ_JOIN_MILLIS)
             stderrThread.join(READ_JOIN_MILLIS)
+            Thread.currentThread().interrupt()
             return GitResult(-1, stdout.toByteArray(), "interrupted", timedOut = true)
         }
         if (!finished) {
             destroy(process)
             stdoutThread.join(READ_JOIN_MILLIS)
             stderrThread.join(READ_JOIN_MILLIS)
-            return GitResult(-1, stdout.toByteArray(), stderr.toString(), timedOut = true)
+            return GitResult(-1, stdout.toByteArray(), stderrText(), timedOut = true)
         }
         stdoutThread.join(READ_JOIN_MILLIS)
         stderrThread.join(READ_JOIN_MILLIS)
-        return GitResult(process.exitValue(), stdout.toByteArray(), stderr.toString(), timedOut = false)
+        return GitResult(process.exitValue(), stdout.toByteArray(), stderrText(), timedOut = false)
     }
 
     companion object {

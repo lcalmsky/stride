@@ -1,6 +1,7 @@
 package stride.app.vcs
 
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -135,6 +136,48 @@ class CliGitExecutorTest {
             Thread.sleep(50)
         }
         assertFalse(runningProcesses(token), "the timed-out command is still running")
+    }
+
+    @Test
+    fun `an interrupted command returns the interrupted result and keeps the flag`() {
+        // The detached holder keeps the output pipe open after the command is destroyed, so the
+        // reader threads are still alive when the interrupt path joins them.
+        val token = "stride-interrupt-${System.nanoTime()}"
+        val script = temp.resolve("slow-git").apply {
+            writeText("#!/bin/sh\n( ( sh -c 'sleep 30; :' $token ) & )\nsleep 30\n")
+            toFile().setExecutable(true)
+        }
+        val executor = CliGitExecutor(script, emptyMap(), baseEnvironment = mapOf("PATH" to "/usr/bin:/bin"))
+        var result: GitResult? = null
+        var flagAfter: Boolean? = null
+        val thread = Thread {
+            try {
+                result = executor.run(GitCommand(listOf("status"), temp, 30.seconds))
+                flagAfter = Thread.currentThread().isInterrupted
+            } finally {
+                Thread.interrupted()
+            }
+        }
+        thread.start()
+        try {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (!runningProcesses(token) && System.nanoTime() < deadline) Thread.sleep(20)
+            assertTrue(runningProcesses(token), "the slow command never started")
+
+            thread.interrupt()
+            thread.join(15_000)
+
+            assertFalse(thread.isAlive, "the interrupted call never returned")
+            val outcome = requireNotNull(result) { "run threw instead of returning the interrupted result" }
+            assertEquals(-1, outcome.exitCode)
+            assertTrue(outcome.timedOut)
+            assertEquals("interrupted", outcome.stderr)
+            assertEquals(true, flagAfter, "the interrupt flag must be set when run returns")
+        } finally {
+            ProcessHandle.allProcesses().toList()
+                .filter { it.info().commandLine().orElse("").contains(token) }
+                .forEach { it.destroyForcibly() }
+        }
     }
 
     @Test

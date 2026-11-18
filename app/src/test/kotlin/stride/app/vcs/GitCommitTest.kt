@@ -9,11 +9,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.core.services.Project
+import stride.core.services.service
 
 class GitCommitTest {
 
@@ -203,6 +209,28 @@ class GitCommitTest {
 
             assertTrue(eventually(5_000) { job.isCompleted }, "the cancelled commit did not finish")
             assertTrue(eventually(5_000) { !hookRunning(hook) }, "the hook is still running")
+        }
+    }
+
+    @Test
+    fun `dispose interrupts a call another scope started and kills its hook`() {
+        val repo = repoWithCommit()
+        val hook = writeHook(repo, "pre-commit", "#!/bin/sh\nsleep 30 && echo done\n")
+        val file = repo.write("src/New.kt", "new\n")
+        val project = Project(repo.root)
+        val service = project.service<GitService>()
+        service.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        val scope = CoroutineScope(Dispatchers.IO)
+        try {
+            scope.launch { runCatching { service.commit(listOf(file), "Slow hook") } }
+            assertTrue(eventually(10_000) { hookRunning(hook) }, "the hook never started")
+
+            project.dispose()
+
+            assertTrue(eventually(5_000) { !hookRunning(hook) }, "the hook is still running after dispose")
+        } finally {
+            scope.cancel()
+            project.dispose()
         }
     }
 

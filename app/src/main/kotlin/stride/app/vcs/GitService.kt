@@ -106,7 +106,9 @@ class GitService(private val project: Project) : Disposable {
     private var debounceJob: Job? = null
     private var refreshing = false
     private var pendingRefresh = false
-    private val runningThreads = ConcurrentHashMap.newKeySet<Thread>()
+    private val runningLock = Any()
+    private val runningThreads = HashSet<Thread>()
+    private var interruptingCalls = false
 
     private val lexicalRoot: Path = project.root.toAbsolutePath().normalize()
 
@@ -293,6 +295,7 @@ class GitService(private val project: Project) : Disposable {
         paths: List<Path>,
         message: String,
     ): GitWriteResult {
+        val commitPaths = (paths + renamedOriginals(repository, paths)).distinct()
         val untracked = untrackedFiles(paths)
         var added = 0
         if (untracked.isNotEmpty()) {
@@ -320,7 +323,7 @@ class GitService(private val project: Project) : Disposable {
             messageFileWriter(messageFile, message)
             val result = write(
                 GitCommand(
-                    listOf("commit", "--only", "-F", messageFile.toString(), "--") + paths.map { it.toString() },
+                    listOf("commit", "--only", "-F", messageFile.toString(), "--") + commitPaths.map { it.toString() },
                     projectRoot,
                     timeouts.commit,
                     write = true,
@@ -468,8 +471,12 @@ class GitService(private val project: Project) : Disposable {
         }
         scope.cancel()
         // Cancels the calls the service launched; the interrupt reaches calls a caller launched
-        // from another scope, so their child processes die with the project too.
-        runningThreads.forEach(Thread::interrupt)
+        // from another scope, so their child processes die with the project too. The lock makes a
+        // call that is leaving the set wait here, so its removal and this loop cannot cross.
+        synchronized(runningLock) {
+            interruptingCalls = true
+            runningThreads.forEach(Thread::interrupt)
+        }
         baseCache.clear()
     }
 
@@ -526,11 +533,16 @@ class GitService(private val project: Project) : Disposable {
     private suspend fun runQuietly(command: GitCommand): GitResult = try {
         runInterruptible(Dispatchers.IO) {
             val thread = Thread.currentThread()
-            runningThreads += thread
+            synchronized(runningLock) { runningThreads += thread }
             try {
                 executor.run(command)
             } finally {
-                runningThreads -= thread
+                val interruptedByDispose = synchronized(runningLock) {
+                    runningThreads -= thread
+                    interruptingCalls
+                }
+                // The dispose interrupt is for this call only; the pooled thread must go back clean.
+                if (interruptedByDispose) Thread.interrupted()
             }
         }
     } catch (e: CancellationException) {
@@ -638,6 +650,20 @@ class GitService(private val project: Project) : Disposable {
             return projectRoot.resolve(lexicalRoot.relativize(absolute)).normalize()
         }
         return absolute
+    }
+
+    /**
+     * `commit --only` records a rename only when both ends are on its command line. An original
+     * that still exists on disk belongs to a copy, and taking it would include an unchecked file.
+     */
+    private fun renamedOriginals(repository: GitRepository, paths: List<Path>): List<Path> {
+        val included = paths.toSet()
+        return snapshot.changes.asSequence()
+            .filter { it.kind == ChangeKind.RENAMED && it.path in included }
+            .mapNotNull { it.originalPath }
+            .filter { it.startsWith(repository.root) && !Files.exists(it) }
+            .distinct()
+            .toList()
     }
 
     private suspend fun untrackedFiles(paths: List<Path>): List<Path> {
