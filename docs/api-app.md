@@ -2377,9 +2377,15 @@ R3 to R5.
   next line. Newlines inside `()`, `[]` and nested `{}`
   never split. These shapes also keep one statement, all on the joining side: a control body
   without braces (a newline after `if (…)`, `for (…)`, `while (…)`, `catch (…)`, `else`, `try`,
-  `do`, `finally`), a next line starting with `{` (a block, or a trailing lambda, which Kotlin
-  passes to the call before it), `->` or `:`, and
-  text inside strings and templates. The trailing `while (…)` of `do … while` ends its statement,
+  `do`, `finally`), a next line starting with `->` or `:`, and a next line starting with `{` when
+  the line ends with a call's `)`, a control or declaration header (`if (…)`, `while (…)`,
+  `when (…)`, `fun f()`, `class A`, `else`, `try`, `finally`, `do`, `init`), a name after `.` or
+  `?.`, `->`, `>` or a token that cannot end an expression (Kotlin reads the block as a trailing
+  lambda or as the body), and text inside strings and templates. After a literal, a string, `]`,
+  `!!`, a grouping `)`, a lambda or a bare name a next-line `{` starts a statement of its own, as
+  Kotlin 2.4.21 reads it. A member name before a next-line `{` joins although Kotlin joins it only
+  when the member has a function type: the model cannot see types, and the other reading is a
+  lambda that is never invoked. The trailing `while (…)` of `do … while` ends its statement,
   and a lambda's parameter list with its `->` is not a statement.
 - **Locals and references.** Locals are `val`/`var` (single and destructured), function
   parameters, lambda parameters (`it` for a lambda without an arrow), `for` variables, `catch`
