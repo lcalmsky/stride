@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import stride.lang.NameCheck
+import stride.lang.RefactoringContext
 import stride.lang.RefactoringStep
 import stride.lang.TextEdit
 
@@ -561,7 +562,33 @@ class KotlinIntroduceVariableTest {
         assertEquals("Select an expression", refused(select(text, "if (a) if (b) 1 else 2")))
     }
 
+    @Test
+    fun `an expression starting or ending at a bad token is refused`() {
+        val minus = "fun f(a: Int) {\n    val n = a - 1\n}\n"
+        assertEquals("Select an expression", refused(select(minus, "- 1")))
+        val plus = "fun f(x: Int, key: Int) {\n    val n = x + key\n}\n"
+        assertEquals("Select an expression", refused(select(plus, "+ key")))
+        val generic = "fun f() {\n    val x = ArrayList<KtToken>()\n}\n"
+        assertEquals("Select an expression", refused(select(generic, "ArrayList<KtToken")))
+        val tryText = "fun f(): Int {\n    val value = try {\n        1\n    } catch (e: E) {\n        2\n    }\n    return value\n}\n"
+        assertEquals("Select an expression", refused(select(tryText, "try")))
+        val byText = "fun f() {\n    var t by remember { 0 }\n    println(t)\n}\n"
+        assertEquals("Select an expression", refused(select(byText, "by")))
+    }
 
+    @Test
+    fun `an expression may start with a prefix operator and end at an operand end`() {
+        val minus = "fun f() {\n    consume(-1)\n}\n"
+        assertEquals("value", ask(select(minus, "-1")).suggested)
+        val not = "fun f(flag: Boolean) {\n    println(!flag)\n}\n"
+        assertEquals("value", ask(select(not, "!flag")).suggested)
+        val asserted = "fun f(x: Int?) {\n    println(x!!)\n}\n"
+        assertEquals("value", ask(select(asserted, "x!!")).suggested)
+        val incremented = "fun f() {\n    var i = 0\n    consume(i++)\n}\n"
+        assertEquals("value", ask(select(incremented, "i++")).suggested)
+        val indexed = "fun f(list: List<Int>) {\n    println(list[0])\n}\n"
+        assertEquals("value", ask(select(indexed, "list[0]")).suggested)
+    }
 
     @Test
     fun `a name spelled by an infix use is already used`() {
@@ -573,6 +600,29 @@ class KotlinIntroduceVariableTest {
         )
     }
 
+    @Test
+    fun `a selection the model misread before refuses or round-trips`() {
+        val tryText = "fun f(): Int {\n    val value = try {\n        1\n    } catch (e: E) {\n        2\n    }\n    return value\n}\n"
+        assertEquals("Select an expression", refused(select(tryText, "try")))
+        val byText = "fun f() {\n    var t by remember { 0 }\n    println(t)\n}\n"
+        assertEquals("Select an expression", refused(select(byText, "by")))
 
+        val infix = "fun f(y: Int) {\n    val p = \"X\" to y\n    println(p)\n}\n"
+        assertEquals(infix, introduceThenInline(infix, "to"))
+        assertEquals(infix, introduceThenInline(infix, "\"X\" to y"))
 
+        val provides = "fun f(tokens: DesignTokens) {\n    val style = LocalTextStyle provides tokens\n    println(style)\n}\n"
+        assertEquals(provides, introduceThenInline(provides, "provides"))
+    }
+
+    /** Introduce Variable with the suggested name, then Inline it at its only use. */
+    private fun introduceThenInline(text: String, snippet: String): String {
+        val introduced = finish(text, ask(select(text, snippet)), "value").text
+        val code = KotlinCode(introduced)
+        val local = code.locals.first { it.name == "value" && it.kind == LocalKind.VAL }
+        val use = code.references.first { it.resolved === local }
+        val step = KotlinInline.prepare(RefactoringContext(introduced, use.token.start, use.token.end, "Test.kt"))
+        val edit = (step as RefactoringStep.Apply).edit
+        return apply(introduced, edit.edits)
+    }
 }

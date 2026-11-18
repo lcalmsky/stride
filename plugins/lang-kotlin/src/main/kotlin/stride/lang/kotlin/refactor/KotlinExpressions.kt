@@ -254,33 +254,22 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
         return ExpressionProblem.STATEMENT
     }
 
-    if (first.type == KotlinTokenTypes.OPERATION_SIGN && first.text !in PREFIX_OPERATORS) {
-        return ExpressionProblem.OPERATOR_EDGE
+    for (atom in atoms) {
+        if (atom.token.type != KotlinTokenTypes.KEYWORD) continue
+        if (atom.text == "return" && isLabelReturnInsideLambda(atom.token, range)) continue
+        if (atom.text in setOf("return", "break", "continue", "throw")) return ExpressionProblem.CONTROL
     }
-    if (first.type == KotlinTokenTypes.DOT || first.type == KotlinTokenTypes.COMMA ||
-        first.type == KotlinTokenTypes.SEMICOLON
-    ) {
-        return ExpressionProblem.OPERATOR_EDGE
-    }
-    if (first.type == KotlinTokenTypes.KEYWORD && first.text in KEYWORD_OPERATORS) {
-        return ExpressionProblem.OPERATOR_EDGE
-    }
+
+    if (!startsOperand(first, range)) return ExpressionProblem.OPERATOR_EDGE
     if (first.text == "!" && atoms.size > 1 && atoms[1].text in KEYWORD_OPERATORS) {
         return ExpressionProblem.OPERATOR_EDGE
     }
     val last = atoms.lastOrNull() ?: return ExpressionProblem.BOUNDARY
-    if (last.token.type == KotlinTokenTypes.OPERATION_SIGN && last.text !in POSTFIX_OPERATORS) {
-        return ExpressionProblem.OPERATOR_EDGE
-    }
-    if (last.token.type == KotlinTokenTypes.DOT || last.token.type == KotlinTokenTypes.COMMA) {
-        return ExpressionProblem.OPERATOR_EDGE
-    }
-    if (last.kind == AtomKind.KEYWORD && last.text in KEYWORD_OPERATORS) {
-        return ExpressionProblem.OPERATOR_EDGE
-    }
+    if (!endsOperand(last.token)) return ExpressionProblem.OPERATOR_EDGE
     if (last.text == "?" && atoms.size > 1 && atoms[atoms.size - 2].text == "as") {
         return ExpressionProblem.OPERATOR_EDGE
     }
+    if (typeArgumentProblem(this, range)) return ExpressionProblem.BRACKETS
 
     val before = tokenBefore(range.start)
     if (before != null) {
@@ -315,12 +304,6 @@ internal fun KotlinCode.checkExpression(range: KtRange): ExpressionProblem? {
 
     if (nonExpressionRanges.any { it.start < range.end && range.start < it.end }) {
         return ExpressionProblem.ANNOTATION
-    }
-
-    for (atom in atoms) {
-        if (atom.token.type != KotlinTokenTypes.KEYWORD) continue
-        if (atom.text == "return" && isLabelReturnInsideLambda(atom.token, range)) continue
-        if (atom.text in setOf("return", "break", "continue", "throw")) return ExpressionProblem.CONTROL
     }
     return null
 }
@@ -558,10 +541,6 @@ private fun KotlinCode.expressionAtoms(range: KtRange): List<ExprAtom>? {
     }
     return atoms
 }
-
-private val PREFIX_OPERATORS = setOf("!", "-", "+", "~")
-
-private val POSTFIX_OPERATORS = setOf("!!", "++", "--")
 
 /** Keywords that act as operators, so an expression may not start or end with them. */
 private val KEYWORD_OPERATORS = setOf("as", "is", "in")

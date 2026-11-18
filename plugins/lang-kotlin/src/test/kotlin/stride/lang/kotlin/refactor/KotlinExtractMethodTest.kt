@@ -978,7 +978,49 @@ class KotlinExtractMethodTest {
         )
     }
 
+    @Test
+    fun `an expression selection that starts or ends at a bad token is refused`() {
+        assertEquals(
+            "Select whole statements or one expression",
+            refused(select("fun f(a: Int) {\n    val n = a - 1\n}\n", "- 1")),
+        )
+        assertEquals(
+            "Select whole statements or one expression",
+            refused(select("fun f(x: Int, key: Int) {\n    val n = x + key\n}\n", "+ key")),
+        )
+        assertEquals(
+            "Select whole statements or one expression",
+            refused(select("fun f() {\n    val x = ArrayList<KtToken>()\n}\n", "ArrayList<KtToken")),
+        )
+        assertEquals(
+            "Select whole statements or one expression",
+            refused(select("fun f(): Int {\n    val value = try {\n        1\n    } catch (e: E) {\n        2\n    }\n    return value\n}\n", "try")),
+        )
+        assertEquals(
+            "Select whole statements or one expression",
+            refused(select("fun f() {\n    var t by remember { 0 }\n    println(t)\n}\n", "by")),
+        )
+    }
 
+    @Test
+    fun `an expression selection may start with a prefix operator and end at an operand end`() {
+        val minus = "fun f() {\n    consume(-1)\n}\n"
+        assertEquals(
+            "Cannot infer the type of -1 without a compiler",
+            refused(select(minus, "-1")),
+        )
+        val not = "fun f(flag: Boolean) {\n    println(!flag)\n}\n"
+        assertEquals("extracted", ask(select(not, "!flag")).suggested)
+        val asserted = "fun f(x: Int?) {\n    println(x!!)\n}\n"
+        assertEquals("extracted", ask(select(asserted, "x!!")).suggested)
+        val indexed = "fun f(list: List<Int>) {\n    println(list[0])\n}\n"
+        assertEquals("extracted", ask(select(indexed, "list[0]")).suggested)
+        val incremented = "fun f() {\n    var i = 0\n    consume(i++)\n}\n"
+        assertEquals(
+            "The selection changes i; extract whole statements instead",
+            refused(select(incremented, "i++")),
+        )
+    }
 
 
     @Test

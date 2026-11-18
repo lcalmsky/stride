@@ -626,8 +626,39 @@ class KotlinCodeModelTest {
         assertFalse(isNameUsedIn(code, scope, "missing"))
     }
 
+    @Test
+    fun `an expression starts and ends on an operand`() {
+        val text = "fun f(a: Int, key: Int, flag: Boolean, list: List<Int>) {\n" +
+            "    val n = a - 1\n    val m = a + key\n    f(-1)\n    val b = !flag\n    val c = list.size!!\n" +
+            "    val d = list[0]\n    i++\n" +
+            "}\n"
+        val code = model(text)
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "- 1")))
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, code.checkExpression(rangeOf(text, "+ key")))
+        assertNull(code.checkExpression(rangeOf(text, "-1")))
+        assertNull(code.checkExpression(rangeOf(text, "!flag")))
+        assertNull(code.checkExpression(rangeOf(text, "list.size!!")))
+        assertNull(code.checkExpression(rangeOf(text, "list[0]")))
+        assertNull(code.checkExpression(rangeOf(text, "i++")))
+    }
 
+    @Test
+    fun `an expression does not start at a soft keyword in a bad position`() {
+        val tryText = "fun f(): Int {\n    val value = try {\n        1\n    } catch (e: E) {\n        2\n    }\n    return value\n}\n"
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, model(tryText).checkExpression(rangeOf(tryText, "try")))
+        val byText = "fun f() {\n    var t by remember { 0 }\n    println(t)\n}\n"
+        assertEquals(ExpressionProblem.OPERATOR_EDGE, model(byText).checkExpression(rangeOf(byText, "by")))
+    }
 
+    @Test
+    fun `a type argument list opens and closes inside the expression`() {
+        val text = "fun f() {\n    val x = ArrayList<KtToken>()\n}\n"
+        val code = model(text)
+        assertEquals(ExpressionProblem.BRACKETS, code.checkExpression(rangeOf(text, "ArrayList<KtToken")))
+        assertNull(code.checkExpression(rangeOf(text, "ArrayList<KtToken>()")))
+        val merged = "fun f(x: Array<out Any?>?) {\n    println(x.size)\n}\n"
+        assertNull(model(merged).checkExpression(rangeOf(merged, "x.size")))
+    }
 
 
 
