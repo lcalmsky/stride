@@ -48,7 +48,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.DesignTokens
@@ -66,6 +73,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 internal const val MAX_DIFF_FILES: Int = 50
+
+internal const val MAX_PARALLEL_FILE_LOADS: Int = 8
 
 private enum class GitTab(val title: String) { LOG("Log"), CONSOLE("Console") }
 
@@ -85,6 +94,19 @@ fun GitToolWindowContent(state: AppState, modifier: Modifier) {
         return
     }
     val git = session.git
+    var undecided by remember(git) {
+        mutableStateOf(git.snapshot.repository == null && git.snapshot.error == null)
+    }
+    LaunchedEffect(git) {
+        if (undecided) {
+            withContext(Dispatchers.IO) { git.refreshNow() }
+            undecided = false
+        }
+    }
+    if (undecided) {
+        Box(modifier)
+        return
+    }
     val snapshot = git.snapshot
     if (snapshot.repository == null) {
         val root = session.project.root.toAbsolutePath().normalize()
@@ -173,7 +195,6 @@ private fun GitLog(
         ToolWindowEmptyState("No commits yet", modifier, focusRequests, onEscape)
         return
     }
-    val scope = rememberCoroutineScope()
     val root = state.session?.project?.root
     GitLogList(
         entries = loaded,
@@ -182,7 +203,7 @@ private fun GitLog(
         focusRequests = focusRequests,
         onEscape = onEscape,
         onOpen = { entry ->
-            scope.launch { openCommitDiff(git, state, entry, root) }
+            git.launch { openCommitDiff(git, state, entry, root) }
         },
     )
 }
@@ -190,15 +211,26 @@ private fun GitLog(
 /** Loads a commit's files off the UI thread and opens them in the diff popup. */
 private suspend fun openCommitDiff(git: GitService, state: AppState, entry: LogEntry, root: Path?) {
     val changes = git.changedFiles(entry.id)
+    if (changes.isEmpty()) {
+        Snapshot.withMutableSnapshot { state.statusMessage = "No changes in ${entry.shortId}" }
+        return
+    }
     val shown = changes.take(MAX_DIFF_FILES)
-    val files = shown.map { change ->
-        DiffFile(
-            path = change.path,
-            displayPath = displayPathOf(root, change.path),
-            old = git.fileAt("${entry.id}^", change.path),
-            new = git.fileAt(entry.id, change.path),
-            openable = false,
-        )
+    val gate = Semaphore(MAX_PARALLEL_FILE_LOADS)
+    val files = coroutineScope {
+        shown.map { change ->
+            async {
+                gate.withPermit {
+                    DiffFile(
+                        path = change.path,
+                        displayPath = displayPathOf(root, change),
+                        old = git.fileAt("${entry.id}^", change.originalPath ?: change.path),
+                        new = git.fileAt(entry.id, change.path),
+                        openable = false,
+                    )
+                }
+            }
+        }.awaitAll()
     }
     val request = DiffRequest(
         title = "${entry.shortId}  ${entry.subject}",
@@ -206,6 +238,13 @@ private suspend fun openCommitDiff(git: GitService, state: AppState, entry: LogE
         moreFiles = changes.size - files.size,
     )
     Snapshot.withMutableSnapshot { state.diffRequest = request }
+}
+
+/** A rename reads `<old> → <new>`, because the file row is the only place the pair shows. */
+private fun displayPathOf(root: Path?, change: FileChange): String {
+    val new = displayPathOf(root, change.path)
+    val original = change.originalPath ?: return new
+    return "${displayPathOf(root, original)} → $new"
 }
 
 private fun displayPathOf(root: Path?, path: Path): String {

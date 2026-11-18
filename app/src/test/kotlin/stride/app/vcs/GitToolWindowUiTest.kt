@@ -24,10 +24,12 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -153,6 +155,159 @@ class GitToolWindowUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the window waits for the first snapshot instead of claiming there is no repository`() =
+        runComposeUiTest {
+            val repo = TestGitRepo.create(temp, "git-window-probe")
+            repo.write("src/Main.kt", "one\n")
+            repo.commitAll("Initial commit")
+            val state = AppState()
+            try {
+                state.openFolder(repo.root)
+                state.session!!.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+                state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
+
+                setContent { GitHarness(state) }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+                waitForIdle()
+
+                assertTrue(
+                    onAllNodesWithText("Not a Git repository: ${repo.root}").fetchSemanticsNodes().isEmpty(),
+                    "the window reported no repository before the first snapshot",
+                )
+                waitUntil(timeoutMillis = 5_000) {
+                    onAllNodesWithText("Initial commit").fetchSemanticsNodes().isNotEmpty()
+                }
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a commit with no file changes reports it instead of opening an empty diff`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp, "git-window-empty")
+        repo.write("src/Main.kt", "one\n")
+        repo.commitAll("Initial commit")
+        repo.git("commit", "--allow-empty", "-q", "-m", "Empty commit")
+        val empty = repo.git("rev-parse", "--short", "HEAD").trim()
+        val state = openRepository(repo)
+        try {
+            setContent { GitHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Empty commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "No changes in $empty" }
+            assertNull(state.diffRequest)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a renamed file reads both sides at their own paths and shows the pair`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp, "git-window-rename")
+        repo.write("src/Old.kt", "alpha\nbeta\n")
+        repo.commitAll("Add Old")
+        repo.git("mv", "src/Old.kt", "src/New.kt")
+        repo.git("commit", "-q", "-m", "Rename Old to New")
+        val state = openRepository(repo)
+        try {
+            setContent { GitHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Rename Old to New").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            val file = requireNotNull(state.diffRequest).files.single()
+            assertEquals("src/Old.kt → src/New.kt", file.displayPath)
+            assertEquals(BaseText.Text("alpha\nbeta\n"), file.old)
+            assertEquals(BaseText.Text("alpha\nbeta\n"), file.new)
+            assertTrue(
+                DiffRows.build(file).filterIsInstance<DiffRow.Code>().all { it.sign == ' ' },
+                "a rename with unchanged content has no changed line",
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a commit beyond fifty files shows the cap and loads file bodies concurrently`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp, "git-window-many")
+        repeat(55) { repo.write("src/File%02d.kt".format(it), "value $it\n") }
+        repo.commitAll("Many files")
+        repeat(55) { repo.write("src/File%02d.kt".format(it), "changed $it\n") }
+        repo.commitAll("Change many files")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val executor = CountingExecutor(CliGitExecutor(TEST_GIT, repo.environment))
+            state.session!!.git.executor = executor
+            runBlocking { state.session!!.git.refreshNow() }
+            state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
+
+            setContent { GitHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Change many files").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 30_000) { state.diffRequest != null }
+            val request = requireNotNull(state.diffRequest)
+            assertEquals(MAX_DIFF_FILES, request.files.size)
+            assertEquals(5, request.moreFiles)
+            assertEquals(BaseText.Text("changed 0\n"), request.files.first().new)
+            assertEquals(BaseText.Text("changed 49\n"), request.files.last().new)
+            assertTrue(
+                executor.maxInFlight in 2..MAX_PARALLEL_FILE_LOADS,
+                "file bodies in flight at once: ${executor.maxInFlight}",
+            )
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("… 5 more files").fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the log reloads when head moves`() = runComposeUiTest {
+        val repo = threeCommits()
+        val state = openRepository(repo)
+        try {
+            setContent { GitHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Third commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            repo.write("src/Later.kt", "later\n")
+            repo.commitAll("Fourth commit")
+            val git = state.session!!.git
+            git.launch { git.refreshNow() }
+
+            waitUntil(timeoutMillis = 10_000) {
+                onAllNodesWithText("Fourth commit").fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
     private fun threeCommits(): TestGitRepo {
         val repo = TestGitRepo.create(temp, "git-window")
         repo.write("src/Main.kt", "one\n")
@@ -172,6 +327,26 @@ class GitToolWindowUiTest {
         runBlocking { state.session!!.git.refreshNow() }
         state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
         return state
+    }
+}
+
+/** Counts the overlapping `cat-file` calls, the reads one file body makes. */
+private class CountingExecutor(private val delegate: GitExecutor) : GitExecutor {
+    private val inFlight = AtomicInteger()
+
+    @Volatile
+    var maxInFlight: Int = 0
+        private set
+
+    override fun run(command: GitCommand): GitResult {
+        if (command.args.firstOrNull() != "cat-file") return delegate.run(command)
+        val current = inFlight.incrementAndGet()
+        synchronized(this) { if (current > maxInFlight) maxInFlight = current }
+        try {
+            return delegate.run(command)
+        } finally {
+            inFlight.decrementAndGet()
+        }
     }
 }
 

@@ -4,7 +4,7 @@ package stride.app.vcs
  * One row of the unified diff. [Code] carries the 1-based line numbers of the side it exists on,
  * a sign (`-`, `+`, or blank) and the line without a trailing `\r`. [Fold] hides an unchanged run
  * and becomes its lines when expanded. [Message] stands in for the whole file when one side cannot
- * be compared.
+ * be compared or the change is over the edit budget.
  */
 sealed interface DiffRow {
     data class Code(
@@ -26,6 +26,7 @@ object DiffRows {
 
     const val CONTEXT_LINES: Int = 3
     const val FOLD_THRESHOLD: Int = 6
+    const val TOO_MANY_CHANGES: String = "Too many changes to show"
 
     fun build(file: DiffFile): List<DiffRow> {
         val old = when (val base = file.old) {
@@ -38,7 +39,7 @@ object DiffRows {
             BaseText.Untracked -> emptyList()
             is BaseText.Unavailable -> return listOf(DiffRow.Message(current.reason))
         }
-        val hunks = LineDiff.diff(old, new) ?: listOf(LineHunk(0, old.size, 0, new.size))
+        val hunks = LineDiff.diff(old, new) ?: return listOf(DiffRow.Message(TOO_MANY_CHANGES))
         if (hunks.isEmpty()) {
             return List(old.size) { index -> DiffRow.Code(index + 1, index + 1, ' ', old[index]) }
         }
@@ -88,13 +89,22 @@ object DiffRows {
         return if (forward) starts.firstOrNull { it > from } else starts.lastOrNull { it < from }
     }
 
-    /** The row of the 0-based [line] on the new side, or the nearest row above it. */
+    /**
+     * The row of the 0-based [line] on the new side, or the nearest row above it. A [Fold] that
+     * holds the line is returned as itself, so the caller can expand it before selecting.
+     */
     fun rowAtLine(rows: List<DiffRow>, line: Int): Int {
         var fallback = 0
         for (index in rows.indices) {
-            val number = (rows[index] as? DiffRow.Code)?.newNumber ?: continue
-            if (number == line + 1) return index
-            if (number <= line + 1) fallback = index
+            when (val row = rows[index]) {
+                is DiffRow.Code -> {
+                    val number = row.newNumber ?: continue
+                    if (number == line + 1) return index
+                    if (number <= line + 1) fallback = index
+                }
+                is DiffRow.Fold -> if (row.lines.any { it.newNumber == line + 1 }) return index
+                is DiffRow.Message -> Unit
+            }
         }
         return fallback
     }

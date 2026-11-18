@@ -41,7 +41,6 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -50,10 +49,18 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
 import stride.app.glass.GlassHoles
@@ -79,6 +86,7 @@ internal const val DIFF_DELETED_TINT_ALPHA: Float = 0.20f
 private val diffNumberWidth = 44.dp
 private val diffSignWidth = 16.dp
 private val diffRowHeight = 20.dp
+private val diffDigitStyle = TextStyle(fontFamily = DesignTokens.codeFont, fontSize = DesignTokens.codeTextSize)
 
 /**
  * The one-column diff popup: the title, a file row when there are several files, and the unified
@@ -93,7 +101,7 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
         mutableStateOf(request.initialFile.coerceIn(0, files.lastIndex))
     }
     val file = files[fileIndex]
-    var rows by remember(request, fileIndex) { mutableStateOf(DiffRows.build(file)) }
+    var rows by remember(request, fileIndex) { mutableStateOf<List<DiffRow>?>(null) }
     var selected by remember(request, fileIndex) { mutableStateOf(0) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -102,9 +110,13 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
     val fade = rememberPopupFadeAlpha()
     val contentFade = popupContentFade(fade)
     val holes = if (LocalNativeGlass.current) GlassHoles.snapshot() else emptyList()
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val numberWidth = remember(rows, measurer, density) { numberColumnWidth(rows, measurer, density) }
 
     fun scrollTo(index: Int) {
-        scope.launch { listState.scrollToItem(index.coerceIn(0, (rows.size - 1).coerceAtLeast(0))) }
+        val count = rows?.size ?: return
+        scope.launch { listState.scrollToItem(index.coerceIn(0, (count - 1).coerceAtLeast(0))) }
     }
 
     fun select(index: Int) {
@@ -118,7 +130,8 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
     }
 
     fun expandFold(index: Int) {
-        rows = DiffRows.expand(rows, index)
+        val current = rows ?: return
+        rows = DiffRows.expand(current, index)
         selected = index
     }
 
@@ -132,23 +145,38 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
     }
 
     fun confirm() {
-        when (val row = rows.getOrNull(selected)) {
+        when (val row = rows?.getOrNull(selected)) {
             is DiffRow.Fold -> expandFold(selected)
             is DiffRow.Code -> open(row)
             else -> Unit
         }
     }
 
+    fun moveBy(delta: Int) {
+        val count = rows?.size ?: return
+        select((selected + delta).coerceIn(0, count - 1))
+    }
+
     fun moveHunk(delta: Int) {
-        val target = DiffRows.nextHunk(rows, selected, forward = delta > 0) ?: return
+        val current = rows ?: return
+        val target = DiffRows.nextHunk(current, selected, forward = delta > 0) ?: return
         select(target)
     }
 
     LaunchedEffect(request, fileIndex) {
+        var built = withContext(Dispatchers.Default) { DiffRows.build(file) }
         val line = request.initialLine
-        val target = if (line != null && fileIndex == request.initialFile) DiffRows.rowAtLine(rows, line) else 0
+        var target = 0
+        if (line != null && fileIndex == request.initialFile) {
+            val row = DiffRows.rowAtLine(built, line)
+            if (built.getOrNull(row) is DiffRow.Fold) built = DiffRows.expand(built, row)
+            target = DiffRows.rowAtLine(built, line)
+        }
+        // The effect can run off the UI thread; write the rows on a frame so composition observes them.
+        withFrameNanos { }
         selected = target
-        listState.scrollToItem(target)
+        rows = built
+        listState.requestScrollToItem(target)
     }
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -195,19 +223,19 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
                                 true
                             }
                             event.key == Key.DirectionDown -> {
-                                select((selected + 1).coerceAtMost((rows.size - 1).coerceAtLeast(0)))
+                                moveBy(1)
                                 true
                             }
                             event.key == Key.DirectionUp -> {
-                                select((selected - 1).coerceAtLeast(0))
+                                moveBy(-1)
                                 true
                             }
                             event.key == Key.PageDown -> {
-                                select((selected + pageSize()).coerceAtMost((rows.size - 1).coerceAtLeast(0)))
+                                moveBy(pageSize())
                                 true
                             }
                             event.key == Key.PageUp -> {
-                                select((selected - pageSize()).coerceAtLeast(0))
+                                moveBy(-pageSize())
                                 true
                             }
                             event.key == Key.Enter || event.key == Key.NumPadEnter -> {
@@ -215,7 +243,7 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
                                 true
                             }
                             event.key == Key.F4 -> {
-                                (rows.getOrNull(selected) as? DiffRow.Code)?.let(::open)
+                                (rows?.getOrNull(selected) as? DiffRow.Code)?.let(::open)
                                 true
                             }
                             else -> false
@@ -235,11 +263,12 @@ fun DiffPopup(request: DiffRequest, state: AppState, onClose: () -> Unit) {
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                        itemsIndexed(rows) { index, row ->
+                        itemsIndexed(rows.orEmpty()) { index, row ->
                             when (row) {
                                 is DiffRow.Code -> CodeRow(
                                     row = row,
                                     selected = index == selected,
+                                    numberWidth = numberWidth,
                                     onClick = { select(index) },
                                 )
                                 is DiffRow.Fold -> FoldRow(
@@ -318,11 +347,11 @@ private fun FileRow(files: List<DiffFile>, selected: Int, moreFiles: Int, onSele
 }
 
 @Composable
-private fun CodeRow(row: DiffRow.Code, selected: Boolean, onClick: () -> Unit) {
+private fun CodeRow(row: DiffRow.Code, selected: Boolean, numberWidth: Dp, onClick: () -> Unit) {
     val tint = when (row.sign) {
         '+' -> DesignTokens.vcsAdded.copy(alpha = DIFF_ADDED_TINT_ALPHA)
         '-' -> DesignTokens.vcsDeleted.copy(alpha = DIFF_DELETED_TINT_ALPHA)
-        else -> Color.Transparent
+        else -> DesignTokens.transparent
     }
     Row(
         Modifier
@@ -333,8 +362,8 @@ private fun CodeRow(row: DiffRow.Code, selected: Boolean, onClick: () -> Unit) {
             .pointerInput(row) { detectTapGestures { onClick() } },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        NumberCell(row.oldNumber)
-        NumberCell(row.newNumber)
+        NumberCell(row.oldNumber, numberWidth)
+        NumberCell(row.newNumber, numberWidth)
         Text(
             if (row.sign == ' ') "" else row.sign.toString(),
             color = DesignTokens.text,
@@ -357,7 +386,7 @@ private fun CodeRow(row: DiffRow.Code, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun NumberCell(number: Int?) {
+private fun NumberCell(number: Int?, width: Dp) {
     Text(
         number?.toString().orEmpty(),
         color = DesignTokens.text,
@@ -365,8 +394,21 @@ private fun NumberCell(number: Int?) {
         fontFamily = DesignTokens.codeFont,
         textAlign = TextAlign.End,
         maxLines = 1,
-        modifier = Modifier.width(diffNumberWidth),
+        modifier = Modifier.width(width),
     )
+}
+
+/** The widest number the rows draw, in the code font, but never narrower than [diffNumberWidth]. */
+private fun numberColumnWidth(rows: List<DiffRow>?, measurer: TextMeasurer, density: Density): Dp {
+    val digits = rows.orEmpty().maxOfOrNull(::digitCount) ?: 1
+    val digit = with(density) { measurer.measure("0", diffDigitStyle).size.width.toDp() }
+    return (digit.value * digits).dp.coerceAtLeast(diffNumberWidth)
+}
+
+private fun digitCount(row: DiffRow): Int = when (row) {
+    is DiffRow.Code -> maxOf(row.oldNumber ?: 0, row.newNumber ?: 0).toString().length
+    is DiffRow.Fold -> row.lines.maxOfOrNull { maxOf(it.oldNumber ?: 0, it.newNumber ?: 0) }?.toString()?.length ?: 1
+    is DiffRow.Message -> 1
 }
 
 @Composable

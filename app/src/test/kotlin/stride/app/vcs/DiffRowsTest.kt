@@ -170,6 +170,55 @@ class DiffRowsTest {
     }
 
     @Test
+    fun `a run of seven lines away from both edges folds one line`() {
+        val lines = (1..12).map { "line $it" }
+        val changed = lines.toMutableList().also {
+            it[0] = "LINE 1"
+            it[8] = "LINE 9"
+        }
+        val rows = text(lines.joinToString("\n"), changed.joinToString("\n"))
+        val foldIndex = rows.indexOfFirst { it is DiffRow.Fold }
+
+        val fold = rows[foldIndex] as DiffRow.Fold
+        assertEquals(1, fold.count)
+        assertEquals("line 5", fold.lines.single().text)
+        assertEquals(
+            listOf("line 2", "line 3", "line 4"),
+            rows.subList(foldIndex - 3, foldIndex).map { (it as DiffRow.Code).text },
+        )
+        assertEquals(
+            listOf("line 6", "line 7", "line 8"),
+            rows.subList(foldIndex + 1, foldIndex + 4).map { (it as DiffRow.Code).text },
+        )
+    }
+
+    @Test
+    fun `a change over the edit budget is one message row`() {
+        val old = (1..6_000).map { "line $it" }
+        val new = (1..6_000).map { "changed line $it" }
+
+        val rows = DiffRows.build(file(BaseText.Text(old.joinToString("\n")), BaseText.Text(new.joinToString("\n"))))
+
+        assertEquals(listOf(DiffRow.Message(DiffRows.TOO_MANY_CHANGES)), rows)
+        assertEquals("Too many changes to show", DiffRows.TOO_MANY_CHANGES)
+    }
+
+    @Test
+    fun `the row of a line inside a fold is the fold itself`() {
+        val lines = (1..20).map { "line $it" }
+        val changed = lines.toMutableList().also {
+            it[0] = "LINE 1"
+            it[19] = "LINE 20"
+        }
+        val rows = text(lines.joinToString("\n"), changed.joinToString("\n"))
+        val foldIndex = rows.indexOfFirst { it is DiffRow.Fold }
+
+        assertEquals(foldIndex, DiffRows.rowAtLine(rows, 9))
+        assertEquals(foldIndex, DiffRows.rowAtLine(rows, 15))
+        assertEquals(1, DiffRows.rowAtLine(rows, 0))
+    }
+
+    @Test
     fun `the row of a line is the new side row or the nearest one above`() {
         val rows = text("alpha\nbeta\ngamma", "alpha\nBETA\ngamma")
         assertEquals(0, DiffRows.rowAtLine(rows, 0))

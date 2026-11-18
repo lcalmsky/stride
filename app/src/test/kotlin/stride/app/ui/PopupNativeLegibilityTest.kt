@@ -706,7 +706,7 @@ class PopupNativeLegibilityTest {
             PopupCase(
                 name = "diff",
                 key = "popup-diff",
-                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT2, Role.BUSY),
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT, Role.ACCENT2, Role.BUSY),
                 renderMillis = 600,
                 selectionPill = false,
             ) {
@@ -722,6 +722,13 @@ class PopupNativeLegibilityTest {
                             DiffFile(
                                 path = root.resolve("src/Main.kt"),
                                 displayPath = "src/Main.kt",
+                                old = BaseText.Text(lines.joinToString("\n")),
+                                new = BaseText.Text(changed.joinToString("\n")),
+                                openable = true,
+                            ),
+                            DiffFile(
+                                path = root.resolve("src/Other.kt"),
+                                displayPath = "src/Other.kt",
                                 old = BaseText.Text(lines.joinToString("\n")),
                                 new = BaseText.Text(changed.joinToString("\n")),
                                 openable = true,

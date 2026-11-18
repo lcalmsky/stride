@@ -55,11 +55,12 @@ import java.nio.file.Path
 
 /**
  * The open VCS Operations popup. [branch] is `null` on a detached HEAD and shown as `HEAD`;
- * [outsideRepository] replaces the six rows with one dimmed message row, and [editorRowsEnabled]
- * stays false until the working-tree comparison has answered.
+ * [error] (no git) and [outsideRepository] each replace the six rows with one dimmed message row,
+ * and [editorRowsEnabled] stays false until the working-tree comparison has answered.
  */
 class VcsPopupRequest internal constructor() {
     var branch: String? by mutableStateOf(null)
+    var error: String? by mutableStateOf(null)
     var outsideRepository: Boolean by mutableStateOf(false)
     var editorRowsEnabled: Boolean by mutableStateOf(false)
 
@@ -86,10 +87,12 @@ fun openVcsPopup(state: AppState): Boolean {
     request.line = editor?.let(::caretLine)
     val snapshot = git.snapshot
     request.branch = snapshot.branch?.branch
+    request.error = snapshot.error
     request.outsideRepository = snapshot.repository == null
     state.vcsPopup = request
     state.focus = KeyContext.CONTEXT_POPUP
     git.launch {
+        if (request.error != null) return@launch
         if (request.outsideRepository) {
             // The snapshot may simply not have run yet; a repository above the project root wins.
             val fresh = git.refreshNow()
@@ -151,7 +154,9 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
 
     fun shortcut(action: ActionId): String = shortcutText(keymap, action)
 
-    val rows = if (request.outsideRepository) {
+    val rows = if (request.error != null) {
+        listOf(VcsRow(0, request.error.orEmpty(), "", false) {})
+    } else if (request.outsideRepository) {
         listOf(VcsRow(0, "Not a Git repository", "", false) {})
     } else {
         listOf(
@@ -224,12 +229,12 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
                                 runRow(rows.getOrNull(index))
                                 true
                             }
-                            Key.One -> { runDigit(1); true }
-                            Key.Two -> { runDigit(2); true }
-                            Key.Three -> { runDigit(3); true }
-                            Key.Four -> { runDigit(4); true }
-                            Key.Five -> { runDigit(5); true }
-                            Key.Six -> { runDigit(6); true }
+                            Key.One, Key.NumPad1 -> { runDigit(1); true }
+                            Key.Two, Key.NumPad2 -> { runDigit(2); true }
+                            Key.Three, Key.NumPad3 -> { runDigit(3); true }
+                            Key.Four, Key.NumPad4 -> { runDigit(4); true }
+                            Key.Five, Key.NumPad5 -> { runDigit(5); true }
+                            Key.Six, Key.NumPad6 -> { runDigit(6); true }
                             else -> false
                         }
                     }

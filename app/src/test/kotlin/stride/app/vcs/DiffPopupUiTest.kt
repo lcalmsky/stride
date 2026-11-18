@@ -15,7 +15,9 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
@@ -78,7 +80,9 @@ class DiffPopupUiTest {
             waitForIdle()
             state.diffRequest = request(file, old, new)
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
-            waitForIdle()
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 001").fetchSemanticsNodes().isNotEmpty()
+            }
 
             onRoot().performKeyInput { pressKey(Key.F7) }
             onRoot().performKeyInput { pressKey(Key.F4) }
@@ -90,7 +94,9 @@ class DiffPopupUiTest {
 
             state.diffRequest = request(file, old, new)
             waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
-            waitForIdle()
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 001").fetchSemanticsNodes().isNotEmpty()
+            }
 
             onRoot().performKeyInput { pressKey(Key.F7) }
             onRoot().performKeyInput { pressKey(Key.F7) }
@@ -174,6 +180,9 @@ class DiffPopupUiTest {
             waitUntil(timeoutMillis = 5_000) {
                 onAllNodesWithText("abc1234  Change the text").fetchSemanticsNodes().isNotEmpty()
             }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("beta").fetchSemanticsNodes().isNotEmpty()
+            }
 
             onRoot().performKeyInput { pressKey(Key.F4) }
             waitForIdle()
@@ -183,6 +192,234 @@ class DiffPopupUiTest {
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `shift f7 moves back to the previous change`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("previous-change-project"))
+        val file = root.resolve("src/Main.kt")
+        Files.createDirectories(file.parent)
+        val lines = (1..120).map { "line %03d".format(it) }
+        val changed = lines.toMutableList().also {
+            it[1] = "LINE 002"
+            it[89] = "LINE 090"
+        }
+        val old = lines.joinToString("\n") + "\n"
+        val new = changed.joinToString("\n") + "\n"
+        Files.writeString(file, new)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { DiffHarness(state) }
+            waitForIdle()
+            state.diffRequest = request(file, old, new)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 001").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.F7) }
+            onRoot().performKeyInput { pressKey(Key.F7) }
+            onRoot().performKeyInput { withKeyDown(Key.ShiftLeft) { pressKey(Key.F7) } }
+            onRoot().performKeyInput { pressKey(Key.F4) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.session!!.editors.selected?.let { (it as TextFileEditor).value.selection.start } ==
+                    new.indexOf("LINE 002")
+            }
+            assertNull(state.diffRequest)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `arrow and page keys move the selected row`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("move-project"))
+        val file = root.resolve("src/Main.kt")
+        Files.createDirectories(file.parent)
+        val old = "alpha\nbeta\ngamma"
+        val new = "alpha\nBETA\ngamma"
+        Files.writeString(file, new)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { DiffHarness(state) }
+            waitForIdle()
+
+            fun closeAgain() {
+                waitUntil(timeoutMillis = 5_000) {
+                    onAllNodesWithText("beta").fetchSemanticsNodes().isEmpty()
+                }
+            }
+
+            fun open() {
+                state.diffRequest = request(file, old, new)
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+                waitUntil(timeoutMillis = 5_000) {
+                    onAllNodesWithText("beta").fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+
+            fun caret(): Int? = (state.session!!.editors.selected as? TextFileEditor)?.value?.selection?.start
+
+            open()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { caret() == new.indexOf("BETA") }
+            closeAgain()
+
+            open()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { caret() == new.indexOf("BETA") }
+            closeAgain()
+
+            open()
+            onRoot().performKeyInput { pressKey(Key.PageDown) }
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { caret() == new.indexOf("gamma") }
+            closeAgain()
+
+            open()
+            onRoot().performKeyInput { pressKey(Key.PageDown) }
+            onRoot().performKeyInput { pressKey(Key.PageUp) }
+            onRoot().performKeyInput { pressKey(Key.F4) }
+            waitUntil(timeoutMillis = 5_000) { caret() == 0 }
+            closeAgain()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a fold row expands by click and by enter`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("fold-project"))
+        val file = root.resolve("src/Main.kt")
+        Files.createDirectories(file.parent)
+        val lines = (1..20).map { "line $it" }
+        val changed = lines.toMutableList().also {
+            it[0] = "LINE 1"
+            it[19] = "LINE 20"
+        }
+        val old = lines.joinToString("\n")
+        val new = changed.joinToString("\n")
+        Files.writeString(file, new)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { DiffHarness(state) }
+            waitForIdle()
+
+            state.diffRequest = request(file, old, new)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("⋯ 12 unchanged lines").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("⋯ 12 unchanged lines").performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 5").fetchSemanticsNodes().isNotEmpty()
+            }
+            assertTrue(onAllNodesWithText("⋯ 12 unchanged lines").fetchSemanticsNodes().isEmpty())
+
+            state.diffRequest = null
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 5").fetchSemanticsNodes().isEmpty()
+            }
+            state.diffRequest = request(file, old, new)
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("⋯ 12 unchanged lines").fetchSemanticsNodes().isNotEmpty()
+            }
+            repeat(5) { onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 5").fetchSemanticsNodes().isNotEmpty()
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an initial line inside a fold opens it and selects the line`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("initial-line-project"))
+        val file = root.resolve("src/Main.kt")
+        Files.createDirectories(file.parent)
+        val lines = (1..20).map { "line $it" }
+        val changed = lines.toMutableList().also {
+            it[0] = "LINE 1"
+            it[19] = "LINE 20"
+        }
+        val old = lines.joinToString("\n")
+        val new = changed.joinToString("\n")
+        Files.writeString(file, new)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { DiffHarness(state) }
+            waitForIdle()
+            state.diffRequest = DiffRequest(
+                title = "${file.fileName}  HEAD ↔ Local",
+                files = listOf(
+                    DiffFile(file, "src/Main.kt", BaseText.Text(old), BaseText.Text(new), openable = true),
+                ),
+                initialLine = 9,
+            )
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("line 10").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.F4) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.session!!.editors.selected?.let { (it as TextFileEditor).value.selection.start } ==
+                    new.indexOf("line 10")
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the body stays empty until the rows are built off the ui thread`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("big-diff-project"))
+        val file = root.resolve("src/Big.kt")
+        Files.createDirectories(file.parent)
+        val count = 300_000
+        val oldLines = (1..count).map { "line $it" }
+        val newLines = oldLines.toMutableList().also { lines ->
+            for (index in 0 until 1_500) lines[index * 100] = "CHANGED $index"
+        }
+        val new = newLines.joinToString("\n")
+        Files.writeString(file, new)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { DiffHarness(state) }
+            waitForIdle()
+            state.diffRequest = request(file, oldLines.joinToString("\n"), new)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            waitForIdle()
+
+            assertTrue(
+                onAllNodesWithText("line 1").fetchSemanticsNodes().isEmpty(),
+                "the body drew rows before the background build finished",
+            )
+            waitUntil(timeoutMillis = 30_000) {
+                onAllNodesWithText("line 1").fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
             state.dispose()
         }

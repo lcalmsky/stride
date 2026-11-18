@@ -27,6 +27,7 @@ import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -166,6 +167,79 @@ class VcsPopupUiTest {
             assertTrue(state.vcsPopup != null)
         } finally {
             state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `without git the popup shows the error instead of the repository message`() = runComposeUiTest {
+        val root = Files.createDirectories(temp.resolve("no-git-project"))
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val git = state.session!!.git
+            git.executor = MissingGitExecutor
+            runBlocking { git.refreshNow() }
+            assertEquals("Git is not installed", git.snapshot.error)
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            openVcsPopup(state)
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Git is not installed").fetchSemanticsNodes().isNotEmpty()
+            }
+            assertTrue(onAllNodesWithText("Not a Git repository").fetchSemanticsNodes().isEmpty())
+            assertTrue(onAllNodesWithText("Commit…").fetchSemanticsNodes().isEmpty())
+
+            onRoot().performKeyInput { pressKey(Key.One) }
+            waitForIdle()
+            assertTrue(state.vcsPopup != null)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a numpad digit runs its row`() = runComposeUiTest {
+        withRepo("popup-numpad") { state, _ ->
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            openVcsPopup(state)
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Commit…").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.NumPad5) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.toolWindows.visible && state.toolWindows.activeId == "commit"
+            }
+            assertNull(state.vcsPopup)
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `arrows move the selection and enter runs the row`() = runComposeUiTest {
+        withRepo("popup-keys") { state, _ ->
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            openVcsPopup(state)
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Commit…").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.statusMessage == "No upstream: set one in the terminal"
+            }
+            assertNull(state.vcsPopup)
+            assertFalse(state.toolWindows.visible && state.toolWindows.activeId == "commit")
         }
     }
 
