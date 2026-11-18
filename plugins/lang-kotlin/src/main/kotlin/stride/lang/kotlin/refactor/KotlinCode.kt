@@ -146,6 +146,12 @@ internal class KotlinCode(val text: String) {
     /** Starts of raw-string pieces that continue a literal from a previous line. */
     internal val rawContinuationStarts: Set<Int>
 
+    /** Code token index → true when the token is template code inside a string literal. */
+    private val insideStringTokens: BooleanArray
+
+    /** Code token index → the token before it, string bodies included. */
+    private val previousTokens: Array<KtToken?>
+
     init {
         val raw = codeTokens(text).sortedBy { it.start }
         var index = 0
@@ -157,6 +163,8 @@ internal class KotlinCode(val text: String) {
 
         lineStarts = buildLineStarts(text)
         rawContinuationStarts = rawContinuations(tokens)
+        insideStringTokens = buildInsideStringTokens()
+        previousTokens = buildPreviousTokens()
         val pairs = IntArray(code.size) { -1 }
         var matched = true
         val stack = ArrayList<Int>()
@@ -343,7 +351,88 @@ internal class KotlinCode(val text: String) {
         if (continuesExpression(next)) return false
         if (lineHoldsOnlyAnnotations(previous)) return false
         if (isControlHeaderEnd(previous)) return false
+        if (isInfixNameAtLineEnd(previous)) return false
         return true
+    }
+
+    /**
+     * True when the line ends with a name Kotlin reads as an infix call (`a to`, `0 until`), so the
+     * next line is its right operand: the name is no keyword and the token right before it on the
+     * same line ends an operand (R2 「Statements」).
+     */
+    private fun isInfixNameAtLineEnd(previous: KtToken): Boolean {
+        if (previous.type != KotlinTokenTypes.IDENTIFIER) return false
+        if (insideStringTokens.getOrElse(previous.index) { false }) return false
+        // A string literal is one token spanning its template code, so its end is the head.
+        val head = previousTokens.getOrNull(previous.index) ?: return false
+        if (hasNewline(head.end, previous.start)) return false
+        // `1u` is a number with a suffix the lexer splits, not `1 u <next line>`.
+        if (head.type == KotlinTokenTypes.NUMBER && head.end == previous.start) return false
+        if (!endsOperandBeforeInfix(head)) return false
+        // `0 until rows`: the name before `rows` is already an infix operator, so `rows` completes
+        // an operand and the next line is not its right side.
+        if (isNameToken(head) && inInfixOperatorPosition(head.index)) return false
+        return true
+    }
+
+    private fun inInfixOperatorPosition(index: Int): Boolean {
+        val before = previousTokens.getOrNull(index) ?: return false
+        return endsOperandBeforeInfix(before)
+    }
+
+    /**
+     * The token before each code token with string bodies included: a string literal is one token
+     * whose end comes after the template code it holds, so the latest end wins.
+     */
+    private fun buildPreviousTokens(): Array<KtToken?> {
+        val visible = tokens.filter { !it.isComment }
+        val previous = arrayOfNulls<KtToken>(code.size)
+        var next = 0
+        var bestEnd = -1
+        var best: KtToken? = null
+        for (token in code) {
+            while (next < visible.size && visible[next].start < token.start) {
+                val candidate = visible[next]
+                if (candidate.end > bestEnd) {
+                    bestEnd = candidate.end
+                    best = candidate
+                }
+                next++
+            }
+            previous[token.index] = best?.takeIf { it.end <= token.start }
+        }
+        return previous
+    }
+
+    private fun buildInsideStringTokens(): BooleanArray {
+        val strings = tokens.filter { it.isStringBody }
+        val inside = BooleanArray(code.size)
+        var stringIndex = 0
+        for (token in code) {
+            while (stringIndex < strings.size && strings[stringIndex].end <= token.start) stringIndex++
+            if (stringIndex >= strings.size) break
+            val string = strings[stringIndex]
+            if (string.start <= token.start && string.end >= token.end) inside[token.index] = true
+        }
+        return inside
+    }
+
+    private fun endsOperandBeforeInfix(token: KtToken): Boolean {
+        when (token.type) {
+            KotlinTokenTypes.NUMBER, KotlinTokenTypes.CHARACTER, KotlinTokenTypes.STRING -> return true
+            KotlinTokenTypes.OPERATION_SIGN -> return token.text == "!!"
+        }
+        if (token.text == "]" || token.text == "}" || token.text == "this" ||
+            token.text == "true" || token.text == "false" || token.text == "null"
+        ) {
+            return true
+        }
+        if (token.text == ")") return !isControlHeaderEnd(token)
+        if (!isNameToken(token)) return false
+        if (token.index in modifierTokens) return false
+        if (token.text == "by" || token.text == "where") return false
+        if (code.getOrNull(token.index - 1)?.text == "@") return false
+        return code.getOrNull(token.index + 1)?.text != "@"
     }
 
     private fun hasNewline(from: Int, to: Int): Boolean {

@@ -660,8 +660,58 @@ class KotlinCodeModelTest {
         assertNull(model(merged).checkExpression(rangeOf(merged, "x.size")))
     }
 
+    @Test
+    fun `a line ending with an infix name continues on the next line`() {
+        assertEquals(
+            listOf("val p = a to\n    foo(x)"),
+            bodyStatements("fun f() {\n    val p = a to\n    foo(x)\n}\n"),
+        )
+        assertEquals(
+            listOf("return 0 until\n    n"),
+            bodyStatements("fun f(): IntRange {\n    return 0 until\n    n\n}\n"),
+        )
+        assertEquals(
+            listOf("val p = \"k\" to\n    v"),
+            bodyStatements("fun f(v: Int) {\n    val p = \"k\" to\n    v\n}\n"),
+        )
+        assertEquals(
+            listOf("val p = x!! shl\n    2"),
+            bodyStatements("fun f(x: Int?) {\n    val p = x!! shl\n    2\n}\n"),
+        )
+    }
 
+    @Test
+    fun `a line ending with a complete operand ends the statement`() {
+        assertEquals(
+            listOf("if (c) a", "foo()"),
+            bodyStatements("fun f(c: Boolean) {\n    if (c) a\n    foo()\n}\n"),
+        )
+        assertEquals(
+            listOf("val x by lazyValue", "foo()"),
+            bodyStatements("fun f() {\n    val x by lazyValue\n    foo()\n}\n"),
+        )
+        assertEquals(
+            listOf("val p = a", "foo()"),
+            bodyStatements("fun f(a: Int) {\n    val p = a\n    foo()\n}\n"),
+        )
+        assertEquals(
+            listOf("break@outer", "foo()"),
+            bodyStatements("fun f() {\n    break@outer\n    foo()\n}\n"),
+        )
+        assertEquals(
+            listOf("val visible = a until rows", "if (visible) return 1", "return 0"),
+            bodyStatements("fun f(): Int {\n    val visible = a until rows\n    if (visible) return 1\n    return 0\n}\n"),
+        )
+    }
 
+    @Test
+    fun `a class body property and its accessor are separate lines`() {
+        val text = "class C {\n    var x = 0\n    private set\n}\n"
+        val code = model(text)
+        val zero = code.code.first { it.text == "0" }
+        val private = code.code.first { it.text == "private" }
+        assertTrue(code.splitsAfter(zero, private))
+    }
 
     @Test
     fun `the model is reused for the same text instance and rebuilt for another`() {

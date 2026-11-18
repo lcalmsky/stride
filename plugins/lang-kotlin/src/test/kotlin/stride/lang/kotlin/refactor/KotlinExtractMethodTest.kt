@@ -1022,6 +1022,15 @@ class KotlinExtractMethodTest {
         )
     }
 
+    @Test
+    fun `the second line of a line-end infix call is one expression`() {
+        val text = "fun pair(a: Int, b: Int): Pair<Int, Int> {\n" +
+            "    return colorOf(a, b, a) to\n        colorOf(b, a, b)\n}\n"
+        assertEquals(
+            "Cannot infer the type of colorOf(b, a, b) without a compiler",
+            refused(select(text, "colorOf(b, a, b)")),
+        )
+    }
 
     @Test
     fun `the file name check counts every spelling`() {
