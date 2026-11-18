@@ -164,12 +164,22 @@ class PushUiTest {
         val gate = CountDownLatch(1)
         try {
             open(repo, state)
+            val session = requireNotNull(state.session)
             val counting = GatedPushExecutor(CliGitExecutor(TEST_GIT, repo.environment), gate)
-            requireNotNull(state.session).git.executor = counting
-            setContent { PushHarness(state) }
-
-            pressPush()
-            waitUntil(timeoutMillis = 10_000) { state.pushRequest != null }
+            session.git.executor = counting
+            val plan = runBlocking { session.git.pushPlan() } as PushPlan.Ready
+            // The popup renders on its own so its close does not remove it between the two keys.
+            setContent {
+                CompositionLocalProvider(
+                    LocalAnimationsEnabled provides false,
+                    LocalWordmarkCaretBlink provides false,
+                ) {
+                    PushPopup(PushRequest(plan), state, onClose = {})
+                }
+            }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("↵ Push").fetchSemanticsNodes().isNotEmpty()
+            }
 
             onRoot().performKeyInput {
                 pressKey(Key.Enter)
