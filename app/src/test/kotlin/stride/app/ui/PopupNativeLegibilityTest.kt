@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.extension.ExtendWith
+import stride.app.AppState
 import stride.app.editor.CompletionPopup
 import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryPopup
@@ -73,6 +74,12 @@ import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.contrastRatio
+import stride.app.vcs.BaseText
+import stride.app.vcs.DiffFile
+import stride.app.vcs.DiffPopup
+import stride.app.vcs.DiffRequest
+import stride.app.vcs.VcsPopup
+import stride.app.vcs.VcsPopupRequest
 import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
@@ -325,6 +332,7 @@ class PopupNativeLegibilityTest {
                 "alpha(value: Int)",
             ),
         )
+        val popupState = AppState()
         return listOf(
             PopupCase(
                 name = "file-structure",
@@ -669,6 +677,47 @@ class PopupNativeLegibilityTest {
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = DesignTokens.popupTop),
                     )
                 }
+            },
+            PopupCase(
+                name = "diff",
+                key = "popup-diff",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT2, Role.BUSY),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                val lines = (1..20).map { "val line$it = $it" }
+                val changed = lines.toMutableList().also {
+                    it[0] = "val LINE1 = 1"
+                    it[19] = "val LINE20 = 20"
+                }
+                DiffPopup(
+                    request = DiffRequest(
+                        title = "src/Main.kt  HEAD ↔ Local",
+                        files = listOf(
+                            DiffFile(
+                                path = root.resolve("src/Main.kt"),
+                                displayPath = "src/Main.kt",
+                                old = BaseText.Text(lines.joinToString("\n")),
+                                new = BaseText.Text(changed.joinToString("\n")),
+                                openable = true,
+                            ),
+                        ),
+                    ),
+                    state = popupState,
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "vcs-operations",
+                key = "popup-vcs-operations",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.ACCENT),
+                renderMillis = 600,
+            ) {
+                val request = VcsPopupRequest()
+                request.branch = "main"
+                request.outsideRepository = false
+                request.editorRowsEnabled = true
+                VcsPopup(request, popupState, {})
             },
         )
     }

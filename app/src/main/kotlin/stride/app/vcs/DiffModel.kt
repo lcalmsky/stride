@@ -16,4 +16,6 @@ data class DiffRequest(
     val files: List<DiffFile>,
     val initialFile: Int = 0,
     val initialLine: Int? = null,
+    /** Files a commit changed beyond the ones [files] carries, shown as `… <n> more files`. */
+    val moreFiles: Int = 0,
 )

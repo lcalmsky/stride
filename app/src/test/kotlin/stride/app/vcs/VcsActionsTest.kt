@@ -3,6 +3,7 @@ package stride.app.vcs
 import androidx.compose.ui.input.key.Key
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -70,7 +71,7 @@ class VcsActionsTest {
             state.focus = KeyContext.EDITOR
             val inEditor = router.route(KeyEventType.DOWN, Key.V, ctrl = true, focus = KeyContext.EDITOR)
             assertTrue(dispatchAction(inEditor!!, state) { null })
-            assertEquals("VCS Operations is not implemented yet", state.statusMessage)
+            assertNotNull(state.vcsPopup)
         } finally {
             state.dispose()
         }
