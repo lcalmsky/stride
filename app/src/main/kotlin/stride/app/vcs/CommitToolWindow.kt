@@ -138,9 +138,11 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
         }
     }
 
-    // A diff, push or VCS popup that closed onto this window gives the keyboard back to the part
-    // that had it; one that closed onto the editor left `state.focus` there and is left alone.
-    val popupOpen = state.diffRequest != null || state.pushRequest != null || state.vcsPopup != null
+    // A diff, push, update or VCS popup that closed onto this window gives the keyboard back to
+    // the part that had it; one that closed onto the editor left `state.focus` there and is left
+    // alone.
+    val popupOpen = state.diffRequest != null || state.pushRequest != null ||
+        state.updateRequest != null || state.vcsPopup != null
     LaunchedEffect(popupOpen) {
         if (popupOpen || state.focus != KeyContext.COMMIT_WINDOW) return@LaunchedEffect
         withFrameNanos { }

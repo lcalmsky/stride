@@ -197,6 +197,37 @@ class ReloadFromDiskTest {
     }
 
     @Test
+    fun `a project opened through a symlink reloads from either path`() {
+        val real = Files.createDirectories(temp.resolve("real"))
+        val link = temp.resolve("link")
+        Files.createSymbolicLink(link, real)
+        val path = real.resolve("a.kt")
+        Files.writeString(path, "one\n")
+        val linkedProject = Project(link)
+        try {
+            val linkedManager = linkedProject.service<FileEditorManager>()
+            val editor = linkedManager.openFile(VFile(link.resolve("a.kt"))) as TextFileEditor
+
+            Files.writeString(path, "two\n")
+            linkedProject.messageBus.syncPublisher(VFS_CHANGES).after(listOf(VFileEvent.Changed(VFile(path))))
+            flushEventQueue()
+
+            assertEquals("two\n", editor.value.text)
+            assertFalse(editor.isModified)
+
+            Files.writeString(path, "three\n")
+            linkedProject.messageBus.syncPublisher(VFS_CHANGES)
+                .after(listOf(VFileEvent.Changed(VFile(link.resolve("a.kt")))))
+            flushEventQueue()
+
+            assertEquals("three\n", editor.value.text)
+            assertFalse(editor.isModified)
+        } finally {
+            linkedProject.dispose()
+        }
+    }
+
+    @Test
     fun `reloadChangedFromDisk reloads only the editors without unsaved text`() {
         val a = write("a.kt", "one\n")
         val b = write("b.kt", "one\n")

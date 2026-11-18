@@ -501,10 +501,10 @@ class GitService(private val project: Project) : Disposable {
 
     /**
      * What [update] would do: the upstream's remote is fetched first. A merge or rebase needs a
-     * clean tracked tree in the whole repository plus [unsavedTrackedEditors] (`git status
+     * clean tracked tree in the whole repository plus [unsavedEditors] (`git status
      * --porcelain=v2 -z --untracked-files=no` at the repository root).
      */
-    suspend fun updatePlan(unsavedTrackedEditors: Int = 0): UpdatePlan = withContext(Dispatchers.IO) {
+    suspend fun updatePlan(unsavedEditors: Int = 0): UpdatePlan = withContext(Dispatchers.IO) {
         if (gitMissing()) return@withContext UpdatePlan.Refused(GIT_NOT_INSTALLED)
         val repository = repository() ?: return@withContext UpdatePlan.Refused(notRepositoryMessage())
         if (!writeGate.tryLock()) return@withContext UpdatePlan.Refused(busyMessage())
@@ -539,8 +539,13 @@ class GitService(private val project: Project) : Disposable {
         }
         if (behind == 0) return@withContext UpdatePlan.Refused("Already up to date")
         if (ahead > 0) {
-            val total = changedTrackedFiles(repository) + unsavedTrackedEditors
-            if (total > 0) return@withContext UpdatePlan.Refused(cleanTreeMessage(total))
+            when (val changed = changedTrackedFiles(repository)) {
+                is TrackedChanges.Failed -> return@withContext UpdatePlan.Refused(changed.message)
+                is TrackedChanges.Count -> {
+                    val total = changed.count + unsavedEditors
+                    if (total > 0) return@withContext UpdatePlan.Refused(cleanTreeMessage(total))
+                }
+            }
         }
         val limit = minOf(behind, MAX_OUTGOING)
         val log = read(
@@ -566,7 +571,7 @@ class GitService(private val project: Project) : Disposable {
             ahead = ahead,
             strategies = strategies,
             defaultStrategy = defaultStrategy,
-            unsavedEditors = unsavedTrackedEditors,
+            unsavedEditors = unsavedEditors,
         )
     }
 
@@ -585,8 +590,12 @@ class GitService(private val project: Project) : Disposable {
                 // The popup can stay open while the tree changes, and an abort cannot restore an
                 // uncommitted edit, so the clean-tree check is repeated here before git starts.
                 if (strategy != UpdateStrategy.FAST_FORWARD) {
-                    val changed = changedTrackedFiles(repository)
-                    if (changed > 0) return@withLock GitWriteResult(false, cleanTreeMessage(changed))
+                    when (val changed = changedTrackedFiles(repository)) {
+                        is TrackedChanges.Failed -> return@withLock GitWriteResult(false, changed.message)
+                        is TrackedChanges.Count -> if (changed.count > 0) {
+                            return@withLock GitWriteResult(false, cleanTreeMessage(changed.count))
+                        }
+                    }
                 }
                 updateLocked(repository, plan, strategy)
             }
@@ -998,8 +1007,11 @@ class GitService(private val project: Project) : Disposable {
         return if (setting?.lowercase() in REBASE_TRUE_VALUES) UpdateStrategy.REBASE else UpdateStrategy.MERGE
     }
 
-    /** The tracked changes in the whole repository, read the way [updatePlan] and [update] share. */
-    private suspend fun changedTrackedFiles(repository: GitRepository): Int {
+    /**
+     * The tracked changes in the whole repository, read the way [updatePlan] and [update] share.
+     * A status that cannot answer is a refusal, not a clean tree.
+     */
+    private suspend fun changedTrackedFiles(repository: GitRepository): TrackedChanges {
         val status = readQuiet(
             GitCommand(
                 listOf("status", "--porcelain=v2", "-z", "--untracked-files=no"),
@@ -1007,7 +1019,9 @@ class GitService(private val project: Project) : Disposable {
                 timeouts.read,
             ),
         )
-        return GitStatusParser.parse(status.stdoutText()).records.count { it.kind != ChangeKind.UNTRACKED }
+        if (!status.ok) return TrackedChanges.Failed("Update failed: ${describe(status, timeouts.read)}")
+        val count = GitStatusParser.parse(status.stdoutText()).records.count { it.kind != ChangeKind.UNTRACKED }
+        return TrackedChanges.Count(count)
     }
 
     private fun cleanTreeMessage(changed: Int): String =
@@ -1139,6 +1153,11 @@ class GitService(private val project: Project) : Disposable {
     private sealed interface UpstreamCheck {
         data class Ready(val branch: String, val remote: String, val remoteRef: String) : UpstreamCheck
         data class Refused(val message: String) : UpstreamCheck
+    }
+
+    private sealed interface TrackedChanges {
+        data class Count(val count: Int) : TrackedChanges
+        data class Failed(val message: String) : TrackedChanges
     }
 
     companion object {

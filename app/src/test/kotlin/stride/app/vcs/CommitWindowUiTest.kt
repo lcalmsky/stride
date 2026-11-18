@@ -36,6 +36,8 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.io.path.createDirectories
+import kotlin.io.path.writeText
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -166,6 +168,36 @@ class CommitWindowUiTest {
             onRoot().performKeyInput { pressKey(Key.Escape) }
             waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
             assertTrue(session.editors.selected is TextFileEditor)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `escape from the update popup returns the keyboard to the message field`() = runComposeUiTest {
+        val repo = upstreamWithIncoming()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { state.toolWindows.visible && state.toolWindows.activeId == "commit" }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+
+            pressCommand(Key.T)
+
+            waitUntil(timeoutMillis = 10_000) { state.updateRequest != null }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.updateRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
         } finally {
             state.dispose()
         }
@@ -387,6 +419,31 @@ class CommitWindowUiTest {
         repo.commitAll("Initial commit")
         repo.write("src/Main.kt", "second\n")
         return repo
+    }
+
+    /** A repository with a local change and one commit waiting on its upstream. */
+    private fun upstreamWithIncoming(): TestGitRepo {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.commitAll("Initial commit")
+        val bare = repo.bareRemote()
+        repo.git("push", "-u", "origin", "main")
+        val clone = Files.createTempDirectory(temp, "clone")
+        val result = TestGitRepo.run(listOf("git", "clone", bare.toString(), clone.toString()), temp, repo.environment)
+        assertEquals(0, result.exitCode, result.stderr)
+        commitIn(repo, clone, "src/Remote.kt", "remote\n", "Remote one")
+        repo.write("src/Main.kt", "second\n")
+        return repo
+    }
+
+    private fun commitIn(repo: TestGitRepo, clone: Path, file: String, text: String, message: String) {
+        val target = clone.resolve(file)
+        target.parent.createDirectories()
+        target.writeText(text)
+        for (args in listOf(listOf("add", "-A"), listOf("commit", "-q", "-m", message), listOf("push"))) {
+            val result = TestGitRepo.run(listOf("git", "-C", clone.toString()) + args, clone, repo.environment)
+            assertEquals(0, result.exitCode, result.stderr)
+        }
     }
 
     private fun open(repo: TestGitRepo, state: AppState) {

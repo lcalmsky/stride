@@ -289,6 +289,104 @@ class UpdateUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `an editor edited while the update runs keeps its text and the message says so`() = runComposeUiTest {
+        val repo = upstream()
+        val state = AppState()
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(repo.root.resolve("src/A.kt"))) as TextFileEditor
+            state.focusSelectedEditor()
+            val clone = cloneOf(repo)
+            commitIn(repo, clone, "src/A.kt", "new A\n", "Remote A")
+            setContent { KeyHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            pressCommand(Key.T)
+            waitUntil(timeoutMillis = 10_000) { state.updateRequest != null }
+            state.session!!.git.executor = GatedMergeExecutor(
+                CliGitExecutor(TEST_GIT, repo.environment),
+                started,
+                release,
+            )
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 10_000) { started.count == 0L }
+            editor.setText("mine\n")
+            release.countDown()
+
+            waitUntil(timeoutMillis = 15_000) {
+                state.statusMessage ==
+                    "Updated main: 1 commits from origin/main (fast-forward); 1 editors with unsaved text were not reloaded"
+            }
+            assertEquals("mine\n", editor.value.text)
+        } finally {
+            release.countDown()
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a save failure before the update stops it before git runs`() = runComposeUiTest {
+        val repo = upstream()
+        val state = AppState()
+        val file = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(file)) as TextFileEditor
+            editor.setText("mine\n")
+            state.focusSelectedEditor()
+            val clone = cloneOf(repo)
+            commitIn(repo, clone, "src/Remote.kt", "remote\n", "Remote one")
+            val head = repo.git("rev-parse", "HEAD").trim()
+            assertTrue(file.toFile().setWritable(false))
+
+            setContent { KeyHarness(state) }
+            pressCommand(Key.T)
+            waitUntil(timeoutMillis = 10_000) { state.updateRequest != null }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage?.startsWith("Update failed: ") == true }
+            assertEquals(head, repo.git("rev-parse", "HEAD").trim())
+            assertTrue(
+                state.session!!.git.console.none { it.write && it.command.startsWith("git merge") },
+                state.session!!.git.console.filter { it.write }.joinToString("\n") { it.command },
+            )
+        } finally {
+            file.toFile().setWritable(true)
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a plan with more than a hundred commits shows the leftover count`() = runComposeUiTest {
+        val repo = upstream()
+        val state = AppState()
+        try {
+            open(repo, state)
+            val clone = cloneOf(repo)
+            for (number in 1..101) {
+                gitAt(repo, clone, "commit", "-q", "--allow-empty", "-m", "Remote $number")
+            }
+            gitAt(repo, clone, "push")
+            setContent { KeyHarness(state) }
+
+            pressCommand(Key.T)
+
+            waitUntil(timeoutMillis = 20_000) { state.updateRequest != null }
+            onNodeWithText("… 1 more").assertExists()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `the status bar shows Fetching while the fetch runs`() = runComposeUiTest {
         val repo = upstream()
         val state = AppState()
@@ -379,6 +477,21 @@ class UpdateUiTest {
 private class GatedFetchExecutor(private val inner: GitExecutor, private val gate: CountDownLatch) : GitExecutor {
     override fun run(command: GitCommand): GitResult {
         if (command.args.firstOrNull() == "fetch") gate.await(10, TimeUnit.SECONDS)
+        return inner.run(command)
+    }
+}
+
+/** Holds `git merge --ff-only` until [release] opens, after [started] reports that it reached it. */
+private class GatedMergeExecutor(
+    private val inner: GitExecutor,
+    private val started: CountDownLatch,
+    private val release: CountDownLatch,
+) : GitExecutor {
+    override fun run(command: GitCommand): GitResult {
+        if (command.args.take(2) == listOf("merge", "--ff-only")) {
+            started.countDown()
+            release.await(10, TimeUnit.SECONDS)
+        }
         return inner.run(command)
     }
 }

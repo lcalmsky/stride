@@ -61,6 +61,7 @@ class FileEditorManager(private val project: Project) : Disposable {
     }
 
     private fun reloadTouchedEditors(events: List<VFileEvent>) {
+        if (openFilesState.none { it is TextFileEditor }) return
         val paths = HashSet<Path>()
         for (event in events) {
             if (event is VFileEvent.Created || event is VFileEvent.Changed) paths.add(canonical(event.file.path))

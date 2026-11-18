@@ -282,7 +282,7 @@ class GitUpdateTest {
         up.repo.git("checkout", "--", "src/Main.kt")
         assertEquals(
             UpdatePlan.Refused("Update needs a clean working tree to merge or rebase: commit your 2 changed files first"),
-            withService(up.repo) { it.updatePlan(unsavedTrackedEditors = 2) },
+            withService(up.repo) { it.updatePlan(unsavedEditors = 2) },
         )
 
         up.repo.write("notes.txt", "note\n")
@@ -499,5 +499,196 @@ class GitUpdateTest {
         assertTrue(writes.any { it.startsWith("git fetch ") }, writes.toString())
         assertTrue(writes.any { it.startsWith("git merge --no-edit") }, writes.toString())
         assertTrue(writes.any { it == "git merge --abort" }, writes.toString())
+    }
+
+    @Test
+    fun `a project in a subfolder refuses a tree that is dirty outside it`() {
+        val up = subfolderUpstream()
+        val clone = cloneOf(up)
+        commitIn(up, clone, "module/src/Remote.kt", "remote\n", "Remote commit")
+        up.repo.write("module/src/Local.kt", "local\n")
+        up.repo.commitAll("Local commit")
+        up.repo.write("root.txt", "dirty\n")
+
+        assertEquals(
+            UpdatePlan.Refused("Update needs a clean working tree to merge or rebase: commit your 1 changed files first"),
+            withService(up.repo, root = up.repo.root.resolve("module")) { it.updatePlan() },
+        )
+    }
+
+    @Test
+    fun `a fast-forward from a subfolder project updates a file outside it`() {
+        val up = subfolderUpstream()
+        val clone = cloneOf(up)
+        commitIn(up, clone, "root.txt", "remote\n", "Remote root")
+        val moduleRoot = up.repo.root.resolve("module")
+
+        val (plan, result) = withService(up.repo, root = moduleRoot) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            ready to service.update(ready, UpdateStrategy.FAST_FORWARD)
+        }
+
+        assertEquals(listOf(UpdateStrategy.FAST_FORWARD), plan.strategies)
+        assertTrue(result.ok, result.message)
+        assertEquals("remote\n", Files.readString(up.repo.root.resolve("root.txt")))
+    }
+
+    @Test
+    fun `an update refused over credentials reports the update credentials message`() {
+        val up = upstream()
+
+        val plan = withService(up.repo) { service ->
+            service.executor = StubExecutor(
+                CliGitExecutor(TEST_GIT, up.repo.environment),
+                fetch = failure("Permission denied (publickey).\n"),
+            )
+            service.updatePlan()
+        }
+
+        assertEquals(
+            UpdatePlan.Refused("Update needs credentials or a passphrase: update from the terminal (⌥F12)"),
+            plan,
+        )
+    }
+
+    @Test
+    fun `any other update fetch failure reports its first line`() {
+        val up = upstream()
+
+        val plan = withService(up.repo) { service ->
+            service.executor = StubExecutor(
+                CliGitExecutor(TEST_GIT, up.repo.environment),
+                fetch = failure("fatal: cannot reach the remote\nsecond line\n"),
+            )
+            service.updatePlan()
+        }
+
+        assertEquals(UpdatePlan.Refused("Update failed: fatal: cannot reach the remote"), plan)
+    }
+
+    @Test
+    fun `a failed status refuses the plan instead of reading a clean tree`() {
+        val up = diverged()
+
+        val plan = withService(up.repo) { service ->
+            service.executor = StubExecutor(
+                CliGitExecutor(TEST_GIT, up.repo.environment),
+                status = failure("status read failed"),
+            )
+            service.updatePlan()
+        }
+
+        assertEquals(UpdatePlan.Refused("Update failed: status read failed"), plan)
+    }
+
+    @Test
+    fun `a timed-out status refuses the plan instead of reading a clean tree`() {
+        val up = diverged()
+
+        val plan = withService(up.repo) { service ->
+            service.executor = StubExecutor(
+                CliGitExecutor(TEST_GIT, up.repo.environment),
+                status = GitResult(-1, ByteArray(0), "", timedOut = true),
+            )
+            service.updatePlan()
+        }
+
+        assertEquals(UpdatePlan.Refused("Update failed: timed out after 15 s"), plan)
+    }
+
+    @Test
+    fun `a merge whose recheck status fails does not run git`() {
+        val up = diverged()
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+
+        val (result, writes) = withService(up.repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            service.executor = StubExecutor(
+                CliGitExecutor(TEST_GIT, up.repo.environment),
+                status = failure("status read failed"),
+            )
+            service.update(ready, UpdateStrategy.MERGE) to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertFalse(result.ok)
+        assertEquals("Update failed: status read failed", result.message)
+        assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+        assertFalse(writes.any { it.startsWith("git merge") }, writes.toString())
+    }
+
+    @Test
+    fun `a failed abort leaves the merge in progress and says so`() {
+        val up = conflicted()
+        val head = up.repo.git("rev-parse", "HEAD").trim()
+        try {
+            val result = withService(up.repo) { service ->
+                val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+                service.executor = StubExecutor(
+                    CliGitExecutor(TEST_GIT, up.repo.environment),
+                    abort = failure("fatal: abort refused"),
+                )
+                service.update(ready, UpdateStrategy.MERGE)
+            }
+
+            assertFalse(result.ok)
+            assertEquals(
+                "Update left a merge in progress: finish or abort it in the terminal (⌥F12)",
+                result.message,
+            )
+            assertEquals(head, up.repo.git("rev-parse", "HEAD").trim())
+            assertTrue(Files.exists(up.repo.root.resolve(".git/MERGE_HEAD")))
+        } finally {
+            up.repo.git("merge", "--abort", check = false)
+        }
+    }
+
+    @Test
+    fun `more than a hundred incoming commits list a hundred and count the rest`() {
+        val up = upstream()
+        val clone = cloneOf(up)
+        for (number in 1..101) {
+            gitAt(up, clone, "commit", "-q", "--allow-empty", "-m", "Remote $number")
+        }
+        gitAt(up, clone, "push")
+
+        val plan = planOf(up)
+
+        assertEquals(100, plan.incoming.size)
+        assertEquals(1, plan.moreIncoming)
+    }
+
+    /** A repository whose tracked file `root.txt` sits above the `module` project folder. */
+    private fun subfolderUpstream(): Upstream {
+        val repo = TestGitRepo.create(temp, name = "sample-repo")
+        repo.write("root.txt", "root\n")
+        repo.write("module/src/Main.kt", "base\n")
+        repo.commitAll("Initial commit")
+        val bare = repo.bareRemote()
+        repo.git("push", "-u", "origin", "main")
+        return Upstream(repo, bare)
+    }
+
+    private fun failure(stderr: String): GitResult = GitResult(128, ByteArray(0), stderr, timedOut = false)
+
+    /** Answers [fetch], [status] or [abort] with a failure and every other command through [delegate]. */
+    private class StubExecutor(
+        private val delegate: GitExecutor,
+        private val fetch: GitResult? = null,
+        private val status: GitResult? = null,
+        private val abort: GitResult? = null,
+    ) : GitExecutor {
+        override fun run(command: GitCommand): GitResult {
+            val failure = when {
+                fetch != null && command.args.firstOrNull() == "fetch" -> fetch
+                status != null && command.args == CHANGED_TRACKED_FILES_ARGS -> status
+                abort != null && command.args == listOf("merge", "--abort") -> abort
+                else -> null
+            }
+            return failure ?: delegate.run(command)
+        }
+    }
+
+    private companion object {
+        val CHANGED_TRACKED_FILES_ARGS = listOf("status", "--porcelain=v2", "-z", "--untracked-files=no")
     }
 }
