@@ -2699,7 +2699,8 @@ bar when run by `⌃O`/`⌃I` and is left out of the `⌘N` menu. The reason rea
 `<Generator> is not available in an interface` (`in an object`, `in an annotation class`,
 `in an enum class`, `in a value class`, `in a class with a primary constructor`).
 
-An existing member that the generator would write again refuses: `equals() already exists in A`,
+An existing member that the generator would write again (same signature: `equals(other: Any?)`,
+`hashCode()`, `toString()`; an overload such as `toString(prefix: String)` does not count) refuses: `equals() already exists in A`,
 `hashCode() already exists in A`, `toString() already exists in A`. IntelliJ offers to delete and
 regenerate them; stride never deletes code it did not write (see 「Generate differences」).
 
