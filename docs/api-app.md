@@ -2273,12 +2273,15 @@ internal sealed interface RefactorThisEntry {
     class Prepared(val kind: RefactoringKind, val step: RefactoringStep)
 }
 internal class RefactorThisRequest(val editor: TextFileEditor, val preparedText: String,
+                                   val preparedSelection: TextRange,
                                    val rows: List<ChooserRow<RefactorThisEntry>>)
 internal class RefactoringChooseRequest(val editor: TextFileEditor, val kind: RefactoringKind,
-                                        val preparedText: String, val step: RefactoringStep.Choose,
+                                        val preparedText: String, val preparedSelection: TextRange,
+                                        val step: RefactoringStep.Choose,
                                         val restoreHighlights: List<IntRange>)
 internal class RefactoringNameRequest(val editor: TextFileEditor, val kind: RefactoringKind,
-                                      val preparedText: String, val step: RefactoringStep.AskName) {
+                                      val preparedText: String, val preparedSelection: TextRange,
+                                      val step: RefactoringStep.AskName) {
     var errorMessage: String?                    // the last rejected name's reason
 }
 internal fun prepareWithProviders(editor: TextFileEditor, kind: RefactoringKind): RefactoringStep
@@ -2538,8 +2541,10 @@ inlining every call.
 ### R7 Applying and undo
 
 `startRefactoring` refuses `File is read-only` before asking the provider. The app keeps the text
-the step was prepared on; when the editor's text differs at apply time it applies nothing and
-shows `The file changed; run <Refactoring> again`. Otherwise it calls
+and the selection the step was prepared on. A popup that takes focus collapses the editor's
+selection, so closing any refactoring popup with `Esc` puts the kept selection back, and applying
+puts it back before the edits so that the undo step records it. When the editor's text differs
+at apply time it applies nothing and shows `The file changed; run <Refactoring> again`. Otherwise it calls
 `TextFileEditor.applyEdits(edits, caret)`: all edits form one undo step, `⌘Z` restores the text
 and the selection from before the refactoring, and the caret lands where the provider said.
 `Esc` in any popup changes nothing and restores the selection.
