@@ -1014,11 +1014,11 @@ class ActionDispatcherTest {
     @Test
     fun `the tool windows register in key number order`() {
         assertEquals(
-            listOf("bookmarks", "find", "run", "problems", "structure", "terminal"),
+            listOf("bookmarks", "find", "run", "problems", "structure", "commit", "git", "terminal"),
             state.toolWindows.windows.map { it.id },
         )
         assertEquals(
-            listOf("Bookmarks", "Find", "Run", "Problems", "Structure", "Terminal"),
+            listOf("Bookmarks", "Find", "Run", "Problems", "Structure", "Commit", "Git", "Terminal"),
             state.toolWindows.windows.map { it.title },
         )
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[0].context)
@@ -1026,7 +1026,9 @@ class ActionDispatcherTest {
         assertEquals(KeyContext.RUN_WINDOW, state.toolWindows.windows[2].context)
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[3].context)
         assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[4].context)
-        assertEquals(KeyContext.TERMINAL, state.toolWindows.windows[5].context)
+        assertEquals(KeyContext.COMMIT_WINDOW, state.toolWindows.windows[5].context)
+        assertEquals(KeyContext.LIST_WINDOW, state.toolWindows.windows[6].context)
+        assertEquals(KeyContext.TERMINAL, state.toolWindows.windows[7].context)
     }
 
     @Test

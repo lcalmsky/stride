@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import stride.app.vcs.ChangeMarks
 import stride.core.Disposable
 import stride.core.Disposer
 import stride.core.extensions.ExtensionPointName
@@ -54,7 +55,10 @@ class FileEditorManager(private val project: Project) : Disposable {
         }
         val provider = providers.firstOrNull { it.accept(project, file) } ?: return null
         val editor = provider.createEditor(project, file)
-        if (editor is TextFileEditor) editor.clipboard = clipboard
+        if (editor is TextFileEditor) {
+            editor.clipboard = clipboard
+            ChangeMarks.attach(project, editor)
+        }
         openFilesState.add(editor)
         select(editor)
         touchRecent(file)
@@ -80,6 +84,7 @@ class FileEditorManager(private val project: Project) : Disposable {
             select(openFilesState.getOrNull(index) ?: openFilesState.getOrNull(index - 1))
         }
         rememberClosed(file)
+        detachMarks(editor)
         Disposer.dispose(editor)
     }
 
@@ -90,6 +95,7 @@ class FileEditorManager(private val project: Project) : Disposable {
         for (editor in others) {
             openFilesState.remove(editor)
             rememberClosed(editor.file)
+            detachMarks(editor)
             Disposer.dispose(editor)
         }
         select(keep)
@@ -160,7 +166,14 @@ class FileEditorManager(private val project: Project) : Disposable {
         recentFilesState.clear()
         closedFiles.clear()
         selected = null
-        for (editor in editors) Disposer.dispose(editor)
+        for (editor in editors) {
+            detachMarks(editor)
+            Disposer.dispose(editor)
+        }
+    }
+
+    private fun detachMarks(editor: FileEditor) {
+        if (editor is TextFileEditor) ChangeMarks.detach(editor)
     }
 
     private fun keyOf(file: VFile): Path = file.path.toAbsolutePath().normalize()

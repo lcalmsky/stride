@@ -48,6 +48,12 @@ import stride.app.run.openContextActions
 import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
 import stride.app.run.runMain
+import stride.app.vcs.gotoChange
+import stride.app.vcs.openCommit
+import stride.app.vcs.openPush
+import stride.app.vcs.openVcsPopup
+import stride.app.vcs.rollbackLines
+import stride.app.vcs.showSelectedDiff
 import stride.core.services.service
 import stride.lang.GenerateKind
 import stride.lang.RefactoringKind
@@ -72,7 +78,10 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.SAVE -> {
-        state.session?.editors?.saveSelected()
+        state.session?.let { session ->
+            session.editors.saveSelected()
+            session.git.refresh()
+        }
         true
     }
     ActionId.CLOSE_TAB -> {
@@ -127,6 +136,24 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         state.toggleToolWindow("problems", KeyContext.LIST_WINDOW)
         true
     }
+    ActionId.ACTIVATE_GIT_TOOL_WINDOW -> {
+        state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
+        true
+    }
+    ActionId.ACTIVATE_COMMIT_TOOL_WINDOW -> {
+        state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+        true
+    }
+    ActionId.COMMIT -> openCommit(state)
+    ActionId.PUSH -> openPush(state)
+    ActionId.VCS_POPUP -> {
+        // Control letters belong to the shell, so the popup declines the stroke in the terminal.
+        if (state.focus == KeyContext.TERMINAL) return false
+        openVcsPopup(state)
+    }
+    ActionId.ROLLBACK_LINES -> rollbackLines(state)
+    ActionId.NEXT_CHANGE, ActionId.PREVIOUS_CHANGE -> gotoChange(state, action == ActionId.NEXT_CHANGE)
+    ActionId.SHOW_DIFF -> showSelectedDiff(state)
     ActionId.GOTO_NEXT_ERROR, ActionId.GOTO_PREVIOUS_ERROR -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
         val target = ProblemNavigation.target(

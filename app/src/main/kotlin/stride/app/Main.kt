@@ -9,6 +9,7 @@ import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.awt.event.WindowFocusListener
 import java.nio.file.Paths
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -67,6 +68,15 @@ fun main(args: Array<String>) {
                         object : ComponentAdapter() {
                             override fun componentShown(event: ComponentEvent) = GlassRuntime.attach(window)
                             override fun componentHidden(event: ComponentEvent) = GlassRuntime.detach()
+                        },
+                    )
+                    addWindowFocusListener(
+                        object : WindowFocusListener {
+                            override fun windowGainedFocus(event: WindowEvent) {
+                                state.session?.git?.refresh()
+                            }
+
+                            override fun windowLostFocus(event: WindowEvent) = Unit
                         },
                     )
                 }

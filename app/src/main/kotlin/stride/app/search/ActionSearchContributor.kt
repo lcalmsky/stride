@@ -135,6 +135,15 @@ object ActionNames {
         ActionId.GENERATE to "Generate",
         ActionId.OVERRIDE_METHODS to "Override Methods",
         ActionId.IMPLEMENT_METHODS to "Implement Methods",
+        ActionId.COMMIT to "Commit…",
+        ActionId.PUSH to "Push…",
+        ActionId.VCS_POPUP to "VCS Operations",
+        ActionId.ACTIVATE_GIT_TOOL_WINDOW to "Git",
+        ActionId.ACTIVATE_COMMIT_TOOL_WINDOW to "Commit",
+        ActionId.ROLLBACK_LINES to "Rollback Lines",
+        ActionId.NEXT_CHANGE to "Next Change",
+        ActionId.PREVIOUS_CHANGE to "Previous Change",
+        ActionId.SHOW_DIFF to "Show Diff",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

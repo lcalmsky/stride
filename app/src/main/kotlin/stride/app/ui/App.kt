@@ -187,6 +187,10 @@ import stride.app.ui.theme.selectionPillAlpha
 import stride.app.ui.theme.sidebarGlass
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.ui.toolwindow.ToolWindowPanel
+import stride.app.vcs.ChangeMarkPopup
+import stride.app.vcs.DiffPopup
+import stride.app.vcs.PushPopup
+import stride.app.vcs.VcsPopup
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.lang.FileTypeRegistry
@@ -213,6 +217,10 @@ fun App(
 ) {
     val session = state.session
     val appearance = AppearanceState.appearance
+    LaunchedEffect(session) {
+        // The project opens: the window starts a refresh and picks up a changed repository.
+        session?.git?.refresh()
+    }
     LaunchedEffect(appearance) {
         // Match highlights carry palette colours, so a live theme switch repaints them too.
         if (state.findBar.visible) {
@@ -891,6 +899,66 @@ fun App(
                 }
             }
         }
+        val diffRequest = state.diffRequest
+        if (diffRequest != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                DiffPopup(diffRequest, state) {
+                    state.diffRequest = null
+                    refocusEditor(state)
+                }
+            }
+        }
+        val vcsPopup = state.vcsPopup
+        if (vcsPopup != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                VcsPopup(vcsPopup, state) {
+                    state.vcsPopup = null
+                    refocusEditor(state)
+                }
+            }
+        }
+        val pushRequest = state.pushRequest
+        if (pushRequest != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                PushPopup(pushRequest, state) {
+                    state.pushRequest = null
+                    refocusEditor(state)
+                }
+            }
+        }
+        val changeMarkPopup = state.changeMarkPopup
+        if (changeMarkPopup != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                ChangeMarkPopup(changeMarkPopup, state) {
+                    state.changeMarkPopup = null
+                    refocusEditor(state)
+                }
+            }
+        }
         val completion = state.completion
         if (completion != null && session != null) {
             Box(
@@ -1150,6 +1218,8 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.generate != null || state.memberChoose != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
+        state.diffRequest != null || state.vcsPopup != null || state.pushRequest != null ||
+        state.changeMarkPopup != null ||
         state.navigationBar != null || state.findBar.visible
 
 /** Hands the keyboard back to the editor only when the action left no popup open. */
@@ -2101,6 +2171,7 @@ private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.TERMINAL -> "Terminal"
     KeyContext.LIST_WINDOW -> "Window"
     KeyContext.NAV_BAR -> "Navigation"
+    KeyContext.COMMIT_WINDOW -> "Commit"
     KeyContext.CONTEXT_POPUP -> null
 }
 

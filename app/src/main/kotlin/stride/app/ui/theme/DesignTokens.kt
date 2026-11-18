@@ -45,6 +45,9 @@ object DesignTokens {
     val neonPink: Color get() = palette.neonPink
     val neonLime: Color get() = palette.neonLime
     val neonAmber: Color get() = palette.neonAmber
+    val vcsAdded: Color get() = palette.vcsAdded
+    val vcsModified: Color get() = palette.vcsModified
+    val vcsDeleted: Color get() = palette.vcsDeleted
     val accentGlow: Color get() = palette.accentGlow
     val accent2Glow: Color get() = palette.accent2Glow
     val neonPinkGlow: Color get() = palette.neonPinkGlow

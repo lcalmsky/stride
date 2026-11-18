@@ -29,11 +29,13 @@ enum class ActionId {
     GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
     REFACTOR_THIS, INTRODUCE_VARIABLE, EXTRACT_METHOD, INLINE,
     GENERATE, OVERRIDE_METHODS, IMPLEMENT_METHODS,
+    COMMIT, PUSH, VCS_POPUP, ACTIVATE_GIT_TOOL_WINDOW, ACTIVATE_COMMIT_TOOL_WINDOW,
+    ROLLBACK_LINES, NEXT_CHANGE, PREVIOUS_CHANGE, SHOW_DIFF,
 }
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
-    LIST_WINDOW, NAV_BAR,
+    LIST_WINDOW, NAV_BAR, COMMIT_WINDOW,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -338,4 +340,22 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control O", ActionId.OVERRIDE_METHODS, KeyContext.EDITOR)
     // ImplementMethods control I
     bind("control I", ActionId.IMPLEMENT_METHODS, KeyContext.EDITOR)
+    // CheckinProject control K (→meta)
+    bind("meta K", ActionId.COMMIT, KeyContext.GLOBAL)
+    // Vcs.Push control shift K (→meta)
+    bind("meta shift K", ActionId.PUSH, KeyContext.GLOBAL)
+    // Vcs.QuickListPopupAction control V; the handler declines it in the terminal
+    bind("control V", ActionId.VCS_POPUP, KeyContext.GLOBAL)
+    // ActivateVersionControlToolWindow meta 9
+    bind("meta 9", ActionId.ACTIVATE_GIT_TOOL_WINDOW, KeyContext.GLOBAL)
+    // ActivateCommitToolWindow meta 0
+    bind("meta 0", ActionId.ACTIVATE_COMMIT_TOOL_WINDOW, KeyContext.GLOBAL)
+    // Vcs.RollbackChangedLines control alt Z (→meta)
+    bind("meta alt Z", ActionId.ROLLBACK_LINES, KeyContext.EDITOR)
+    // VcsShowPrevChangeMarker control alt shift UP
+    bind("control alt shift UP", ActionId.PREVIOUS_CHANGE, KeyContext.EDITOR)
+    // VcsShowNextChangeMarker control alt shift DOWN
+    bind("control alt shift DOWN", ActionId.NEXT_CHANGE, KeyContext.EDITOR)
+    // Diff.ShowDiff control D (→meta) in the Commit window only; the editor keeps EditorDuplicate
+    bind("meta D", ActionId.SHOW_DIFF, KeyContext.COMMIT_WINDOW)
 }

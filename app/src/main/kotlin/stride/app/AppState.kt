@@ -74,6 +74,13 @@ import stride.app.ui.theme.UiFontChoice
 import stride.app.ui.toolwindow.ToolWindow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.app.ui.toolwindow.ToolWindowManager
+import stride.app.vcs.ChangeMarkPopupRequest
+import stride.app.vcs.CommitToolWindowContent
+import stride.app.vcs.DiffRequest
+import stride.app.vcs.GitService
+import stride.app.vcs.GitToolWindowContent
+import stride.app.vcs.PushRequest
+import stride.app.vcs.VcsPopupRequest
 import stride.core.Disposable
 import stride.core.extensions.ExtensionPointName
 import stride.core.services.Project
@@ -93,6 +100,7 @@ import java.nio.file.Path
 class ProjectSession private constructor(val project: Project) : Disposable {
     val editors: FileEditorManager
     val tree: ProjectTreeModel
+    val git: GitService
 
     /** Back/forward locations of this session. */
     val history = NavigationHistory()
@@ -111,6 +119,7 @@ class ProjectSession private constructor(val project: Project) : Disposable {
         editors.onSelectionChanged = { editor -> history.record(navigationLocation(editor)) }
         val providers = ExtensionPointName<TreeStructureProvider>(TREE_STRUCTURE_PROVIDER_EP).extensionList()
         tree = ProjectTreeModel(VFile(project.root), providers, project)
+        git = project.service()
     }
 
     fun displayName(): String = project.root.fileName?.toString() ?: project.root.toString()
@@ -274,6 +283,18 @@ class AppState {
     /** The open Show Error Description popup; `null` when it is closed. */
     var errorDescription by mutableStateOf<ErrorDescriptionRequest?>(null)
 
+    /** The open diff popup; `null` when it is closed. G, K and V share this field. */
+    internal var diffRequest by mutableStateOf<DiffRequest?>(null)
+
+    /** The open VCS Operations popup; `null` when it is closed. */
+    internal var vcsPopup by mutableStateOf<VcsPopupRequest?>(null)
+
+    /** The open push confirmation popup; `null` when it is closed. */
+    internal var pushRequest by mutableStateOf<PushRequest?>(null)
+
+    /** The open gutter change popup; `null` when it is closed. */
+    internal var changeMarkPopup by mutableStateOf<ChangeMarkPopupRequest?>(null)
+
     /** The open Surround With popup; `null` when it is closed. */
     var surround by mutableStateOf<SurroundRequest?>(null)
 
@@ -408,6 +429,16 @@ class AppState {
                         modifier = modifier,
                     )
                 }
+            },
+        )
+        toolWindows.register(
+            ToolWindow("commit", "Commit", KeyContext.COMMIT_WINDOW) { modifier ->
+                CommitToolWindowContent(this@AppState, modifier)
+            },
+        )
+        toolWindows.register(
+            ToolWindow("git", "Git", KeyContext.LIST_WINDOW) { modifier ->
+                GitToolWindowContent(this@AppState, modifier)
             },
         )
         toolWindows.register(
@@ -667,6 +698,10 @@ class AppState {
         parameterInfo = null
         surround = null
         errorDescription = null
+        diffRequest = null
+        vcsPopup = null
+        pushRequest = null
+        changeMarkPopup = null
         statusMessage = null
         projectTreeVisible = true
         treeBeforeHide = null
