@@ -2848,7 +2848,9 @@ the same tokens and blocks as the current file.
   = 7 }` compiles without an override and runs `R.f`). A body declared independently, in a
   supertype that does not inherit the abstract declaration (`interface P { fun f(): Int }` and
   `interface Q { fun f(): Int = 7 }` in `class C : P, Q`), does not count: Kotlin then requires an
-  explicit override, so `f` is listed. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+  explicit override, so `f` is listed. Likewise a member is listed when two interface bodies reach
+  the class and neither overrides the other (Kotlin requires an override then too), and a `private`
+  body in a class implements nothing. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
   walk is not in project sources (a supertype with `()`, or one without parentheses in a class with
   explicit constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
