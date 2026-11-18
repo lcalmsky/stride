@@ -28,6 +28,7 @@ enum class ActionId {
     RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
     GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
     REFACTOR_THIS, INTRODUCE_VARIABLE, EXTRACT_METHOD, INLINE,
+    GENERATE, OVERRIDE_METHODS, IMPLEMENT_METHODS,
 }
 
 enum class KeyContext {
@@ -330,4 +331,11 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta alt M", ActionId.EXTRACT_METHOD, KeyContext.EDITOR)
     // Inline meta alt N
     bind("meta alt N", ActionId.INLINE, KeyContext.EDITOR)
+    // Generate meta N | control ENTER
+    bind("meta N", ActionId.GENERATE, KeyContext.EDITOR)
+    bind("control ENTER", ActionId.GENERATE, KeyContext.EDITOR)
+    // OverrideMethods control O
+    bind("control O", ActionId.OVERRIDE_METHODS, KeyContext.EDITOR)
+    // ImplementMethods control I
+    bind("control I", ActionId.IMPLEMENT_METHODS, KeyContext.EDITOR)
 }

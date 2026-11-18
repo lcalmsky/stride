@@ -9,6 +9,8 @@ import stride.app.editor.openPasteHistory
 import stride.app.editor.openRename
 import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
+import stride.app.generate.openGenerate
+import stride.app.generate.startGenerate
 import stride.app.navigation.UsageMatches
 import stride.app.navigation.NavigationBarState
 import stride.app.navigation.clearUsageStatus
@@ -47,6 +49,7 @@ import stride.app.run.openRunConfigurationChooser
 import stride.app.run.runAtCaret
 import stride.app.run.runMain
 import stride.core.services.service
+import stride.lang.GenerateKind
 import stride.lang.RefactoringKind
 import stride.search.SearchTab
 import java.nio.file.Path
@@ -229,6 +232,9 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.INTRODUCE_VARIABLE -> startRefactoring(state, RefactoringKind.INTRODUCE_VARIABLE)
     ActionId.EXTRACT_METHOD -> startRefactoring(state, RefactoringKind.EXTRACT_METHOD)
     ActionId.INLINE -> startRefactoring(state, RefactoringKind.INLINE)
+    ActionId.GENERATE -> openGenerate(state)
+    ActionId.OVERRIDE_METHODS -> startGenerate(state, GenerateKind.OVERRIDE_METHODS)
+    ActionId.IMPLEMENT_METHODS -> startGenerate(state, GenerateKind.IMPLEMENT_METHODS)
     ActionId.JUMP_TO_LAST_CHANGE -> jumpToLastChange(state)
     ActionId.TOGGLE_BOOKMARK -> toggleBookmark(state)
     ActionId.SHOW_BOOKMARKS -> showBookmarks(state)

@@ -17,6 +17,10 @@ import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
 import stride.app.editor.find.FindOptions
+import stride.app.generate.GenerateRequest
+import stride.app.generate.MemberChooseRequest
+import stride.app.generate.prepareGenerateWithProviders
+import stride.app.generate.projectTypes
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
@@ -76,6 +80,7 @@ import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
 import stride.core.vfs.VirtualFileManager
+import stride.lang.GenerateKind
 import stride.lang.RefactoringKind
 import stride.lang.RefactoringStep
 import stride.search.Declaration
@@ -246,6 +251,16 @@ class AppState {
 
     /** Prepares a refactoring of an editor; tests replace it to skip the language providers. */
     internal var prepareRefactoring: (TextFileEditor, RefactoringKind) -> RefactoringStep = ::prepareWithProviders
+
+    /** The open Generate popup; `null` when it is closed. */
+    internal var generate by mutableStateOf<GenerateRequest?>(null)
+
+    /** The open member chooser of a generation step; `null` when it is closed. */
+    internal var memberChoose by mutableStateOf<MemberChooseRequest?>(null)
+
+    /** Prepares a generation of an editor; tests replace it to skip the language providers. */
+    internal var prepareGenerate: (TextFileEditor, GenerateKind) -> RefactoringStep =
+        { editor, kind -> prepareGenerateWithProviders(editor, kind, projectTypes(this)) }
 
     /** The open Quick Documentation popup; `null` when it is closed. */
     var quickDoc by mutableStateOf<PeekRequest?>(null)
@@ -644,6 +659,8 @@ class AppState {
         refactorThis = null
         refactoringChoose = null
         refactoringName = null
+        generate = null
+        memberChoose = null
         pasteHistory = null
         quickDoc = null
         quickDefinition = null

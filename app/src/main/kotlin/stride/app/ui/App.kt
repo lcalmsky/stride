@@ -112,6 +112,11 @@ import stride.app.glass.LocalNativeGlass
 import stride.app.glass.chromeLayout
 import stride.app.glass.nativeGlass
 import stride.app.glass.windowDragRegion
+import stride.app.generate.MemberChooserPopup
+import stride.app.generate.chooseGenerate
+import stride.app.generate.closeGenerate
+import stride.app.generate.closeMemberChoose
+import stride.app.generate.submitMemberChoose
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
@@ -1026,6 +1031,53 @@ fun App(
                 )
             }
         }
+        val generate = state.generate
+        if (generate != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                TargetChooserPopup(
+                    title = "Generate",
+                    rows = generate.rows,
+                    onChoose = { entry ->
+                        chooseGenerate(state, entry)
+                        refocusEditorUnlessPopup(state)
+                    },
+                    onClose = {
+                        closeGenerate(state)
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
+        val memberChoose = state.memberChoose
+        if (memberChoose != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                MemberChooserPopup(
+                    title = memberChoose.step.title,
+                    members = memberChoose.step.members,
+                    error = memberChoose.errorMessage,
+                    onSubmit = { members ->
+                        submitMemberChoose(state, members)
+                        refocusEditorUnlessPopup(state)
+                    },
+                    onClose = {
+                        closeMemberChoose(state)
+                        refocusEditor(state)
+                    },
+                )
+            }
+        }
     }
     }
 }
@@ -1095,6 +1147,7 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.bookmarksVisible || state.contextActionsVisible || state.runConfigurationsVisible ||
         state.completion != null || state.rename != null || state.pasteHistory != null ||
         state.refactorThis != null || state.refactoringChoose != null || state.refactoringName != null ||
+        state.generate != null || state.memberChoose != null ||
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
         state.navigationBar != null || state.findBar.visible

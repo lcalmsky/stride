@@ -65,7 +65,7 @@ fun startRefactoring(state: AppState, kind: RefactoringKind): Boolean {
     return followStep(
         state,
         editor,
-        kind,
+        kind.title,
         preparedText,
         preparedSelection,
         state.prepareRefactoring(editor, kind),

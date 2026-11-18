@@ -36,6 +36,7 @@ import stride.app.editor.SurroundRequest
 import stride.app.editor.SurroundWith
 import stride.app.editor.SurroundWithPopup
 import stride.app.editor.TextFileEditor
+import stride.app.generate.MemberChooserPopup
 import stride.app.glass.GlassHoles
 import stride.app.glass.GlassRegistry
 import stride.app.glass.LocalNativeGlass
@@ -76,6 +77,7 @@ import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.MemberOption
 import stride.lang.ProblemSeverity
 import stride.lang.TextEdit
 import stride.search.Declaration
@@ -481,6 +483,28 @@ class PopupNativeLegibilityTest {
                     title = "Introduce Variable",
                     suggested = "alphaOne",
                     error = "Not a valid name",
+                    onSubmit = {},
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "member-chooser",
+                key = "popup-member-chooser",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.ACCENT2, Role.ERROR),
+                renderMillis = 600,
+            ) {
+                MemberChooserPopup(
+                    title = "Override Methods",
+                    members = listOf(
+                        MemberOption("alphaOne(): Unit", group = "AlphaOne", checked = true),
+                        MemberOption(
+                            "betaOne(): Unit",
+                            group = "AlphaOne",
+                            disabledReason = "refers to another name here",
+                        ),
+                        MemberOption("gammaOne(): Unit", group = "Any"),
+                    ),
+                    error = "Choose a member",
                     onSubmit = {},
                     onClose = {},
                 )

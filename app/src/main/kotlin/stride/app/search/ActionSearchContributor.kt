@@ -132,6 +132,9 @@ object ActionNames {
         ActionId.INTRODUCE_VARIABLE to "Introduce Variable",
         ActionId.EXTRACT_METHOD to "Extract Method",
         ActionId.INLINE to "Inline",
+        ActionId.GENERATE to "Generate",
+        ActionId.OVERRIDE_METHODS to "Override Methods",
+        ActionId.IMPLEMENT_METHODS to "Implement Methods",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */
