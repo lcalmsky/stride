@@ -11,8 +11,11 @@ import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -235,6 +238,33 @@ class GitCommitTest {
     }
 
     @Test
+    fun `a dispose interrupt does not leak into the commit's next git call`() {
+        val repo = repoWithCommit()
+        val file = repo.write("src/New.kt", "new\n")
+        val project = Project(repo.root)
+        val service = project.service<GitService>()
+        val executor = InterruptedReadExecutor(CliGitExecutor(TEST_GIT, repo.environment))
+        service.executor = executor
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val commit = scope.async { service.commit(listOf(file), "Add new") }
+            assertTrue(executor.callEntered.await(10, TimeUnit.SECONDS), "the commit never reached git")
+
+            project.dispose()
+
+            val result = runBlocking { withTimeout(10.seconds) { commit.await() } }
+            assertFalse(result.ok, result.message)
+            assertFalse(
+                executor.flagOnNextCall == true,
+                "the commit's next git call ran on the interrupted thread with its flag still set",
+            )
+        } finally {
+            scope.cancel()
+            project.dispose()
+        }
+    }
+
+    @Test
     fun `a commit failing after add names the new files it added`() {
         val repo = repoWithCommit()
         writeHook(repo, "pre-commit", "#!/bin/sh\necho 'hook refused the commit' >&2\nexit 1\n")
@@ -353,6 +383,36 @@ class GitCommitTest {
                     commitEntered.countDown()
                     release.await(10, TimeUnit.SECONDS)
                 }
+            }
+            return delegate.run(command)
+        }
+    }
+
+    /**
+     * Blocks the commit's first git call and answers the interrupt the way [CliGitExecutor] does.
+     * The pool clears a leftover flag only when it goes idle, so the flag is read when the commit's
+     * next git call runs on the same thread, not from the test thread after the commit returns.
+     */
+    private class InterruptedReadExecutor(private val delegate: GitExecutor) : GitExecutor {
+        val callEntered = CountDownLatch(1)
+
+        @Volatile
+        var flagOnNextCall: Boolean? = null
+
+        override fun run(command: GitCommand): GitResult {
+            when (command.args.firstOrNull()) {
+                "ls-files" -> {
+                    val thread = Thread.currentThread()
+                    callEntered.countDown()
+                    try {
+                        Thread.sleep(30_000)
+                    } catch (e: InterruptedException) {
+                        thread.interrupt()
+                        return GitResult(-1, ByteArray(0), "interrupted", timedOut = true)
+                    }
+                    return GitResult(1, ByteArray(0), "the call was never interrupted", timedOut = false)
+                }
+                "commit" -> flagOnNextCall = Thread.currentThread().isInterrupted
             }
             return delegate.run(command)
         }
