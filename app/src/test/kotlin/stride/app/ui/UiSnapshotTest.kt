@@ -4,6 +4,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
@@ -28,6 +29,8 @@ import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.keys.KeyEventType
+import stride.app.keys.KeyRouter
 import stride.app.keys.dispatchAction
 import stride.app.navigation.NavigationBarState
 import stride.app.navigation.NavigationLocation
@@ -1053,6 +1056,49 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(36)
+    fun `generate implement methods snapshot`() {
+        val root = generateProject()
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
+            expand(session, root, "src", "main", "kotlin", "com", "example", "orders")
+            val editor = openEditor(session, root.resolve("src/main/kotlin/com/example/orders/OrderRepository.kt"))
+            val text = editor.value.text
+            val member = text.indexOf("private val orders")
+            check(member > 0) { "the order list member did not land in the class body" }
+            editor.updateValue(TextFieldValue(text, TextRange(member)))
+
+            val stroke = KeyRouter(isMac = true)
+                .route(KeyEventType.DOWN, Key.I, ctrl = true, focus = KeyContext.EDITOR)
+            assertEquals(ActionId.IMPLEMENT_METHODS, stroke)
+            assertTrue(dispatchAction(requireNotNull(stroke), state) { null })
+
+            val request = requireNotNull(state.memberChoose) { "⌃I opened no member chooser" }
+            assertEquals("Implement Methods", request.step.title)
+            assertEquals(
+                listOf(
+                    "fun find(id: Long): Order?",
+                    "fun save(item: Order): Order",
+                    "fun delete(id: Long)",
+                    "val size: Int",
+                ),
+                request.step.members.map { it.text },
+            )
+            assertEquals(List(4) { "Repository" }, request.step.members.map { it.group })
+            assertTrue(request.step.members.all { it.checked && it.disabledReason == null })
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+            renderApp("25-generate-implement.png", state, renderMillis = 800)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("25-generate-implement.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
@@ -1154,6 +1200,43 @@ class UiSnapshotTest {
             }
 
             class Order(val price: Double)
+            """.trimIndent() + "\n",
+        )
+        return root
+    }
+
+    private fun generateProject(): Path {
+        val root = temp.resolve("api-server")
+        val packageDirectory = root.resolve("src/main/kotlin/com/example/orders")
+        Files.createDirectories(packageDirectory)
+        Files.writeString(root.resolve("build.gradle.kts"), "plugins {\n    kotlin(\"jvm\")\n}\n")
+        Files.writeString(
+            packageDirectory.resolve("Repository.kt"),
+            """
+            package com.example.orders
+
+            interface Repository<T> {
+                fun find(id: Long): T?
+                fun save(item: T): T
+                fun delete(id: Long)
+                val size: Int
+            }
+            """.trimIndent() + "\n",
+        )
+        Files.writeString(
+            packageDirectory.resolve("OrderRepository.kt"),
+            """
+            package com.example.orders
+
+            class OrderRepository : Repository<Order> {
+                private val orders = mutableListOf<Order>()
+
+                fun add(order: Order) {
+                    orders += order
+                }
+            }
+
+            class Order(val id: Long, val total: Double)
             """.trimIndent() + "\n",
         )
         return root
@@ -1293,6 +1376,7 @@ class UiSnapshotTest {
             "22-navigation-bar.png",
             "23-type-hierarchy.png",
             "24-refactor-this.png",
+            "25-generate-implement.png",
             "01-empty-light.png",
             "02-editor-kotlin-light.png",
             "04-search-light.png",
