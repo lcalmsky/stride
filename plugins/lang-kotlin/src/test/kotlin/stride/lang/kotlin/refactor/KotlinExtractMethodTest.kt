@@ -456,19 +456,52 @@ class KotlinExtractMethodTest {
     }
 
     @Test
-    fun `the value of an expression-position branch becomes an expression function`() {
+    fun `a selection in an expression body branch is refused`() {
         val text = "fun f(flag: Boolean): Int =\n    if (flag) {\n        a.value\n    } else {\n        0\n    }\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "a.value")))
+    }
+
+    @Test
+    fun `statements in an expression body block are refused`() {
+        val text = "fun f(flag: Boolean): Int =\n    if (flag) {\n        println(1)\n        2\n    } else {\n        0\n    }\n"
+        assertEquals(
+            "Expression body: convert it to a block body first",
+            refused(select(text, "println(1)\n        2")),
+        )
+    }
+
+    @Test
+    fun `a try block in an expression body is refused`() {
+        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
+            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "a + 1")))
+    }
+
+    @Test
+    fun `statements including an expression body try value are refused`() {
+        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
+            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+        assertEquals(
+            "Expression body: convert it to a block body first",
+            refused(select(text, "val a = 1\n        a + 1")),
+        )
+    }
+
+    @Test
+    fun `a block body keeps the value of an expression-position branch`() {
+        val text = "fun f(flag: Boolean): Int {\n    return if (flag) {\n        a.value\n    } else {\n        0\n    }\n}\n"
         val applied = extract(text, "a.value")
         assertEquals(
-            "fun f(flag: Boolean): Int =\n    if (flag) {\n        extracted()\n    } else {\n        0\n    }\n\n" +
+            "fun f(flag: Boolean): Int {\n    return if (flag) {\n        extracted()\n    } else {\n        0\n    }\n}\n\n" +
                 "private fun extracted() = a.value\n",
             applied.text,
         )
     }
 
     @Test
-    fun `statements that include the block's value are refused`() {
-        val text = "fun f(flag: Boolean): Int =\n    if (flag) {\n        println(1)\n        2\n    } else {\n        0\n    }\n"
+    fun `a block body still refuses statements that include the block's value`() {
+        val text = "fun f(flag: Boolean): Int {\n    return if (flag) {\n        println(1)\n        2\n" +
+            "    } else {\n        0\n    }\n}\n"
         assertEquals(
             "The selection is the block's value; extract one expression",
             refused(select(text, "println(1)\n        2")),
@@ -476,25 +509,25 @@ class KotlinExtractMethodTest {
     }
 
     @Test
-    fun `a try block that is a branch value keeps its value`() {
-        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
-            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+    fun `a block body try branch value keeps its value`() {
+        val text = "fun f(flag: Boolean): Int {\n    return if (flag) {\n        try {\n            val a = 1\n" +
+            "            a + 1\n        } finally {\n            reset()\n        }\n    } else {\n        0\n    }\n}\n"
         val applied = extract(text, "a + 1")
         assertEquals(
-            "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        extracted(a)\n" +
-                "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n\n" +
-                "private fun extracted(a: Int) = a + 1\n",
+            "fun f(flag: Boolean): Int {\n    return if (flag) {\n        try {\n            val a = 1\n" +
+                "            extracted(a)\n        } finally {\n            reset()\n        }\n    } else {\n" +
+                "        0\n    }\n}\n\nprivate fun extracted(a: Int) = a + 1\n",
             applied.text,
         )
     }
 
     @Test
-    fun `statements including a try block's value are refused`() {
-        val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        val a = 1\n        a + 1\n" +
-            "    } finally {\n        reset()\n    }\n} else {\n    0\n}\n"
+    fun `a block body still refuses statements including a try block's value`() {
+        val text = "fun f(flag: Boolean): Int {\n    return if (flag) {\n        try {\n            val a = 1\n" +
+            "            a + 1\n        } finally {\n            reset()\n        }\n    } else {\n        0\n    }\n}\n"
         assertEquals(
             "The selection is the block's value; extract one expression",
-            refused(select(text, "val a = 1\n        a + 1")),
+            refused(select(text, "val a = 1\n            a + 1")),
         )
     }
 
@@ -802,13 +835,25 @@ class KotlinExtractMethodTest {
     }
 
     @Test
-    fun `a finally block is not a value block`() {
+    fun `a selection in an expression body finally block is refused`() {
         val text = "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        1\n" +
             "    } finally {\n        reset()\n        val a = 2\n        a + 1\n    }\n} else {\n    0\n}\n"
-        val applied = extract(text, "val a = 2\n        a + 1")
         assertEquals(
-            "fun f(flag: Boolean): Int = if (flag) {\n    try {\n        1\n" +
-                "    } finally {\n        reset()\n        extracted()\n    }\n} else {\n    0\n}\n\n" +
+            "Expression body: convert it to a block body first",
+            refused(select(text, "val a = 2\n        a + 1")),
+        )
+    }
+
+    @Test
+    fun `a finally block of a block body is not a value block`() {
+        val text = "fun f(flag: Boolean): Int {\n    return if (flag) {\n        try {\n            1\n" +
+            "        } finally {\n            reset()\n            val a = 2\n            a + 1\n" +
+            "        }\n    } else {\n        0\n    }\n}\n"
+        val applied = extract(text, "val a = 2\n            a + 1")
+        assertEquals(
+            "fun f(flag: Boolean): Int {\n    return if (flag) {\n        try {\n            1\n" +
+                "        } finally {\n            reset()\n            extracted()\n" +
+                "        }\n    } else {\n        0\n    }\n}\n\n" +
                 "private fun extracted() {\n    val a = 2\n    a + 1\n}\n",
             applied.text,
         )
@@ -912,12 +957,19 @@ class KotlinExtractMethodTest {
     }
 
     @Test
-    fun `a when used as an expression keeps its value`() {
+    fun `a selection in an expression body when branch is refused`() {
         val text = "fun f(x: Int): Int = when (x) {\n    1 -> {\n        a.value\n    }\n    else -> 0\n}\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "a.value")))
+    }
+
+    @Test
+    fun `a block body when used as an expression keeps its value`() {
+        val text = "fun f(x: Int): Int {\n    return when (x) {\n        1 -> {\n            a.value\n" +
+            "        }\n        else -> 0\n    }\n}\n"
         val applied = extract(text, "a.value")
         assertEquals(
-            "fun f(x: Int): Int = when (x) {\n    1 -> {\n        extracted()\n    }\n    else -> 0\n}\n\n" +
-                "private fun extracted() = a.value\n",
+            "fun f(x: Int): Int {\n    return when (x) {\n        1 -> {\n            extracted()\n" +
+                "        }\n        else -> 0\n    }\n}\n\nprivate fun extracted() = a.value\n",
             applied.text,
         )
     }
@@ -1062,5 +1114,59 @@ class KotlinExtractMethodTest {
         val question = ask(select(text, "println(1)"))
         assertEquals(NameCheck.Invalid("'name' is already used in this file"), question.complete("name"))
         assertEquals(NameCheck.Invalid("'user' is already used in this file"), question.complete("user"))
+    }
+
+    @Test
+    fun `a block comment closing after the function's line refuses placement`() {
+        val text = "class A {\n    fun g() {\n        println(1)\n    } /* note\n         more */\n}\n"
+        assertEquals(
+            "The function's last line holds other code; put it on its own line first",
+            refused(select(text, "println(1)")),
+        )
+    }
+
+    @Test
+    fun `a comment closing on the function's line allows placement`() {
+        val text = "class A {\n    fun g() {\n        println(1)\n    } /* note */\n}\n"
+        val applied = extract(text, "println(1)")
+        assertEquals(
+            "class A {\n    fun g() {\n        extracted()\n    } /* note */\n\n" +
+                "    private fun extracted() {\n        println(1)\n    }\n}\n",
+            applied.text,
+        )
+    }
+
+    @Test
+    fun `a selection in a one-line expression body branch is refused`() {
+        val text = "class A { val base = 1; fun f(x: Int): Int = when (x) { 1 -> { println(base); 2 } else -> 0 } }\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "println(base)")))
+        val thisText = "class A { val base = 1; fun f(x: Int): Int = when (x) { 1 -> { println(this.base); 2 } else -> 0 } }\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(thisText, "println(this.base)")))
+    }
+
+    @Test
+    fun `a selection in a multi-line expression body branch is refused`() {
+        val text = "class A {\n    val base = 1\n    fun f(x: Int): Int = when (x) {\n" +
+            "        1 -> { println(base); 2 }\n        else -> 0\n    }\n}\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "println(base)")))
+    }
+
+    @Test
+    fun `a selection in an expression body if block is refused`() {
+        val text = "fun f(c: Boolean): Int = if (c) { println(c); 1 } else { 2 }\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "println(c)")))
+    }
+
+    @Test
+    fun `a selection in an expression body lambda is refused`() {
+        val text = "fun f(): Int = listOf(1).map { println(it); it }.size\n"
+        assertEquals("Expression body: convert it to a block body first", refused(select(text, "println(it)")))
+    }
+
+    @Test
+    fun `a selection in a local function of an expression body is refused`() {
+        val text = "fun outer(): Int = listOf(1).map {\n    fun local(): Int {\n        println(it)\n" +
+            "        return it\n    }\n    local()\n}.size\n"
+        assertEquals("The selection is inside a local function", refused(select(text, "println(it)")))
     }
 }

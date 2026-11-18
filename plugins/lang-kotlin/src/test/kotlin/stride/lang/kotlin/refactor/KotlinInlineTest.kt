@@ -916,4 +916,51 @@ class KotlinInlineTest {
             applied.text,
         )
     }
+
+    @Test
+    fun `a declaration sharing its line with code is refused in all mode`() {
+        val sameLineVal = "class A {\n    private fun f(v: Int) = v + 1; val z = 3\n    fun g() = f(2) + z\n}\n"
+        assertEquals(
+            "The declaration shares its line with other code",
+            refused(caretAt(sameLineVal, "fun f", delta = 4)),
+        )
+        val sameLineFun = "class A {\n    private fun f(v: Int) = v + 1; fun h() = 3\n    fun g() = f(2) + h()\n}\n"
+        assertEquals(
+            "The declaration shares its line with other code",
+            refused(caretAt(sameLineFun, "fun f", delta = 4)),
+        )
+        val sameLineCall = "class A { private fun f(v: Int) = v + 1; fun g() = f(2) }\n"
+        assertEquals(
+            "The declaration shares its line with other code",
+            refused(caretAt(sameLineCall, "fun f", delta = 4)),
+        )
+        val applied = apply(caretAt(sameLineCall, "f(2)"), sameLineCall)
+        assertEquals("class A { private fun f(v: Int) = v + 1; fun g() = (2 + 1) }\n", applied.text)
+        assertEquals("Inlined a call of f", applied.message)
+    }
+
+    @Test
+    fun `a block comment closing on a later line shares the declaration's line`() {
+        val variable = "fun f() {\n    val x = 1 /* note\n       more */\n    println(x)\n}\n"
+        assertEquals(
+            "The declaration shares its line with other code",
+            refused(caretAt(variable, "x = 1")),
+        )
+        val function = "class A {\n    private fun f(v: Int) = v + 1 /* note\n        more */\n" +
+            "    fun g() = f(2)\n}\n"
+        assertEquals(
+            "The declaration shares its line with other code",
+            refused(caretAt(function, "fun f", delta = 4)),
+        )
+    }
+
+    @Test
+    fun `a comment closing on the declaration's line is removed with it`() {
+        val block = "fun f() {\n    val x = 1 /* note */\n    println(x)\n}\n"
+        val blockApplied = apply(caretAt(block, "x = 1"), block)
+        assertEquals("fun f() {\n    println(1)\n}\n", blockApplied.text)
+        val line = "fun f() {\n    val x = 1 // note\n    println(x)\n}\n"
+        val lineApplied = apply(caretAt(line, "x = 1"), line)
+        assertEquals("fun f() {\n    println(1)\n}\n", lineApplied.text)
+    }
 }

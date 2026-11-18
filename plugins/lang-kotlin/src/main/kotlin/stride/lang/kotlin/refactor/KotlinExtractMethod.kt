@@ -93,10 +93,14 @@ internal object KotlinExtractMethod {
             .minByOrNull { it.expressionRange!!.length }
             ?: return Place(refusal = NOT_IN_FUNCTION)
         if (expressionFunction.container == FunctionContainer.LOCAL) return Place(refusal = LOCAL_FUNCTION)
-        betweenRefusal(chain.filter { it.open.start > expressionFunction.funToken.start })?.let {
-            return Place(refusal = it)
+        for (block in chain) {
+            if (block.open.start <= expressionFunction.funToken.start) continue
+            if (block.kind == BlockKind.CLASS_BODY || block.kind == BlockKind.INITIALIZER) {
+                return Place(refusal = NOT_IN_FUNCTION)
+            }
         }
-        return Place(enclosing = bound(code, expressionFunction, null))
+        // A block inside the expression (`when` branch, `if` block, lambda) is still that body.
+        return Place(refusal = EXPRESSION_BODY)
     }
 
     private fun betweenRefusal(between: List<KtBlock>): String? {
@@ -132,25 +136,7 @@ internal object KotlinExtractMethod {
     /** The new function follows the enclosing function's line, which holds nothing else (R4 Placement). */
     private fun placementRefusal(code: KotlinCode, enclosing: Enclosing): String? {
         if (enclosing.body == null) return null
-        return if (lineHoldsCodeAfter(code, enclosing.function.declarationEnd)) PLACEMENT else null
-    }
-
-    private fun lineHoldsCodeAfter(code: KotlinCode, offset: Int): Boolean {
-        val end = code.lineEnd(offset)
-        var index = offset
-        while (index < end) {
-            when {
-                code.text[index].isWhitespace() -> index++
-                code.text.startsWith("//", index) -> return false
-                code.text.startsWith("/*", index) -> {
-                    val close = code.text.indexOf("*/", index + 2)
-                    if (close < 0) return false
-                    index = close + 2
-                }
-                else -> return true
-            }
-        }
-        return false
+        return if (code.lineHoldsCodeAfter(enclosing.function.declarationEnd)) PLACEMENT else null
     }
 
     private fun statementsCovering(code: KotlinCode, selection: KtRange): List<KtStatement>? {

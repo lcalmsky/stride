@@ -337,13 +337,37 @@ internal class KotlinCode(val text: String) {
                 text.startsWith("//", index) -> return true
                 text.startsWith("/*", index) -> {
                     val end = text.indexOf("*/", index + 2)
-                    if (end < 0) return true
+                    // A block comment that closes after this line leaves code (its `*/`) behind.
+                    if (end < 0 || end + 2 > to) return false
                     index = end + 2
                 }
                 else -> return false
             }
         }
         return true
+    }
+
+    /**
+     * True when something besides whitespace, a line comment or a comment closing on this line
+     * follows [offset] on its line; with [allowSemicolon] a closing `;` counts as part of it.
+     */
+    internal fun lineHoldsCodeAfter(offset: Int, allowSemicolon: Boolean = false): Boolean {
+        val end = lineEnd(offset)
+        var index = offset
+        while (index < end) {
+            when {
+                text[index].isWhitespace() -> index++
+                allowSemicolon && text[index] == ';' -> index++
+                text.startsWith("//", index) -> return false
+                text.startsWith("/*", index) -> {
+                    val close = text.indexOf("*/", index + 2)
+                    if (close < 0 || close + 2 > end) return true
+                    index = close + 2
+                }
+                else -> return true
+            }
+        }
+        return false
     }
 
     fun statementText(statement: KtStatement): String = text.substring(statement.start, statement.end)

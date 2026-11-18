@@ -96,7 +96,22 @@ internal object KotlinInlineFunction {
         if (unreadSpelling(code, function, uses) != null) {
             return "$name appears where this refactoring cannot read it"
         }
+        if (sharesItsLine(code, function)) return "The declaration shares its line with other code"
         return null
+    }
+
+    /** R5 「Modes」: removal deletes whole lines, so the declaration may not share them with code. */
+    private fun sharesItsLine(code: KotlinCode, function: KtFunction): Boolean {
+        val firstLine = code.lineIndex(function.declarationStartWithDocs)
+        val lastLine = code.lineIndex(function.declarationEnd)
+        for (token in code.code) {
+            if (token.start >= function.declarationStartWithDocs && token.end <= function.declarationEnd) continue
+            val line = code.lineIndex(token.start)
+            if (line != firstLine && line != lastLine) continue
+            if (token.text == ";" && line == lastLine) continue
+            return true
+        }
+        return code.lineHoldsCodeAfter(function.declarationEnd, allowSemicolon = true)
     }
 
     /** A token spelled like the function that is neither its declaration nor a use read above. */
