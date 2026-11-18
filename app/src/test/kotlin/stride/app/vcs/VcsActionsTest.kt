@@ -109,18 +109,26 @@ class VcsActionsTest {
     fun `the stub actions report themselves in the status bar`() {
         val state = AppState()
         try {
-            assertTrue(dispatchAction(ActionId.COMMIT, state) { null })
-            assertEquals("Commit is not implemented yet", state.statusMessage)
-            assertTrue(dispatchAction(ActionId.PUSH, state) { null })
-            assertEquals("Push is not implemented yet", state.statusMessage)
-            assertTrue(dispatchAction(ActionId.SHOW_DIFF, state) { null })
-            assertEquals("Show Diff is not implemented yet", state.statusMessage)
             assertTrue(dispatchAction(ActionId.ROLLBACK_LINES, state) { null })
             assertEquals("Rollback Lines is not implemented yet", state.statusMessage)
             assertTrue(dispatchAction(ActionId.NEXT_CHANGE, state) { null })
             assertEquals("Next Change is not implemented yet", state.statusMessage)
             assertTrue(dispatchAction(ActionId.PREVIOUS_CHANGE, state) { null })
             assertEquals("Previous Change is not implemented yet", state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `the commit, push and show diff actions need a project`() {
+        val state = AppState()
+        try {
+            assertFalse(dispatchAction(ActionId.COMMIT, state) { null })
+            assertFalse(dispatchAction(ActionId.PUSH, state) { null })
+            assertFalse(dispatchAction(ActionId.SHOW_DIFF, state) { null })
+            assertNull(state.statusMessage)
+            assertFalse(state.toolWindows.visible)
         } finally {
             state.dispose()
         }

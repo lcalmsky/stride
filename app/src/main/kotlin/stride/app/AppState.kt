@@ -76,6 +76,7 @@ import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.app.ui.toolwindow.ToolWindowManager
 import stride.app.vcs.ChangeMarkPopupRequest
 import stride.app.vcs.CommitToolWindowContent
+import stride.app.vcs.CommitWindowState
 import stride.app.vcs.DiffRequest
 import stride.app.vcs.GitService
 import stride.app.vcs.GitToolWindowContent
@@ -110,6 +111,9 @@ class ProjectSession private constructor(val project: Project) : Disposable {
 
     /** Last edit places of this session, fed by the selected text editor's change reports. */
     val editLocations = EditLocations()
+
+    /** The Commit window's rows, message and last error, kept while the window is hidden. */
+    val commit = CommitWindowState()
 
     init {
         project.service<VirtualFileManager>().start()

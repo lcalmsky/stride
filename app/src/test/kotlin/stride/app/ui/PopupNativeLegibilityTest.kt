@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import kotlin.math.roundToInt
 import org.jetbrains.skia.EncodedImageFormat
 import org.junit.jupiter.api.AfterAll
@@ -71,6 +72,10 @@ import stride.app.search.SearchEverywherePopup
 import stride.app.search.ShowUsagesPopup
 import stride.app.search.ShowUsagesRequest
 import stride.app.ui.theme.Appearance
+import stride.app.vcs.LogEntry
+import stride.app.vcs.PushPlan
+import stride.app.vcs.PushPopup
+import stride.app.vcs.PushRequest
 import stride.app.ui.theme.AppearanceState
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.contrastRatio
@@ -718,6 +723,46 @@ class PopupNativeLegibilityTest {
                 request.outsideRepository = false
                 request.editorRowsEnabled = true
                 VcsPopup(request, popupState, {})
+            },
+            PopupCase(
+                name = "push",
+                key = "popup-push",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT2, Role.AMBER),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                PushPopup(
+                    request = PushRequest(
+                        PushPlan.Ready(
+                            branch = "main",
+                            remote = "origin",
+                            remoteRef = "refs/heads/main",
+                            newBranch = true,
+                            outgoing = listOf(
+                                LogEntry(
+                                    id = "0".repeat(40),
+                                    shortId = "1a2b3c4",
+                                    author = "Test Author",
+                                    time = Instant.parse("2026-01-01T00:00:00Z"),
+                                    refs = emptyList(),
+                                    subject = "Change the check",
+                                ),
+                                LogEntry(
+                                    id = "1".repeat(40),
+                                    shortId = "5d6e7f8",
+                                    author = "Test Author",
+                                    time = Instant.parse("2026-01-01T00:00:00Z"),
+                                    refs = emptyList(),
+                                    subject = "Add the dashboard",
+                                ),
+                            ),
+                            moreOutgoing = 3,
+                            behind = 1,
+                        ),
+                    ),
+                    state = AppState(),
+                    onClose = {},
+                )
             },
         )
     }
