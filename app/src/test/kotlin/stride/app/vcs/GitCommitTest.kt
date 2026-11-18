@@ -6,6 +6,7 @@ import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.writeText
 import kotlin.time.Duration.Companion.seconds
@@ -390,9 +391,11 @@ class GitCommitTest {
     }
 
     /**
-     * Blocks the commit's first git call and answers the interrupt the way [CliGitExecutor] does.
-     * The pool clears a leftover flag only when it goes idle, so the flag is read when the commit's
-     * next git call runs on the same thread, not from the test thread after the commit returns.
+     * Blocks the commit's first `ls-files` (the merge-in-progress check) and answers the interrupt
+     * the way [CliGitExecutor] does; later `ls-files` calls fail at once so the commit cannot add
+     * its untracked file and reaches `git commit`. The pool clears a leftover flag only when it
+     * goes idle, so the flag is read when the commit's next git call runs on the same thread, not
+     * from the test thread after the commit returns.
      */
     private class InterruptedReadExecutor(private val delegate: GitExecutor) : GitExecutor {
         val callEntered = CountDownLatch(1)
@@ -400,18 +403,23 @@ class GitCommitTest {
         @Volatile
         var flagOnNextCall: Boolean? = null
 
+        private val interrupted = AtomicBoolean()
+
         override fun run(command: GitCommand): GitResult {
             when (command.args.firstOrNull()) {
                 "ls-files" -> {
-                    val thread = Thread.currentThread()
-                    callEntered.countDown()
-                    try {
-                        Thread.sleep(30_000)
-                    } catch (e: InterruptedException) {
-                        thread.interrupt()
-                        return GitResult(-1, ByteArray(0), "interrupted", timedOut = true)
+                    if (interrupted.compareAndSet(false, true)) {
+                        val thread = Thread.currentThread()
+                        callEntered.countDown()
+                        try {
+                            Thread.sleep(30_000)
+                        } catch (e: InterruptedException) {
+                            thread.interrupt()
+                            return GitResult(-1, ByteArray(0), "interrupted", timedOut = true)
+                        }
+                        return GitResult(1, ByteArray(0), "the call was never interrupted", timedOut = false)
                     }
-                    return GitResult(1, ByteArray(0), "the call was never interrupted", timedOut = false)
+                    return GitResult(-1, ByteArray(0), "interrupted", timedOut = true)
                 }
                 "commit" -> flagOnNextCall = Thread.currentThread().isInterrupted
             }

@@ -71,7 +71,7 @@ class GitService(private val project: Project) : Disposable {
     /** Runs [block] on the service's IO scope, which is cancelled when the project closes. */
     fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
-    /** Test seam for the three read, commit and push limits. */
+    /** Test seam for the read, commit, push, fetch and update limits. */
     var timeouts: GitTimeouts = GitTimeouts()
 
     /** Test seam for the message file write, so a full disk can be seen from a test. */
@@ -274,6 +274,7 @@ class GitService(private val project: Project) : Disposable {
     suspend fun commit(include: List<Path>, message: String): GitWriteResult = withContext(Dispatchers.IO) {
         if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
         val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        operationInProgress()?.let { return@withContext GitWriteResult(false, operationMessage(it)) }
         if (message.trim().isEmpty()) return@withContext GitWriteResult(false, "Enter a commit message")
         val paths = include
             .map(::normalizePath)
@@ -460,6 +461,156 @@ class GitService(private val project: Project) : Disposable {
             updateBusy(null)
             writeGate.unlock()
         }
+    }
+
+    /** Fetches every remote; remote-tracking refs are all that changes. */
+    suspend fun fetch(): GitWriteResult = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+        try {
+            val remotes = remotes()
+            if (remotes.isEmpty()) return@withContext GitWriteResult(false, "No remotes: add one in the terminal")
+            updateBusy(FETCHING)
+            statusGate.withLock {
+                val environment = runInterruptible(Dispatchers.IO) {
+                    sshBatchModeEnvironment(executor, projectRoot, timeouts.read)
+                }
+                val result = write(
+                    GitCommand(listOf("fetch", "--all"), projectRoot, timeouts.fetch, write = true, environment = environment),
+                )
+                refreshStatus()
+                if (result.ok) {
+                    val message = buildString {
+                        append("Fetched from ").append(remotes.joinToString(", "))
+                        val branch = snapshot.branch
+                        if (branch?.upstream != null && branch.behind > 0) {
+                            append(": ").append(branch.behind).append(" new commits on ").append(branch.upstream)
+                        }
+                    }
+                    GitWriteResult(true, message)
+                } else {
+                    GitWriteResult(false, fetchFailure(result))
+                }
+            }
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+    }
+
+    /**
+     * What [update] would do: the upstream's remote is fetched first. A merge or rebase needs a
+     * clean tracked tree in the whole repository plus [unsavedTrackedEditors] (`git status
+     * --porcelain=v2 -z --untracked-files=no` at the repository root).
+     */
+    suspend fun updatePlan(unsavedTrackedEditors: Int = 0): UpdatePlan = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext UpdatePlan.Refused(GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext UpdatePlan.Refused(notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext UpdatePlan.Refused(busyMessage())
+        val upstream = try {
+            fetchUpstreamForUpdate()
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+        val ready = when (upstream) {
+            is UpstreamCheck.Refused -> return@withContext UpdatePlan.Refused(upstream.message)
+            is UpstreamCheck.Ready -> upstream
+        }
+        val branch = ready.branch
+        val trackRemote = "refs/remotes/${ready.remote}/${shortRef(ready.remoteRef)}"
+        val tracks = readQuiet(
+            GitCommand(listOf("rev-parse", "--verify", "--quiet", trackRemote), projectRoot, timeouts.read),
+        ).ok
+        if (!tracks) {
+            return@withContext UpdatePlan.Refused(
+                "The upstream ${ready.remote}/${shortRef(ready.remoteRef)} does not exist: set one in the terminal",
+            )
+        }
+        val counts = readQuiet(
+            GitCommand(listOf("rev-list", "--left-right", "--count", "HEAD...$trackRemote"), projectRoot, timeouts.read),
+        )
+        val numbers = counts.stdoutText().trim().split(Regex("\\s+"))
+        val ahead = numbers.getOrNull(0)?.toIntOrNull()
+        val behind = numbers.getOrNull(1)?.toIntOrNull()
+        if (!counts.ok || ahead == null || behind == null) {
+            return@withContext UpdatePlan.Refused("Update failed: ${firstLine(counts)}")
+        }
+        if (behind == 0) return@withContext UpdatePlan.Refused("Already up to date")
+        if (ahead > 0) {
+            val status = readQuiet(
+                GitCommand(
+                    listOf("status", "--porcelain=v2", "-z", "--untracked-files=no"),
+                    repository.root,
+                    timeouts.read,
+                ),
+            )
+            val changed = GitStatusParser.parse(status.stdoutText()).records.count { it.kind != ChangeKind.UNTRACKED }
+            val total = changed + unsavedTrackedEditors
+            if (total > 0) {
+                return@withContext UpdatePlan.Refused(
+                    "Update needs a clean working tree to merge or rebase: commit your $total changed files first",
+                )
+            }
+        }
+        val limit = minOf(behind, MAX_OUTGOING)
+        val log = read(
+            GitCommand(listOf("log", "-n", limit.toString(), LOG_FORMAT, "HEAD..$trackRemote"), projectRoot, timeouts.read),
+        )
+        val incoming = if (log.ok) parseLog(log.stdoutText()) else emptyList()
+        val moreIncoming = (behind - incoming.size).coerceAtLeast(0)
+        val strategies: List<UpdateStrategy>
+        val defaultStrategy: UpdateStrategy
+        if (ahead == 0) {
+            strategies = listOf(UpdateStrategy.FAST_FORWARD)
+            defaultStrategy = UpdateStrategy.FAST_FORWARD
+        } else {
+            strategies = listOf(UpdateStrategy.MERGE, UpdateStrategy.REBASE)
+            defaultStrategy = configuredStrategy(branch)
+        }
+        UpdatePlan.Ready(
+            branch = branch,
+            remote = ready.remote,
+            remoteRef = ready.remoteRef,
+            incoming = incoming,
+            moreIncoming = moreIncoming,
+            ahead = ahead,
+            strategies = strategies,
+            defaultStrategy = defaultStrategy,
+            unsavedEditors = unsavedTrackedEditors,
+        )
+    }
+
+    /** Integrates [plan]'s upstream with [strategy], never with a force option or a stash. */
+    suspend fun update(plan: UpdatePlan.Ready, strategy: UpdateStrategy): GitWriteResult = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+        try {
+            if (strategy !in plan.strategies) {
+                return@withContext GitWriteResult(false, "Update failed: ${strategy.name} is not possible here")
+            }
+            operationInProgress()?.let { return@withContext GitWriteResult(false, operationMessage(it)) }
+            updateBusy(UPDATING)
+            statusGate.withLock { updateLocked(repository, plan, strategy) }
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+    }
+
+    /** The operation the repository is in the middle of, or `null` when it is not. */
+    suspend fun operationInProgress(): String? {
+        val repository = repository() ?: return null
+        if (present(repository.gitDir.resolve("rebase-merge")) || present(repository.gitDir.resolve("rebase-apply"))) {
+            return "rebase"
+        }
+        if (present(repository.gitDir.resolve("MERGE_HEAD"))) return "merge"
+        if (present(repository.gitDir.resolve("CHERRY_PICK_HEAD"))) return "cherry-pick"
+        if (present(repository.gitDir.resolve("REVERT_HEAD"))) return "revert"
+        val unmerged = readQuiet(GitCommand(listOf("ls-files", "-u", "-z"), repository.root, timeouts.read))
+        return if (unmerged.stdoutText().isNotEmpty()) "merge" else null
     }
 
     override fun dispose() {
@@ -819,6 +970,139 @@ class GitService(private val project: Project) : Disposable {
         }
     }
 
+    private suspend fun fetchUpstreamForUpdate(): UpstreamCheck {
+        operationInProgress()?.let { return UpstreamCheck.Refused(operationMessage(it)) }
+        val branch = currentBranch() ?: return UpstreamCheck.Refused("Update needs a branch: HEAD is detached")
+        val (remote, remoteRef) = upstreamOf(branch) ?: return UpstreamCheck.Refused("No upstream: set one in the terminal")
+        updateBusy(FETCHING)
+        val result = statusGate.withLock {
+            val environment = runInterruptible(Dispatchers.IO) {
+                sshBatchModeEnvironment(executor, projectRoot, timeouts.read)
+            }
+            val fetched = write(
+                GitCommand(listOf("fetch", remote), projectRoot, timeouts.fetch, write = true, environment = environment),
+            )
+            refreshStatus()
+            fetched
+        }
+        if (!result.ok) return UpstreamCheck.Refused(updateFetchFailure(result))
+        return UpstreamCheck.Ready(branch, remote, remoteRef)
+    }
+
+    /** The strategy `git pull` would use on [branch]; an interactive rebase is never one of them. */
+    private suspend fun configuredStrategy(branch: String): UpdateStrategy {
+        val branchConfig = readQuiet(
+            GitCommand(listOf("config", "--get", "branch.$branch.rebase"), projectRoot, timeouts.read),
+        )
+        val branchValue = branchConfig.stdoutText().trim().takeIf { branchConfig.ok && it.isNotEmpty() }
+        val setting = branchValue ?: run {
+            val pullConfig = readQuiet(GitCommand(listOf("config", "--get", "pull.rebase"), projectRoot, timeouts.read))
+            pullConfig.stdoutText().trim().takeIf { pullConfig.ok && it.isNotEmpty() }
+        }
+        return if (setting?.lowercase() in REBASE_TRUE_VALUES) UpdateStrategy.REBASE else UpdateStrategy.MERGE
+    }
+
+    private suspend fun updateLocked(
+        repository: GitRepository,
+        plan: UpdatePlan.Ready,
+        strategy: UpdateStrategy,
+    ): GitWriteResult {
+        val ref = "refs/remotes/${plan.remote}/${shortRef(plan.remoteRef)}"
+        val args = when (strategy) {
+            UpdateStrategy.FAST_FORWARD -> listOf("merge", "--ff-only", "--no-autostash", ref)
+            UpdateStrategy.MERGE -> listOf("merge", "--no-edit", "--no-autostash", ref)
+            UpdateStrategy.REBASE -> listOf("rebase", "--no-autostash", ref)
+        }
+        val result = write(GitCommand(args, repository.root, timeouts.update, write = true))
+        refreshStatus()
+        if (result.ok) {
+            val count = plan.incoming.size + plan.moreIncoming
+            val word = when (strategy) {
+                UpdateStrategy.FAST_FORWARD -> "fast-forward"
+                UpdateStrategy.MERGE -> "merge"
+                UpdateStrategy.REBASE -> "rebase"
+            }
+            return GitWriteResult(
+                true,
+                "Updated ${plan.branch}: $count commits from ${plan.remote}/${shortRef(plan.remoteRef)} ($word)",
+            )
+        }
+        val text = result.stdoutText() + "\n" + result.stderr
+        val lower = text.lowercase()
+        if (lower.contains("would be overwritten by merge") && lower.contains("your local changes to the following files")) {
+            val count = countListedFiles(text, "your local changes to the following files")
+            return GitWriteResult(
+                false,
+                "Update stopped: local changes to $count files would be overwritten: commit them first",
+            )
+        }
+        if (lower.contains("untracked working tree files would be overwritten")) {
+            val count = countListedFiles(text, "untracked working tree files would be overwritten")
+            return GitWriteResult(false, "Update stopped: $count untracked files would be overwritten: move them first")
+        }
+        val operation = operationInProgress()
+        if (operation != null) {
+            val conflicts = readQuiet(
+                GitCommand(
+                    listOf("diff", "--name-only", "--diff-filter=U", "-z"),
+                    repository.root,
+                    timeouts.read,
+                ),
+            ).stdoutText().split('\u0000').count { it.isNotEmpty() }
+            val abortArgs = if (operation == "rebase") listOf("rebase", "--abort") else listOf("merge", "--abort")
+            val aborted = write(GitCommand(abortArgs, repository.root, timeouts.update, write = true))
+            refreshStatus()
+            if (!aborted.ok) {
+                return GitWriteResult(
+                    false,
+                    "Update left a $operation in progress: finish or abort it in the terminal (⌥F12)",
+                )
+            }
+            return if (conflicts > 0) {
+                GitWriteResult(
+                    false,
+                    "Update had conflicts in $conflicts files and was undone: update from the terminal (⌥F12) to resolve them",
+                )
+            } else {
+                GitWriteResult(false, "Update failed: ${firstLine(result)} (undone)")
+            }
+        }
+        return GitWriteResult(false, "Update failed: ${describe(result, timeouts.update)}")
+    }
+
+    /** git lists the files it will not overwrite as the tab-indented lines after [marker]. */
+    private fun countListedFiles(text: String, marker: String): Int {
+        val lines = text.lineSequence().toList()
+        val start = lines.indexOfFirst { it.lowercase().contains(marker) }
+        if (start < 0) return 0
+        return lines.drop(start + 1).takeWhile { it.startsWith('\t') }.size
+    }
+
+    private fun operationMessage(operation: String): String =
+        "A $operation is in progress: finish it in the terminal (⌥F12)"
+
+    private fun busyMessage(): String = "Git is busy: ${busy ?: "another write"}"
+
+    /** An unreadable entry counts as present: a check that cannot answer must not start a write. */
+    private fun present(path: Path): Boolean = !Files.notExists(path)
+
+    private fun fetchFailure(result: GitResult): String {
+        if (!result.timedOut && AUTH_MARKERS.any { lowerOutput(result).contains(it) }) {
+            return "Fetch needs credentials or a passphrase: fetch from the terminal (⌥F12)"
+        }
+        return "Fetch failed: ${describe(result, timeouts.fetch)}"
+    }
+
+    private fun updateFetchFailure(result: GitResult): String {
+        if (!result.timedOut && AUTH_MARKERS.any { lowerOutput(result).contains(it) }) {
+            return "Update needs credentials or a passphrase: update from the terminal (⌥F12)"
+        }
+        return "Update failed: ${describe(result, timeouts.fetch)}"
+    }
+
+    private fun lowerOutput(result: GitResult): String =
+        (result.stdoutText() + "\n" + result.stderr).lowercase()
+
     private fun describe(result: GitResult, timeout: Duration): String =
         if (result.timedOut) "timed out after ${timeout.inWholeSeconds} s" else firstLine(result)
 
@@ -839,6 +1123,11 @@ class GitService(private val project: Project) : Disposable {
 
     private class BlobRead(val text: BaseText, val cacheable: Boolean)
 
+    private sealed interface UpstreamCheck {
+        data class Ready(val branch: String, val remote: String, val remoteRef: String) : UpstreamCheck
+        data class Refused(val message: String) : UpstreamCheck
+    }
+
     companion object {
         /** System property that turns the default executor off; the app's test task sets it. */
         const val DISABLE_DEFAULT_EXECUTOR: String = "stride.git.disableDefaultExecutor"
@@ -851,6 +1140,8 @@ class GitService(private val project: Project) : Disposable {
 
         private const val COMMITTING = "Committing…"
         private const val PUSHING = "Pushing…"
+        private const val FETCHING = "Fetching…"
+        private const val UPDATING = "Updating…"
         private const val GIT_NOT_INSTALLED = "Git is not installed"
         private const val OUTSIDE_REASON = "Outside the repository"
         private const val FILTER_REASON = "Filtered by a Git attribute"
@@ -859,6 +1150,8 @@ class GitService(private val project: Project) : Disposable {
         private const val LARGE_REASON = "Larger than 8 MB"
         private const val RECORD_SEPARATOR = '\u001f'
         private const val LOG_FORMAT = "--format=%H%x00%h%x00%an%x00%at%x00%D%x00%s%x1f"
+
+        private val REBASE_TRUE_VALUES = setOf("true", "yes", "on", "1", "merges", "m", "interactive", "i")
 
         private val AUTH_MARKERS = listOf(
             "authentication failed",

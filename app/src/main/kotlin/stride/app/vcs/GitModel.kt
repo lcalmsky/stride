@@ -89,4 +89,26 @@ data class GitTimeouts(
     val read: Duration = 15.seconds,
     val commit: Duration = 120.seconds,
     val push: Duration = 90.seconds,
+    val fetch: Duration = 90.seconds,
+    val update: Duration = 120.seconds,
 )
+
+enum class UpdateStrategy { FAST_FORWARD, MERGE, REBASE }
+
+/** What an update would do, or why it cannot run. */
+sealed interface UpdatePlan {
+    data class Ready(
+        val branch: String,
+        val remote: String,
+        val remoteRef: String,
+        val incoming: List<LogEntry>,
+        val moreIncoming: Int,
+        val ahead: Int,
+        /** [UpdateStrategy.FAST_FORWARD] alone when nothing is ahead, else merge and rebase. */
+        val strategies: List<UpdateStrategy>,
+        val defaultStrategy: UpdateStrategy,
+        val unsavedEditors: Int = 0,
+    ) : UpdatePlan
+
+    data class Refused(val message: String) : UpdatePlan
+}
