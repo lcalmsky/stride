@@ -2839,7 +2839,8 @@ the same tokens and blocks as the current file.
   is not written (an expression body, `fun name() = "x"`) is listed with `type not written` and
   cannot be checked, as a property is. Override also lists
   `equals(other: Any?): Boolean`, `hashCode(): Int` and `toString(): String` of `Any` under the
-  group `Any` unless the class or a project supertype declares them, or declares them `final`; an
+  group `Any` unless the class or a project supertype declares them with those signatures (an overload
+  does not count), or declares them `final`; an
   interface lists no `Any` group (an interface may not implement a member of `Any`).
 - **Override** lists every candidate grouped by supertype, none checked. A concrete member's body
   calls super: `return super.f(a, b)` (block body; `Unit` members drop the `return`), a `vararg`
