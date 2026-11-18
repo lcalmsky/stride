@@ -1033,6 +1033,15 @@ class KotlinExtractMethodTest {
     }
 
     @Test
+    fun `a name the model cannot place refuses the selection`() {
+        val text = "fun f() {\n    @Suppress(\"unused\")\n    val a = 1\n    println(a)\n}\n"
+        assertEquals(
+            "Suppress appears where this refactoring cannot read it",
+            refused(select(text, "@Suppress(\"unused\")\n    val a = 1")),
+        )
+    }
+
+    @Test
     fun `a letter attached to a number is not an input`() {
         val text = "fun f(u: Int) {\n    consume(1u)\n}\n"
         assertEquals(

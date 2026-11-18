@@ -295,6 +295,7 @@ internal object KotlinExtractMethod {
             is OutputResult.Found -> result.outputs
         }
         exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
+        unreadRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
         val output = outputs.singleOrNull()
         return nameStep(code) { name ->
             statementEdit(code, selection, enclosing, inputs, output, name)
@@ -319,6 +320,7 @@ internal object KotlinExtractMethod {
             )
         }
         exitsRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
+        unreadRefusal(code, selection)?.let { return RefactoringStep.Refused(it) }
         if (contextTyped(code, selection) || !selfTyped(code, selection)) {
             return RefactoringStep.Refused(
                 "Cannot infer the type of ${writtenExpression(code, selection)} without a compiler",
@@ -784,6 +786,12 @@ internal object KotlinExtractMethod {
             return loops.firstOrNull { it.keywordIndex == keyword.index }
         }
         return null
+    }
+
+    /** A name token in the selection that the model cannot place (R2 「Unread spellings」). */
+    private fun unreadRefusal(code: KotlinCode, selection: KtRange): String? {
+        val token = code.unreadNameTokens(selection).firstOrNull() ?: return null
+        return "${token.spelling()} appears where this refactoring cannot read it"
     }
 
     // --- name ---------------------------------------------------------------------------------
