@@ -294,6 +294,9 @@ class TextFileEditor(
     /** Called with the hunk under a click on a gutter change mark. */
     var onChangeMarkClick: ((LineHunk) -> Unit)? = null
 
+    /** Called after the document's text changed, so the gutter marks can recompute their hunks. */
+    internal var onDocumentTextChanged: (() -> Unit)? = null
+
     /** Called after a jump moved the caret, so the navigation history can record the target. */
     var onJump: (() -> Unit)? = null
 
@@ -443,6 +446,7 @@ class TextFileEditor(
     private fun reportTextChange(changes: List<TextChange>, recorded: Boolean, recordIndex: Int = 0) {
         usageHighlights = emptyList()
         onTextChange?.invoke(changes, recorded, recordIndex)
+        onDocumentTextChanged?.invoke()
     }
 
     /** Applies a multi-caret result: the last caret becomes [value]'s selection. */

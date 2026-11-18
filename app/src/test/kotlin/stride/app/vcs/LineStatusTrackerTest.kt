@@ -68,6 +68,44 @@ class LineStatusTrackerTest {
     }
 
     @Test
+    fun `adding an open untracked file to the index marks every line added`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "alpha\n")
+        repo.commitAll("Initial commit")
+        val file = repo.write("src/Fresh.kt", "alpha\nbeta\n")
+
+        withEditor(repo, file, baseAlreadySet = true) { editor, state ->
+            assertEquals(BaseText.Untracked, ChangeMarks.trackerOf(editor)?.baseState())
+
+            repo.git("add", "src/Fresh.kt")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            assertTrue(
+                eventually { editor.vcsHunks == listOf(LineHunk(0, 0, 0, 2)) },
+                "hunks: ${editor.vcsHunks}",
+            )
+        }
+    }
+
+    @Test
+    fun `removing an open tracked file from the index drops its marks`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\n")
+        repo.commitAll("Initial commit")
+
+        withEditor(repo, file, baseAlreadySet = true) { editor, state ->
+            editor.setText("alpha\nBETA\n")
+            assertTrue(eventually { editor.vcsHunks.isNotEmpty() }, "hunks: ${editor.vcsHunks}")
+
+            repo.git("rm", "--cached", "src/Main.kt")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            assertTrue(eventually { editor.vcsHunks.isEmpty() }, "hunks: ${editor.vcsHunks}")
+            assertEquals(BaseText.Untracked, ChangeMarks.trackerOf(editor)?.baseState())
+        }
+    }
+
+    @Test
     fun `a new commit refetches the base`(@TempDir temp: Path) {
         val repo = TestGitRepo.create(temp)
         val file = repo.write("src/Main.kt", "alpha\n")

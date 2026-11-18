@@ -949,16 +949,25 @@ fun App(
         }
         val changeMarkPopup = state.changeMarkPopup
         if (changeMarkPopup != null && session != null) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .onFocusChanged { focus ->
-                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
-                    },
-            ) {
-                ChangeMarkPopup(changeMarkPopup, state) {
+            val selectedEditor = session.editors.selected
+            LaunchedEffect(changeMarkPopup, selectedEditor) {
+                if (selectedEditor !== changeMarkPopup.editor) {
                     state.changeMarkPopup = null
-                    refocusEditor(state)
+                    if (state.focus == KeyContext.CONTEXT_POPUP) refocusEditor(state)
+                }
+            }
+            if (selectedEditor === changeMarkPopup.editor) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .onFocusChanged { focus ->
+                            if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                        },
+                ) {
+                    ChangeMarkPopup(changeMarkPopup, state) {
+                        state.changeMarkPopup = null
+                        refocusEditor(state)
+                    }
                 }
             }
         }

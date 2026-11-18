@@ -64,13 +64,17 @@ object LineDiff {
         val output = ArrayList<String>(current.size)
         var newCursor = 0
         for (hunk in hunks.sortedBy { it.oldStart }) {
-            for (index in newCursor until hunk.newStart.coerceAtLeast(newCursor)) output += current[index]
+            val newStart = hunk.newStart.coerceIn(newCursor, current.size)
+            for (index in newCursor until newStart) output += current[index]
             if (hunk in chosen) {
-                for (index in hunk.oldStart until hunk.oldStart + hunk.oldCount) output += base[index]
+                val oldStart = hunk.oldStart.coerceIn(0, base.size)
+                val oldEnd = (hunk.oldStart + hunk.oldCount).coerceIn(oldStart, base.size)
+                for (index in oldStart until oldEnd) output += base[index]
             } else {
-                for (index in hunk.newStart until hunk.newStart + hunk.newCount) output += current[index]
+                val newEnd = (hunk.newStart + hunk.newCount).coerceIn(newStart, current.size)
+                for (index in newStart until newEnd) output += current[index]
             }
-            newCursor = hunk.newStart + hunk.newCount
+            newCursor = (hunk.newStart + hunk.newCount).coerceIn(newStart, current.size)
         }
         for (index in newCursor until current.size) output += current[index]
         return join(output, lineSeparator)

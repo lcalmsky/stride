@@ -97,6 +97,20 @@ class LineDiffTest {
         assertEquals("a\nb\nc\nd\nE", rolled)
     }
 
+    @Test
+    fun `a hunk past the end of either list is clamped`() {
+        val hunk = LineHunk(oldStart = 5, oldCount = 3, newStart = 9, newCount = 4)
+        assertEquals(
+            "A",
+            LineDiff.rollback(listOf("a", "b"), listOf("A"), listOf(hunk), listOf(hunk), "\n"),
+        )
+        val negative = LineHunk(oldStart = -2, oldCount = 3, newStart = -1, newCount = 2)
+        assertEquals(
+            "a\nb",
+            LineDiff.rollback(listOf("a", "b"), listOf("a", "b"), listOf(negative), listOf(negative), "\n"),
+        )
+    }
+
     private fun randomLines(random: Random): List<String> = List(random.nextInt(0, 18)) { line(random) }
 
     private fun line(random: Random): String = ALPHABET[random.nextInt(ALPHABET.size)]

@@ -8,6 +8,8 @@ import kotlin.io.path.readText
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -133,6 +135,170 @@ class ChangeMarkRollbackTest {
         }
     }
 
+    @Test
+    fun `a rollback within the debounce uses the hunks of the current text`(@TempDir temp: Path) {
+        val initial = "alpha\nbeta\ngamma\ndelta\nepsilon\n"
+        val base = LineDiff.split(initial)
+        withCleanEditor(temp, initial) { editor, state ->
+            val edited = "sigma\nalpha\nbeta\ngamma\nDELTA\nepsilon\n"
+            val caret = edited.indexOf("DELTA") + 1
+            editor.updateValue(TextFieldValue(edited, TextRange(caret)))
+            assertTrue(editor.vcsHunks.isEmpty(), "the tracker is debounced; hunks: ${editor.vcsHunks}")
+
+            assertTrue(rollbackLines(state))
+
+            assertEquals(expectedRollback(base, edited, line = 4), editor.value.text)
+            assertEquals("sigma\nalpha\nbeta\ngamma\ndelta\nepsilon\n", editor.value.text)
+            assertNull(state.statusMessage)
+        }
+    }
+
+    @Test
+    fun `a rollback after deleting lines within the debounce does not throw`(@TempDir temp: Path) {
+        val lines = List(15) { "line$it" }
+        val initial = lines.joinToString("\n") + "\n"
+        val base = LineDiff.split(initial)
+        withCleanEditor(temp, initial) { editor, state ->
+            val modified = lines.toMutableList().also {
+                it[0] = "LINE0"
+                it[9] = "LINE9"
+            }.joinToString("\n") + "\n"
+            editor.setText(modified)
+            assertTrue(eventually { editor.vcsHunks.size == 2 }, "hunks: ${editor.vcsHunks}")
+
+            val shorter = (listOf("LINE0", "line1") + lines.subList(9, 15)).joinToString("\n") + "\n"
+            editor.updateValue(TextFieldValue(shorter, TextRange(1)))
+            assertTrue(rollbackLines(state))
+
+            assertEquals(expectedRollback(base, shorter, line = 0), editor.value.text)
+            assertTrue(editor.value.text.endsWith("line14\n"), editor.value.text)
+        }
+    }
+
+    @Test
+    fun `a file that was clean rolls back an edit made within the debounce`(@TempDir temp: Path) {
+        val initial = "alpha\nbeta\ngamma\n"
+        withCleanEditor(temp, initial) { editor, state ->
+            val edited = "alpha\nBETA\ngamma\n"
+            editor.updateValue(TextFieldValue(edited, TextRange(edited.indexOf("BETA") + 1)))
+            assertTrue(editor.vcsHunks.isEmpty(), "the tracker is debounced; hunks: ${editor.vcsHunks}")
+
+            assertTrue(rollbackLines(state))
+
+            assertEquals(initial, editor.value.text)
+            assertNull(state.statusMessage)
+        }
+    }
+
+    @Test
+    fun `a rollback keeps the other lines' own terminators`(@TempDir temp: Path) {
+        val initial = "alpha\nbeta\r\ngamma\ndelta\n"
+        withCleanEditor(temp, initial) { editor, state ->
+            val edited = "ALPHA\nbeta\r\ngamma\ndelta\n"
+            editor.setText(edited)
+            assertTrue(eventually { editor.vcsHunks.size == 1 }, "hunks: ${editor.vcsHunks}")
+
+            editor.updateValue(TextFieldValue(edited, TextRange(1)))
+            assertTrue(rollbackLines(state))
+
+            assertEquals(initial, editor.value.text)
+        }
+    }
+
+    @Test
+    fun `a selection ending at the start of a line does not take that line`(@TempDir temp: Path) {
+        val initial = "alpha\nbeta\ngamma\ndelta\nepsilon\n"
+        val edited = "alpha\nBETA\ngamma\nDELTA\nepsilon\n"
+        withCleanEditor(temp, initial) { editor, state ->
+            editor.setText(edited)
+            assertTrue(eventually { editor.vcsHunks.size == 2 }, "hunks: ${editor.vcsHunks}")
+
+            editor.updateValue(TextFieldValue(edited, TextRange(edited.indexOf("BETA"), edited.indexOf("DELTA"))))
+            assertTrue(rollbackLines(state))
+
+            assertEquals("alpha\nbeta\ngamma\nDELTA\nepsilon\n", editor.value.text)
+        }
+    }
+
+    @Test
+    fun `the popup rollback does nothing once another editor is selected`(@TempDir temp: Path) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\n")
+        val other = repo.write("src/Other.kt", "one\ntwo\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val git = state.session!!.git
+            git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+            runBlocking { git.refreshNow() }
+            val editor = state.session!!.editors.openFile(VFile(file)) as TextFileEditor
+            assertTrue(eventually { ChangeMarks.trackerOf(editor)?.baseState() != null })
+            editor.setText("new\nalpha\nbeta\n")
+            assertTrue(eventually { editor.vcsHunks.isNotEmpty() }, "hunks: ${editor.vcsHunks}")
+            val hunk = editor.vcsHunks.single()
+
+            state.session!!.editors.openFile(VFile(other))
+
+            assertFalse(rollbackHunk(state, editor, hunk))
+            assertEquals("new\nalpha\nbeta\n", editor.value.text)
+            assertNull(state.statusMessage)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `a deleted first line rolls back at the first line`(@TempDir temp: Path) {
+        rollbackTest(temp, "alpha\nbeta\ngamma\n", "beta\ngamma\n") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(0)))
+        }
+    }
+
+    @Test
+    fun `a deleted last line rolls back at the end of the file`(@TempDir temp: Path) {
+        rollbackTest(temp, "alpha\nbeta\ngamma\n", "alpha\nbeta\n") { editor ->
+            editor.updateValue(TextFieldValue(editor.value.text, TextRange(editor.value.text.length)))
+        }
+    }
+
+    /**
+     * Opens [initial] committed in a tracked file through a tracker that has published the clean
+     * document, and hands the editor and state to [block] without waiting for a recompute.
+     */
+    private fun withCleanEditor(temp: Path, initial: String, block: (TextFileEditor, AppState) -> Unit) {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", initial)
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            state.openFolder(repo.root)
+            val git = state.session!!.git
+            git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+            runBlocking { git.refreshNow() }
+            val editor = state.session!!.editors.openFile(VFile(file)) as TextFileEditor
+            assertTrue(eventually { ChangeMarks.trackerOf(editor)?.baseState() != null })
+            assertTrue(eventually { editor.vcsHunks.isEmpty() })
+            block(editor, state)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /** The text [LineDiff.rollback] gives when only the hunks touching [line] are rolled back. */
+    private fun expectedRollback(base: List<String>, text: String, line: Int): String {
+        val current = LineDiff.split(text)
+        val fresh = LineDiff.diff(base, current).orEmpty()
+        val selected = fresh.filter { hunk ->
+            if (hunk.newCount == 0) {
+                hunk.newStart - 1 == line || hunk.newStart == line
+            } else {
+                line >= hunk.newStart && line < hunk.newStart + hunk.newCount
+            }
+        }
+        return LineDiff.rollback(base, current, fresh, selected, LineDiff.lineSeparator(text))
+    }
+
     /**
      * Opens a tracked file, edits it in the editor and places the carets with [setCarets]. Every
      * hunk is expected to be rolled back; the expected text comes from [LineDiff.rollback] itself.
@@ -196,6 +362,7 @@ class ChangeMarkRollbackTest {
         val afterLines = LineDiff.split(after)
         var line = 0
         while (line < beforeLines.size && line < afterLines.size && beforeLines[line] == afterLines[line]) line++
+        if (line == 0) return 0
         var seen = 0
         for (index in after.indices) {
             if (after[index] == '\n') {

@@ -29,6 +29,8 @@ import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
@@ -170,6 +172,116 @@ class ChangeMarkUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control alt shift up opens the previous change`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\ngamma\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            val editor = openEdited(state, repo, file, "alpha\nBETA\ngamma\nNEW\n")
+            setContent { Harness(state) }
+            waitUntil(timeoutMillis = 5_000) { editor.vcsHunks.size == 2 }
+            editor.jumpTo(editor.value.text.length)
+
+            state.focus = KeyContext.EDITOR
+            pressControlAltShiftUp()
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup?.hunk?.newStart == 3 }
+            assertEquals(3, caretLine(editor))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the popup closes when its editor is no longer selected or is closed`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\n")
+        val other = repo.write("src/Other.kt", "one\ntwo\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            val editor = openEdited(state, repo, file, "new\nalpha\nbeta\n")
+            setContent { Harness(state) }
+            waitUntil(timeoutMillis = 5_000) { editor.vcsHunks.isNotEmpty() }
+
+            clickFirstMark()
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup != null }
+
+            state.session!!.editors.openFile(VFile(other))
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup == null }
+
+            state.session!!.editors.openFile(VFile(file))
+            waitUntil(timeoutMillis = 5_000) { editor.vcsHunks.isNotEmpty() }
+            clickFirstMark()
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup != null }
+
+            state.session!!.editors.closeFile(VFile(file))
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup == null }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the popup rolls back only on exactly option command z`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            val editor = openEdited(state, repo, file, "new\nalpha\nbeta\n")
+            setContent { Harness(state) }
+            waitUntil(timeoutMillis = 5_000) { editor.vcsHunks.isNotEmpty() }
+            clickFirstMark()
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup != null }
+
+            pressWithModifiers(Key.ShiftLeft)
+            waitForIdle()
+            assertEquals("new\nalpha\nbeta\n", editor.value.text)
+            assertTrue(state.changeMarkPopup != null)
+
+            pressWithModifiers(Key.CtrlLeft)
+            waitForIdle()
+            assertEquals("new\nalpha\nbeta\n", editor.value.text)
+            assertTrue(state.changeMarkPopup != null)
+
+            pressAltMetaZ()
+            waitUntil(timeoutMillis = 5_000) { editor.value.text == "alpha\nbeta\n" }
+            assertNull(state.changeMarkPopup)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the popup reports no changes at the caret when its hunk is gone`() = runComposeUiTest {
+        val repo = TestGitRepo.create(temp)
+        val file = repo.write("src/Main.kt", "alpha\nbeta\n")
+        repo.commitAll("Initial commit")
+        val state = AppState()
+        try {
+            val editor = openEdited(state, repo, file, "new\nalpha\nbeta\n")
+            setContent { Harness(state) }
+            waitUntil(timeoutMillis = 5_000) { editor.vcsHunks.isNotEmpty() }
+            clickFirstMark()
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup != null }
+
+            editor.updateValue(TextFieldValue("alpha\nbeta\n", TextRange(0)))
+            pressAltMetaZ()
+
+            waitUntil(timeoutMillis = 5_000) { state.changeMarkPopup == null }
+            assertEquals("No changes at the caret", state.statusMessage)
+            assertEquals("alpha\nbeta\n", editor.value.text)
+        } finally {
+            state.dispose()
+        }
+    }
+
     private fun openEdited(state: AppState, repo: TestGitRepo, file: Path, edited: String): TextFileEditor {
         state.openFolder(repo.root)
         val git = state.session!!.git
@@ -208,6 +320,27 @@ class ChangeMarkUiTest {
                 withKeyDown(Key.AltLeft) {
                     withKeyDown(Key.ShiftLeft) { pressKey(Key.DirectionDown) }
                 }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.pressControlAltShiftUp() {
+        onRoot().performKeyInput {
+            withKeyDown(Key.CtrlLeft) {
+                withKeyDown(Key.AltLeft) {
+                    withKeyDown(Key.ShiftLeft) { pressKey(Key.DirectionUp) }
+                }
+            }
+        }
+    }
+
+    /** ⌥⌘Z with [extra] held as well. */
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.pressWithModifiers(extra: Key) {
+        onRoot().performKeyInput {
+            withKeyDown(extra) {
+                withKeyDown(Key.AltLeft) { withKeyDown(Key.MetaLeft) { pressKey(Key.Z) } }
             }
         }
     }

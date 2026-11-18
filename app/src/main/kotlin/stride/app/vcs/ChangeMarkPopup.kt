@@ -30,7 +30,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -92,7 +94,8 @@ fun ChangeMarkPopup(request: ChangeMarkPopupRequest, state: AppState, onClose: (
                                 onClose()
                                 true
                             }
-                            event.key == Key.Z && event.isAltPressed && event.isMetaPressed -> {
+                            event.key == Key.Z && event.isAltPressed && event.isMetaPressed &&
+                                !event.isShiftPressed && !event.isCtrlPressed -> {
                                 rollbackHunk(state, request.editor, request.hunk)
                                 onClose()
                                 true

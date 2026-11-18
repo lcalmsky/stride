@@ -15,10 +15,13 @@ object ChangeMarks {
     private val trackers = ConcurrentHashMap<TextFileEditor, LineStatusTracker>()
 
     fun attach(project: Project, editor: TextFileEditor) {
-        trackers.put(editor, LineStatusTracker(project, editor))?.detach()
+        val tracker = LineStatusTracker(project, editor)
+        editor.onDocumentTextChanged = tracker::textChanged
+        trackers.put(editor, tracker)?.detach()
     }
 
     fun detach(editor: TextFileEditor) {
+        editor.onDocumentTextChanged = null
         trackers.remove(editor)?.detach()
     }
 
@@ -27,7 +30,7 @@ object ChangeMarks {
 
 /** Opens the gutter popup for [hunk] with the hunk's base lines. */
 internal fun openChangeMarkPopup(state: AppState, editor: TextFileEditor, hunk: LineHunk): Boolean {
-    val base = ChangeMarks.trackerOf(editor)?.baseLines.orEmpty()
+    val base = ChangeMarks.trackerOf(editor)?.document()?.baseLines.orEmpty()
     val lines = base.subList(hunk.oldStart.coerceIn(0, base.size), (hunk.oldStart + hunk.oldCount).coerceIn(0, base.size))
         .toList()
     state.changeMarkPopup = ChangeMarkPopupRequest(editor, hunk, lines)
@@ -46,9 +49,9 @@ fun rollbackLines(state: AppState): Boolean {
         state.statusMessage = answer.reason
         return true
     }
-    val hunks = tracker?.hunks.orEmpty()
-    val selected = selectedHunks(editor, hunks)
-    if (selected.isEmpty()) {
+    val status = tracker?.statusFor(editor.value.text)
+    val selected = status?.let { selectedHunks(editor, it.hunks) }.orEmpty()
+    if (selected.isEmpty() || status == null) {
         state.statusMessage = "No changes at the caret"
         return true
     }
@@ -56,22 +59,27 @@ fun rollbackLines(state: AppState): Boolean {
         state.statusMessage = "File is read-only"
         return true
     }
-    applyRollback(editor, tracker?.baseLines.orEmpty(), hunks, selected)
     state.statusMessage = null
+    applyRollback(editor, status.baseLines, status.hunks, selected)
     return true
 }
 
 /** Rolls back the single [hunk] the gutter popup shows; `false` when the text moved past it. */
 internal fun rollbackHunk(state: AppState, editor: TextFileEditor, hunk: LineHunk): Boolean {
+    if (state.session?.editors?.selected !== editor) return false
     if (editor.isReadOnly) {
         state.statusMessage = "File is read-only"
         return false
     }
     val tracker = ChangeMarks.trackerOf(editor) ?: return false
-    val hunks = tracker.hunks
-    val target = hunks.firstOrNull { it == hunk } ?: return false
-    val applied = applyRollback(editor, tracker.baseLines, hunks, listOf(target))
-    state.statusMessage = null
+    val status = tracker.statusFor(editor.value.text)
+    val target = status?.let { live -> live.hunks.firstOrNull { it == hunk } }
+    val applied = if (status != null && target != null) {
+        applyRollback(editor, status.baseLines, status.hunks, listOf(target))
+    } else {
+        false
+    }
+    state.statusMessage = if (applied) null else "No changes at the caret"
     return applied
 }
 
@@ -79,7 +87,7 @@ internal fun rollbackHunk(state: AppState, editor: TextFileEditor, hunk: LineHun
 fun gotoChange(state: AppState, forward: Boolean): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected as? TextFileEditor ?: return false
-    val hunks = ChangeMarks.trackerOf(editor)?.hunks.orEmpty()
+    val hunks = ChangeMarks.trackerOf(editor)?.document()?.hunks.orEmpty()
     val text = editor.value.text
     val caretLine = lineIndexAt(text, editor.value.selection.end)
     val target = if (forward) {
@@ -104,7 +112,11 @@ private fun selectedHunks(editor: TextFileEditor, hunks: List<LineHunk>): List<L
         if (caret.collapsed) {
             lines += lineIndexAt(text, caret.start)
         } else {
-            for (line in lineIndexAt(text, caret.min)..lineIndexAt(text, caret.max)) lines += line
+            val first = lineIndexAt(text, caret.min)
+            var last = lineIndexAt(text, caret.max)
+            // A selection dragged to the start of a line does not take that line.
+            if (last > first && caret.max == lineStartOffset(text, last)) last--
+            for (line in first..last) lines += line
         }
     }
     return hunks.filter { hunk ->
@@ -116,7 +128,10 @@ private fun selectedHunks(editor: TextFileEditor, hunks: List<LineHunk>): List<L
     }
 }
 
-/** Replaces [selected] hunks with their base lines in one undo step, caret at the first change. */
+/**
+ * Replaces [selected] hunks with their base lines in one undo step, caret at the first change.
+ * Only the rolled-back line ranges change; every other line keeps its own text and terminator.
+ */
 private fun applyRollback(
     editor: TextFileEditor,
     base: List<String>,
@@ -124,18 +139,54 @@ private fun applyRollback(
     selected: List<LineHunk>,
 ): Boolean {
     val text = editor.value.text
-    val current = LineDiff.split(text)
-    val result = LineDiff.rollback(base, current, hunks, selected, LineDiff.lineSeparator(text))
-    if (result == text) return false
-    val caret = lineStartOffset(result, firstChangedLine(current, result))
-    return editor.applyEdits(listOf(TextEdit(0, text.length, result)), caret = caret)
+    val separator = LineDiff.lineSeparator(text)
+    val lineCount = LineDiff.split(text).size
+    val edits = ArrayList<TextEdit>(selected.size)
+    for (hunk in selected.sortedBy { it.newStart }) {
+        val start = hunk.newStart.coerceIn(0, lineCount)
+        val count = hunk.newCount.coerceIn(0, lineCount - start)
+        val oldStart = hunk.oldStart.coerceIn(0, base.size)
+        val oldCount = hunk.oldCount.coerceIn(0, base.size - oldStart)
+        val oldLines = base.subList(oldStart, oldStart + oldCount)
+        when {
+            count == 0 -> {
+                if (oldLines.isEmpty()) continue
+                val offset = lineStartOffset(text, start)
+                val atLineStart = offset == 0 || text[offset - 1] == '\n'
+                val insertion = if (atLineStart) {
+                    oldLines.joinToString(separator) + separator
+                } else {
+                    separator + oldLines.joinToString(separator)
+                }
+                edits += TextEdit(offset, offset, insertion)
+            }
+            oldCount == 0 -> {
+                val from = lineStartOffset(text, start)
+                val to = lineStartOffset(text, start + count).coerceAtMost(text.length)
+                if (to > from) edits += TextEdit(from, to, "")
+            }
+            else -> {
+                val from = lineStartOffset(text, start)
+                val to = lineContentEnd(text, start + count - 1)
+                val replacement = oldLines.joinToString(separator)
+                if (text.substring(from, to) != replacement) edits += TextEdit(from, to, replacement)
+            }
+        }
+    }
+    if (edits.isEmpty()) return false
+    return editor.applyEdits(edits, caret = edits.first().start)
 }
 
-private fun firstChangedLine(before: List<String>, after: String): Int {
-    val afterLines = LineDiff.split(after)
-    var line = 0
-    while (line < before.size && line < afterLines.size && before[line] == afterLines[line]) line++
-    return line
+/** The offset just past [line]'s content, before its terminator; the text end for a last line. */
+private fun lineContentEnd(text: String, line: Int): Int {
+    val start = lineStartOffset(text, line)
+    val next = lineStartOffset(text, line + 1)
+    if (next > start && text[next - 1] == '\n') {
+        var end = next - 1
+        if (end > start && text[end - 1] == '\r') end--
+        return end
+    }
+    return text.length
 }
 
 private fun lineStartOffset(text: String, line: Int): Int {
