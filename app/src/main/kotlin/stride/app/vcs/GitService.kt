@@ -51,7 +51,13 @@ class GitService(private val project: Project) : Disposable {
 
     private var overrideExecutor: GitExecutor? = null
     private val defaultExecutor: GitExecutor by lazy {
-        GitBinary.resolve()?.let { CliGitExecutor(it, emptyMap()) } ?: MissingGitExecutor
+        // The test JVM sets this so a composed App never runs git on a real repository; a test that
+        // needs git sets [executor] itself.
+        if (System.getProperty(DISABLE_DEFAULT_EXECUTOR) == "true") {
+            MissingGitExecutor
+        } else {
+            GitBinary.resolve()?.let { CliGitExecutor(it, emptyMap()) } ?: MissingGitExecutor
+        }
     }
 
     /** Test seam, like [stride.app.run.RunManager.starter]. */
@@ -60,6 +66,9 @@ class GitService(private val project: Project) : Disposable {
         set(value) {
             overrideExecutor = value
         }
+
+    /** Runs [block] on the service's IO scope, which is cancelled when the project closes. */
+    fun launch(block: suspend CoroutineScope.() -> Unit): Job = scope.launch(block = block)
 
     /** Test seam for the three read, commit and push limits. */
     var timeouts: GitTimeouts = GitTimeouts()
@@ -737,6 +746,8 @@ class GitService(private val project: Project) : Disposable {
     private data class BaseKey(val path: Path, val head: String?)
 
     companion object {
+        /** System property that turns the default executor off; the app's test task sets it. */
+        const val DISABLE_DEFAULT_EXECUTOR: String = "stride.git.disableDefaultExecutor"
         const val MAX_CONSOLE_ENTRIES: Int = 200
         const val MAX_CONSOLE_OUTPUT: Int = 64 * 1024
         const val MAX_BASE_BYTES: Long = 8L * 1024 * 1024

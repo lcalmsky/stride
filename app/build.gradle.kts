@@ -129,6 +129,7 @@ fun Test.strideTestDefaults() {
     // The native tests need a real AWT peer; they create no visible window.
     systemProperty("java.awt.headless", "false")
     systemProperty("stride.repoRoot", project.rootProject.projectDir.absolutePath)
+    systemProperty("stride.git.disableDefaultExecutor", "true")
     systemProperty("stride.runIntegration", runIntegration.toString())
     systemProperty("stride.glass.library", nativeLibraryForTests)
     // The appearance-order test forks a fresh JVM; it must see the same test runtime classes.
