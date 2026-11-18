@@ -307,6 +307,20 @@ class RefactoringActionsTest {
     }
 
     @Test
+    fun `the rename row reads the word at the prepared selection after the popup collapses it`() {
+        val editor = editorWith("alpha beta\n")
+        editor.updateValue(TextFieldValue("alpha beta\n", TextRange(0, 10)))
+        state.prepareRefactoring = { _, _ -> RefactoringStep.Refused("not here") }
+        assertTrue(openRefactorThis(state))
+        editor.updateValue(editor.value.copy(selection = TextRange(10)))
+
+        assertTrue(chooseRefactorThis(state, RefactorThisEntry.Rename))
+
+        assertEquals("alpha", state.rename?.original)
+        assertEquals("alpha beta\n", editor.value.text)
+    }
+
+    @Test
     fun `a chooser highlights the selected option and puts the old highlights back`() {
         val editor = editorWith("alpha beta\n")
         editor.updateValue(TextFieldValue("alpha beta\n", TextRange(0)))

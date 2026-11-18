@@ -196,7 +196,10 @@ internal fun chooseRefactorThis(state: AppState, entry: RefactorThisEntry): Bool
     val request = state.refactorThis ?: return false
     state.refactorThis = null
     return when (entry) {
-        RefactorThisEntry.Rename -> openRename(state)
+        RefactorThisEntry.Rename -> {
+            restorePreparedSelection(request.editor, request.preparedText, request.preparedSelection)
+            openRename(state)
+        }
         is RefactorThisEntry.Prepared -> followStep(
             state,
             request.editor,
