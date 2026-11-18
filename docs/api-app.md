@@ -2842,15 +2842,22 @@ the same tokens and blocks as the current file.
   bare `super` does not compile there). An abstract member's body is `TODO("Not yet implemented")`.
   A property becomes `override val x: T get() = super.x`, and a `var` adds
   `set(value) { super.x = value }` (measured: same behaviour as inheriting it).
-- **Implement** lists the abstract candidates that nothing along the walk implements, all
-  checked: a body that overrides the abstract declaration, an interface's default body included,
-  counts as an implementation (measured: `class C : P, R` with `interface R : P { override fun f()
-  = 7 }` compiles without an override and runs `R.f`). A body declared independently, in a
-  supertype that does not inherit the abstract declaration (`interface P { fun f(): Int }` and
-  `interface Q { fun f(): Int = 7 }` in `class C : P, Q`), does not count: Kotlin then requires an
-  explicit override, so `f` is listed. Likewise a member is listed when two interface bodies reach
-  the class and neither overrides the other (Kotlin requires an override then too), and a `private`
-  body in a class implements nothing. Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
+- **Implement** lists every member that Kotlin would require the class to override, all checked.
+  For one member, take its non-`private` declarations along the walk, one per declaration (a
+  declaration reached through two supertypes counts once), and drop each one that another of them
+  overrides (inherits from). The member is implemented, and not listed, when exactly one of the
+  remaining declarations has a body and it is in a class, or it is the only one remaining; otherwise
+  it is listed. Measured with Kotlin 2.4.21:
+  - `interface R : P { override fun f() = 7 }`, `class C : P, R`: only `R.f` remains, not listed
+  - `interface Q { fun f() = 7 }` unrelated to an abstract `P.f`, `class C : P, Q`: listed (must
+    override)
+  - two unrelated interface bodies, with or without an abstract declaration: listed
+  - an interface body that overrides another (`interface R : Q`): not listed
+  - a class body and an abstract interface declaration, `class C : B(), P`: not listed (a final
+    class body implements it too)
+  - a class body and an unrelated interface body: listed (`inherits multiple implementations`)
+  - an abstract class declaration and an unrelated interface body: listed
+  - a `private` body in a class is not a declaration here, so `P.f` is listed Bodies are `TODO("Not yet implemented")`; a `val` gets `get() = TODO("Not yet implemented")`
   and a `var` adds `set(value) {}`. Implement refuses when a class supertype anywhere along the
   walk is not in project sources (a supertype with `()`, or one without parentheses in a class with
   explicit constructors, which may delegate `: super()`): `Base is not in project sources; it may implement these members`
