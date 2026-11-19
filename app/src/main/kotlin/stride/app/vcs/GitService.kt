@@ -669,7 +669,8 @@ class GitService(private val project: Project) : Disposable {
         val orphans = count.stdoutText().trim().toIntOrNull()
         if (!count.ok || orphans == null) return "$failure: ${firstLine(count)}"
         if (orphans == 0) return null
-        return "HEAD has $orphans commits on no branch: create a branch from it first (New Branch)"
+        val commits = if (orphans == 1) "1 commit" else "$orphans commits"
+        return "HEAD has $commits on no branch: create a branch from it first (New Branch)"
     }
 
     /** V19 step 5's success text: a post-checkout hook's failure is git's exit code, not a failed switch. */

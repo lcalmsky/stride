@@ -259,7 +259,7 @@ class GitBranchesTest {
         }
 
         assertFalse(result.ok)
-        assertEquals("HEAD has 1 commits on no branch: create a branch from it first (New Branch)", result.message)
+        assertEquals("HEAD has 1 commit on no branch: create a branch from it first (New Branch)", result.message)
         assertEquals(orphan, fixture.head())
         assertTrue(writes.isEmpty(), writes.toString())
     }
@@ -553,7 +553,7 @@ class GitBranchesTest {
         }
 
         assertFalse(result.ok)
-        assertEquals("HEAD has 1 commits on no branch: create a branch from it first (New Branch)", result.message)
+        assertEquals("HEAD has 1 commit on no branch: create a branch from it first (New Branch)", result.message)
         assertNull(fixture.branchId("fix-login"))
         assertEquals(orphan, fixture.head())
         assertTrue(writes.isEmpty(), writes.toString())
