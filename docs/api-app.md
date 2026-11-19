@@ -3657,7 +3657,10 @@ check that fails or times out refuses with `Amend failed: <first line>`.
    (`git log -1 --format=%H%x00%B HEAD`); the window keeps the message the field had and puts HEAD's
    message in the field. The capsules read `Amend Commit` and `Amend Commit and Push…`. `Amend` from
    Find Action outside the Commit window opens the window as `⌘K` does and turns Amend on; it does
-   not turn off an Amend that is already on.
+   not turn off an Amend that is already on. While another git write runs, turning it on refuses
+   with `Git is busy: <what>` on the error line and the status bar. An answer that arrives while an
+   ordinary commit from the window runs is dropped, because that commit owns the field; one that
+   arrives after a commit has finished names the old HEAD, and step 3's HEAD check refuses it.
 2. **Turning it off** puts back the message the field had when Amend was turned on. While an amend
    is running, neither the checkbox nor `⌃⌥M` changes Amend in either direction, because the
    running amend already holds the message on screen.
@@ -3709,7 +3712,7 @@ check that fails or times out refuses with `Amend failed: <first line>`.
 |---|---|
 | `Not a Git repository: <root>` | any action when the project root is not in a repository |
 | `Git is not installed` | no git binary (V3) |
-| `Git is busy: <what>` | a write while another runs |
+| `Git is busy: <what>` | a write, or turning Amend on, while another write runs |
 | `No changes to commit` | `⌘K` commit with nothing checked or no changes |
 | `Enter a commit message` | commit with an empty message |
 | `Committed <n> files to <branch>: <short hash> <subject>` | commit succeeded |
