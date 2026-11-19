@@ -31,7 +31,7 @@ enum class ActionId {
     GENERATE, OVERRIDE_METHODS, IMPLEMENT_METHODS,
     COMMIT, PUSH, VCS_POPUP, ACTIVATE_GIT_TOOL_WINDOW, ACTIVATE_COMMIT_TOOL_WINDOW,
     ROLLBACK_LINES, NEXT_CHANGE, PREVIOUS_CHANGE, SHOW_DIFF,
-    COMMIT_AND_PUSH, UPDATE_PROJECT, FETCH,
+    COMMIT_AND_PUSH, UPDATE_PROJECT, FETCH, ROLLBACK_CHANGES, TOGGLE_AMEND,
 }
 
 enum class KeyContext {
@@ -354,6 +354,10 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("meta 0", ActionId.ACTIVATE_COMMIT_TOOL_WINDOW, KeyContext.GLOBAL)
     // Vcs.RollbackChangedLines control alt Z (→meta)
     bind("meta alt Z", ActionId.ROLLBACK_LINES, KeyContext.EDITOR)
+    // ChangesView.Revert control alt Z ($default, control as meta); same stroke as Rollback Lines in EDITOR
+    bind("meta alt Z", ActionId.ROLLBACK_CHANGES, KeyContext.COMMIT_WINDOW)
+    // Vcs.ToggleAmendCommitMode control alt M (Mac OS X 10.5+)
+    bind("control alt M", ActionId.TOGGLE_AMEND, KeyContext.COMMIT_WINDOW)
     // VcsShowPrevChangeMarker control alt shift UP
     bind("control alt shift UP", ActionId.PREVIOUS_CHANGE, KeyContext.EDITOR)
     // VcsShowNextChangeMarker control alt shift DOWN

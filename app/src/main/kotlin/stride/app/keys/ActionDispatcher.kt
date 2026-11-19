@@ -53,10 +53,12 @@ import stride.app.vcs.fetchFromVcs
 import stride.app.vcs.gotoChange
 import stride.app.vcs.openCommit
 import stride.app.vcs.openPush
+import stride.app.vcs.openRollback
 import stride.app.vcs.openUpdate
 import stride.app.vcs.openVcsPopup
 import stride.app.vcs.rollbackLines
 import stride.app.vcs.showSelectedDiff
+import stride.app.vcs.toggleAmend
 import stride.core.services.service
 import stride.lang.GenerateKind
 import stride.lang.RefactoringKind
@@ -158,6 +160,8 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         openVcsPopup(state)
     }
     ActionId.ROLLBACK_LINES -> rollbackLines(state)
+    ActionId.ROLLBACK_CHANGES -> openRollback(state)
+    ActionId.TOGGLE_AMEND -> toggleAmend(state)
     ActionId.NEXT_CHANGE, ActionId.PREVIOUS_CHANGE -> gotoChange(state, action == ActionId.NEXT_CHANGE)
     ActionId.SHOW_DIFF -> showSelectedDiff(state)
     ActionId.GOTO_NEXT_ERROR, ActionId.GOTO_PREVIOUS_ERROR -> {

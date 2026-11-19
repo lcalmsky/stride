@@ -108,7 +108,34 @@ class CommitWindowState {
     /** The last refused or failed commit, shown above the capsule until the next one. */
     var error: String? by mutableStateOf(null)
 
+    /** The commit Amend replaces while Amend is on, `null` otherwise. */
+    var amend: AmendBase? by mutableStateOf(null)
+        private set
+
+    /** The message the field had when Amend was turned on; turning it off puts it back. */
+    var amendMessage: String by mutableStateOf("")
+        private set
+
     val inclusion = CommitInclusion()
+
+    fun turnAmendOn(base: AmendBase) {
+        amendMessage = message
+        message = base.message
+        amend = base
+    }
+
+    fun turnAmendOff() {
+        if (amend == null) return
+        message = amendMessage
+        amendMessage = ""
+        amend = null
+    }
+
+    /** A successful amend leaves no base behind: the field is cleared by the caller. */
+    fun amendFinished() {
+        amend = null
+        amendMessage = ""
+    }
 
     /** A commit this window asked for and has not seen finish; blocks a second request. */
     var committing by mutableStateOf(false)

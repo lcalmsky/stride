@@ -76,6 +76,7 @@ internal const val COMMIT_MESSAGE_TAG: String = "commit-message"
 internal const val COMMIT_CAPSULE_TAG: String = "commit-capsule"
 internal const val COMMIT_AND_PUSH_CAPSULE_TAG: String = "commit-and-push-capsule"
 internal const val COMMIT_ERROR_TAG: String = "commit-error"
+internal const val COMMIT_AMEND_TAG: String = "commit-amend"
 
 /**
  * The Commit window: the grouped file list on the left, the message and the Commit capsule on
@@ -142,7 +143,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
     // the part that had it; one that closed onto the editor left `state.focus` there and is left
     // alone.
     val popupOpen = state.diffRequest != null || state.pushRequest != null ||
-        state.updateRequest != null || state.vcsPopup != null
+        state.updateRequest != null || state.vcsPopup != null || state.rollbackRequest != null
     LaunchedEffect(popupOpen) {
         if (popupOpen || state.focus != KeyContext.COMMIT_WINDOW) return@LaunchedEffect
         withFrameNanos { }
@@ -154,7 +155,8 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
     val index = window.selectedIndex()
     val selectedPath = ordered.getOrNull(index)?.path
     val checked = window.checkedCount()
-    val enabled = session.git.busy == null && window.message.isNotBlank() && checked > 0
+    val amending = window.amend != null
+    val enabled = session.git.busy == null && window.message.isNotBlank() && (checked > 0 || amending)
 
     fun move(step: Int) {
         if (ordered.isEmpty()) return
@@ -257,6 +259,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                         cursorBrush = SolidColor(DesignTokens.accent),
                     )
                 }
+                AmendCheckbox(checked = amending, onToggle = { toggleAmend(state) })
                 window.error?.let { error ->
                     Text(
                         error,
@@ -279,6 +282,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                         checked = checked,
                         total = rows.size,
                         onClick = { commitFromWindow(state) },
+                        label = if (amending) "Amend Commit" else "Commit",
                     )
                     Spacer(Modifier.width(DesignTokens.space8))
                     CommitCapsule(
@@ -286,7 +290,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                         checked = checked,
                         total = rows.size,
                         onClick = { commitFromWindow(state, push = true) },
-                        label = "Commit and Push…",
+                        label = if (amending) "Amend Commit and Push…" else "Commit and Push…",
                         tag = COMMIT_AND_PUSH_CAPSULE_TAG,
                         showCount = false,
                     )
@@ -472,7 +476,34 @@ private fun FileRow(
     }
 }
 
-private fun folderOf(path: Path, root: Path): String? {
+@Composable
+private fun AmendCheckbox(checked: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(DesignTokens.popupRowHeight)
+            .clickable(onClick = onToggle)
+            .testTag(COMMIT_AMEND_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (checked) "✓" else "",
+            color = DesignTokens.accent2,
+            fontSize = DesignTokens.uiTextSize,
+            fontFamily = DesignTokens.uiFont,
+            modifier = Modifier.width(20.dp),
+        )
+        Spacer(Modifier.width(DesignTokens.space8))
+        Text(
+            "Amend",
+            color = DesignTokens.text,
+            fontSize = DesignTokens.uiTextSize,
+            fontFamily = DesignTokens.uiFont,
+        )
+    }
+}
+
+internal fun folderOf(path: Path, root: Path): String? {
     val parent = path.parent ?: return null
     val normalizedRoot = root.toAbsolutePath().normalize()
     val relative = if (parent.startsWith(normalizedRoot)) {
@@ -483,14 +514,14 @@ private fun folderOf(path: Path, root: Path): String? {
     return relative.ifEmpty { null }
 }
 
-private fun letterColor(kind: ChangeKind): Color = when (kind) {
+internal fun letterColor(kind: ChangeKind): Color = when (kind) {
     ChangeKind.ADDED, ChangeKind.RENAMED -> DesignTokens.vcsAdded
     ChangeKind.DELETED, ChangeKind.UNTRACKED, ChangeKind.CONFLICTED -> DesignTokens.vcsDeleted
     ChangeKind.MODIFIED -> DesignTokens.vcsModified
 }
 
 @Composable
-private fun CommitCapsule(
+internal fun CommitCapsule(
     enabled: Boolean,
     checked: Int,
     total: Int,

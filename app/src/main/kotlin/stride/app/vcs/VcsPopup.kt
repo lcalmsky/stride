@@ -64,8 +64,14 @@ class VcsPopupRequest internal constructor() {
     var outsideRepository: Boolean by mutableStateOf(false)
     var editorRowsEnabled: Boolean by mutableStateOf(false)
 
+    /** Row 9 stays dimmed until Rollback would list the file the popup opened on. */
+    var rollbackEnabled: Boolean by mutableStateOf(false)
+
     internal var file: Path? = null
     internal var line: Int? = null
+    internal var rollbackPath: Path? = null
+    internal var rollbackFromWindow: Boolean = false
+    internal var rollbackNeedsTrackedRead: Boolean = false
 
     /** Read before the popup takes `state.focus`; the App hands the keyboard back to it on close. */
     internal var openedFrom: KeyContext? = null
@@ -93,6 +99,20 @@ fun openVcsPopup(state: AppState): Boolean {
     request.branch = snapshot.branch?.branch
     request.error = snapshot.error
     request.outsideRepository = snapshot.repository == null
+    val unsaved = editor?.isModified == true
+    request.rollbackFromWindow = state.focus == KeyContext.COMMIT_WINDOW
+    if (request.rollbackFromWindow) {
+        request.rollbackEnabled = rollbackRows(commitRows(session)).isNotEmpty()
+    } else {
+        val lexicalRoot = session.project.root.toAbsolutePath().normalize()
+        val realRoot = realProjectRoot(session.project.root)
+        val path = request.file?.let { realPathOf(it, lexicalRoot, realRoot) }
+        request.rollbackPath = path
+        val inProject = path != null && path.startsWith(realRoot)
+        request.rollbackEnabled = inProject && rollbackRows(commitRows(session)).any { it.path == path }
+        request.rollbackNeedsTrackedRead = inProject && !request.rollbackEnabled &&
+            (unsaved || snapshot.repository == null)
+    }
     state.vcsPopup = request
     state.focus = KeyContext.CONTEXT_POPUP
     git.launch {
@@ -108,6 +128,11 @@ fun openVcsPopup(state: AppState): Boolean {
         }
         val changed = editorHasChanges(git, editor)
         Snapshot.withMutableSnapshot { request.editorRowsEnabled = changed }
+        val path = request.rollbackPath
+        if (request.rollbackNeedsTrackedRead && path != null) {
+            val listed = rollbackWouldList(session, path, unsaved)
+            Snapshot.withMutableSnapshot { request.rollbackEnabled = listed }
+        }
     }
     return true
 }
@@ -144,7 +169,7 @@ private class VcsRow(
 )
 
 /**
- * The VCS Operations quick list: the branch in the title and the eight numbered commands with their
+ * The VCS Operations quick list: the branch in the title and the nine numbered commands with their
  * shortcuts. A digit runs its row, ↑/↓ select, ↵ runs, Esc closes; a dimmed row does nothing.
  */
 @Composable
@@ -180,6 +205,9 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
             },
             VcsRow(7, "Update Project…", shortcut(ActionId.UPDATE_PROJECT), true) { openUpdate(state) },
             VcsRow(8, "Fetch", "", true) { fetchFromVcs(state) },
+            VcsRow(9, "Rollback…", shortcut(ActionId.ROLLBACK_CHANGES), request.rollbackEnabled) {
+                openRollback(state)
+            },
         )
     }
     val index = selected.coerceIn(0, rows.lastIndex.coerceAtLeast(0))
@@ -243,6 +271,7 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
                             Key.Six, Key.NumPad6 -> { runDigit(6); true }
                             Key.Seven, Key.NumPad7 -> { runDigit(7); true }
                             Key.Eight, Key.NumPad8 -> { runDigit(8); true }
+                            Key.Nine, Key.NumPad9 -> { runDigit(9); true }
                             else -> false
                         }
                     }

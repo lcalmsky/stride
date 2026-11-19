@@ -147,6 +147,8 @@ object ActionNames {
         ActionId.COMMIT_AND_PUSH to "Commit and Push…",
         ActionId.UPDATE_PROJECT to "Update Project…",
         ActionId.FETCH to "Fetch",
+        ActionId.ROLLBACK_CHANGES to "Rollback…",
+        ActionId.TOGGLE_AMEND to "Amend",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

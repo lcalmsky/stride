@@ -75,6 +75,8 @@ import stride.app.search.SearchEverywherePopup
 import stride.app.search.ShowUsagesPopup
 import stride.app.search.ShowUsagesRequest
 import stride.app.ui.theme.Appearance
+import stride.app.vcs.ChangeKind
+import stride.app.vcs.CommitRow
 import stride.app.vcs.LogEntry
 import stride.app.vcs.PushPlan
 import stride.app.vcs.PushPopup
@@ -86,6 +88,8 @@ import stride.app.vcs.BaseText
 import stride.app.vcs.DiffFile
 import stride.app.vcs.DiffPopup
 import stride.app.vcs.DiffRequest
+import stride.app.vcs.RollbackPopup
+import stride.app.vcs.RollbackRequest
 import stride.app.vcs.UpdatePlan
 import stride.app.vcs.UpdatePopup
 import stride.app.vcs.UpdateRequest
@@ -834,6 +838,26 @@ class PopupNativeLegibilityTest {
                         ),
                     ),
                     state = AppState(),
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "rollback",
+                key = "popup-rollback",
+                roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT2),
+                renderMillis = 600,
+            ) {
+                val first = CommitRow(root.resolve("src/AlphaOne.kt"), ChangeKind.MODIFIED)
+                RollbackPopup(
+                    request = RollbackRequest(
+                        rows = listOf(
+                            first,
+                            CommitRow(root.resolve("src/AlphaTwo.kt"), ChangeKind.ADDED),
+                            CommitRow(root.resolve("src/BetaOne.kt"), ChangeKind.DELETED, unsaved = true),
+                        ),
+                        checked = setOf(first.path),
+                    ),
+                    state = popupState,
                     onClose = {},
                 )
             },

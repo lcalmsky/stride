@@ -30,6 +30,8 @@ class VcsActionsTest {
         assertEquals(ActionId.ACTIVATE_GIT_TOOL_WINDOW, action("meta 9", KeyContext.GLOBAL))
         assertEquals(ActionId.ACTIVATE_COMMIT_TOOL_WINDOW, action("meta 0", KeyContext.GLOBAL))
         assertEquals(ActionId.ROLLBACK_LINES, action("meta alt Z", KeyContext.EDITOR))
+        assertEquals(ActionId.ROLLBACK_CHANGES, action("meta alt Z", KeyContext.COMMIT_WINDOW))
+        assertEquals(ActionId.TOGGLE_AMEND, action("control alt M", KeyContext.COMMIT_WINDOW))
         assertEquals(ActionId.NEXT_CHANGE, action("control alt shift DOWN", KeyContext.EDITOR))
         assertEquals(ActionId.PREVIOUS_CHANGE, action("control alt shift UP", KeyContext.EDITOR))
         assertEquals(ActionId.SHOW_DIFF, action("meta D", KeyContext.COMMIT_WINDOW))
@@ -44,13 +46,16 @@ class VcsActionsTest {
 
     @Test
     fun `no vcs stroke already had a binding in its context`() {
-        val expected = mapOf(
+        // A list, not a map: a map keyed by the stroke would drop EDITOR's own meta alt Z.
+        val expected = listOf(
             KeyStroke.parse("meta K") to KeyContext.GLOBAL,
             KeyStroke.parse("meta shift K") to KeyContext.GLOBAL,
             KeyStroke.parse("control V") to KeyContext.GLOBAL,
             KeyStroke.parse("meta 9") to KeyContext.GLOBAL,
             KeyStroke.parse("meta 0") to KeyContext.GLOBAL,
             KeyStroke.parse("meta alt Z") to KeyContext.EDITOR,
+            KeyStroke.parse("meta alt Z") to KeyContext.COMMIT_WINDOW,
+            KeyStroke.parse("control alt M") to KeyContext.COMMIT_WINDOW,
             KeyStroke.parse("control alt shift DOWN") to KeyContext.EDITOR,
             KeyStroke.parse("control alt shift UP") to KeyContext.EDITOR,
             KeyStroke.parse("meta D") to KeyContext.COMMIT_WINDOW,
@@ -62,6 +67,8 @@ class VcsActionsTest {
             assertEquals(1, inContext.size, "$stroke is bound ${inContext.size} times in $context")
         }
         assertEquals(2, keymap.bindings[KeyStroke.parse("meta D")].orEmpty().size)
+        assertEquals(2, keymap.bindings[KeyStroke.parse("meta alt Z")].orEmpty().size)
+        assertEquals(1, keymap.bindings[KeyStroke.parse("control alt M")].orEmpty().size)
         for (stroke in listOf("meta alt K", "meta T")) {
             val parsed = KeyStroke.parse(stroke)
             assertEquals(1, keymap.bindings[parsed].orEmpty().size, "$parsed is bound more than once in all contexts")

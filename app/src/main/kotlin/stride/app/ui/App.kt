@@ -191,6 +191,7 @@ import stride.app.vcs.ChangeMarkPopup
 import stride.app.vcs.DiffPopup
 import stride.app.vcs.LineHunk
 import stride.app.vcs.PushPopup
+import stride.app.vcs.RollbackPopup
 import stride.app.vcs.UpdatePopup
 import stride.app.vcs.VcsPopup
 import stride.app.vcs.openChangeMarkPopup
@@ -968,6 +969,22 @@ fun App(
                 }
             }
         }
+        val rollbackRequest = state.rollbackRequest
+        val rollbackReturnContext = remember(rollbackRequest) { if (rollbackRequest != null) state.focus else null }
+        if (rollbackRequest != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                RollbackPopup(rollbackRequest, state) {
+                    state.rollbackRequest = null
+                    refocusAfterPopup(state, rollbackReturnContext)
+                }
+            }
+        }
         val changeMarkPopup = state.changeMarkPopup
         if (changeMarkPopup != null && session != null) {
             val selectedEditor = session.editors.selected
@@ -1252,7 +1269,7 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
         state.diffRequest != null || state.vcsPopup != null || state.pushRequest != null ||
-        state.updateRequest != null || state.changeMarkPopup != null ||
+        state.updateRequest != null || state.rollbackRequest != null || state.changeMarkPopup != null ||
         state.navigationBar != null || state.findBar.visible
 
 /** Hands the keyboard back to the editor only when the action left no popup open. */

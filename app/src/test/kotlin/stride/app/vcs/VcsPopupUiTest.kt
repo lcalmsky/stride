@@ -85,9 +85,11 @@ class VcsPopupUiTest {
                 for (text in listOf("Commit…", "Push…", "Rollback Lines", "Show Diff", "Commit Window", "Git Log")) {
                     onNodeWithText(text).assertIsDisplayed()
                 }
-                for (shortcut in listOf("⌘K", "⇧⌘K", "⌥⌘Z", "⌘D", "⌘0", "⌘9")) {
+                for (shortcut in listOf("⌘K", "⇧⌘K", "⌘D", "⌘0", "⌘9")) {
                     onNodeWithText(shortcut).assertIsDisplayed()
                 }
+                // Row 9 shares Rollback Lines' stroke, as COMMIT_WINDOW shares it with EDITOR.
+                assertEquals(2, onAllNodesWithText("⌥⌘Z").fetchSemanticsNodes().size)
                 onNodeWithText("main").assertIsDisplayed()
 
                 onRoot().performKeyInput { pressKey(Key.Five) }

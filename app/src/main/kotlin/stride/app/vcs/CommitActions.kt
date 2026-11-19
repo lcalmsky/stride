@@ -81,6 +81,161 @@ fun fetchFromVcs(state: AppState): Boolean {
     return true
 }
 
+/** The Rollback popup's rows: the Commit window's `Changes` rows, without conflicted files. */
+internal fun rollbackRows(rows: List<CommitRow>): List<CommitRow> =
+    CommitModel.ordered(rows).filter { it.tracked && it.kind != ChangeKind.CONFLICTED }
+
+/**
+ * Opens the rollback confirmation with exactly one row checked: the Commit window's selected row,
+ * or the selected editor's file from outside the window. An unsaved editor the Commit window has
+ * not asked git about yet arrives a moment later.
+ */
+fun openRollback(state: AppState): Boolean {
+    val session = state.session ?: return false
+    val window = session.commit
+    val fromWindow = state.focus == KeyContext.COMMIT_WINDOW
+    val editor = if (fromWindow) null else session.editors.selected as? TextFileEditor
+    window.syncRows(commitRows(session, window))
+    val rows = rollbackRows(window.rows)
+    val editorPath = editor?.let {
+        realPathOf(
+            it.file.path,
+            session.project.root.toAbsolutePath().normalize(),
+            realProjectRoot(session.project.root),
+        )
+    }
+    val initial = if (fromWindow) {
+        window.selectedRow()?.path?.takeIf { path -> rows.any { it.path == path } }
+    } else {
+        editorPath?.takeIf { path -> rows.any { it.path == path } }
+    }
+    state.rollbackRequest = RollbackRequest(
+        rows = rows,
+        checked = setOfNotNull(initial),
+        selected = rows.indexOfFirst { it.path == initial }.coerceAtLeast(0),
+    )
+    if (!fromWindow && editor != null && editor.isModified && initial == null) {
+        session.git.launch {
+            resolveTracked(session, window)
+            val updated = rollbackRows(commitRows(session, window))
+            val row = updated.firstOrNull { it.path == editorPath }
+            Snapshot.withMutableSnapshot {
+                val current = state.rollbackRequest ?: return@withMutableSnapshot
+                if (row == null) {
+                    state.rollbackRequest = current.copy(rows = updated)
+                } else if (current.checked.isEmpty()) {
+                    state.rollbackRequest = current.copy(
+                        rows = updated,
+                        checked = setOf(row.path),
+                        selected = updated.indexOf(row),
+                    )
+                } else {
+                    state.rollbackRequest = current.copy(rows = updated)
+                }
+            }
+        }
+    }
+    return true
+}
+
+/**
+ * Rolls back the checked rows. git restores the paths HEAD has and only unstages the others; the
+ * open editors take the disk text on the UI thread afterwards. The Commit window's error line
+ * takes a refusal or failure, and its choices for the rolled-back paths are forgotten.
+ */
+fun runRollback(state: AppState, request: RollbackRequest) {
+    val session = state.session ?: return
+    val window = session.commit
+    val checked = request.rows.filter { it.path in request.checked }
+    if (checked.isEmpty()) return
+    val changes = session.git.snapshot.changes.associateBy { it.path.toAbsolutePath().normalize() }
+    val gitPaths = ArrayList<Path>()
+    val editorOnly = ArrayList<Path>()
+    val forgotten = ArrayList<Path>()
+    for (row in checked) {
+        val change = changes[row.path]
+        if (change == null) {
+            editorOnly.add(row.path)
+            continue
+        }
+        gitPaths.add(row.path)
+        // A rename row contributes both paths: its old path is in HEAD and its new one is not.
+        change.originalPath?.let {
+            gitPaths.add(it)
+            forgotten.add(it)
+        }
+    }
+    forgotten.addAll(checked.map { it.path })
+    session.git.launch {
+        val result = if (gitPaths.isEmpty()) null else session.git.rollback(gitPaths)
+        val discard = when {
+            result == null -> editorOnly
+            result.ok -> result.restored + editorOnly
+            result.restored.isNotEmpty() -> result.restored
+            else -> emptyList()
+        }
+        if (discard.isNotEmpty()) {
+            runCatching { EventQueue.invokeAndWait { session.editors.discardToDisk(discard) } }
+        }
+        val outcome = when {
+            result == null -> rolledBackMessage(checked.size)
+            result.ok -> rolledBackMessage(checked.size, result.unstaged.size)
+            else -> result.message
+        }
+        Snapshot.withMutableSnapshot {
+            state.statusMessage = outcome
+            if (result != null && !result.ok) {
+                window.error = outcome
+            } else {
+                window.inclusion.forget(forgotten)
+                window.syncRows(commitRows(session, window))
+            }
+        }
+    }
+}
+
+/** `Rolled back <n> files`, naming the paths a rollback only took out of the index. */
+internal fun rolledBackMessage(rows: Int, unstaged: Int = 0): String = buildString {
+    append("Rolled back ").append(rows).append(if (rows == 1) " file" else " files")
+    if (unstaged > 0) {
+        append("; ").append(unstaged)
+        append(if (unstaged == 1) " added file kept as unversioned" else " added files kept as unversioned")
+    }
+}
+
+/**
+ * `⌃⌥M` and the window's Amend checkbox. Outside the Commit window it opens the window as `⌘K`
+ * does and turns Amend on; a refusal lands on the window's error line and leaves the box off.
+ */
+fun toggleAmend(state: AppState): Boolean {
+    val session = state.session ?: return false
+    val inWindow = state.focus == KeyContext.COMMIT_WINDOW
+    if (!inWindow) openCommit(state)
+    val window = session.commit
+    if (window.amend != null) {
+        // Outside the window the action only opens it and turns Amend on, so an Amend that is
+        // already on stays on.
+        if (inWindow) window.turnAmendOff()
+        return true
+    }
+    if (window.committing || session.git.busy != null) return true
+    session.git.launch {
+        when (val start = session.git.amendStart()) {
+            is AmendStart.Ready -> Snapshot.withMutableSnapshot {
+                if (window.amend == null) {
+                    window.turnAmendOn(start.base)
+                    window.error = null
+                }
+            }
+            is AmendStart.Refused -> Snapshot.withMutableSnapshot {
+                window.error = start.message
+                state.statusMessage = start.message
+            }
+        }
+    }
+    return true
+}
+
 /** Commits and pushes from the Commit window; anywhere else it opens that window first. */
 fun commitAndPush(state: AppState): Boolean {
     if (state.session == null) return false
@@ -108,7 +263,7 @@ internal fun realProjectRoot(root: Path): Path {
 }
 
 /** git reports real paths, so an editor under a symlinked project root is moved to the same form. */
-private fun realPathOf(path: Path, lexicalRoot: Path, realRoot: Path): Path {
+internal fun realPathOf(path: Path, lexicalRoot: Path, realRoot: Path): Path {
     val absolute = path.toAbsolutePath().normalize()
     return if (lexicalRoot != realRoot && absolute.startsWith(lexicalRoot)) {
         realRoot.resolve(lexicalRoot.relativize(absolute)).normalize()
@@ -161,6 +316,22 @@ internal suspend fun resolveTracked(session: ProjectSession, window: CommitWindo
 }
 
 /**
+ * Whether Rollback would list the editor at [path]: git reports a change Rollback can act on, or
+ * an unsaved editor git knows. Runs off the UI thread; reads git for a path git did not report.
+ */
+internal suspend fun rollbackWouldList(session: ProjectSession, path: Path, unsaved: Boolean): Boolean {
+    val change = session.git.snapshot.changes.firstOrNull { it.path.toAbsolutePath().normalize() == path }
+    if (change != null) {
+        return change.kind != ChangeKind.UNTRACKED && change.kind != ChangeKind.CONFLICTED
+    }
+    if (!unsaved) return false
+    return when (session.git.baseText(path)) {
+        is BaseText.Text, is BaseText.Unavailable -> true
+        else -> false
+    }
+}
+
+/**
  * Saves the checked files' editors and commits them. Refusals and save failures land in the
  * window's error line before git runs; the commit itself runs off the UI thread. With [push] a
  * successful commit asks for the push plan and opens the push popup, or refuses in the status bar.
@@ -176,8 +347,9 @@ fun commitFromWindow(state: AppState, push: Boolean = false) {
         refuseCommit(state, window, "Enter a commit message")
         return
     }
+    val amend = window.amend
     val paths = window.checkedPaths()
-    if (paths.isEmpty()) {
+    if (paths.isEmpty() && amend == null) {
         refuseCommit(state, window, "No changes to commit")
         return
     }
@@ -199,13 +371,14 @@ fun commitFromWindow(state: AppState, push: Boolean = false) {
     window.committing = true
     session.git.launch {
         try {
-            val result = session.git.commit(paths, message)
+            val result = session.git.commit(paths, message, amend)
             Snapshot.withMutableSnapshot {
                 state.statusMessage = result.message
                 if (result.ok) {
                     if (window.message == message) window.message = ""
                     window.error = null
                     window.inclusion.forget(paths)
+                    if (amend != null) window.amendFinished()
                     window.syncRows(commitRows(session, window))
                 } else {
                     window.error = result.message
