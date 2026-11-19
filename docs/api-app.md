@@ -2975,6 +2975,8 @@ changes and whether ⌘Z brings it back (V5).
 | Fetch | `FETCH` | `Git.Fetch` | none | VCS popup row |
 | Rollback | `ROLLBACK_CHANGES` | `ChangesView.Revert` | `⌥⌘Z` | COMMIT_WINDOW, and VCS popup row 9 |
 | Amend | `TOGGLE_AMEND` | `Vcs.ToggleAmendCommitMode` | `⌃⌥M` | COMMIT_WINDOW |
+| Branches | `SHOW_BRANCHES` | `Git.Branches` | none (the macOS keymaps remove it) | VCS popup row 0, the status bar's branch item, Find Action |
+| New Branch | `NEW_BRANCH` | `Git.CreateNewBranch` | `⌥⌘N` inside the branches popup only | the branches popup, Find Action |
 
 The IntelliJ strokes come from its keymaps: `⌘K`, `⇧⌘K` and `⌥⌘Z` are `$default` entries
 (`control K`, `control shift K`, `control alt Z`) read with control as meta, and `⌃V`, `⌘9`, `⌘0`
@@ -3090,7 +3092,8 @@ Not in this round (no target in the list asks for them): Commit and Push `⌥⌘
 files from the Commit window, Update Project `⌘T`, pull, fetch, branches, stash, amend, file
 history, annotate, the staging area and partial (hunk) commits, and repositories other than the one
 containing the project root. Commit and Push, Update Project, pull and fetch came in the 14th
-round (V7 to V11), and Rollback and Amend in the 15th (V12 to V15).
+round (V7 to V11), Rollback and Amend in the 15th (V12 to V15), and branches in the 16th (V16 to
+V20).
 
 ### V2 Where git runs
 
@@ -3317,7 +3320,7 @@ HEAD against the editor's current text.
   has one dimmed row, `Not a Git repository` (`Git is not installed` when there is no git). The
   digits of the numeric keypad run rows too. Rows `7 Update Project…` (`⌘T`) and `8 Fetch` come
   after the six above (V7), so the numbers of the 13th round do not move. Row `9 Rollback…`
-  (`⌥⌘Z`) comes after them (V15).
+  (`⌥⌘Z`) comes after them (V15), and row `0 Branches…` after that (V17).
 
 ### V7 What the 14th round includes
 
@@ -3706,6 +3709,306 @@ check that fails or times out refuses with `Amend failed: <first line>`.
 - **Find Action.** `Rollback…` and `Amend` are action search entries.
 - **Progress.** `Rolling back…` and `Amending…` in the status bar (V11).
 
+### V16 What the 16th round includes
+
+The user chose C2 after the 15th round. Its items are the branch list, checkout, new branch, rename
+and delete (V12). IntelliJ's per-branch menu also has Checkout and Rebase, Compare, Show Diff with
+Working Tree, Rebase, Merge, Update, Push, tracked branch and tag actions, and its popup has a
+Recent group and `Checkout Tag or Revision…`; none of those are in C2 (differences). A stash-based
+Smart Checkout needs C4 and is not in either.
+
+**Deleting a remote branch.**
+
+| | A: in, after a confirmation (`git push <remote> --delete <branch>`) | B: out; remote rows have no Delete |
+|---|---|---|
+| What it changes | a branch on a shared server that others may have checked out or opened a review from; stride cannot see who uses it | nothing outside the repository |
+| Undo | only by pushing the branch again from a clone that still has it | — |
+| What it needs | a confirmation popup, push's prompt-free authentication and its failure classes (V3, V5), and a choice about the local branches tracking it (IntelliJ asks) | nothing |
+| V5 | stride's remote writes so far only add: a push is never forced and never deletes | the same |
+
+**B is the contract.** A merged branch is usually deleted by the hosting service; the terminal
+does the rest (`git push <remote> --delete <branch>`).
+
+### V17 Opening the branches popup
+
+IntelliJ's `Git.Branches` has `control shift BACK_QUOTE` in `$default`, and both macOS keymaps
+remove `meta shift BACK_QUOTE` (`intellij.vcs.git.xml:156-159` in the Git plugin), so the action
+has no stroke on macOS. It opens from the branch widget (`Git.ShowBranches`, which takes the
+shortcut of `Git.Branches`), from the VCS quick list (the Git plugin's repository actions list
+`Git.Branches` and `Git.CreateNewBranch`) and from Find Action. `Git.CreateNewBranch` is
+`control alt N` in `$default.xml:1173-1175`, read with control as meta: `⌥⌘N`, the stroke of
+Inline (`meta alt N`, EDITOR) in stride as in IntelliJ.
+
+| | A: VCS popup row and Find Action | B: A, plus a branch item in the status bar | C: B, plus a global stroke |
+|---|---|---|---|
+| IntelliJ on macOS | two of its three ways | its three ways | no stroke exists to copy (`meta shift BACK_QUOTE` is removed, and stride's `KeyStroke` has no back quote) |
+| Showing the current branch | only inside the VCS popup's title | always, while the project is in a repository | — |
+| Frame path | unchanged | one more status item, drawn only when the snapshot has a repository and a branch state, so a folder outside Git draws exactly what it drew | — |
+
+**B is the contract.**
+
+- **VCS popup.** Row `0 Branches…` after row 9; the tenth row is numbered `0`, the digit after
+  `9` on the keyboard, and `0` and keypad `0` run it. `VcsRow` keeps the number as data and gets an
+  explicit "no number" for the one-row error forms, which used `0` until now. Outside a repository
+  the popup is the one dimmed row as before.
+- **Status bar.** A branch item before `Ln`, in the status item style: the branch name, the short
+  id on a detached HEAD, the unborn branch's name before the first commit. It is drawn only when
+  `snapshot.repository` and `snapshot.branch` are both present. A click opens the branches popup.
+  It does not take the keyboard; the keyboard ways are the VCS popup row and Find Action.
+- **Find Action.** `Branches…` (`SHOW_BRANCHES`) opens the popup, and `New Branch…` (`NEW_BRANCH`)
+  opens it directly on the name page with HEAD as the start.
+- **`⌥⌘N`** is handled by the branches popup itself, as the update popup handles `Tab`: it opens
+  the name page with HEAD as the start, from the list page. The keymap gets no new binding:
+  CONTEXT_POPUP is modal (`Keymap.actionFor` returns null there), so EDITOR's Inline never sees the
+  stroke while a popup is open, and outside the popup `⌥⌘N` stays Inline. `VcsActionsTest` checks
+  that `meta alt N` has exactly one binding in all contexts, Inline in EDITOR.
+
+### V18 The branches popup
+
+```kotlin
+// stride.app.vcs — additions for the 16th round
+data class LocalBranch(val name: String,              // "feature/x", without refs/heads/
+                       val id: String,
+                       val upstream: String?,         // "origin/main", from %(upstream)
+                       val upstreamGone: Boolean,     // %(upstream:track) is [gone]
+                       val ahead: Int, val behind: Int,
+                       val current: Boolean,          // %(HEAD) is *
+                       val worktree: Path?)           // %(worktreepath) of another worktree, else null
+data class RemoteBranch(val remote: String, val name: String, val id: String) {
+    val ref: String                                   // refs/remotes/<remote>/<name>
+    val display: String                               // <remote>/<name>
+}
+sealed interface BranchList {
+    data class Ready(val current: String?,            // null on a detached HEAD
+                     val head: String?,               // null before the first commit
+                     val local: List<LocalBranch>, val remote: List<RemoteBranch>) : BranchList
+    data class Refused(val message: String) : BranchList
+}
+sealed interface BranchTarget {
+    data class Local(val name: String) : BranchTarget
+    data class Remote(val remote: String, val name: String) : BranchTarget
+}
+sealed interface DeletePlan {
+    data class Merged(val name: String, val id: String) : DeletePlan
+    data class Unmerged(val name: String, val id: String, val reference: String,   // "origin/b" or "HEAD"
+                        val commits: List<LogEntry>, val moreCommits: Int) : DeletePlan
+    data class Refused(val message: String) : DeletePlan
+}
+suspend fun GitService.branches(): BranchList
+suspend fun GitService.checkout(target: BranchTarget): GitWriteResult                     // V19
+suspend fun GitService.createBranch(name: String, start: BranchTarget?, checkout: Boolean): GitWriteResult  // null = HEAD
+suspend fun GitService.renameBranch(old: String, new: String): GitWriteResult
+suspend fun GitService.deletePlan(name: String): DeletePlan
+suspend fun GitService.deleteBranch(name: String, expectedId: String, force: Boolean): GitWriteResult
+val GitService.refsVersion: Int                       // Compose state; +1 after every write
+object BranchNames { fun problem(name: String, existing: Collection<String>): String? }   // pure
+// GitTimeouts gains checkout = 120 s and branch = 30 s, with defaults
+```
+
+These are members of `GitService`, written in extension form only to list them, as in V12.
+
+- **Reading.** `branches()` reads `git for-each-ref --format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:track)%00%(HEAD)%00%(symref)%00%(worktreepath) refs/heads refs/remotes`
+  at the repository root (measured with git 2.50.1: NUL-separated fields; `for-each-ref` prints
+  the track words untranslated). A remote branch's remote is the longest name from `git remote`
+  that its ref starts with, because remote names can contain `/` (measured: `team/up`). A ref with a
+  `%(symref)` (`<remote>/HEAD`) is skipped. `current` and `head` come from the snapshot's
+  `BranchState`. Refusals: `Git is not installed`, `Not a Git repository: <root>`, or a failed read
+  as `Branches failed: <first line>`.
+- **Layout.** A `popupPanel` at the top of the window like the other popups: the title `Branches`
+  with the current branch in the accent colour (`HEAD <short id>` when detached), a search field,
+  and the rows. First `New Branch…` with `⌥⌘N`; then `Local (<n>)` with the current branch first,
+  marked, then the others by name; then `Remote (<n>)` by name. A local row shows its upstream and
+  `↑<ahead> ↓<behind>` dimmed at the right (`gone` when the upstream is gone), and `worktree` when
+  another worktree has it checked out. Typing filters the branch rows to names that contain the text,
+  ignoring case; a group with no row left hides its header; `New Branch…` stays first. While
+  `branches()` runs the list is one dimmed `Loading…` row; a refusal is one dimmed row with its
+  message. Before the first commit there are no branch rows and `New Branch…` is dimmed.
+- **Keys.** The search field keeps the keyboard. `↑`/`↓` move over the rows (headers are skipped),
+  `↩` or `→` opens the selected row's menu (`New Branch…` opens the name page with the typed text as
+  the name), `⌥⌘N` opens the name page, `Esc` closes. Clicking a row selects and opens it.
+- **Menu page.** Headed by the branch. A local branch that is not current: `Checkout`,
+  `New Branch from '<branch>'…`, `Rename…`, `Delete`. The current branch: `New Branch from
+  '<branch>'…`, `Rename…`. A remote branch: `Checkout`, `New Branch from '<remote>/<branch>'…`.
+  `Checkout` carries the dimmed line `Saves <n> unsaved editors first` when the project has unsaved
+  editors (V19). `↑`/`↓` move, `↩` runs, `←` and `Esc` go back to the list.
+- **Name page.** `New Branch` with `from <start>` dimmed (`HEAD`, a branch, or `<remote>/<branch>`),
+  or `Rename <old>` with the old name in the field, selected. Under the field, the live problem from
+  `BranchNames.problem` in the error colour, and for a new branch a `Checkout branch` checkbox, on
+  by default, that `Tab` or a click toggles. `↩` runs when there is no problem; `Esc` goes back to
+  the page it came from, or closes when the page was opened directly (Find Action).
+- **Delete page.** Shown when `deletePlan` answers `Unmerged`: `Delete <branch>?`, `<n> commits are
+  not merged into <reference>` (`1 commit is`), the commits (at most 20, then `… <n> more`), and a
+  `Delete` capsule. `↩` deletes with force, `Esc` goes back to the menu. A `Merged` answer deletes at
+  once and closes the popup, with no page.
+- **Running.** `Checkout`, the name page's `↩` and a delete close the popup and run on the service;
+  the status bar shows `busy` and then the result (V11). The popup's request is one object,
+  `BranchesRequest`, whose page is a field, so one place holds where the keyboard returns.
+- **Keyboard after closing.** As V6: the context is read once when the popup opens; the request joins
+  `popupOwnsFocus`, the Commit window's set of popups whose closing gives the keyboard back, and the
+  requests `closeSession()` clears.
+- **The Git window.** Creating, renaming and deleting a branch do not move HEAD, so the Log, which
+  read the log again only when HEAD's id changed, kept old ref names. Every write now adds one to
+  `refsVersion`, and the Log reads again when HEAD's id or `refsVersion` changes; a push or fetch,
+  which move remote-tracking refs, refresh the Log's ref names the same way.
+
+**Names.** `BranchNames.problem` answers in process, for the live line: `Enter a branch name`
+(empty), `<name> is not a valid branch name` (git's `check-ref-format --branch` rules: no space or
+control character, none of `~ ^ : ? * [ \`, no `..`, `//` or `@{`, not `@` or `HEAD`, not starting
+with `-` or `/`, not ending with `/` or `.`, no component starting with `.` or ending with `.lock`),
+`A branch named <name> already exists`, `<name> conflicts with the branch <other>` (one is a folder
+of the other, which git cannot store: measured `'refs/heads/a' exists; cannot create
+'refs/heads/a/b'`). git stays the judge: inside the write lock the service runs
+`git check-ref-format --branch <name>` and takes the name only when the command succeeds and prints
+exactly the name, because it expands `@{-1}` to the previous branch and accepts `@` (measured), and
+checks `git rev-parse --verify -q refs/heads/<name>` again.
+
+### V19 Checkout
+
+**Unsaved editors.**
+
+| | A: save the project's unsaved editors first; git's own check decides | B: refuse while an editor has unsaved text | C: leave unsaved editors alone |
+|---|---|---|---|
+| An unsaved edit to a file the two branches differ in | saved; git then refuses with "would be overwritten" and nothing changes | refused until the user saves | git switches; the editor keeps the edit over the new branch's file, and `⌘S` writes it there |
+| An unsaved edit to a file both branches share | saved and carried to the new branch | refused | carried only in the editor |
+| No editor shows unsaved text over a file whose disk content changed | holds: everything is saved first, and an edit made after the save is reported by V10 | holds | broken |
+| IntelliJ | saves all documents before a VCS operation | — | — |
+| V10 | as Update's fast-forward | as Update's merge and rebase | — |
+
+**A is the contract.** The menu's `Checkout` row says how many editors it saves.
+
+**Local changes.**
+
+| | A: git's own check (V9) | B: refuse any local change | C: stash them (Smart Checkout) |
+|---|---|---|---|
+| A change git can carry | carried (measured: `M b.txt`, exit 0) | refused | stashed and popped |
+| A change the checkout would overwrite | git refuses and nothing changes (measured: exit 1, HEAD, index and files as before, for unstaged and staged edits and for untracked files) | refused | stashed; a conflicting pop leaves a stash entry |
+| What it needs | nothing | nothing | C4 |
+
+**A is the contract.** stride never passes `--force`, `--discard-changes` or `--merge`.
+
+**Remote rows.**
+
+| | A: a local branch of the same name that tracks the remote branch | B: a detached HEAD at the remote branch |
+|---|---|---|
+| After it | Commit, Push and Update work on the new branch | Commit works; Push and Update refuse on a detached HEAD (V5, V8) |
+| IntelliJ | its Checkout of a remote branch | its `Checkout Tag or Revision…` |
+
+**A is the contract.** When no local branch has the name, `git switch -c <name> --track
+refs/remotes/<remote>/<name>` (measured: the full ref sets `branch.<name>.remote` and `.merge`, also
+for a remote named `team/up`; the short form is ambiguous when a local branch `origin/topic`
+exists). When a local branch of that name exists and its upstream is that remote-tracking ref, the
+checkout switches to it. When it exists with another upstream or none, the checkout refuses: stride
+never overwrites a branch (measured: with two remotes that both have the branch, git's own guess
+refuses as ambiguous too).
+
+**Steps.**
+
+1. **Save** (the app, on the UI thread): the unsaved editors under the project root, as Update does.
+   A save that fails stops the checkout before git: `Checkout failed: <reason>`.
+2. **Refusals**, in this order: `Git is not installed`, `Not a Git repository: <root>`,
+   `Git is busy: <what>`, then inside the write lock `A <operation> is in progress: finish it in the
+   terminal (⌥F12)` (git refuses too, measured `cannot switch branch while merging`).
+3. **Read the target again** inside the lock, because the popup can stay open while the terminal
+   changes branches:
+   - A detached HEAD whose commits are on no branch: `git rev-list --count HEAD --not --branches
+     --remotes --tags` above 0 refuses with `HEAD has <n> commits on no branch: create a branch from
+     it first (New Branch)` (`1 commit`). git would switch and only warn (measured: `you are leaving 1
+     commit behind`), and stride has no reflog screen to get them back. A count that cannot be read
+     refuses with `Checkout failed: <first line>`.
+   - A local target that no longer exists: `Branch <name> no longer exists`. A remote target whose
+     ref is gone: `Branch <remote>/<name> no longer exists: fetch to see the remote's branches`. A
+     remote target whose same-named local branch tracks something else: `A local branch <name>
+     already exists and does not track <remote>/<name>`.
+4. **Run** with `busy` `Checking out <name>…` and `timeouts.checkout` (120 s; checkout filters and
+   hooks run): `git switch --no-guess <name>` for a local branch (measured: `--no-guess` never turns
+   a missing local name into a new tracking branch; `switch` refuses a full `refs/heads/` name as
+   not a branch), and for a remote one the command above.
+5. **Judge by HEAD, not by the exit code.** A post-checkout hook's exit status becomes git's
+   (measured: exit 1 with the switch done), and a timeout can stop git halfway. After git the
+   service reads `git symbolic-ref -q --short HEAD`. On the target: success, `Checked out <name>`
+   (`Checked out <name>, tracking <remote>/<name>` for a new tracking branch), ending with
+   `; git reported an error after switching (see the Console)` when the exit code was not 0.
+   Otherwise: `Checkout stopped: local changes to <n> files would be overwritten: commit them first`,
+   `Checkout stopped: <n> untracked files would be overwritten: move them first` (git's lists after
+   `…would be overwritten by checkout`, counted as Update counts them, V9), or
+   `Checkout failed: <first line>`.
+6. **Always**, success or not, the write refreshes status, and the app then reloads the editors as
+   V10 does on the UI thread, ending a success message with `; <n> editors with unsaved text were
+   not reloaded` when some were left. A failed checkout can still have changed files (a hook, a
+   timeout), so the reload does not depend on the outcome.
+
+**After.** A new HEAD makes the editors fetch their base text again and the Git window read its log
+(V3, V4, V6); the status bar's branch item and the VCS popup's title follow the snapshot; the Commit
+window lists the carried changes from the next status. An editor of a file the new branch does not
+have keeps its tab with its text, as V10 keeps the tab of a file deleted on disk (differences). An
+Amend that was on refuses its commit with `HEAD changed since Amend was turned on…` (V14).
+
+### V20 New branch, rename and delete
+
+All three refuse first with `Git is not installed`, `Not a Git repository: <root>`,
+`Git is busy: <what>` and, inside the write lock, the in-progress check. They run with
+`timeouts.branch` (30 s), write Console entries, refresh status and add one to `refsVersion`.
+
+**New branch.**
+
+| | A: `--no-track` | B: git's default (`branch.autoSetupMerge`): a branch started from a remote branch tracks it |
+|---|---|---|
+| `fix-login` from `origin/main` | no upstream; the first Push creates `<remote>/fix-login` with `-u` (V5) | upstream `origin/main`; Push sends to the upstream's remote ref (V5), so `fix-login` would be pushed onto `main` |
+| From a local branch or HEAD | no upstream | no upstream (git does not track local start points by default) |
+
+**A is the contract.** The start is HEAD (`New Branch…`, `⌥⌘N`, Find Action) or the menu's branch
+as a full ref (`refs/heads/<b>`, `refs/remotes/<remote>/<b>`). With `Checkout branch` on:
+`git switch --no-track -c <name> <start>`; off: `git branch --no-track -- <name> <start>`. Both
+leave the working tree as it is, so nothing is saved. Before the first commit there is nothing to
+start from: `Nothing to branch from: the branch has no commits yet`. The name is checked as V18
+says; a refusal reads `<name> is not a valid branch name` or `A branch named <name> already exists`.
+`busy` is `Creating <name>…`. Success reads `Created and checked out <name>` or
+`Created <name> from <start>`; a failure `New branch failed: <first line>`.
+
+**Rename.**
+
+| | A: keep the upstream (git's `branch -m`) | B: also remove the upstream |
+|---|---|---|
+| After renaming `feature` with upstream `origin/feature` to `feature-2` | `branch.feature-2.merge` stays `refs/heads/feature` (measured), so Push sends to `origin/feature` and its popup reads `feature-2 → origin/feature` | no upstream; the first Push creates `origin/feature-2`, and `origin/feature` stays on the server |
+| IntelliJ | keeps it | — |
+
+**A is the contract.** `git branch -m -- <old> <new>` (measured: without `--` a name starting with
+`-` is read as an option); never `-M`, which overwrites a branch. The current branch can be renamed,
+and so can a branch another worktree has checked out (measured). `busy` is `Renaming <old>…`.
+Success reads `Renamed <old> to <new>`, ending with `; it still pushes to <remote>/<branch>` when
+the upstream's branch name differs from the new name; a failure `Rename failed: <first line>`.
+
+**Delete.**
+
+| | A: `-d` only | B: `-d` when merged; otherwise a page with the commits that would be lost, then `-D` | C: `-D` after one confirmation, always |
+|---|---|---|---|
+| A merged branch | deleted | deleted at once, as in IntelliJ | asks first |
+| An unmerged branch | refused; the terminal deletes it | the user sees the commits and the reference, then decides | deleted after one generic question |
+| IntelliJ | — | asks for an unmerged branch and lists its commits | — |
+
+**B is the contract.**
+
+- **Merged into what.** git's own rule for `-d` (measured with branches that each have their own
+  commit): the reference is the upstream when its remote-tracking ref exists, and HEAD when there is
+  no upstream or it is gone. A branch merged into HEAD but not into its existing upstream is not
+  merged (git refuses `-d`), and one merged into its upstream but not HEAD is (git deletes with a
+  warning). `deletePlan` counts `git rev-list --count refs/heads/<b> --not <reference>`: 0 is
+  `Merged`, otherwise `Unmerged` with the commits (`git log` of the same range, at most 20). A count
+  that cannot be read refuses with `Delete failed: <first line>`.
+- **Refusals before git**, read inside the write lock from `for-each-ref`: the current branch
+  (`Cannot delete the current branch <b>: check out another branch first`) and a branch another
+  worktree has checked out (`<b> is checked out in another worktree: <path>`); git refuses both too,
+  with `used by worktree at` (measured).
+- **Running.** `Merged` runs `git branch -d -- <b>` at once. The delete page's `↩` runs
+  `deleteBranch(name, id, force = true)`: inside the write lock the service reads
+  `refs/heads/<b>` again and refuses when the id differs from the one the page showed
+  (`Branch <b> changed since you chose to delete it: delete it again`), then runs
+  `git branch -D -- <b>`. `busy` is `Deleting <b>…`.
+- **Messages.** Success reads `Deleted branch <b> (was <short id>)`, built from the id stride read,
+  not from git's output, which can start with a two-line warning (measured). A failure reads
+  `Delete failed: <first line>`. The branch's `branch.<b>.*` settings go with it (measured); the
+  remote branch stays.
+
 ### Version control messages
 
 | Message | When it appears |
@@ -3728,7 +4031,7 @@ check that fails or times out refuses with `Amend failed: <first line>`.
 | `Too many changes to show` | a diff over the edit budget; the popup shows this one row instead of the lines |
 | `No more changes` | `⌃⌥⇧↓/↑` past the last or first hunk |
 | `<commit message>; <refusal>` | `⌥⌘K` committed but the push plan refused (for example `; Nothing to push`) |
-| `A <operation> is in progress: finish it in the terminal (⌥F12)` | Update, `⌘K`, `⌥⌘K`, Rollback or turning Amend on while a merge, rebase, cherry-pick or revert is in progress |
+| `A <operation> is in progress: finish it in the terminal (⌥F12)` | Update, `⌘K`, `⌥⌘K`, Rollback, turning Amend on, or a checkout, new branch, rename or delete while a merge, rebase, cherry-pick or revert is in progress |
 | `Update needs a branch: HEAD is detached` | `⌘T` on a detached HEAD |
 | `No upstream: set one in the terminal` | `⌘T` on a branch with no upstream (also push, V5) |
 | `The upstream <remote>/<branch> does not exist: set one in the terminal` | the upstream's remote-tracking ref is missing after the fetch |
@@ -3754,6 +4057,30 @@ check that fails or times out refuses with `Amend failed: <first line>`.
 | `HEAD changed since Amend was turned on: turn it off and on again` | an amend commit found HEAD at another commit than the one whose message is on screen |
 | `Amended <short hash> <subject> on <branch> (was <old short hash>)` | Amend succeeded; `detached HEAD` in place of the branch when there is none |
 | `Amend failed: <first line>` | reading HEAD, the pushed check or `git commit --amend` failed or timed out, or an included editor could not be saved; after `git add` added new files it ends as `Commit failed` does |
+| `Branches failed: <first line>` | the branches popup could not read the branch list (shown as its one dimmed row) |
+| `Checked out <name>` | a checkout ended on the target; `Checked out <name>, tracking <remote>/<name>` for a new tracking branch; ends with `; git reported an error after switching (see the Console)` when git exited non-zero after switching, and with `; <n> editors with unsaved text were not reloaded` when V10 left some |
+| `Checkout stopped: local changes to <n> files would be overwritten: commit them first` | git refused the checkout for local changes |
+| `Checkout stopped: <n> untracked files would be overwritten: move them first` | git refused the checkout for untracked files |
+| `Checkout failed: <first line>` | any other checkout failure, a save before it that failed (`Checkout failed: <reason>`), or a detached-HEAD count that could not be read |
+| `HEAD has <n> commits on no branch: create a branch from it first (New Branch)` | a checkout from a detached HEAD whose commits no branch, remote branch or tag contains (`1 commit`) |
+| `Branch <name> no longer exists` | the local branch chosen in the popup was deleted meanwhile |
+| `Branch <remote>/<name> no longer exists: fetch to see the remote's branches` | the remote branch chosen in the popup is gone |
+| `A local branch <name> already exists and does not track <remote>/<name>` | a remote checkout whose same-named local branch tracks something else or nothing |
+| `Enter a branch name` | the name page's field is empty (the live line) |
+| `<name> is not a valid branch name` | the name page's live line, or git's `check-ref-format --branch` inside the write |
+| `A branch named <name> already exists` | the name page's live line, or the existence check inside the write |
+| `<name> conflicts with the branch <other>` | the name page's live line: one name is a folder of the other |
+| `Nothing to branch from: the branch has no commits yet` | New Branch before the first commit |
+| `Created and checked out <name>` | a new branch with `Checkout branch` on |
+| `Created <name> from <start>` | a new branch with `Checkout branch` off |
+| `New branch failed: <first line>` | `git switch -c` or `git branch` failed or timed out |
+| `Renamed <old> to <new>` | rename succeeded; ends with `; it still pushes to <remote>/<branch>` when the upstream's branch name differs from the new name |
+| `Rename failed: <first line>` | `git branch -m` failed or timed out |
+| `Cannot delete the current branch <b>: check out another branch first` | Delete of the checked-out branch |
+| `<b> is checked out in another worktree: <path>` | Delete of a branch another worktree has checked out |
+| `Branch <b> changed since you chose to delete it: delete it again` | the delete page's branch moved before `↩` |
+| `Deleted branch <b> (was <short id>)` | delete succeeded |
+| `Delete failed: <first line>` | the merge count, `git branch -d` or `git branch -D` failed or timed out |
 
 ### Version control differences
 
@@ -3763,8 +4090,18 @@ check that fails or times out refuses with `Amend failed: <first line>`.
   files, where IntelliJ can delete them, and its popup has no diff preview (V13).
 - Amend refuses a commit that a remote-tracking ref contains, as of the last fetch; IntelliJ amends
   it and the push then needs force (V14).
-- Branches, stash, history and annotate are not in yet (V1, V12). Pull is Update
+- Stash, history and annotate are not in yet (V12). Pull is Update
   Project of the tracked branch; there is no Pull dialog for another remote or branch (V7).
+- The branches popup has no Recent group, no `Checkout Tag or Revision…`, and its branch menu only
+  checks out, creates, renames and deletes; IntelliJ's menu also compares, merges, rebases, updates
+  and pushes a branch (V16). Remote branches cannot be deleted from stride (V16).
+- Checkout has no Smart Checkout: a change the checkout would overwrite stops it, as git does
+  (V19). It refuses to leave a detached HEAD whose commits are on no branch, where IntelliJ lets git
+  switch and warn (V19).
+- An editor of a file the checked-out branch does not have keeps its tab and text; IntelliJ closes
+  it (V10, V19).
+- A new branch started from a remote branch does not track it (V20), and deleting a branch has no
+  Restore action; the message names the id it was at (V20).
 - Update does not stash local changes: a merge or rebase needs a clean tree, and a conflict is
   undone instead of opening a merge screen (V9). IntelliJ stashes or shelves and opens its conflict
   dialog.
