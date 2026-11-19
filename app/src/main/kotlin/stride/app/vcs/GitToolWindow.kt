@@ -183,7 +183,7 @@ private fun GitLog(
 ) {
     var entries by remember { mutableStateOf<List<LogEntry>?>(null) }
     val head = git.snapshot.branch?.head
-    LaunchedEffect(head) {
+    LaunchedEffect(head, git.refsVersion) {
         entries = git.log()
     }
     val loaded = entries

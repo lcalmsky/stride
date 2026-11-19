@@ -91,6 +91,10 @@ class GitService(private val project: Project) : Disposable {
     var busy: String? by mutableStateOf(null)
         private set
 
+    /** One more after every write, so a view that reads refs (the Log) reloads on a ref-only change. */
+    var refsVersion: Int by mutableStateOf(0)
+        private set
+
     private val baseCache = ConcurrentHashMap<BaseKey, BaseText>()
 
     @Volatile
@@ -519,6 +523,356 @@ class GitService(private val project: Project) : Disposable {
     private fun repoRelative(repository: GitRepository, path: Path): String =
         repository.root.relativize(path).toString().replace('\\', '/')
 
+    /**
+     * The branch list the popup shows. `%(upstream)` prints the full remote-tracking ref, so the
+     * row's upstream drops `refs/remotes/`; `%(worktreepath)` names the worktree that has the
+     * branch checked out, and only another worktree is one the user cannot switch away from.
+     */
+    suspend fun branches(): BranchList = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext BranchList.Refused(GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext BranchList.Refused(notRepositoryMessage())
+        val result = read(
+            GitCommand(
+                listOf("for-each-ref", "--format=$BRANCH_REF_FORMAT", "refs/heads", "refs/remotes"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        if (!result.ok) return@withContext BranchList.Refused("Branches failed: ${firstLine(result)}")
+        val remotes = remotes()
+        val local = ArrayList<LocalBranch>()
+        val remote = ArrayList<RemoteBranch>()
+        for (line in result.stdoutText().lineSequence()) {
+            if (line.isEmpty()) continue
+            val fields = line.split('\u0000')
+            if (fields.size < 7) continue
+            val refname = fields[0]
+            when {
+                refname.startsWith("refs/heads/") -> {
+                    val track = fields[3]
+                    val worktreePath = fields[6].trim()
+                    local += LocalBranch(
+                        name = refname.removePrefix("refs/heads/"),
+                        id = fields[1],
+                        upstream = fields[2].takeIf { it.isNotEmpty() }?.removePrefix("refs/remotes/"),
+                        upstreamGone = track.contains("[gone]"),
+                        ahead = AHEAD_WORDS.find(track)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
+                        behind = BEHIND_WORDS.find(track)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
+                        current = fields[4] == "*",
+                        worktree = worktreePath.takeIf { it.isNotEmpty() }
+                            ?.let(Path::of)
+                            ?.takeUnless { it.toAbsolutePath().normalize() == repository.root },
+                    )
+                }
+                refname.startsWith("refs/remotes/") -> {
+                    if (fields[5].isNotEmpty()) continue
+                    val rest = refname.removePrefix("refs/remotes/")
+                    val remoteName = remotes.filter { rest.startsWith("$it/") }.maxByOrNull { it.length } ?: continue
+                    remote += RemoteBranch(remoteName, rest.removePrefix("$remoteName/"), fields[1])
+                }
+            }
+        }
+        BranchList.Ready(
+            current = snapshot.branch?.branch,
+            head = snapshot.branch?.head,
+            local = local.sortedWith(compareByDescending<LocalBranch> { it.current }.thenBy { it.name }),
+            remote = remote.sortedBy { it.display },
+        )
+    }
+
+    /** Switches to [target]; V19 judges the result by the branch HEAD points at, not by the exit code. */
+    suspend fun checkout(target: BranchTarget): GitWriteResult = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+        try {
+            updateBusy("Checking out ${target.name()}…")
+            statusGate.withLock { checkoutLocked(repository, target) }
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+    }
+
+    private suspend fun checkoutLocked(repository: GitRepository, target: BranchTarget): GitWriteResult {
+        operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+        if (currentBranch() == null) {
+            val count = readQuiet(
+                GitCommand(
+                    listOf("rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"),
+                    repository.root,
+                    timeouts.read,
+                ),
+            )
+            val orphans = count.stdoutText().trim().toIntOrNull()
+            if (!count.ok || orphans == null) return GitWriteResult(false, "Checkout failed: ${firstLine(count)}")
+            if (orphans > 0) {
+                return GitWriteResult(false, "HEAD has $orphans commits on no branch: create a branch from it first (New Branch)")
+            }
+        }
+        val name = target.name()
+        val creatingTracking: Boolean
+        val args: List<String>
+        when (target) {
+            is BranchTarget.Local -> {
+                if (!refExists(repository, "refs/heads/${target.name}")) {
+                    return GitWriteResult(false, "Branch ${target.name} no longer exists")
+                }
+                creatingTracking = false
+                args = listOf("switch", "--no-guess", target.name)
+            }
+            is BranchTarget.Remote -> {
+                val remoteRef = "refs/remotes/${target.remote}/${target.name}"
+                if (!refExists(repository, remoteRef)) {
+                    return GitWriteResult(
+                        false,
+                        "Branch ${target.remote}/${target.name} no longer exists: fetch to see the remote's branches",
+                    )
+                }
+                if (refExists(repository, "refs/heads/${target.name}")) {
+                    val upstream = upstreamOf(target.name)
+                    val tracks = upstream != null &&
+                        upstream.first == target.remote &&
+                        upstream.second == "refs/heads/${target.name}"
+                    if (!tracks) {
+                        return GitWriteResult(
+                            false,
+                            "A local branch ${target.name} already exists and does not track ${target.remote}/${target.name}",
+                        )
+                    }
+                    creatingTracking = false
+                    args = listOf("switch", "--no-guess", target.name)
+                } else {
+                    creatingTracking = true
+                    args = listOf("switch", "-c", target.name, "--track", remoteRef)
+                }
+            }
+        }
+        val result = write(GitCommand(args, repository.root, timeouts.checkout, write = true))
+        val head = currentBranch()
+        refreshStatus()
+        if (head == name) {
+            val base = if (creatingTracking) {
+                val remote = target as BranchTarget.Remote
+                "Checked out $name, tracking ${remote.remote}/${remote.name}"
+            } else {
+                "Checked out $name"
+            }
+            val message = if (result.ok) base else "$base; git reported an error after switching (see the Console)"
+            return GitWriteResult(true, message)
+        }
+        val text = result.stdoutText() + "\n" + result.stderr
+        val lower = text.lowercase()
+        if (lower.contains("your local changes to the following files") && lower.contains("would be overwritten by checkout")) {
+            val count = countListedFiles(text, "your local changes to the following files")
+            return GitWriteResult(
+                false,
+                "Checkout stopped: local changes to $count files would be overwritten: commit them first",
+            )
+        }
+        if (lower.contains("untracked working tree files would be overwritten")) {
+            val count = countListedFiles(text, "untracked working tree files would be overwritten")
+            return GitWriteResult(false, "Checkout stopped: $count untracked files would be overwritten: move them first")
+        }
+        return GitWriteResult(false, "Checkout failed: ${describe(result, timeouts.checkout)}")
+    }
+
+    /** Creates [name] from [start] (`null` is HEAD), with `--no-track` so a remote start has no upstream. */
+    suspend fun createBranch(name: String, start: BranchTarget?, checkout: Boolean): GitWriteResult =
+        withContext(Dispatchers.IO) {
+            if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+            val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+            if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+            try {
+                updateBusy("Creating $name…")
+                statusGate.withLock { createBranchLocked(repository, name, start, checkout) }
+            } finally {
+                updateBusy(null)
+                writeGate.unlock()
+            }
+        }
+
+    private suspend fun createBranchLocked(
+        repository: GitRepository,
+        name: String,
+        start: BranchTarget?,
+        checkout: Boolean,
+    ): GitWriteResult {
+        operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+        branchNameProblem(repository, name)?.let { return GitWriteResult(false, it) }
+        if (start == null && !refExists(repository, "HEAD")) {
+            return GitWriteResult(false, "Nothing to branch from: the branch has no commits yet")
+        }
+        val startRef = when (start) {
+            null -> "HEAD"
+            is BranchTarget.Local -> "refs/heads/${start.name}"
+            is BranchTarget.Remote -> "refs/remotes/${start.remote}/${start.name}"
+        }
+        val args = if (checkout) {
+            listOf("switch", "--no-track", "-c", name, startRef)
+        } else {
+            listOf("branch", "--no-track", "--", name, startRef)
+        }
+        val result = write(GitCommand(args, repository.root, timeouts.branch, write = true))
+        refreshStatus()
+        if (!result.ok) return GitWriteResult(false, "New branch failed: ${describe(result, timeouts.branch)}")
+        val message = if (checkout) "Created and checked out $name" else "Created $name from ${start.display()}"
+        return GitWriteResult(true, message)
+    }
+
+    /** Renames [old] to [new], keeping the upstream, as `git branch -m` does. */
+    suspend fun renameBranch(old: String, new: String): GitWriteResult = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+        try {
+            updateBusy("Renaming $old…")
+            statusGate.withLock { renameBranchLocked(repository, old, new) }
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+    }
+
+    private suspend fun renameBranchLocked(repository: GitRepository, old: String, new: String): GitWriteResult {
+        operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+        branchNameProblem(repository, new)?.let { return GitWriteResult(false, it) }
+        val result = write(GitCommand(listOf("branch", "-m", "--", old, new), repository.root, timeouts.branch, write = true))
+        refreshStatus()
+        if (!result.ok) return GitWriteResult(false, "Rename failed: ${describe(result, timeouts.branch)}")
+        val message = buildString {
+            append("Renamed ").append(old).append(" to ").append(new)
+            val upstream = upstreamOf(new)
+            if (upstream != null) {
+                val upstreamBranch = shortRef(upstream.second)
+                if (upstreamBranch != new) {
+                    append("; it still pushes to ").append(upstream.first).append("/").append(upstreamBranch)
+                }
+            }
+        }
+        return GitWriteResult(true, message)
+    }
+
+    /** What deleting [name] would do: merged into its upstream when that ref exists, else HEAD. */
+    suspend fun deletePlan(name: String): DeletePlan = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext DeletePlan.Refused(GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext DeletePlan.Refused(notRepositoryMessage())
+        val branchRef = "refs/heads/$name"
+        val id = readQuiet(GitCommand(listOf("rev-parse", "--verify", "-q", branchRef), repository.root, timeouts.read))
+        val branchId = id.stdoutText().trim()
+        if (!id.ok || branchId.isEmpty()) {
+            return@withContext DeletePlan.Refused("Delete failed: ${firstLine(id)}")
+        }
+        val reference = mergedReference(repository, name)
+        val count = readQuiet(
+            GitCommand(listOf("rev-list", "--count", branchRef, "--not", reference.second), repository.root, timeouts.read),
+        )
+        val total = count.stdoutText().trim().toIntOrNull()
+        if (!count.ok || total == null) {
+            return@withContext DeletePlan.Refused("Delete failed: ${firstLine(count)}")
+        }
+        if (total == 0) return@withContext DeletePlan.Merged(name, branchId)
+        val limit = minOf(total, MAX_DELETE_COMMITS)
+        val log = read(
+            GitCommand(
+                listOf("log", "-n", limit.toString(), LOG_FORMAT, branchRef, "--not", reference.second),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        val commits = if (log.ok) parseLog(log.stdoutText()) else emptyList()
+        DeletePlan.Unmerged(name, branchId, reference.first, commits, (total - commits.size).coerceAtLeast(0))
+    }
+
+    /** Deletes [name] with `-d`, or with `-D` when the delete page's [force] is set. */
+    suspend fun deleteBranch(name: String, expectedId: String, force: Boolean): GitWriteResult =
+        withContext(Dispatchers.IO) {
+            if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+            val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+            if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+            try {
+                updateBusy("Deleting $name…")
+                statusGate.withLock { deleteBranchLocked(repository, name, expectedId, force) }
+            } finally {
+                updateBusy(null)
+                writeGate.unlock()
+            }
+        }
+
+    private suspend fun deleteBranchLocked(
+        repository: GitRepository,
+        name: String,
+        expectedId: String,
+        force: Boolean,
+    ): GitWriteResult {
+        operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+        val refname = "refs/heads/$name"
+        val listing = readQuiet(
+            GitCommand(
+                listOf("for-each-ref", "--format=%(refname)%00%(HEAD)%00%(worktreepath)", "refs/heads"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        if (!listing.ok) return GitWriteResult(false, "Delete failed: ${firstLine(listing)}")
+        val entry = listing.stdoutText().lineSequence()
+            .map { it.split('\u0000') }
+            .firstOrNull { it.getOrNull(0) == refname }
+        if (entry?.getOrNull(1) == "*") {
+            return GitWriteResult(false, "Cannot delete the current branch $name: check out another branch first")
+        }
+        val worktree = entry?.getOrNull(2)?.trim().orEmpty()
+        if (worktree.isNotEmpty() && Path.of(worktree).toAbsolutePath().normalize() != repository.root) {
+            return GitWriteResult(false, "$name is checked out in another worktree: $worktree")
+        }
+        val id = readQuiet(GitCommand(listOf("rev-parse", "--verify", "-q", refname), repository.root, timeouts.read))
+        val idText = id.stdoutText().trim()
+        if (force && idText != expectedId) {
+            return GitWriteResult(false, "Branch $name changed since you chose to delete it: delete it again")
+        }
+        val args = listOf("branch", if (force) "-D" else "-d", "--", name)
+        val result = write(GitCommand(args, repository.root, timeouts.branch, write = true))
+        refreshStatus()
+        if (!result.ok) return GitWriteResult(false, "Delete failed: ${describe(result, timeouts.branch)}")
+        return GitWriteResult(true, "Deleted branch $name (was ${idText.take(7)})")
+    }
+
+    /** The ref `git branch -d` judges [name] against: its upstream's ref when that exists, else HEAD. */
+    private suspend fun mergedReference(repository: GitRepository, name: String): Pair<String, String> {
+        val upstream = upstreamOf(name)
+        if (upstream != null) {
+            val branch = shortRef(upstream.second)
+            val ref = "refs/remotes/${upstream.first}/$branch"
+            if (refExists(repository, ref)) return "${upstream.first}/$branch" to ref
+        }
+        return "HEAD" to "HEAD"
+    }
+
+    /** Checks the name as git will, inside the write lock: `check-ref-format` and the ref itself. */
+    private suspend fun branchNameProblem(repository: GitRepository, name: String): String? {
+        BranchNames.problem(name, emptyList())?.let { return it }
+        val format = readQuiet(GitCommand(listOf("check-ref-format", "--branch", name), repository.root, timeouts.read))
+        // `@{-1}` passes the command but expands to another name; git stays the judge of the rest.
+        if (!format.ok || format.stdoutText().trim() != name) return "$name is not a valid branch name"
+        if (refExists(repository, "refs/heads/$name")) return "A branch named $name already exists"
+        return null
+    }
+
+    private suspend fun refExists(repository: GitRepository, ref: String): Boolean = readQuiet(
+        GitCommand(listOf("rev-parse", "--verify", "-q", ref), repository.root, timeouts.read),
+    ).ok
+
+    private fun BranchTarget.name(): String = when (this) {
+        is BranchTarget.Local -> name
+        is BranchTarget.Remote -> name
+    }
+
+    private fun BranchTarget?.display(): String = when (this) {
+        null -> "HEAD"
+        is BranchTarget.Local -> name
+        is BranchTarget.Remote -> "$remote/$name"
+    }
+
     /** V14 step 1: what turning Amend on needs, or why it cannot. Reads only. */
     suspend fun amendStart(): AmendStart = withContext(Dispatchers.IO) {
         if (gitMissing()) return@withContext AmendStart.Refused(GIT_NOT_INSTALLED)
@@ -868,6 +1222,7 @@ class GitService(private val project: Project) : Disposable {
         val started = System.nanoTime()
         val result = runQuietly(command)
         record(command, result, System.nanoTime() - started)
+        Snapshot.withMutableSnapshot { refsVersion++ }
         return result
     }
 
@@ -1393,7 +1748,10 @@ class GitService(private val project: Project) : Disposable {
         const val MAX_BASE_BYTES: Long = 8L * 1024 * 1024
         const val NUL_SCAN_BYTES: Int = 8_000
         const val MAX_OUTGOING: Int = 100
+        const val MAX_DELETE_COMMITS: Int = 20
         const val DEBOUNCE_MILLIS: Long = 300
+        private const val BRANCH_REF_FORMAT =
+            "%(refname)%00%(objectname)%00%(upstream)%00%(upstream:track)%00%(HEAD)%00%(symref)%00%(worktreepath)"
 
         private const val COMMITTING = "Committing…"
         private const val AMENDING = "Amending…"
@@ -1411,6 +1769,9 @@ class GitService(private val project: Project) : Disposable {
         private const val LOG_FORMAT = "--format=%H%x00%h%x00%an%x00%at%x00%D%x00%s%x1f"
 
         private val REBASE_TRUE_VALUES = setOf("true", "yes", "on", "1", "merges", "m", "interactive", "i")
+
+        private val AHEAD_WORDS = Regex("ahead (\\d+)")
+        private val BEHIND_WORDS = Regex("behind (\\d+)")
 
         private val AUTH_MARKERS = listOf(
             "authentication failed",

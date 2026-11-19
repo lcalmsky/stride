@@ -108,7 +108,60 @@ data class GitTimeouts(
     val update: Duration = 120.seconds,
     /** Rollback's `restore` runs checkout filters, as commit's hooks do. */
     val rollback: Duration = 120.seconds,
+    /** A checkout saves files and runs checkout filters and a post-checkout hook. */
+    val checkout: Duration = 120.seconds,
+    val branch: Duration = 30.seconds,
 )
+
+/** A branch under `refs/heads/`; [upstream] is `origin/main`, [worktree] another worktree's path. */
+data class LocalBranch(
+    val name: String,
+    val id: String,
+    val upstream: String?,
+    val upstreamGone: Boolean,
+    val ahead: Int,
+    val behind: Int,
+    val current: Boolean,
+    val worktree: Path?,
+)
+
+data class RemoteBranch(val remote: String, val name: String, val id: String) {
+    val ref: String get() = "refs/remotes/$remote/$name"
+    val display: String get() = "$remote/$name"
+}
+
+/** The branches popup's list; [current] is null on a detached HEAD and [head] before the first commit. */
+sealed interface BranchList {
+    data class Ready(
+        val current: String?,
+        val head: String?,
+        val local: List<LocalBranch>,
+        val remote: List<RemoteBranch>,
+    ) : BranchList
+
+    data class Refused(val message: String) : BranchList
+}
+
+sealed interface BranchTarget {
+    data class Local(val name: String) : BranchTarget
+
+    data class Remote(val remote: String, val name: String) : BranchTarget
+}
+
+/** What deleting a branch would do, or why it cannot; [reference] is `origin/b` or `HEAD`. */
+sealed interface DeletePlan {
+    data class Merged(val name: String, val id: String) : DeletePlan
+
+    data class Unmerged(
+        val name: String,
+        val id: String,
+        val reference: String,
+        val commits: List<LogEntry>,
+        val moreCommits: Int,
+    ) : DeletePlan
+
+    data class Refused(val message: String) : DeletePlan
+}
 
 enum class UpdateStrategy { FAST_FORWARD, MERGE, REBASE }
 
