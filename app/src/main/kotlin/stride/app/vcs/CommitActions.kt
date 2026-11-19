@@ -227,11 +227,21 @@ fun toggleAmend(state: AppState): Boolean {
         if (inWindow) window.turnAmendOff()
         return true
     }
-    if (session.git.busy != null) return true
+    val busy = session.git.busy
+    if (busy != null) {
+        val message = "Git is busy: $busy"
+        Snapshot.withMutableSnapshot {
+            window.error = message
+            state.statusMessage = message
+        }
+        return true
+    }
     session.git.launch {
         when (val start = session.git.amendStart()) {
+            // An ordinary commit that started while HEAD was still being read owns the field now;
+            // the base read before it is no longer HEAD.
             is AmendStart.Ready -> Snapshot.withMutableSnapshot {
-                if (window.amend == null) {
+                if (window.amend == null && !window.committing) {
                     window.turnAmendOn(start.base)
                     window.error = null
                 }

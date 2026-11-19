@@ -347,6 +347,137 @@ class AmendUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an amendStart answer that arrives while a commit runs leaves Amend off`() = runComposeUiTest {
+        val repo = committedRepo()
+        repo.write("src/Main.kt", "second\n")
+        val state = AppState()
+        val commitGate = CountDownLatch(1)
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            waitUntil(timeoutMillis = 10_000) { window.rows.any { it.path.fileName.toString() == "Main.kt" } }
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput("WIP")
+            waitUntil(timeoutMillis = 5_000) { window.message == "WIP" }
+
+            val amendGate = CountDownLatch(1)
+            val amendReadStarted = CountDownLatch(1)
+            val amendReadDone = CountDownLatch(1)
+            val commitEntered = CountDownLatch(1)
+            state.session!!.git.executor = GatedAmendRaceExecutor(
+                CliGitExecutor(TEST_GIT, repo.environment),
+                amendGate,
+                amendReadStarted,
+                amendReadDone,
+                commitGate,
+                commitEntered,
+            )
+
+            pressControlAlt(Key.M)
+            assertTrue(amendReadStarted.await(10, TimeUnit.SECONDS), "amendStart must reach HEAD's message")
+
+            pressCommand(Key.Enter)
+            assertTrue(commitEntered.await(10, TimeUnit.SECONDS), "the commit must reach git")
+            assertTrue(window.committing)
+
+            amendGate.countDown()
+            assertTrue(amendReadDone.await(10, TimeUnit.SECONDS), "amendStart must read HEAD")
+
+            commitGate.countDown()
+
+            waitUntil(timeoutMillis = 20_000) { !window.committing }
+            assertTrue(state.statusMessage?.startsWith("Committed ") == true, state.statusMessage)
+            assertNull(window.amend, "Amend must stay off after the commit")
+            assertTrue(window.message.isEmpty(), "the committed message must clear the field")
+            assertEquals("WIP", repo.git("log", "-1", "--format=%s").trim())
+        } finally {
+            commitGate.countDown()
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `control alt M while another write runs shows Git is busy and leaves Amend off`() = runComposeUiTest {
+        val repo = committedRepo()
+        repo.bareRemote()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            val git = state.session!!.git
+
+            val fetchGate = CountDownLatch(1)
+            val fetchEntered = CountDownLatch(1)
+            git.executor = GatedFetchExecutor(CliGitExecutor(TEST_GIT, repo.environment), fetchGate, fetchEntered)
+            git.launch { git.fetch() }
+            assertTrue(fetchEntered.await(10, TimeUnit.SECONDS), "the fetch must reach git")
+
+            try {
+                assertEquals("Fetching…", git.busy)
+                pressControlAlt(Key.M)
+                waitUntil(timeoutMillis = 5_000) { window.error != null }
+                assertEquals("Git is busy: Fetching…", window.error)
+                assertEquals("Git is busy: Fetching…", state.statusMessage)
+                assertNull(window.amend)
+            } finally {
+                fetchGate.countDown()
+            }
+
+            waitUntil(timeoutMillis = 20_000) { git.busy == null }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /** Holds Amend's HEAD read and the commit's `commit` call on separate latches. */
+    private class GatedAmendRaceExecutor(
+        private val delegate: GitExecutor,
+        private val amendGate: CountDownLatch,
+        private val amendReadStarted: CountDownLatch,
+        private val amendReadDone: CountDownLatch,
+        private val commitGate: CountDownLatch,
+        private val commitEntered: CountDownLatch,
+    ) : GitExecutor {
+        override fun run(command: GitCommand): GitResult {
+            val args = command.args
+            if (args.firstOrNull() == "log" && "--format=%H%x00%B" in args) {
+                amendReadStarted.countDown()
+                amendGate.await(10, TimeUnit.SECONDS)
+                try {
+                    return delegate.run(command)
+                } finally {
+                    amendReadDone.countDown()
+                }
+            }
+            if (args.firstOrNull() == "commit" && "--only" in args) {
+                commitEntered.countDown()
+                commitGate.await(10, TimeUnit.SECONDS)
+            }
+            return delegate.run(command)
+        }
+    }
+
+    /** Holds the `fetch` call until [gate] opens. */
+    private class GatedFetchExecutor(
+        private val delegate: GitExecutor,
+        private val gate: CountDownLatch,
+        private val entered: CountDownLatch,
+    ) : GitExecutor {
+        override fun run(command: GitCommand): GitResult {
+            if (command.args.firstOrNull() == "fetch") {
+                entered.countDown()
+                gate.await(10, TimeUnit.SECONDS)
+            }
+            return delegate.run(command)
+        }
+    }
+
     /** Holds the `commit --amend` call until [gate] opens. */
     private class GatedAmendExecutor(private val delegate: GitExecutor, private val gate: CountDownLatch) : GitExecutor {
         override fun run(command: GitCommand): GitResult {
