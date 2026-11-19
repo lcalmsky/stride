@@ -104,6 +104,24 @@ class FileEditorManager(private val project: Project) : Disposable {
     }
 
     /**
+     * Makes every open text editor of a file in [paths] take the disk text, unsaved text
+     * included, as a rollback does; returns how many editors reloaded. Call on the UI thread, as
+     * [reloadChangedFromDisk] does.
+     */
+    fun discardToDisk(paths: Collection<Path>): Int {
+        val wanted = paths.mapTo(HashSet()) { canonical(it) }
+        var reloaded = 0
+        for (editor in openFilesState.toList()) {
+            if (editor is TextFileEditor && canonical(editor.file.path) in wanted &&
+                editor.discardToDisk() == ReloadResult.RELOADED
+            ) {
+                reloaded++
+            }
+        }
+        return reloaded
+    }
+
+    /**
      * Opens [file] in a new tab, or selects its existing tab. Returns `null` when no provider
      * accepts the file.
      */

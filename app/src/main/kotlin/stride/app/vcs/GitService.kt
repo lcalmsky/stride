@@ -269,9 +269,14 @@ class GitService(private val project: Project) : Disposable {
     /**
      * Commits the working-tree content of [include] with [message]. Untracked included files are
      * added first; staged changes in files that are not included stay staged. The caller saves
-     * the included editors before calling.
+     * the included editors before calling. With [amend], HEAD is replaced by a new commit instead:
+     * an empty [include] amends the message only.
      */
-    suspend fun commit(include: List<Path>, message: String): GitWriteResult = withContext(Dispatchers.IO) {
+    suspend fun commit(
+        include: List<Path>,
+        message: String,
+        amend: AmendBase? = null,
+    ): GitWriteResult = withContext(Dispatchers.IO) {
         if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
         val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
         operationInProgress()?.let { return@withContext GitWriteResult(false, operationMessage(it)) }
@@ -280,11 +285,11 @@ class GitService(private val project: Project) : Disposable {
             .map(::normalizePath)
             .filter { it.startsWith(repository.root) }
             .distinct()
-        if (paths.isEmpty()) return@withContext GitWriteResult(false, "No changes to commit")
+        if (paths.isEmpty() && amend == null) return@withContext GitWriteResult(false, "No changes to commit")
         if (!writeGate.tryLock()) return@withContext GitWriteResult(false, "Git is busy: ${busy ?: "another write"}")
         try {
-            updateBusy(COMMITTING)
-            statusGate.withLock { commitLocked(repository, paths, message) }
+            updateBusy(if (amend == null) COMMITTING else AMENDING)
+            statusGate.withLock { commitLocked(repository, paths, message, amend) }
         } finally {
             updateBusy(null)
             writeGate.unlock()
@@ -295,7 +300,23 @@ class GitService(private val project: Project) : Disposable {
         repository: GitRepository,
         paths: List<Path>,
         message: String,
+        amend: AmendBase?,
     ): GitWriteResult {
+        if (amend != null) {
+            // The message on screen belongs to [amend]'s commit, and a merge can start while the
+            // window is open, so both checks run again right before git.
+            operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+            val current = readQuiet(GitCommand(listOf("rev-parse", "HEAD"), repository.root, timeouts.read))
+            if (!current.ok) return GitWriteResult(false, "Amend failed: ${describe(current, timeouts.read)}")
+            if (current.stdoutText().trim() != amend.head) {
+                return GitWriteResult(false, "HEAD changed since Amend was turned on: turn it off and on again")
+            }
+            when (val pushed = pushedCheck(repository)) {
+                is PushedState.Pushed -> return GitWriteResult(false, pushed.message)
+                is PushedState.Failed -> return GitWriteResult(false, "Amend failed: ${pushed.reason}")
+                PushedState.NotPushed -> {}
+            }
+        }
         val commitPaths = (paths + renamedOriginals(repository, paths)).distinct()
         val untracked = untrackedFiles(paths)
         var added = 0
@@ -310,7 +331,11 @@ class GitService(private val project: Project) : Disposable {
             )
             if (!add.ok) {
                 refreshStatus()
-                return GitWriteResult(false, commitFailure(add, timeouts.read, added = 0), addedToIndex = 0)
+                return if (amend == null) {
+                    GitWriteResult(false, commitFailure(add, timeouts.read, added = 0), addedToIndex = 0)
+                } else {
+                    GitWriteResult(false, amendFailure(add, timeouts.read, added = 0), addedToIndex = 0)
+                }
             }
             added = untracked.size
         }
@@ -318,21 +343,33 @@ class GitService(private val project: Project) : Disposable {
             Files.createTempFile("stride-commit-", ".txt")
         } catch (e: java.io.IOException) {
             refreshStatus()
-            return GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added))
+            return if (amend == null) {
+                GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added))
+            } else {
+                GitWriteResult(false, amendFailureText(e.message ?: "cannot write the message", added))
+            }
+        }
+        val commitArgs = buildList {
+            add("commit")
+            if (amend != null) add("--amend")
+            add("--only")
+            add("-F")
+            add(messageFile.toString())
+            if (commitPaths.isNotEmpty()) {
+                add("--")
+                addAll(commitPaths.map { it.toString() })
+            }
         }
         return try {
             messageFileWriter(messageFile, message)
-            val result = write(
-                GitCommand(
-                    listOf("commit", "--only", "-F", messageFile.toString(), "--") + commitPaths.map { it.toString() },
-                    projectRoot,
-                    timeouts.commit,
-                    write = true,
-                ),
-            )
+            val result = write(GitCommand(commitArgs, projectRoot, timeouts.commit, write = true))
             if (!result.ok) {
                 refreshStatus()
-                return GitWriteResult(false, commitFailure(result, timeouts.commit, added), addedToIndex = added)
+                return if (amend == null) {
+                    GitWriteResult(false, commitFailure(result, timeouts.commit, added), addedToIndex = added)
+                } else {
+                    GitWriteResult(false, amendFailure(result, timeouts.commit, added), addedToIndex = added)
+                }
             }
             val id = readQuiet(GitCommand(listOf("rev-parse", "HEAD"), projectRoot, timeouts.read))
                 .stdoutText().trim()
@@ -340,20 +377,170 @@ class GitService(private val project: Project) : Disposable {
                 .stdoutText().trim()
             val short = readQuiet(GitCommand(listOf("rev-parse", "--short", "HEAD"), projectRoot, timeouts.read))
                 .stdoutText().trim()
-            val branch = currentBranch() ?: "HEAD"
+            val branch = currentBranch()
             refreshStatus()
-            GitWriteResult(
-                ok = true,
-                message = "Committed ${paths.size} files to $branch: $short $subject",
-                commitId = id,
-                subject = subject,
-            )
+            if (amend != null) {
+                val previousShort = readQuiet(
+                    GitCommand(listOf("rev-parse", "--short", amend.head), projectRoot, timeouts.read),
+                ).stdoutText().trim()
+                GitWriteResult(
+                    ok = true,
+                    message = "Amended $short $subject on ${branch ?: "detached HEAD"} (was $previousShort)",
+                    commitId = id,
+                    subject = subject,
+                    previousCommitId = amend.head,
+                )
+            } else {
+                GitWriteResult(
+                    ok = true,
+                    message = "Committed ${paths.size} files to ${branch ?: "HEAD"}: $short $subject",
+                    commitId = id,
+                    subject = subject,
+                )
+            }
         } catch (e: java.io.IOException) {
             refreshStatus()
-            GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added), addedToIndex = added)
+            if (amend == null) {
+                GitWriteResult(false, commitFailureText(e.message ?: "cannot write the message", added), addedToIndex = added)
+            } else {
+                GitWriteResult(false, amendFailureText(e.message ?: "cannot write the message", added), addedToIndex = added)
+            }
         } finally {
             runCatching { Files.deleteIfExists(messageFile) }
         }
+    }
+
+    /**
+     * Discards the working-tree and index changes of [paths] the way V13 decides: a path HEAD has
+     * is restored from HEAD, and a path HEAD does not have only leaves the index, so its content
+     * stays on disk as an unversioned file. The caller discards the open editors of the paths
+     * that were restored.
+     */
+    suspend fun rollback(paths: List<Path>): GitWriteResult = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext GitWriteResult(false, GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext GitWriteResult(false, notRepositoryMessage())
+        if (!writeGate.tryLock()) return@withContext GitWriteResult(false, busyMessage())
+        try {
+            updateBusy(ROLLING_BACK)
+            statusGate.withLock { rollbackLocked(repository, paths) }
+        } finally {
+            updateBusy(null)
+            writeGate.unlock()
+        }
+    }
+
+    private suspend fun rollbackLocked(repository: GitRepository, paths: List<Path>): GitWriteResult {
+        // The popup can stay open while a merge starts in the terminal, so the check runs here.
+        operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
+        val targets = paths
+            .map(::normalizePath)
+            .filter { it.startsWith(repository.root) }
+            .distinct()
+        if (targets.isEmpty()) return GitWriteResult(false, "Nothing to roll back")
+        val head = readQuiet(GitCommand(listOf("rev-parse", "--verify", "-q", "HEAD"), repository.root, timeouts.read))
+        val headExists = when {
+            head.ok -> true
+            head.exitCode == 1 && head.stdoutText().isEmpty() -> false
+            else -> return GitWriteResult(false, "Rollback failed: ${describe(head, timeouts.read)}")
+        }
+        val inHead: List<Path>
+        val notInHead: List<Path>
+        if (headExists) {
+            val listed = read(
+                GitCommand(
+                    listOf("ls-tree", "-z", "--name-only", "--full-tree", "HEAD", "--") +
+                        targets.map { repoRelative(repository, it) },
+                    repository.root,
+                    timeouts.read,
+                ),
+            )
+            if (!listed.ok) return GitWriteResult(false, "Rollback failed: ${describe(listed, timeouts.read)}")
+            val listedPaths = listed.stdoutText().split('\u0000').filter { it.isNotEmpty() }.toSet()
+            val groups = targets.partition { repoRelative(repository, it) in listedPaths }
+            inHead = groups.first
+            notInHead = groups.second
+        } else {
+            inHead = emptyList()
+            notInHead = targets
+        }
+        var restored: List<Path> = emptyList()
+        if (inHead.isNotEmpty()) {
+            val result = write(
+                GitCommand(
+                    listOf("restore", "--source=HEAD", "--staged", "--worktree", "--") +
+                        inHead.map { repoRelative(repository, it) },
+                    repository.root,
+                    timeouts.rollback,
+                    write = true,
+                ),
+            )
+            if (!result.ok) {
+                refreshStatus()
+                return GitWriteResult(false, "Rollback failed: ${describe(result, timeouts.rollback)}")
+            }
+            restored = inHead
+        }
+        var unstaged: List<Path> = emptyList()
+        if (notInHead.isNotEmpty()) {
+            val result = write(
+                GitCommand(
+                    listOf("rm", "--cached", "--force", "--quiet", "--") +
+                        notInHead.map { repoRelative(repository, it) },
+                    repository.root,
+                    timeouts.rollback,
+                    write = true,
+                ),
+            )
+            if (!result.ok) {
+                val reason = "Rollback failed: ${describe(result, timeouts.rollback)}"
+                val message = if (restored.isEmpty()) reason else buildString {
+                    append(reason).append(" (").append(restored.size)
+                    append(if (restored.size == 1) " file was" else " files were")
+                    append(" already rolled back)")
+                }
+                refreshStatus()
+                return GitWriteResult(false, message, restored = restored)
+            }
+            unstaged = notInHead
+        }
+        refreshStatus()
+        val message = buildString {
+            append("Rolled back ").append(targets.size)
+            append(if (targets.size == 1) " file" else " files")
+            if (unstaged.isNotEmpty()) {
+                append("; ").append(unstaged.size)
+                append(if (unstaged.size == 1) " added file kept as unversioned" else " added files kept as unversioned")
+            }
+        }
+        return GitWriteResult(true, message, restored = restored, unstaged = unstaged)
+    }
+
+    /** The path git prints and takes: relative to the repository root with `/` separators. */
+    private fun repoRelative(repository: GitRepository, path: Path): String =
+        repository.root.relativize(path).toString().replace('\\', '/')
+
+    /** V14 step 1: what turning Amend on needs, or why it cannot. Reads only. */
+    suspend fun amendStart(): AmendStart = withContext(Dispatchers.IO) {
+        if (gitMissing()) return@withContext AmendStart.Refused(GIT_NOT_INSTALLED)
+        val repository = repository() ?: return@withContext AmendStart.Refused(notRepositoryMessage())
+        operationInProgress()?.let { return@withContext AmendStart.Refused(operationMessage(it)) }
+        val head = readQuiet(GitCommand(listOf("rev-parse", "--verify", "-q", "HEAD"), repository.root, timeouts.read))
+        when {
+            head.ok -> {}
+            head.exitCode == 1 && head.stdoutText().isEmpty() ->
+                return@withContext AmendStart.Refused("Nothing to amend: the branch has no commits yet")
+            else -> return@withContext AmendStart.Refused("Amend failed: ${describe(head, timeouts.read)}")
+        }
+        val log = readQuiet(GitCommand(listOf("log", "-1", "--format=%H%x00%B", "HEAD"), repository.root, timeouts.read))
+        if (!log.ok) return@withContext AmendStart.Refused("Amend failed: ${describe(log, timeouts.read)}")
+        val fields = log.stdoutText().split('\u0000', limit = 2)
+        if (fields.size < 2) return@withContext AmendStart.Refused("Amend failed: HEAD's commit message cannot be read")
+        when (val pushed = pushedCheck(repository)) {
+            is PushedState.Pushed -> return@withContext AmendStart.Refused(pushed.message)
+            is PushedState.Failed -> return@withContext AmendStart.Refused("Amend failed: ${pushed.reason}")
+            PushedState.NotPushed -> {}
+        }
+        AmendStart.Ready(AmendBase(fields[0].trim(), fields[1].trimEnd()))
     }
 
     /** What [push] would do, or why it cannot run. */
@@ -953,9 +1140,19 @@ class GitService(private val project: Project) : Disposable {
     private fun commitFailure(result: GitResult, timeout: Duration, added: Int): String =
         commitFailureText(describe(result, timeout), added)
 
+    private fun amendFailure(result: GitResult, timeout: Duration, added: Int): String =
+        amendFailureText(describe(result, timeout), added)
+
     /** A commit that fails after `git add` says how many new files are already in the index. */
-    private fun commitFailureText(reason: String, added: Int): String = buildString {
-        append("Commit failed: ").append(reason)
+    private fun commitFailureText(reason: String, added: Int): String =
+        writeFailureText("Commit failed", reason, added)
+
+    /** An amend that fails after `git add` ends with the same suffix [commitFailureText] adds. */
+    private fun amendFailureText(reason: String, added: Int): String =
+        writeFailureText("Amend failed", reason, added)
+
+    private fun writeFailureText(prefix: String, reason: String, added: Int): String = buildString {
+        append(prefix).append(": ").append(reason)
         if (added > 0) {
             append(" (").append(added)
             append(if (added == 1) " new file was" else " new files were")
@@ -973,6 +1170,28 @@ class GitService(private val project: Project) : Disposable {
             AUTH_MARKERS.any(lower::contains) -> "Push needs credentials or a passphrase: push from the terminal (⌥F12)"
             else -> "Push failed: ${describe(result, timeouts.push)}"
         }
+    }
+
+    /**
+     * Whether a remote-tracking ref contains HEAD (V14's check). The remote's symbolic `HEAD` is
+     * not a branch and does not count.
+     */
+    private suspend fun pushedCheck(repository: GitRepository): PushedState {
+        val result = readQuiet(
+            GitCommand(
+                listOf("for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/remotes"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        if (!result.ok) return PushedState.Failed(describe(result, timeouts.read))
+        val ref = result.stdoutText().lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.endsWith("/HEAD") }
+            ?: return PushedState.NotPushed
+        return PushedState.Pushed(
+            "HEAD is already pushed to ${ref.removePrefix("refs/remotes/")}: amending it needs a force push",
+        )
     }
 
     private suspend fun fetchUpstreamForUpdate(): UpstreamCheck {
@@ -1160,6 +1379,12 @@ class GitService(private val project: Project) : Disposable {
         data class Failed(val message: String) : TrackedChanges
     }
 
+    private sealed interface PushedState {
+        data object NotPushed : PushedState
+        data class Pushed(val message: String) : PushedState
+        data class Failed(val reason: String) : PushedState
+    }
+
     companion object {
         /** System property that turns the default executor off; the app's test task sets it. */
         const val DISABLE_DEFAULT_EXECUTOR: String = "stride.git.disableDefaultExecutor"
@@ -1171,6 +1396,8 @@ class GitService(private val project: Project) : Disposable {
         const val DEBOUNCE_MILLIS: Long = 300
 
         private const val COMMITTING = "Committing…"
+        private const val AMENDING = "Amending…"
+        private const val ROLLING_BACK = "Rolling back…"
         private const val PUSHING = "Pushing…"
         private const val FETCHING = "Fetching…"
         private const val UPDATING = "Updating…"

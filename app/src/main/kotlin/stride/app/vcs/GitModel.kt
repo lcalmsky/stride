@@ -50,7 +50,9 @@ data class GitConsoleEntry(
 
 /**
  * The outcome of a write. [message] is the one-line status message; [addedToIndex] counts the new
- * files a failing commit had already added before git stopped.
+ * files a failing commit had already added before git stopped. [restored] and [unstaged] are the
+ * absolute paths a rollback restored from HEAD and only took out of the index;
+ * [previousCommitId] is the commit an amend replaced.
  */
 data class GitWriteResult(
     val ok: Boolean,
@@ -58,7 +60,20 @@ data class GitWriteResult(
     val commitId: String? = null,
     val subject: String? = null,
     val addedToIndex: Int = 0,
+    val restored: List<Path> = emptyList(),
+    val unstaged: List<Path> = emptyList(),
+    val previousCommitId: String? = null,
 )
+
+/** HEAD's id and full message, as Amend's step 1 reads them. */
+data class AmendBase(val head: String, val message: String)
+
+/** What turning Amend on found, or why it cannot. */
+sealed interface AmendStart {
+    data class Ready(val base: AmendBase) : AmendStart
+
+    data class Refused(val message: String) : AmendStart
+}
 
 /** What a push would do, or why it cannot run. */
 sealed interface PushPlan {
@@ -91,6 +106,8 @@ data class GitTimeouts(
     val push: Duration = 90.seconds,
     val fetch: Duration = 90.seconds,
     val update: Duration = 120.seconds,
+    /** Rollback's `restore` runs checkout filters, as commit's hooks do. */
+    val rollback: Duration = 120.seconds,
 )
 
 enum class UpdateStrategy { FAST_FORWARD, MERGE, REBASE }

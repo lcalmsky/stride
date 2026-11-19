@@ -1426,6 +1426,18 @@ class TextFileEditor(
         return applyDiskText(readDiskText() ?: return ReloadResult.FAILED)
     }
 
+    /**
+     * Replaces the text with the file's current content as one undo step, also when the editor
+     * has unsaved text: the saved text becomes the disk text, so the editor is no longer
+     * modified, and the primary caret keeps its line and column. A read-only editor or a file
+     * that cannot be read as UTF-8 is left as it is. Call on the UI thread, as
+     * [reloadFromDisk] does.
+     */
+    fun discardToDisk(): ReloadResult {
+        if (isReadOnly) return ReloadResult.FAILED
+        return applyDiskText(readDiskText() ?: return ReloadResult.FAILED, discarding = true)
+    }
+
     // Strict UTF-8 and no line-ending or BOM handling: the same text `init` read through VFile.
     private fun readDiskText(): String? = try {
         Charsets.UTF_8.newDecoder()
@@ -1438,9 +1450,11 @@ class TextFileEditor(
         null
     }
 
-    private fun applyDiskText(disk: String): ReloadResult {
-        if (disk == savedText) return ReloadResult.UNCHANGED
-        if (isModified) return ReloadResult.KEPT_UNSAVED
+    private fun applyDiskText(disk: String, discarding: Boolean = false): ReloadResult {
+        // A discard also takes the disk text when the disk still holds the saved text and only
+        // the editor differs, so an edit that exists nowhere else still goes.
+        if (disk == savedText && (!discarding || !isModified)) return ReloadResult.UNCHANGED
+        if (isModified && !discarding) return ReloadResult.KEPT_UNSAVED
         val change = computeTextChange(text, disk)
         val applied = applyEdits(
             listOf(TextEdit(change.offset, change.offset + change.oldLength, change.newText)),
