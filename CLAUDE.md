@@ -37,6 +37,7 @@
 | `app/.../run/` 의 Run 창과 거터 표시 | `run.png` |
 | `app/.../terminal/` 의 터미널 화면과 팔레트 | `terminal.png` |
 | `app/.../vcs/` 의 거터 표시·Commit 창·diff 팝업 | `commit.png`, `diff.png` |
+| `app/.../vcs/` 의 브랜치 팝업과 상태 표시줄 브랜치 항목 | `branches.png` |
 | `app/.../ui/theme/` 의 색·네온·글래스 | 모두, `editor-light.png` |
 | 어느 그림에 영향이 있는지 판단이 서지 않을 때 | 모두 |
 

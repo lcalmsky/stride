@@ -22,6 +22,7 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `generate.png` 제네릭 인터페이스의 멤버를 타입 인자로 치환해 보여 주는 Implement Methods 멤버 선택 팝업 (`25-generate-implement.png`)
 - `commit.png` 추가·수정·삭제 거터 표시가 보이는 에디터와 Commit 창 (`26-commit-window.png`)
 - `diff.png` 수정한 줄에서 연 HEAD ↔ Local 한 열 diff 팝업 (`27-diff.png`)
+- `branches.png` 로컬·원격 브랜치와 업스트림 표시가 보이는 브랜치 팝업 (`28-branches.png`)
 
 한국어판과 영어판 README 가 같은 그림을 씁니다. `UiSnapshotTest` 의 시나리오가 바뀌면 `app/build/ui-snapshots/` 의 PNG 를 이 디렉터리로 다시 복사합니다.
 
