@@ -3834,7 +3834,9 @@ These are members of `GitService`, written in extension form only to list them, 
 - **Name page.** `New Branch` with `from <start>` dimmed (`HEAD`, a branch, or `<remote>/<branch>`),
   or `Rename <old>` with the old name in the field, selected. Under the field, the live problem from
   `BranchNames.problem` in the error colour, and for a new branch a `Checkout branch` checkbox, on
-  by default, that `Tab` or a click toggles. `↩` runs when there is no problem; `Esc` goes back to
+  by default, that `Tab` or a click toggles. When the start is not HEAD, the box is on and the
+  project has unsaved editors, the dimmed line `Saves <n> unsaved editors first` follows it, because
+  that new branch is a checkout (V20). `↩` runs when there is no problem; `Esc` goes back to
   the page it came from, or closes when the page was opened directly (Find Action).
 - **Delete page.** Shown when `deletePlan` answers `Unmerged`: `Delete <branch>?`, `<n> commits are
   not merged into <reference>` (`1 commit is`), the commits (at most 20, then `… <n> more`), and a
@@ -3947,7 +3949,8 @@ Amend that was on refuses its commit with `HEAD changed since Amend was turned o
 
 All three refuse first with `Git is not installed`, `Not a Git repository: <root>`,
 `Git is busy: <what>` and, inside the write lock, the in-progress check. They run with
-`timeouts.branch` (30 s), write Console entries, refresh status and add one to `refsVersion`.
+`timeouts.branch` (30 s), except a new branch that is checked out (`timeouts.checkout`), write
+Console entries, refresh status and add one to `refsVersion`.
 
 **New branch.**
 
@@ -3957,13 +3960,28 @@ All three refuse first with `Git is not installed`, `Not a Git repository: <root
 | From a local branch or HEAD | no upstream | no upstream (git does not track local start points by default) |
 
 **A is the contract.** The start is HEAD (`New Branch…`, `⌥⌘N`, Find Action) or the menu's branch
-as a full ref (`refs/heads/<b>`, `refs/remotes/<remote>/<b>`). With `Checkout branch` on:
-`git switch --no-track -c <name> <start>`; off: `git branch --no-track -- <name> <start>`. Both
-leave the working tree as it is, so nothing is saved. Before the first commit there is nothing to
-start from: `Nothing to branch from: the branch has no commits yet`. The name is checked as V18
-says; a refusal reads `<name> is not a valid branch name` or `A branch named <name> already exists`.
-`busy` is `Creating <name>…`. Success reads `Created and checked out <name>` or
-`Created <name> from <start>`; a failure `New branch failed: <first line>`.
+as a full ref (`refs/heads/<b>`, `refs/remotes/<remote>/<b>`). Before the first commit there is
+nothing to start from: `Nothing to branch from: the branch has no commits yet`. The name is checked
+as V18 says; a refusal reads `<name> is not a valid branch name` or `A branch named <name> already
+exists`. `busy` is `Creating <name>…`.
+
+- **`Checkout branch` off.** `git branch --no-track -- <name> <start>`. Nothing on disk changes and
+  no hook runs, so nothing is saved. Success reads `Created <name> from <start>`; a failure
+  `New branch failed: <first line>`.
+- **`Checkout branch` on.** `git switch --no-track -c <name>` from HEAD, `git switch --no-track -c
+  <name> <start>` from another start, with `timeouts.checkout`. From HEAD the working tree stays as
+  it is. From another start git moves the working tree to the start as a checkout does (measured
+  with git 2.50.1: an overlapping edit is refused with `…would be overwritten by checkout`, exit 1,
+  and no branch is created; a clean tree gets the start's files), and it leaves a detached HEAD's
+  commits behind with only a warning (measured). So this write is a checkout and follows V19:
+  - From another start the app saves the project's unsaved editors first (V19 step 1; a failed
+    save stops it with `New branch failed: <reason>`), and the service refuses a detached HEAD whose
+    commits are on no branch (V19 step 3).
+  - The result is judged by HEAD, not by the exit code (V19 step 5; measured: after `Switched to a
+    new branch` a post-checkout hook's exit 1 is git's exit code, from HEAD too). On the new branch:
+    `Created and checked out <name>` with V19's tails. Otherwise V19's two `Checkout stopped: …`
+    messages, or `New branch failed: <first line>`.
+  - Whatever the result, status is refreshed and the app reloads the editors (V19 step 6).
 
 **Rename.**
 
@@ -4059,10 +4077,10 @@ the upstream's branch name differs from the new name; a failure `Rename failed: 
 | `Amend failed: <first line>` | reading HEAD, the pushed check or `git commit --amend` failed or timed out, or an included editor could not be saved; after `git add` added new files it ends as `Commit failed` does |
 | `Branches failed: <first line>` | the branches popup could not read the branch list (shown as its one dimmed row) |
 | `Checked out <name>` | a checkout ended on the target; `Checked out <name>, tracking <remote>/<name>` for a new tracking branch; ends with `; git reported an error after switching (see the Console)` when git exited non-zero after switching, and with `; <n> editors with unsaved text were not reloaded` when V10 left some |
-| `Checkout stopped: local changes to <n> files would be overwritten: commit them first` | git refused the checkout for local changes |
-| `Checkout stopped: <n> untracked files would be overwritten: move them first` | git refused the checkout for untracked files |
+| `Checkout stopped: local changes to <n> files would be overwritten: commit them first` | git refused the checkout, or a new branch checked out from another start, for local changes |
+| `Checkout stopped: <n> untracked files would be overwritten: move them first` | git refused the checkout, or a new branch checked out from another start, for untracked files |
 | `Checkout failed: <first line>` | any other checkout failure, a save before it that failed (`Checkout failed: <reason>`), or a detached-HEAD count that could not be read |
-| `HEAD has <n> commits on no branch: create a branch from it first (New Branch)` | a checkout from a detached HEAD whose commits no branch, remote branch or tag contains (`1 commit`) |
+| `HEAD has <n> commits on no branch: create a branch from it first (New Branch)` | a checkout, or a new branch checked out from another start, from a detached HEAD whose commits no branch, remote branch or tag contains (`1 commit`) |
 | `Branch <name> no longer exists` | the local branch chosen in the popup was deleted meanwhile |
 | `Branch <remote>/<name> no longer exists: fetch to see the remote's branches` | the remote branch chosen in the popup is gone |
 | `A local branch <name> already exists and does not track <remote>/<name>` | a remote checkout whose same-named local branch tracks something else or nothing |
@@ -4071,9 +4089,9 @@ the upstream's branch name differs from the new name; a failure `Rename failed: 
 | `A branch named <name> already exists` | the name page's live line, or the existence check inside the write |
 | `<name> conflicts with the branch <other>` | the name page's live line: one name is a folder of the other |
 | `Nothing to branch from: the branch has no commits yet` | New Branch before the first commit |
-| `Created and checked out <name>` | a new branch with `Checkout branch` on |
+| `Created and checked out <name>` | a new branch with `Checkout branch` on ended on it; ends with V19's tails as `Checked out <name>` does |
 | `Created <name> from <start>` | a new branch with `Checkout branch` off |
-| `New branch failed: <first line>` | `git switch -c` or `git branch` failed or timed out |
+| `New branch failed: <first line>` | `git switch -c` or `git branch` failed or timed out, or the save before a new branch checked out from another start failed (`New branch failed: <reason>`) |
 | `Renamed <old> to <new>` | rename succeeded; ends with `; it still pushes to <remote>/<branch>` when the upstream's branch name differs from the new name |
 | `Rename failed: <first line>` | `git branch -m` failed or timed out |
 | `Cannot delete the current branch <b>: check out another branch first` | Delete of the checked-out branch |
