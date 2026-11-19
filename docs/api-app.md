@@ -2956,8 +2956,8 @@ G2 to G6 list the provider's other messages.
 
 Git actions on the project's repository. stride runs the user's own `git` command line, so the
 user's configuration, hooks, signing and credentials apply exactly as in their terminal. Reading is
-done in the background and never blocks typing; the three actions that write (Rollback Lines,
-Commit, Push) each have one rule for what they change and whether ⌘Z brings it back (V5).
+done in the background and never blocks typing; every action that writes has one rule for what it
+changes and whether ⌘Z brings it back (V5).
 
 | Action | `ActionId` | IntelliJ id | Key | Context |
 |---|---|---|---|---|
@@ -2973,6 +2973,8 @@ Commit, Push) each have one rule for what they change and whether ⌘Z brings it
 | Commit and Push | `COMMIT_AND_PUSH` | `Git.Commit.And.Push.Executor` | `⌥⌘K` | GLOBAL |
 | Update Project | `UPDATE_PROJECT` | `Vcs.UpdateProject` | `⌘T` | GLOBAL |
 | Fetch | `FETCH` | `Git.Fetch` | none | VCS popup row |
+| Rollback | `ROLLBACK_CHANGES` | `ChangesView.Revert` | `⌥⌘Z` | COMMIT_WINDOW, and VCS popup row 9 |
+| Amend | `TOGGLE_AMEND` | `Vcs.ToggleAmendCommitMode` | `⌃⌥M` | COMMIT_WINDOW |
 
 The IntelliJ strokes come from its keymaps: `⌘K`, `⇧⌘K` and `⌥⌘Z` are `$default` entries
 (`control K`, `control shift K`, `control alt Z`) read with control as meta, and `⌃V`, `⌘9`, `⌘0`
@@ -3088,7 +3090,7 @@ Not in this round (no target in the list asks for them): Commit and Push `⌥⌘
 files from the Commit window, Update Project `⌘T`, pull, fetch, branches, stash, amend, file
 history, annotate, the staging area and partial (hunk) commits, and repositories other than the one
 containing the project root. Commit and Push, Update Project, pull and fetch came in the 14th
-round (V7 to V11).
+round (V7 to V11), and Rollback and Amend in the 15th (V12 to V15).
 
 ### V2 Where git runs
 
@@ -3211,6 +3213,8 @@ HEAD against the editor's current text.
 | Push `⇧⌘K` | the remote branch | no |
 | Fetch | the remote-tracking refs (`refs/remotes/...`) and tags git fetches by default; no branch, index or file | no |
 | Update Project `⌘T` | after its confirmation: saves the unsaved editors, then HEAD, the index and the working tree of the whole repository (V8 to V10) | no |
+| Rollback `⌥⌘Z` in the Commit window | after its confirmation: the index entries and working files of the checked paths HEAD has, and the text of their open editors, become HEAD's; checked paths HEAD does not have only leave the index (V13) | an open editor: yes, one step; a file not open: no |
+| Amend (Commit with Amend on) | saves the open editors of the included files, then the index and HEAD: HEAD is replaced by a new commit (V14) | no; the message names the replaced commit |
 | Diff, popups, Log | nothing | — |
 
 - **What a commit takes.** The working-tree content of the included files, after their open
@@ -3310,7 +3314,8 @@ HEAD against the editor's current text.
   the off-thread comparison of HEAD with the editor text answers). Outside a repository the popup
   has one dimmed row, `Not a Git repository` (`Git is not installed` when there is no git). The
   digits of the numeric keypad run rows too. Rows `7 Update Project…` (`⌘T`) and `8 Fetch` come
-  after the six above (V7), so the numbers of the 13th round do not move.
+  after the six above (V7), so the numbers of the 13th round do not move. Row `9 Rollback…`
+  (`⌥⌘Z`) comes after them (V15).
 
 ### V7 What the 14th round includes
 
@@ -3490,6 +3495,199 @@ change through the paths of V3 and V4.
 - **Refresh.** The write refreshes status; a new HEAD makes the editors fetch their base again and
   the Git window read its log again (V3, V6), and V10 reloads the files.
 
+### V12 The remaining items and the 15th round
+
+V1 left out reverting whole files from the Commit window (Rollback), branches (list, checkout,
+create), stash, amend, file history, annotate, the staging area and partial (hunk) commits, and
+repositories other than the one containing the project root. Each needs a screen, and most of them
+write in ways ⌘Z does not undo. They fall into six bundles by what they read and write, the files
+they change and what they depend on.
+
+| Bundle | Items | Writes | Files it changes | Depends on | New screens |
+|---|---|---|---|---|---|
+| C1 Commit window writes | Rollback `⌥⌘Z`, Amend `⌃⌥M` | the index, working files, HEAD | the Commit window, `GitService.commit`, the VCS popup | V5, V9, V10 only | a confirmation popup and one checkbox |
+| C2 Branches | branch list, checkout, new branch (with rename and delete) | HEAD and the working tree of the whole repository | a new branches popup, `GitService`, the VCS popup | V9's rule for local changes (git's own check); a stash-based "smart" checkout would need C4 | a branches popup with search and a per-branch menu |
+| C3 History and annotate | Show History, Annotate | nothing (reads `git log --follow`, `git blame --porcelain`) | a history view, the editor gutter, the diff popup request | the diff popup (V6) | a history list; a gutter column that widens the gutter (frame path) |
+| C4 Stash | stash, unstash (apply, pop), drop, the stash list | the working tree, the index, stash refs | a stash list, `GitService`, the VCS popup | V9 (clean tree, undo on conflict), V10 | a stash list with its diff |
+| C5 Staging area and partial commits | staged and unstaged groups, stage and unstage, hunk selection | the index | `GitStatusParser` (keeps the index and work-tree letters apart), the commit model, the Commit window, change marks against the index | C1's Commit window; replaces V5's whole-file commit | new Commit window groups, hunk checkboxes in the diff popup |
+| C6 Several repositories | nested repositories, submodules, several roots | everything | every `GitService` call (one repository becomes a list) and every screen | all of the above, retrofitted | a repository column or filter on every screen |
+
+**C1 is the 15th round.** It is the only bundle with no new data source and no new kind of screen:
+both items extend the Commit window and `commit`, and both reuse V5's write rules, V8's refusal
+order and V10's reload. C2, C3 and C4 each bring a new screen; C5 replaces a recorded decision (V5's
+"a commit takes whole files", and today's parser folds the index and work-tree letters into one
+`ChangeKind`); C6 changes every call. C5 also rebuilds the Commit window C1 extends, so C1 first
+means C5 later adapts one finished window.
+
+The order of C2 to C6 is a product decision, not a dependency: C2, C3 and C4 do not need each other
+(C2's checkout uses git's own check for local changes, so it does not wait for C4), and C5 and C6
+each replace or widen a recorded contract. The handoff lists them for the user to order.
+
+```kotlin
+// stride.app.vcs — additions for the 15th round
+data class AmendBase(val head: String, val message: String)      // HEAD's id and full message
+sealed interface AmendStart {
+    data class Ready(val base: AmendBase) : AmendStart
+    data class Refused(val message: String) : AmendStart
+}
+suspend fun GitService.amendStart(): AmendStart                    // V14 step 1
+suspend fun GitService.commit(include: List<Path>, message: String,
+                              amend: AmendBase? = null): GitWriteResult   // V14 step 3
+suspend fun GitService.rollback(paths: List<Path>): GitWriteResult // V13, the git part only
+fun TextFileEditor.discardToDisk(): ReloadResult                   // V13; UI thread
+// GitTimeouts gains rollback = 120 s, with a default
+```
+
+These are members of `GitService` and `TextFileEditor`, written in extension form only to list
+them. The fields `GitWriteResult` gains for the paths a rollback restored or only unstaged, and for
+the replaced commit of an amend, follow V13 and V14.
+
+### V13 Rollback
+
+IntelliJ's Rollback (`ChangesView.Revert`, "Rollback…") opens a dialog of the selected changes,
+each with a checkbox, and discards the checked ones. Three questions decide it: which files the
+popup starts with, what happens to a path HEAD does not have, and what happens to unsaved text.
+
+**Starting selection.**
+
+| | A: the Commit window's checked files | B: only the selected file | C: every change |
+|---|---|---|---|
+| What one `⌥⌘Z` `↩` discards | every tracked change, because tracked changes start checked (V6) | the file the user is on | everything |
+| IntelliJ | — | the selection | the whole changelist when nothing is selected |
+
+**B is the contract.** The popup lists every change Rollback can act on: the `Changes` group (`M`,
+`A`, `D`, `R`, and editor-only `unsaved` rows), not unversioned or conflicted files. Its checkboxes
+are its own, apart from the Commit window's, and exactly one starts checked: the Commit window's
+selected row when the popup can list it (whichever part of the window has the keyboard), or, from
+VCS popup row 9 in an editor, that editor's file. A selected row the popup cannot list (an
+unversioned file) starts it with nothing checked. One `↩` never discards more than the file the
+user was on.
+
+**Paths HEAD does not have.**
+
+| | A: `git restore --source=HEAD --staged --worktree` for every path | B: restore the paths HEAD has, only take the others out of the index | C: B, then delete the others |
+|---|---|---|---|
+| A file added and never committed | deleted from disk (measured with git 2.50: a no-overlay restore removes a path the source lacks) | stays on disk as an unversioned file | deleted |
+| A rename's new path | deleted with its edits | stays as an unversioned file with its edits; the old path comes back | deleted |
+| Can content that exists nowhere else be lost | yes | no | yes |
+| IntelliJ | — | its default: added files become unversioned | its "Delete local copies of added files" option |
+
+**B is the contract.** Rollback discards only what HEAD can give back. Right before git runs,
+`git ls-tree -z --name-only --full-tree HEAD -- <checked paths>` at the repository root (paths
+relative to it, literal pathspecs) splits the checked paths: the listed ones get
+`git restore --source=HEAD --staged --worktree -- <paths>`, the rest get
+`git rm --cached --force --quiet -- <paths>`, which removes only the index entry (`--cached` never
+touches the file; `--force` lets an `AM` file go, whose index and work-tree content differ). The
+split comes from HEAD, not from `ChangeKind`, because the parser folds the index and work-tree
+letters together (`AM`, `AD` and `RM` are one kind each). A rename row contributes both paths; its
+old path is in HEAD and its new path is not. An `ls-tree` that fails or times out refuses the whole
+rollback before anything changed. Before the first commit there is no HEAD
+(`git rev-parse --verify -q HEAD` exits 1 and prints nothing), so every checked path only leaves the
+index; `restore --staged` cannot run then (measured: `could not resolve HEAD`), which is why the
+unstaging uses `rm --cached` in both cases.
+
+**Unsaved text.**
+
+| | A: leave unsaved text alone (V10's reload) | B: rolled-back paths take HEAD's text in the editor, unsaved or not, as one undo step |
+|---|---|---|
+| A file with unsaved edits the user rolls back | the editor keeps the edits and `⌘S` writes them back | the edits go; `⌘Z` in that editor brings them back as an unsaved change |
+| An `unsaved` row (the edit exists only in the editor) | cannot be rolled back | the editor takes the disk text; git does not run for it |
+
+**B is the contract.** Rolling back a file means all of its changes, including the ones only in its
+editor. After git, each open editor of a path restored from HEAD, and of an `unsaved` row, takes the
+disk text through `TextFileEditor.discardToDisk()`: like `reloadFromDisk()` (V10), but also when the
+editor has unsaved text, as one undo step, with the saved text becoming the disk text and the
+primary caret keeping its line and column. `reloadFromDisk()` keeps its `KEPT_UNSAVED` answer,
+because the file watcher and Update rely on it. `discardToDisk()` runs on the UI thread; the
+rollback waits for it with `invokeAndWait`, as Update does. Editors of paths that were only unstaged
+are not touched, since their file did not change; every other editor follows V10.
+
+**Refusals.** In this order: `Git is not installed`, `Not a Git repository: <root>`,
+`Git is busy: <what>`, `A <operation> is in progress: finish it in the terminal (⌥F12)` (V8's check,
+run inside the write lock when `↩` is pressed, because a merge can start in the terminal while the
+popup is open), `Nothing to roll back` (no path given). Then the `ls-tree` split above. The paths are
+not compared with what the popup showed: a file that changed again meanwhile is still a file the
+user chose to discard, and its editor can undo.
+
+**Running it.** `busy` is `Rolling back…`, the timeout `timeouts.rollback` (120 s, because checkout
+filters run). The `restore` and `rm --cached` calls are write entries in the Console; the
+`rev-parse` and `ls-tree` reads are logged only when they fail. The write refreshes status (V3), and
+the Commit window forgets the checkbox choices of the rolled-back paths (`CommitInclusion.forget`).
+The status bar reads `Rolled back <n> files` (`1 file`), where `<n>` counts the checked rows, ending
+with `; <k> added files kept as unversioned` when some paths were only unstaged. A failure reads
+`Rollback failed: <first line>`, ending with ` (<n> files were already rolled back)` when an earlier
+git call of the same rollback had succeeded; the editors of those files still take the disk text.
+
+### V14 Amend
+
+IntelliJ's Commit window has an `Amend` checkbox (`Vcs.ToggleAmendCommitMode`, `⌃⌥M` on macOS):
+when it is on, the message field shows the last commit's message and Commit replaces that commit.
+
+**Which commits may be amended.**
+
+| | A: any HEAD | B: a HEAD that no remote-tracking ref contains | C: a HEAD ahead of its upstream |
+|---|---|---|---|
+| A pushed commit | rewritten; the next push is rejected and stride has no force push (V5), so the branch can only be pushed from the terminal | refused before anything changes | refused |
+| A commit pushed to another branch, on a branch with no upstream | rewritten | refused (another ref contains it) | allowed (no upstream to compare with) |
+| The check | none | `git for-each-ref --contains HEAD --format=%(refname) refs/remotes` | `rev-list` against the upstream |
+
+**B is the contract.** The refusal reads `HEAD is already pushed to <remote>/<branch>: amending it
+needs a force push`, naming the first ref listed. The check reads remote-tracking refs, so it is as
+fresh as the last fetch: a commit pushed from another clone since then is not seen (differences). A
+check that fails or times out refuses with `Amend failed: <first line>`.
+
+**Steps.**
+
+1. **Turning it on** (the checkbox, or `⌃⌥M` anywhere in the Commit window) runs `amendStart`, whose
+   refusals come in this order: `Git is not installed`, `Not a Git repository: <root>`,
+   `A <operation> is in progress: finish it in the terminal (⌥F12)`, `Nothing to amend: the branch
+   has no commits yet` (no HEAD), the pushed check. A refusal leaves the box off and shows on the
+   window's error line. Otherwise it reads HEAD's id and full message
+   (`git log -1 --format=%H%x00%B HEAD`); the window keeps the message the field had and puts HEAD's
+   message in the field. The capsules read `Amend Commit` and `Amend Commit and Push…`.
+2. **Turning it off** puts back the message the field had when Amend was turned on.
+3. **Committing with Amend on** is Commit (V5) with three differences. Zero checked files is allowed
+   and amends the message only. Right before git, inside the write lock, it runs the operation
+   check, compares HEAD's id with the one step 1 read (a different id refuses with `HEAD changed
+   since Amend was turned on: turn it off and on again`, because the message on screen belongs to the
+   old commit), and runs the pushed check again. Then it runs
+   `git commit --amend --only -F <message file>`, followed by `-- <included>` when files are checked
+   and by no pathspec when none are; measured with git 2.50, both forms leave other staged changes
+   staged. The checked files are taken as in V5 (their editors saved first, untracked ones added).
+4. **After** a successful amend, Amend turns off and the message field is cleared. `busy` is
+   `Amending…` and the timeout is `timeouts.commit`. The status bar reads `Amended <short hash>
+   <subject> on <branch> (was <old short hash>)` (`detached HEAD` when there is no branch). The old
+   commit stays in the reflog, so the terminal can bring it back (`git reset --soft <old>`); stride
+   does not.
+5. **Commit and Push with Amend on** (`⌥⌘K` or the capsule) amends and then asks for the push plan
+   as V7 does. No remote-tracking ref contained the amended commit, so the plan is an ordinary push.
+
+### V15 Keys and what the user sees
+
+- **Keys.** `⌥⌘Z` is `ChangesView.Revert`'s `$default` entry `control alt Z` read with control as
+  meta (`$default.xml:660`); the macOS keymap does not override it. It is also Rollback Lines'
+  stroke (`Vcs.RollbackChangedLines`, `$default.xml:657`), which IntelliJ resolves by context, so
+  stride binds it in COMMIT_WINDOW beside EDITOR's Rollback Lines, as `⌘D` is Duplicate in EDITOR and
+  Show Diff in COMMIT_WINDOW. `⌃⌥M` is an explicit macOS entry (`control alt M`,
+  `Mac OS X 10.5+.xml:491`; `$default` has `alt M`) and is bound in COMMIT_WINDOW only. Neither had a
+  binding in COMMIT_WINDOW (`meta alt Z` only in EDITOR, `control alt M` in no context), checked
+  through `KeyStroke.parse`. `VcsActionsTest` lists (stroke, context) pairs, because a map keyed by
+  the stroke would silently drop EDITOR's `meta alt Z`.
+- **Rollback popup.** A `popupPanel` titled `Rollback Changes`: the V13 rows with a checkbox, the
+  status letter in the mark colours, the file name and its folder dimmed (as in the Commit window),
+  a `Rollback` capsule with `<checked> of <total>`, and the line `Open editors can undo this with ⌘Z;
+  files that are not open cannot be brought back`. `↑`/`↓` move, `Space` toggles, `↩` rolls back the
+  checked files (nothing when none is checked), `Esc` cancels. It joins the popups whose closing
+  gives the keyboard back to the Commit window (V6), and from an editor the keyboard goes back to
+  the editor.
+- **Commit window.** An `Amend` checkbox under the message field, before the capsules; the capsule
+  texts follow V14.
+- **VCS popup.** Row `9 Rollback…` with `⌥⌘Z`. From the Commit window it opens the popup as `⌥⌘Z`
+  does there. From an editor it opens it with that editor's file checked, and the row is dimmed when
+  the popup could not list that file (V13).
+- **Find Action.** `Rollback…` and `Amend` are action search entries.
+- **Progress.** `Rolling back…` and `Amending…` in the status bar (V11).
+
 ### Version control messages
 
 | Message | When it appears |
@@ -3512,7 +3710,7 @@ change through the paths of V3 and V4.
 | `Too many changes to show` | a diff over the edit budget; the popup shows this one row instead of the lines |
 | `No more changes` | `⌃⌥⇧↓/↑` past the last or first hunk |
 | `<commit message>; <refusal>` | `⌥⌘K` committed but the push plan refused (for example `; Nothing to push`) |
-| `A <operation> is in progress: finish it in the terminal (⌥F12)` | Update, `⌘K` or `⌥⌘K` while a merge, rebase, cherry-pick or revert is in progress |
+| `A <operation> is in progress: finish it in the terminal (⌥F12)` | Update, `⌘K`, `⌥⌘K`, Rollback or turning Amend on while a merge, rebase, cherry-pick or revert is in progress |
 | `Update needs a branch: HEAD is detached` | `⌘T` on a detached HEAD |
 | `No upstream: set one in the terminal` | `⌘T` on a branch with no upstream (also push, V5) |
 | `The upstream <remote>/<branch> does not exist: set one in the terminal` | the upstream's remote-tracking ref is missing after the fetch |
@@ -3530,12 +3728,24 @@ change through the paths of V3 and V4.
 | `Update left a <operation> in progress: finish or abort it in the terminal (⌥F12)` | the abort itself failed |
 | `Update needs credentials or a passphrase: update from the terminal (⌥F12)` | the fetch of `⌘T` failed authentication |
 | `Update failed: <first line>` | the fetch of `⌘T` failed otherwise, the clean-tree status read failed or timed out, or a save before the update failed |
+| `Nothing to roll back` | Rollback was given no path |
+| `Rolled back <n> files` | Rollback succeeded (`1 file` for one); ends with `; <k> added files kept as unversioned` (`1 added file`) when paths HEAD does not have were only unstaged |
+| `Rollback failed: <first line>` | the `ls-tree` split or a `restore` failed or timed out; ends with ` (<n> files were already rolled back)` when an earlier call of the same rollback had succeeded |
+| `Nothing to amend: the branch has no commits yet` | Amend turned on before the first commit |
+| `HEAD is already pushed to <remote>/<branch>: amending it needs a force push` | Amend turned on, or an amend commit, while a remote-tracking ref contains HEAD |
+| `HEAD changed since Amend was turned on: turn it off and on again` | an amend commit found HEAD at another commit than the one whose message is on screen |
+| `Amended <short hash> <subject> on <branch> (was <old short hash>)` | Amend succeeded; `detached HEAD` in place of the branch when there is none |
+| `Amend failed: <first line>` | reading HEAD, the pushed check or `git commit --amend` failed or timed out, or an included editor could not be saved; after `git add` added new files it ends as `Commit failed` does |
 
 ### Version control differences
 
 - One column diff instead of two, and the Commit window in the bottom panel instead of the left.
-- No staging area, changelists, partial commits or amend; a commit takes whole files (V5).
-- Reverting whole files, branches, stash, history and annotate are not in yet (V1). Pull is Update
+- No staging area, changelists or partial commits; a commit takes whole files (V5).
+- Rollback keeps the paths HEAD does not have (an added file, a rename's new path) as unversioned
+  files, where IntelliJ can delete them, and its popup has no diff preview (V13).
+- Amend refuses a commit that a remote-tracking ref contains, as of the last fetch; IntelliJ amends
+  it and the push then needs force (V14).
+- Branches, stash, history and annotate are not in yet (V1, V12). Pull is Update
   Project of the tracked branch; there is no Pull dialog for another remote or branch (V7).
 - Update does not stash local changes: a merge or rebase needs a clean tree, and a conflict is
   undone instead of opening a merge screen (V9). IntelliJ stashes or shelves and opens its conflict
