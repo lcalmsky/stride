@@ -3287,6 +3287,8 @@ HEAD against the editor's current text.
   popup gives the keyboard back to the tool window it was opened from while that window is still the
   visible active one (a VCS popup row that focuses something itself, such as `Commit…`, keeps that): the Commit window to the part that had it (the file list after `⌘D` from the list, otherwise
   the message), the Git window to its Log with the selected row kept. Otherwise the editor gets it.
+  Where the keyboard was is read once, when the popup opens, so a popup whose content changes while
+  it is open (the Rollback popup's checks, V15) still gives it back there.
 - **Commit window `⌘0`.** A bottom tool window `Commit` (the bottom panel, as the other tool
   windows; IntelliJ docks it on the left). Left: files grouped `Changes (<n>)` and
   `Unversioned Files (<n>)` with a checkbox, a status letter (`M`, `A`, `D`, `R`, `U`, `C`) in the
@@ -3607,12 +3609,20 @@ are not touched, since their file did not change; every other editor follows V10
 run inside the write lock when `↩` is pressed, because a merge can start in the terminal while the
 popup is open), `Nothing to roll back` (no path given). Then the `ls-tree` split above. The paths are
 not compared with what the popup showed: a file that changed again meanwhile is still a file the
-user chose to discard, and its editor can undo.
+user chose to discard, and its editor can undo. The same holds for which rows go to git: a checked
+row is an `unsaved` row, for which git does not run, only when it is marked unsaved and the
+repository's current status has no change for its path. Every other checked row goes to git, so a
+file committed in the terminal meanwhile is a no-op restore, and a repository that disappeared
+while the popup was open refuses with `Not a Git repository: <root>` instead of reporting a
+rollback that did not happen.
 
 **Running it.** `busy` is `Rolling back…`, the timeout `timeouts.rollback` (120 s, because checkout
 filters run). The `restore` and `rm --cached` calls are write entries in the Console; the
 `rev-parse` and `ls-tree` reads are logged only when they fail. The write refreshes status (V3), and
-the Commit window forgets the checkbox choices of the rolled-back paths (`CommitInclusion.forget`).
+the Commit window forgets the checkbox choices of the rolled-back paths (`CommitInclusion.forget`),
+after a failure too for the paths an earlier git call had already restored. A refusal or failure
+also shows on the Commit window's error line; a success shows on the status bar only, because that
+line holds the last refusal or failure (V6).
 The status bar reads `Rolled back <n> files` (`1 file`), where `<n>` counts the checked rows, ending
 with `; <k> added files kept as unversioned` when some paths were only unstaged. A failure reads
 `Rollback failed: <first line>`, ending with ` (<n> files were already rolled back)` when an earlier
@@ -3632,7 +3642,8 @@ when it is on, the message field shows the last commit's message and Commit repl
 | The check | none | `git for-each-ref --contains HEAD --format=%(refname) refs/remotes` | `rev-list` against the upstream |
 
 **B is the contract.** The refusal reads `HEAD is already pushed to <remote>/<branch>: amending it
-needs a force push`, naming the first ref listed. The check reads remote-tracking refs, so it is as
+needs a force push`, naming the first branch ref listed; a remote's symbolic `<remote>/HEAD` is
+skipped, because it is not a branch. The check reads remote-tracking refs, so it is as
 fresh as the last fetch: a commit pushed from another clone since then is not seen (differences). A
 check that fails or times out refuses with `Amend failed: <first line>`.
 
@@ -3644,8 +3655,12 @@ check that fails or times out refuses with `Amend failed: <first line>`.
    has no commits yet` (no HEAD), the pushed check. A refusal leaves the box off and shows on the
    window's error line. Otherwise it reads HEAD's id and full message
    (`git log -1 --format=%H%x00%B HEAD`); the window keeps the message the field had and puts HEAD's
-   message in the field. The capsules read `Amend Commit` and `Amend Commit and Push…`.
-2. **Turning it off** puts back the message the field had when Amend was turned on.
+   message in the field. The capsules read `Amend Commit` and `Amend Commit and Push…`. `Amend` from
+   Find Action outside the Commit window opens the window as `⌘K` does and turns Amend on; it does
+   not turn off an Amend that is already on.
+2. **Turning it off** puts back the message the field had when Amend was turned on. While an amend
+   is running, neither the checkbox nor `⌃⌥M` changes Amend in either direction, because the
+   running amend already holds the message on screen.
 3. **Committing with Amend on** is Commit (V5) with three differences. Zero checked files is allowed
    and amends the message only. Right before git, inside the write lock, it runs the operation
    check, compares HEAD's id with the one step 1 read (a different id refuses with `HEAD changed

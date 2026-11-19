@@ -144,6 +144,8 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 - **Commit** `⌘K` opens the Commit window with the message field focused. Changed and unversioned files are listed with checkboxes, and `⌘↩` commits only the checked ones. Unsaved editors of the checked files are saved first, and there is no separate staging area. In the window, `⌘D` opens the diff of the selected file
 - **Push** `⇧⌘K` shows a confirmation popup with the current branch and the outgoing commits, and `↩` pushes. There is no force push and no tag push. A remote that needs credentials fails without a prompt, and the status bar says to retry in the terminal
 - **Commit and push** `⌥⌘K` or the `Commit and Push…` button in the Commit window commits the checked files and then opens the same push confirmation. Outside the Commit window, `⌥⌘K` opens it like `⌘K`
+- **Rollback files** `⌥⌘Z` in the Commit window opens the Rollback popup with only the selected file checked. `Space` checks more changes, and `↩` returns the checked files to their HEAD content, unsaved edits included. An open editor brings the discarded text back with `⌘Z`; a file that is not open cannot be brought back. A new file that was never committed is not deleted but stays as an unversioned file. In an editor, row `9 Rollback…` of the VCS popup opens the same popup with that file checked
+- **Amend** turning on the `Amend` checkbox in the Commit window, or `⌃⌥M`, fills the message field with the last commit's message, and `Amend Commit` rewrites the last commit with the checked files and that message. With no file checked, only the message changes. Turning it off brings back the message written before. A commit that a remote-tracking branch already contains is not amended, because that would need a force push
 - **Update project** `⌘T` fetches the current branch's upstream remote, shows the incoming commits in a confirmation popup, and `↩` updates the branch. A branch that is only behind is fast-forwarded; for a branch that has diverged, `Tab` chooses between Merge and Rebase, defaulting to git's `branch.<name>.rebase` and `pull.rebase` settings. Tabs of files the update changed read the new content. No stash is created: a fast-forward saves unsaved editors first and stops when git would overwrite local changes, and a merge or rebase runs only with no uncommitted changes and no unsaved editors. A conflict puts everything back as it was and the status bar says to update from the terminal
 - **Fetch** `8 Fetch` in the VCS popup fetches every remote without touching branches or files. While git runs, the status bar shows progress such as `Fetching…`, `Updating…` or `Pushing…`
 - **Diff and the Git window** the diff shows HEAD and the current text in one column, and `F7` / `⇧F7` move between changes. In the `⌘9` Git window, the Log tab lists recent commits and `↩` opens a commit's diff; the Console tab shows the git commands stride ran and their output. `⌃V` is the VCS popup with these commands numbered
@@ -300,7 +302,8 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | `⌥⌘K` | Commit and push (outside the Commit window, open it) |
 | `⌘T` | Update project (`Tab` Merge/Rebase, `↩` run) |
 | `⌃V` | VCS popup (passed to the shell in the terminal) |
-| `⌥⌘Z` | Rollback lines |
+| `⌥⌘Z` | Rollback lines (editor) · Rollback files popup (Commit window, `Space` check, `↩` run) |
+| `⌃⌥M` | Turn Amend on or off (Commit window) |
 | `⌃⌥⇧↓` / `⌃⌥⇧↑` | Next change / previous change |
 | `⌘0` / `⌘9` | Commit / Git window |
 | `F7` / `⇧F7` · `⌃⇧→` / `⌃⇧←` (diff) | Next / previous change · next / previous file |
