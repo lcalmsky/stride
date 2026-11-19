@@ -531,15 +531,15 @@ class GitService(private val project: Project) : Disposable {
                 return@withContext AmendStart.Refused("Nothing to amend: the branch has no commits yet")
             else -> return@withContext AmendStart.Refused("Amend failed: ${describe(head, timeouts.read)}")
         }
-        val log = readQuiet(GitCommand(listOf("log", "-1", "--format=%H%x00%B", "HEAD"), repository.root, timeouts.read))
-        if (!log.ok) return@withContext AmendStart.Refused("Amend failed: ${describe(log, timeouts.read)}")
-        val fields = log.stdoutText().split('\u0000', limit = 2)
-        if (fields.size < 2) return@withContext AmendStart.Refused("Amend failed: HEAD's commit message cannot be read")
         when (val pushed = pushedCheck(repository)) {
             is PushedState.Pushed -> return@withContext AmendStart.Refused(pushed.message)
             is PushedState.Failed -> return@withContext AmendStart.Refused("Amend failed: ${pushed.reason}")
             PushedState.NotPushed -> {}
         }
+        val log = readQuiet(GitCommand(listOf("log", "-1", "--format=%H%x00%B", "HEAD"), repository.root, timeouts.read))
+        if (!log.ok) return@withContext AmendStart.Refused("Amend failed: ${describe(log, timeouts.read)}")
+        val fields = log.stdoutText().split('\u0000', limit = 2)
+        if (fields.size < 2) return@withContext AmendStart.Refused("Amend failed: HEAD's commit message cannot be read")
         AmendStart.Ready(AmendBase(fields[0].trim(), fields[1].trimEnd()))
     }
 

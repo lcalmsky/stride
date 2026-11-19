@@ -212,6 +212,27 @@ class GitAmendTest {
         assertEquals("Amended $newShort Reworded subject on main (was $oldShort)", result.message)
     }
 
+    @Test
+    fun `the pushed check runs before HEAD's message is read`() {
+        val repo = repoWithTwoCommits()
+        repo.bareRemote()
+        repo.git("push", "-u", "origin", "main")
+
+        val start = withService(repo) { service ->
+            service.executor = FailingCommandExecutor(
+                CliGitExecutor(TEST_GIT, repo.environment),
+                "log",
+                GitResult(128, ByteArray(0), "fatal: bad revision\n", timedOut = false),
+            )
+            service.amendStart()
+        }
+
+        assertEquals(
+            AmendStart.Refused("HEAD is already pushed to origin/main: amending it needs a force push"),
+            start,
+        )
+    }
+
     /** Answers every command whose first argument is [name] with [result]. */
     private class FailingCommandExecutor(
         private val delegate: GitExecutor,

@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
@@ -408,6 +409,44 @@ class VcsPopupUiTest {
             waitUntil(timeoutMillis = 5_000) {
                 runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
             }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `row nine from the commit window checks the window's selected row`() = runComposeUiTest {
+        withRepo("popup-rollback-window") { state, repo ->
+            repo.write("src/Main.kt", "first\n")
+            repo.write("src/Other.kt", "other\n")
+            repo.commitAll("Initial commit")
+            repo.write("src/Main.kt", "second\n")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            setContent { VcsHarness(state) }
+            waitForIdle()
+            pressCommand(Key.K)
+            waitUntil(timeoutMillis = 5_000) { commitRowShown() }
+            waitUntil(timeoutMillis = 5_000) {
+                state.session!!.commit.rows.any { it.path.fileName.toString() == "Main.kt" }
+            }
+            onNode(hasText("Main.kt") and hasAnyAncestor(hasTestTag(COMMIT_LIST_TAG))).performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                state.session!!.commit.selectedPath?.fileName.toString() == "Main.kt"
+            }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+
+            pressControl(Key.V)
+            waitUntil(timeoutMillis = 5_000) {
+                state.vcsPopup != null && state.focus == KeyContext.CONTEXT_POPUP
+            }
+            onRoot().performKeyInput { pressKey(Key.Nine) }
+
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            assertEquals(
+                setOf(repo.root.resolve("src/Main.kt")),
+                state.rollbackRequest!!.checked,
+            )
+            assertNull(state.vcsPopup)
         }
     }
 

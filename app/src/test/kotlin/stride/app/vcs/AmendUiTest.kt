@@ -29,9 +29,12 @@ import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -39,6 +42,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
+import stride.app.editor.TextFileEditor
+import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
@@ -46,6 +51,7 @@ import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
 import stride.core.services.Application
+import stride.core.vfs.VFile
 
 @ExtendWith(FixedUiFontExtension::class)
 class AmendUiTest {
@@ -207,6 +213,147 @@ class AmendUiTest {
             assertNull(window.amend)
         } finally {
             state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an amend whose included editor cannot be saved says Amend failed`() = runComposeUiTest {
+        val repo = committedRepo()
+        val file = repo.write("src/Main.kt", "second\n")
+        val state = AppState()
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(file)) as TextFileEditor
+            editor.setText("cannot be saved\n")
+            file.toFile().setWritable(false)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            waitUntil(timeoutMillis = 10_000) { window.rows.any { it.path == file } }
+
+            pressControlAlt(Key.M)
+            waitUntil(timeoutMillis = 10_000) { window.amend != null }
+
+            pressCommand(Key.Enter)
+
+            waitUntil(timeoutMillis = 5_000) { window.error != null }
+            assertTrue(window.error!!.startsWith("Amend failed: "), window.error)
+            assertTrue(state.statusMessage!!.startsWith("Amend failed: "), state.statusMessage)
+            assertTrue(editor.isModified)
+        } finally {
+            file.toFile().setWritable(true)
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `Amend cannot be turned off while the amend runs`() = runComposeUiTest {
+        val repo = committedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput("WIP")
+            waitUntil(timeoutMillis = 5_000) { window.message == "WIP" }
+
+            pressControlAlt(Key.M)
+            waitUntil(timeoutMillis = 10_000) { window.amend != null }
+            val headMessage = window.message
+
+            val gate = CountDownLatch(1)
+            state.session!!.git.executor = GatedAmendExecutor(
+                CliGitExecutor(TEST_GIT, repo.environment),
+                gate,
+            )
+            pressCommand(Key.Enter)
+            try {
+                waitUntil(timeoutMillis = 10_000) { window.committing }
+                pressControlAlt(Key.M)
+                waitForIdle()
+                assertNotNull(window.amend, "Amend must stay on while the amend runs")
+                assertEquals(headMessage, window.message)
+            } finally {
+                gate.countDown()
+            }
+
+            waitUntil(timeoutMillis = 20_000) { state.statusMessage?.startsWith("Amended ") == true }
+            assertNull(window.amend)
+            assertTrue(window.message.isEmpty())
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the checkbox turns Amend off while the keyboard is in the editor`() = runComposeUiTest {
+        val repo = committedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            onNodeWithTag(COMMIT_MESSAGE_TAG).performTextInput("WIP")
+            waitUntil(timeoutMillis = 5_000) { window.message == "WIP" }
+
+            pressControlAlt(Key.M)
+            waitUntil(timeoutMillis = 10_000) { window.amend != null }
+
+            state.session!!.editors.openFile(VFile(repo.root.resolve("src/Main.kt")))
+            state.focusSelectedEditor()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            onNodeWithTag(COMMIT_AMEND_TAG).performClick()
+
+            waitUntil(timeoutMillis = 10_000) { window.amend == null }
+            assertEquals("WIP", window.message)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a commit made after Amend was turned on refuses and keeps the field`() = runComposeUiTest {
+        val repo = committedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+
+            pressControlAlt(Key.M)
+            waitUntil(timeoutMillis = 10_000) { window.amend != null }
+            window.message = "Reword"
+
+            repo.write("src/Main.kt", "moved\n")
+            repo.commitAll("Moved HEAD")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            pressCommand(Key.Enter)
+
+            val refusal = "HEAD changed since Amend was turned on: turn it off and on again"
+            waitUntil(timeoutMillis = 10_000) { window.error == refusal }
+            assertNotNull(window.amend)
+            assertEquals("Reword", window.message)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    /** Holds the `commit --amend` call until [gate] opens. */
+    private class GatedAmendExecutor(private val delegate: GitExecutor, private val gate: CountDownLatch) : GitExecutor {
+        override fun run(command: GitCommand): GitResult {
+            if (command.args.firstOrNull() == "commit" && "--amend" in command.args) {
+                gate.await(10, TimeUnit.SECONDS)
+            }
+            return delegate.run(command)
         }
     }
 

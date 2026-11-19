@@ -109,6 +109,19 @@ class DiscardToDiskTest {
     }
 
     @Test
+    fun `an editor whose text already is the new disk text takes it and is no longer modified`() {
+        val path = write("a.kt", "A\n")
+        val editor = TextFileEditor(VFile(path))
+        editor.setText("B\n")
+        write("a.kt", "B\n")
+
+        assertEquals(ReloadResult.RELOADED, editor.discardToDisk())
+
+        assertEquals("B\n", editor.value.text)
+        assertFalse(editor.isModified)
+    }
+
+    @Test
     fun `reloadFromDisk still keeps the unsaved text of a modified editor`() {
         val path = write("a.kt", "one\n")
         val editor = TextFileEditor(VFile(path))

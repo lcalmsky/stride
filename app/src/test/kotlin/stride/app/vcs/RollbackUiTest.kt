@@ -16,6 +16,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.editor.TextFileEditor
 import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
@@ -329,6 +331,364 @@ class RollbackUiTest {
             }
         }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `closing the popup after moving and toggling gives the list the keyboard back`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            focusList()
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.selected == 1 }
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.checked.size == 2 }
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+            assertEquals("second\n", Files.readString(main))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `closing the popup after toggling gives the message field the keyboard back`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.checked.isEmpty() }
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.checked.isNotEmpty() }
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_MESSAGE_TAG).assertIsFocused() }.isSuccess
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `returning after toggling rolls back and keeps the keyboard in the commit window`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            focusList()
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.checked.isEmpty() }
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.checked.isNotEmpty() }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest == null }
+            waitUntil(timeoutMillis = 15_000) { state.statusMessage == "Rolled back 1 file" }
+            assertEquals(KeyContext.COMMIT_WINDOW, state.focus)
+            assertEquals("first\n", Files.readString(main))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a tracked row whose change was committed while the popup was open still runs git`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            selectRow("Main.kt")
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            assertEquals(setOf(main), state.rollbackRequest!!.checked)
+
+            repo.git("add", "--", "src/Main.kt")
+            repo.git("commit", "-q", "-m", "Committed while the popup was open")
+            runBlocking { state.session!!.git.refreshNow() }
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 15_000) { state.statusMessage == "Rolled back 1 file" }
+            val writes = state.session!!.git.console.filter { it.write }.map { it.command }
+            assertTrue(
+                writes.any { it.startsWith("git restore --source=HEAD --staged --worktree -- src/Main.kt") },
+                writes.toString(),
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a repository that disappears while the popup is open refuses and keeps the unsaved text`() =
+        runComposeUiTest {
+            val repo = changedRepo(committedOnly = true)
+            val state = AppState()
+            val main = repo.root.resolve("src/Main.kt")
+            try {
+                open(repo, state)
+                val editor = state.session!!.editors.openFile(VFile(main)) as TextFileEditor
+                editor.setText("mine\n")
+                setContent { KeyHarness(state) }
+                openCommitWindow(state)
+                waitUntil(timeoutMillis = 10_000) {
+                    state.session!!.commit.rows.any { it.path == main && it.unsaved }
+                }
+                selectRow("Main.kt")
+
+                pressAltCommand(Key.Z)
+                waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+                waitRollbackFocused()
+                assertEquals(setOf(main), state.rollbackRequest!!.checked)
+
+                deleteRecursively(repo.root.resolve(".git"))
+                runBlocking { state.session!!.git.refreshNow() }
+
+                // Losing the repository replaces the window's content, which takes the popup's
+                // focus with it; the capsule runs the same confirmation as ↩.
+                onNodeWithTag(ROLLBACK_CAPSULE_TAG).performClick()
+
+                waitUntil(timeoutMillis = 5_000) { state.rollbackRequest == null }
+                val refusal = "Not a Git repository: ${repo.root}"
+                waitUntil(timeoutMillis = 15_000) {
+                    state.statusMessage != null || state.session!!.commit.error != null
+                }
+                assertEquals(refusal, state.statusMessage, "window error: ${state.session!!.commit.error}")
+                assertEquals(refusal, state.session!!.commit.error)
+                assertTrue(editor.isModified)
+                assertEquals("mine\n", editor.value.text)
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a partly failed rollback forgets the choices of the paths it restored`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        repo.write("src/New.kt", "new\n")
+        repo.git("add", "--", "src/New.kt")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            selectRow("Main.kt")
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) {
+                val row = state.session!!.commit.rows.first { it.path == main }
+                !state.session!!.commit.inclusion.isChecked(row)
+            }
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest!!.selected == 1 }
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) {
+                state.rollbackRequest!!.checked == setOf(main, repo.root.resolve("src/New.kt"))
+            }
+
+            state.session!!.git.executor = FailingCommandExecutor(
+                CliGitExecutor(TEST_GIT, repo.environment),
+                "rm",
+                GitResult(128, ByteArray(0), "fatal: could not remove 'src/New.kt'\n", timedOut = false),
+            )
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val window = state.session!!.commit
+            waitUntil(timeoutMillis = 15_000) { window.error?.startsWith("Rollback failed:") == true }
+            assertEquals("first\n", Files.readString(main))
+
+            repo.write("src/Main.kt", "third\n")
+            runBlocking { state.session!!.git.refreshNow() }
+            window.syncRows(commitRows(state.session!!, window))
+            val row = window.rows.first { it.path == main }
+            assertTrue(window.inclusion.isChecked(row), "Main.kt must start checked again")
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a rename row rolled back through the popup restores the old path and keeps the edits`() =
+        runComposeUiTest {
+            val repo = changedRepo(committedOnly = true)
+            val state = AppState()
+            val original = repo.root.resolve("src/Main.kt")
+            val renamed = repo.root.resolve("src/Renamed.kt")
+            repo.git("mv", "src/Main.kt", "src/Renamed.kt")
+            repo.write("src/Renamed.kt", "edited\n")
+            try {
+                open(repo, state)
+                setContent { KeyHarness(state) }
+                openCommitWindow(state)
+                selectRow("Renamed.kt")
+
+                pressAltCommand(Key.Z)
+                waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+                waitRollbackFocused()
+                assertEquals(setOf(renamed), state.rollbackRequest!!.checked)
+
+                onRoot().performKeyInput { pressKey(Key.Enter) }
+
+                waitUntil(timeoutMillis = 15_000) {
+                    state.statusMessage == "Rolled back 1 file; 1 added file kept as unversioned"
+                }
+                assertEquals("first\n", Files.readString(original))
+                assertEquals("edited\n", Files.readString(renamed))
+                assertTrue(repo.git("status", "--porcelain").contains("?? src/Renamed.kt"))
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a rolled back path's unchecked choice is forgotten and it starts checked again`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            val window = state.session!!.commit
+            selectRow("Main.kt")
+            onRoot().performKeyInput { pressKey(Key.Spacebar) }
+            waitUntil(timeoutMillis = 5_000) {
+                val row = window.rows.first { it.path == main }
+                !window.inclusion.isChecked(row)
+            }
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            assertEquals(setOf(main), state.rollbackRequest!!.checked)
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 15_000) { state.statusMessage == "Rolled back 1 file" }
+
+            repo.write("src/Main.kt", "third\n")
+            runBlocking { state.session!!.git.refreshNow() }
+            window.syncRows(commitRows(state.session!!, window))
+            val row = window.rows.first { it.path == main }
+            assertTrue(window.inclusion.isChecked(row), "Main.kt must start checked again")
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an added file with unsaved text keeps its text when it is only unstaged`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val added = repo.write("src/New.kt", "new\n")
+        repo.git("add", "--", "src/New.kt")
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(added)) as TextFileEditor
+            editor.setText("draft\n")
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            waitUntil(timeoutMillis = 10_000) {
+                state.session!!.commit.rows.any { it.path == added && it.unsaved }
+            }
+            selectRow("New.kt")
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            assertEquals(setOf(added), state.rollbackRequest!!.checked)
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 15_000) {
+                state.statusMessage == "Rolled back 1 file; 1 added file kept as unversioned"
+            }
+            assertEquals("new\n", Files.readString(added))
+            assertTrue(editor.isModified)
+            assertEquals("draft\n", editor.value.text)
+            assertTrue(repo.git("status", "--porcelain").contains("?? src/New.kt"))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `an unversioned selected row opens the popup with nothing checked`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        val loose = repo.write("src/Loose.kt", "loose\n")
+        try {
+            open(repo, state)
+            setContent { KeyHarness(state) }
+            openCommitWindow(state)
+            selectRow("Loose.kt")
+
+            pressAltCommand(Key.Z)
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitRollbackFocused()
+            assertTrue(state.rollbackRequest!!.checked.isEmpty())
+            onNodeWithText("0 of 2").assertExists()
+            onNodeWithTag(ROLLBACK_CAPSULE_TAG).assertIsNotEnabled()
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitForIdle()
+            assertNotNull(state.rollbackRequest)
+            assertNull(state.statusMessage)
+            assertEquals("loose\n", Files.readString(loose))
+        } finally {
+            state.dispose()
+        }
+    }
+
     /** Two changed files and a clean one, so the window lists two tracked rows. */
     private fun changedRepo(committedOnly: Boolean = false): TestGitRepo {
         val repo = TestGitRepo.create(temp)
@@ -364,6 +724,22 @@ class RollbackUiTest {
         assertTrue(merge.exitCode != 0, "the merge was meant to conflict")
         repo.write("src/Main.kt", "second again\n")
         return repo
+    }
+
+    private fun deleteRecursively(path: Path) {
+        Files.walk(path).use { stream ->
+            stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+        }
+    }
+
+    /** Answers every command whose first argument is [name] with [result]. */
+    private class FailingCommandExecutor(
+        private val delegate: GitExecutor,
+        private val name: String,
+        private val result: GitResult,
+    ) : GitExecutor {
+        override fun run(command: GitCommand): GitResult =
+            if (command.args.firstOrNull() == name) result else delegate.run(command)
     }
 
     private fun open(repo: TestGitRepo, state: AppState) {

@@ -148,19 +148,22 @@ fun runRollback(state: AppState, request: RollbackRequest) {
     val window = session.commit
     val checked = request.rows.filter { it.path in request.checked }
     if (checked.isEmpty()) return
-    val changes = session.git.snapshot.changes.associateBy { it.path.toAbsolutePath().normalize() }
+    val snapshot = session.git.snapshot
+    val changes = snapshot.changes.associateBy { it.path.toAbsolutePath().normalize() }
     val gitPaths = ArrayList<Path>()
     val editorOnly = ArrayList<Path>()
     val forgotten = ArrayList<Path>()
     for (row in checked) {
         val change = changes[row.path]
-        if (change == null) {
+        // Only an edit that exists nowhere but the editor is off limits to git; a tracked path the
+        // snapshot no longer lists is still a file the user chose to discard.
+        if (change == null && row.unsaved && snapshot.repository != null) {
             editorOnly.add(row.path)
             continue
         }
         gitPaths.add(row.path)
         // A rename row contributes both paths: its old path is in HEAD and its new one is not.
-        change.originalPath?.let {
+        change?.originalPath?.let {
             gitPaths.add(it)
             forgotten.add(it)
         }
@@ -186,6 +189,10 @@ fun runRollback(state: AppState, request: RollbackRequest) {
             state.statusMessage = outcome
             if (result != null && !result.ok) {
                 window.error = outcome
+                if (result.restored.isNotEmpty()) {
+                    window.inclusion.forget(result.restored)
+                    window.syncRows(commitRows(session, window))
+                }
             } else {
                 window.inclusion.forget(forgotten)
                 window.syncRows(commitRows(session, window))
@@ -209,16 +216,18 @@ internal fun rolledBackMessage(rows: Int, unstaged: Int = 0): String = buildStri
  */
 fun toggleAmend(state: AppState): Boolean {
     val session = state.session ?: return false
+    val window = session.commit
+    // A running amend already holds the message it will commit, so neither direction may move it.
+    if (window.committing) return true
     val inWindow = state.focus == KeyContext.COMMIT_WINDOW
     if (!inWindow) openCommit(state)
-    val window = session.commit
     if (window.amend != null) {
         // Outside the window the action only opens it and turns Amend on, so an Amend that is
         // already on stays on.
         if (inWindow) window.turnAmendOff()
         return true
     }
-    if (window.committing || session.git.busy != null) return true
+    if (session.git.busy != null) return true
     session.git.launch {
         when (val start = session.git.amendStart()) {
             is AmendStart.Ready -> Snapshot.withMutableSnapshot {
@@ -364,7 +373,8 @@ fun commitFromWindow(state: AppState, push: Boolean = false) {
             editor.save()
         } catch (e: IOException) {
             val reason = e.message ?: "cannot save ${editor.file.name}"
-            refuseCommit(state, window, "Commit failed: $reason")
+            val prefix = if (amend == null) "Commit failed" else "Amend failed"
+            refuseCommit(state, window, "$prefix: $reason")
             return
         }
     }

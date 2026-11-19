@@ -70,7 +70,6 @@ class VcsPopupRequest internal constructor() {
     internal var file: Path? = null
     internal var line: Int? = null
     internal var rollbackPath: Path? = null
-    internal var rollbackFromWindow: Boolean = false
     internal var rollbackNeedsTrackedRead: Boolean = false
 
     /** Read before the popup takes `state.focus`; the App hands the keyboard back to it on close. */
@@ -100,8 +99,8 @@ fun openVcsPopup(state: AppState): Boolean {
     request.error = snapshot.error
     request.outsideRepository = snapshot.repository == null
     val unsaved = editor?.isModified == true
-    request.rollbackFromWindow = state.focus == KeyContext.COMMIT_WINDOW
-    if (request.rollbackFromWindow) {
+    val rollbackFromWindow = state.focus == KeyContext.COMMIT_WINDOW
+    if (rollbackFromWindow) {
         request.rollbackEnabled = rollbackRows(commitRows(session)).isNotEmpty()
     } else {
         val lexicalRoot = session.project.root.toAbsolutePath().normalize()

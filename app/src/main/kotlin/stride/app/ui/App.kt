@@ -907,7 +907,7 @@ fun App(
         val diffRequest = state.diffRequest
         // The keyboard's owner before the popup took it, read in the composition that first sees
         // the request, before the popup's focus handler moves `state.focus` to CONTEXT_POPUP.
-        val diffReturnContext = remember(diffRequest) { if (diffRequest != null) state.focus else null }
+        val diffReturnContext = remember(diffRequest != null) { if (diffRequest != null) state.focus else null }
         if (diffRequest != null && session != null) {
             Box(
                 Modifier
@@ -938,7 +938,7 @@ fun App(
             }
         }
         val pushRequest = state.pushRequest
-        val pushReturnContext = remember(pushRequest) { if (pushRequest != null) state.focus else null }
+        val pushReturnContext = remember(pushRequest != null) { if (pushRequest != null) state.focus else null }
         if (pushRequest != null && session != null) {
             Box(
                 Modifier
@@ -954,7 +954,7 @@ fun App(
             }
         }
         val updateRequest = state.updateRequest
-        val updateReturnContext = remember(updateRequest) { if (updateRequest != null) state.focus else null }
+        val updateReturnContext = remember(updateRequest != null) { if (updateRequest != null) state.focus else null }
         if (updateRequest != null && session != null) {
             Box(
                 Modifier
@@ -970,7 +970,7 @@ fun App(
             }
         }
         val rollbackRequest = state.rollbackRequest
-        val rollbackReturnContext = remember(rollbackRequest) { if (rollbackRequest != null) state.focus else null }
+        val rollbackReturnContext = remember(rollbackRequest != null) { if (rollbackRequest != null) state.focus else null }
         if (rollbackRequest != null && session != null) {
             Box(
                 Modifier
