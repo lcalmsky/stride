@@ -456,6 +456,125 @@ class GitBranchesTest {
     }
 
     @Test
+    fun `a new branch checked out from another start stops on local changes`() {
+        val fixture = fixture()
+        fixture.repo.git("switch", "-q", "-c", "topic")
+        fixture.repo.write("src/Main.kt", "topic\n")
+        fixture.repo.commitAll("Topic change")
+        fixture.repo.git("switch", "-q", "main")
+        fixture.repo.write("src/Main.kt", "dirty\n")
+        val head = fixture.head()
+
+        val result = withService(fixture.repo) {
+            it.createBranch("fix-login", BranchTarget.Local("topic"), checkout = true)
+        }
+
+        assertFalse(result.ok)
+        assertEquals("Checkout stopped: local changes to 1 files would be overwritten: commit them first", result.message)
+        assertNull(fixture.branchId("fix-login"))
+        assertEquals(head, fixture.head())
+        assertEquals("dirty\n", Files.readString(fixture.repo.root.resolve("src/Main.kt")))
+    }
+
+    @Test
+    fun `a new branch checked out from another start moves the working tree to it`() {
+        val fixture = fixture()
+        fixture.repo.git("switch", "-q", "-c", "topic")
+        fixture.repo.write("src/Topic.kt", "topic\n")
+        val topicId = fixture.repo.commitAll("Topic adds a file")
+        fixture.repo.git("switch", "-q", "main")
+
+        val result = withService(fixture.repo) {
+            it.createBranch("fix-login", BranchTarget.Local("topic"), checkout = true)
+        }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Created and checked out fix-login", result.message)
+        assertEquals("refs/heads/fix-login", fixture.repo.git("symbolic-ref", "HEAD").trim())
+        assertEquals(topicId, fixture.head())
+        assertEquals("topic\n", Files.readString(fixture.repo.root.resolve("src/Topic.kt")))
+        assertEquals("", fixture.repo.git("config", "--get", "branch.fix-login.remote", check = false).trim())
+    }
+
+    @Test
+    fun `a failing post-checkout hook still reports a new branch checked out from HEAD`() {
+        val fixture = fixture()
+        val hook = fixture.repo.root.resolve(".git/hooks/post-checkout")
+        Files.createDirectories(hook.parent)
+        Files.writeString(hook, "#!/bin/sh\nexit 1\n")
+        hook.toFile().setExecutable(true)
+
+        val result = withService(fixture.repo) { it.createBranch("fix-login", null, checkout = true) }
+
+        assertTrue(result.ok, result.message)
+        assertEquals(
+            "Created and checked out fix-login; git reported an error after switching (see the Console)",
+            result.message,
+        )
+        assertEquals("refs/heads/fix-login", fixture.repo.git("symbolic-ref", "HEAD").trim())
+    }
+
+    @Test
+    fun `a failing post-checkout hook still reports a new branch checked out from another start`() {
+        val fixture = fixture()
+        fixture.repo.git("switch", "-q", "-c", "topic")
+        fixture.repo.write("src/Topic.kt", "topic\n")
+        val topicId = fixture.repo.commitAll("Topic adds a file")
+        fixture.repo.git("switch", "-q", "main")
+        val hook = fixture.repo.root.resolve(".git/hooks/post-checkout")
+        Files.createDirectories(hook.parent)
+        Files.writeString(hook, "#!/bin/sh\nexit 1\n")
+        hook.toFile().setExecutable(true)
+
+        val result = withService(fixture.repo) {
+            it.createBranch("fix-login", BranchTarget.Local("topic"), checkout = true)
+        }
+
+        assertTrue(result.ok, result.message)
+        assertEquals(
+            "Created and checked out fix-login; git reported an error after switching (see the Console)",
+            result.message,
+        )
+        assertEquals("refs/heads/fix-login", fixture.repo.git("symbolic-ref", "HEAD").trim())
+        assertEquals(topicId, fixture.head())
+    }
+
+    @Test
+    fun `a new branch checked out from another start refuses a detached HEAD's orphan commits`() {
+        val fixture = fixture()
+        fixture.repo.git("branch", "topic")
+        fixture.repo.git("checkout", "-q", "--detach")
+        fixture.repo.write("src/Orphan.kt", "orphan\n")
+        val orphan = fixture.repo.commitAll("Orphan work")
+
+        val (result, writes) = withService(fixture.repo) { service ->
+            val result = service.createBranch("fix-login", BranchTarget.Local("topic"), checkout = true)
+            result to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertFalse(result.ok)
+        assertEquals("HEAD has 1 commits on no branch: create a branch from it first (New Branch)", result.message)
+        assertNull(fixture.branchId("fix-login"))
+        assertEquals(orphan, fixture.head())
+        assertTrue(writes.isEmpty(), writes.toString())
+    }
+
+    @Test
+    fun `a new branch checked out from a detached HEAD keeps its commits`() {
+        val fixture = fixture()
+        fixture.repo.git("checkout", "-q", "--detach")
+        fixture.repo.write("src/Orphan.kt", "orphan\n")
+        val orphan = fixture.repo.commitAll("Orphan work")
+
+        val result = withService(fixture.repo) { it.createBranch("fix-login", null, checkout = true) }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Created and checked out fix-login", result.message)
+        assertEquals("refs/heads/fix-login", fixture.repo.git("symbolic-ref", "HEAD").trim())
+        assertEquals(orphan, fixture.head())
+    }
+
+    @Test
     fun `a rename keeps the upstream and says where it still pushes`() {
         val fixture = fixture()
         fixture.publish("feature")
@@ -558,6 +677,37 @@ class GitBranchesTest {
 
         assertEquals("HEAD", plan.reference)
         assertEquals(listOf("Topic work"), plan.commits.map { it.subject })
+    }
+
+    @Test
+    fun `a branch merged into a local upstream is judged against it as git does`() {
+        val fixture = fixture()
+        val base = fixture.head()
+        fixture.repo.git("switch", "-q", "-c", "b")
+        fixture.repo.write("src/B.kt", "b\n")
+        val id = fixture.repo.commitAll("Work on b")
+        fixture.repo.git("switch", "-q", "main")
+        fixture.repo.git("merge", "-q", "--ff-only", "b")
+        fixture.repo.git("branch", "other", base)
+        fixture.repo.git("switch", "-q", "other")
+        fixture.repo.git("branch", "--set-upstream-to=main", "b")
+        fixture.repo.git("branch", "raw", "b")
+        fixture.repo.git("branch", "--set-upstream-to=main", "raw")
+        val raw = TestGitRepo.run(
+            listOf("git", "-C", fixture.repo.root.toString(), "branch", "-d", "raw"),
+            fixture.repo.root,
+            fixture.repo.environment,
+        )
+
+        assertEquals(0, raw.exitCode, raw.stderr)
+        assertEquals("main", readyList(fixture).local.first { it.name == "b" }.upstream)
+        val plan = withService(fixture.repo) { it.deletePlan("b") }
+        assertEquals(DeletePlan.Merged("b", id), plan)
+        val result = withService(fixture.repo) { service ->
+            service.deleteBranch("b", (plan as DeletePlan.Merged).id, force = false)
+        }
+        assertTrue(result.ok, result.message)
+        assertNull(fixture.branchId("b"))
     }
 
     @Test

@@ -524,9 +524,10 @@ class GitService(private val project: Project) : Disposable {
         repository.root.relativize(path).toString().replace('\\', '/')
 
     /**
-     * The branch list the popup shows. `%(upstream)` prints the full remote-tracking ref, so the
-     * row's upstream drops `refs/remotes/`; `%(worktreepath)` names the worktree that has the
-     * branch checked out, and only another worktree is one the user cannot switch away from.
+     * The branch list the popup shows. `%(upstream)` prints the full ref (`refs/remotes/…` or, for a
+     * local upstream, `refs/heads/…`), so the row's upstream drops that prefix; `%(worktreepath)`
+     * names the worktree that has the branch checked out, and only another worktree is one the user
+     * cannot switch away from.
      */
     suspend fun branches(): BranchList = withContext(Dispatchers.IO) {
         if (gitMissing()) return@withContext BranchList.Refused(GIT_NOT_INSTALLED)
@@ -554,7 +555,7 @@ class GitService(private val project: Project) : Disposable {
                     local += LocalBranch(
                         name = refname.removePrefix("refs/heads/"),
                         id = fields[1],
-                        upstream = fields[2].takeIf { it.isNotEmpty() }?.removePrefix("refs/remotes/"),
+                        upstream = fields[2].takeIf { it.isNotEmpty() }?.let(::shortRef),
                         upstreamGone = track.contains("[gone]"),
                         ahead = AHEAD_WORDS.find(track)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
                         behind = BEHIND_WORDS.find(track)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
@@ -596,20 +597,7 @@ class GitService(private val project: Project) : Disposable {
 
     private suspend fun checkoutLocked(repository: GitRepository, target: BranchTarget): GitWriteResult {
         operationInProgress()?.let { return GitWriteResult(false, operationMessage(it)) }
-        if (currentBranch() == null) {
-            val count = readQuiet(
-                GitCommand(
-                    listOf("rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"),
-                    repository.root,
-                    timeouts.read,
-                ),
-            )
-            val orphans = count.stdoutText().trim().toIntOrNull()
-            if (!count.ok || orphans == null) return GitWriteResult(false, "Checkout failed: ${firstLine(count)}")
-            if (orphans > 0) {
-                return GitWriteResult(false, "HEAD has $orphans commits on no branch: create a branch from it first (New Branch)")
-            }
-        }
+        orphanCommitsRefusal(repository, "Checkout failed")?.let { return GitWriteResult(false, it) }
         val name = target.name()
         val creatingTracking: Boolean
         val args: List<String>
@@ -658,23 +646,49 @@ class GitService(private val project: Project) : Disposable {
             } else {
                 "Checked out $name"
             }
-            val message = if (result.ok) base else "$base; git reported an error after switching (see the Console)"
+            val message = checkoutMessage(base, result)
             return GitWriteResult(true, message)
         }
+        checkoutStoppedMessage(result)?.let { return GitWriteResult(false, it) }
+        return GitWriteResult(false, "Checkout failed: ${describe(result, timeouts.checkout)}")
+    }
+
+    /**
+     * V19 step 3: a detached HEAD whose commits are on no branch would be left behind by a
+     * checkout, so the write refuses first; [failure] prefixes a count that cannot be read.
+     */
+    private suspend fun orphanCommitsRefusal(repository: GitRepository, failure: String): String? {
+        if (currentBranch() != null) return null
+        val count = readQuiet(
+            GitCommand(
+                listOf("rev-list", "--count", "HEAD", "--not", "--branches", "--remotes", "--tags"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        val orphans = count.stdoutText().trim().toIntOrNull()
+        if (!count.ok || orphans == null) return "$failure: ${firstLine(count)}"
+        if (orphans == 0) return null
+        return "HEAD has $orphans commits on no branch: create a branch from it first (New Branch)"
+    }
+
+    /** V19 step 5's success text: a post-checkout hook's failure is git's exit code, not a failed switch. */
+    private fun checkoutMessage(base: String, result: GitResult): String =
+        if (result.ok) base else "$base; git reported an error after switching (see the Console)"
+
+    /** V19 step 5's two refusals for local and untracked files, or `null` for anything else. */
+    private fun checkoutStoppedMessage(result: GitResult): String? {
         val text = result.stdoutText() + "\n" + result.stderr
         val lower = text.lowercase()
         if (lower.contains("your local changes to the following files") && lower.contains("would be overwritten by checkout")) {
             val count = countListedFiles(text, "your local changes to the following files")
-            return GitWriteResult(
-                false,
-                "Checkout stopped: local changes to $count files would be overwritten: commit them first",
-            )
+            return "Checkout stopped: local changes to $count files would be overwritten: commit them first"
         }
         if (lower.contains("untracked working tree files would be overwritten")) {
             val count = countListedFiles(text, "untracked working tree files would be overwritten")
-            return GitWriteResult(false, "Checkout stopped: $count untracked files would be overwritten: move them first")
+            return "Checkout stopped: $count untracked files would be overwritten: move them first"
         }
-        return GitWriteResult(false, "Checkout failed: ${describe(result, timeouts.checkout)}")
+        return null
     }
 
     /** Creates [name] from [start] (`null` is HEAD), with `--no-track` so a remote start has no upstream. */
@@ -708,16 +722,28 @@ class GitService(private val project: Project) : Disposable {
             is BranchTarget.Local -> "refs/heads/${start.name}"
             is BranchTarget.Remote -> "refs/remotes/${start.remote}/${start.name}"
         }
-        val args = if (checkout) {
-            listOf("switch", "--no-track", "-c", name, startRef)
-        } else {
-            listOf("branch", "--no-track", "--", name, startRef)
+        if (!checkout) {
+            val result = write(
+                GitCommand(listOf("branch", "--no-track", "--", name, startRef), repository.root, timeouts.branch, write = true),
+            )
+            refreshStatus()
+            if (!result.ok) return GitWriteResult(false, "New branch failed: ${describe(result, timeouts.branch)}")
+            return GitWriteResult(true, "Created $name from ${start.display()}")
         }
-        val result = write(GitCommand(args, repository.root, timeouts.branch, write = true))
+        if (start != null) {
+            orphanCommitsRefusal(repository, "New branch failed")?.let { return GitWriteResult(false, it) }
+        }
+        val args = if (start == null) {
+            listOf("switch", "--no-track", "-c", name)
+        } else {
+            listOf("switch", "--no-track", "-c", name, startRef)
+        }
+        val result = write(GitCommand(args, repository.root, timeouts.checkout, write = true))
+        val head = currentBranch()
         refreshStatus()
-        if (!result.ok) return GitWriteResult(false, "New branch failed: ${describe(result, timeouts.branch)}")
-        val message = if (checkout) "Created and checked out $name" else "Created $name from ${start.display()}"
-        return GitWriteResult(true, message)
+        if (head == name) return GitWriteResult(true, checkoutMessage("Created and checked out $name", result))
+        checkoutStoppedMessage(result)?.let { return GitWriteResult(false, it) }
+        return GitWriteResult(false, "New branch failed: ${describe(result, timeouts.checkout)}")
     }
 
     /** Renames [old] to [new], keeping the upstream, as `git branch -m` does. */
@@ -837,14 +863,17 @@ class GitService(private val project: Project) : Disposable {
         return GitWriteResult(true, "Deleted branch $name (was ${idText.take(7)})")
     }
 
-    /** The ref `git branch -d` judges [name] against: its upstream's ref when that exists, else HEAD. */
+    /** The ref `git branch -d` judges [name] against: the configured upstream ref, else HEAD. */
     private suspend fun mergedReference(repository: GitRepository, name: String): Pair<String, String> {
-        val upstream = upstreamOf(name)
-        if (upstream != null) {
-            val branch = shortRef(upstream.second)
-            val ref = "refs/remotes/${upstream.first}/$branch"
-            if (refExists(repository, ref)) return "${upstream.first}/$branch" to ref
-        }
+        val upstream = readQuiet(
+            GitCommand(
+                listOf("for-each-ref", "--format=%(upstream)", "refs/heads/$name"),
+                repository.root,
+                timeouts.read,
+            ),
+        )
+        val ref = upstream.stdoutText().trim()
+        if (upstream.ok && ref.isNotEmpty() && refExists(repository, ref)) return shortRef(ref) to ref
         return "HEAD" to "HEAD"
     }
 
