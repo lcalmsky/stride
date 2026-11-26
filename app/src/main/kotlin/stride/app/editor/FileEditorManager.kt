@@ -33,7 +33,8 @@ class FileEditorManager(private val project: Project) : Disposable {
     private val openFilesState = mutableStateListOf<FileEditor>()
     private val recentFilesState = mutableStateListOf<VFile>()
 
-    val openFiles: List<FileEditor> get() = openFilesState
+    // Background readers walk this while the UI edits it; the member toList() returns the record's immutable list.
+    val openFiles: List<FileEditor> get() = openFilesState.toList()
 
     /** Most recently opened or selected files, newest first; closed files stay. */
     val recentFiles: List<VFile> get() = recentFilesState
@@ -63,7 +64,7 @@ class FileEditorManager(private val project: Project) : Disposable {
     }
 
     private fun reloadTouchedEditors(events: List<VFileEvent>) {
-        if (openFilesState.none { it is TextFileEditor }) return
+        if (openFilesState.toList().none { it is TextFileEditor }) return
         val paths = HashSet<Path>()
         for (event in events) {
             if (event is VFileEvent.Created || event is VFileEvent.Changed) paths.add(canonical(event.file.path))

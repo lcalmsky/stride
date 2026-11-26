@@ -171,6 +171,28 @@ class FileEditorManagerTest {
     }
 
     @Test
+    fun `a list read before a change keeps the editors it had`() {
+        val pathA = write("a.kt")
+        val pathB = write("b.kt")
+        val a = manager.openFile(VFile(pathA))!!
+        val b = manager.openFile(VFile(pathB))!!
+        val before = manager.openFiles
+        val iterator = before.iterator()
+        assertSame(a, iterator.next())
+
+        manager.openFile(VFile(write("c.kt")))
+        manager.closeFile(VFile(pathA))
+
+        val walked = mutableListOf(a)
+        while (iterator.hasNext()) walked += iterator.next()
+        assertEquals(listOf(a, b), walked)
+        assertEquals(listOf("b.kt", "c.kt"), manager.openFiles.map { it.file.name })
+
+        project.dispose()
+        assertEquals(listOf("a.kt", "b.kt"), before.map { it.file.name })
+    }
+
+    @Test
     fun `opening a file at a line puts the caret at that line start`() {
         val content = "line 1\nline 2\nline 3"
         val editor = manager.openFileAtLine(VFile(write("a.kt", content)), 1) as TextFileEditor
