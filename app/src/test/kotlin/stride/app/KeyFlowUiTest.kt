@@ -2806,6 +2806,40 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `renaming onto a symlink to the source shows the already exists error`() = runComposeUiTest {
+        val root = temp.resolve("tree-rename-symlink-project")
+        Files.createDirectories(root)
+        val source = root.resolve("Real.kt")
+        Files.writeString(source, "class Real\n")
+        Files.createSymbolicLink(root.resolve("Alias.kt"), source)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(source))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.RENAME }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("Alias")
+
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_ERROR_TAG)
+                .assertIsDisplayed()
+                .assertTextEquals("Alias.kt already exists")
+            assertTrue(Files.isSymbolicLink(root.resolve("Alias.kt")))
+            assertTrue(Files.isRegularFile(source))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `rename file from the actions tab works on the editor and returns the keyboard`() = runComposeUiTest {
         val root = temp.resolve("tree-actions-editor-project")
         Files.createDirectories(root)
@@ -3022,7 +3056,7 @@ class KeyFlowUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
-    fun `deleting a path that is not a visible row leaves the tree selection alone`() = runComposeUiTest {
+    fun `deleting a path that is not a visible row clears a selection on it`() = runComposeUiTest {
         val root = temp.resolve("tree-delete-hidden-project")
         val directory = Files.createDirectories(root.resolve("pkg"))
         val doomed = directory.resolve("Deep.kt")
@@ -3046,7 +3080,7 @@ class KeyFlowUiTest {
             onRoot().performKeyInput { pressKey(Key.Enter) }
 
             waitUntil(timeoutMillis = 5_000) { !Files.exists(doomed) && state.fileOperation == null }
-            assertEquals(doomed.toAbsolutePath().normalize(), session.tree.selected)
+            assertNull(session.tree.selected)
         } finally {
             state.dispose()
         }

@@ -191,7 +191,7 @@ fun FileOperationPopup(request: FileOperationRequest, state: AppState, onFinish:
         val key = now.target.toAbsolutePath().normalize()
         val index = rows.indexOfFirst { it.file.path.toAbsolutePath().normalize() == key }
         fun atOrBelow(path: Path) = path.toAbsolutePath().normalize().startsWith(key)
-        // A path that was not a visible row leaves the selection where it was.
+        // A path that was not a visible row has no next row to move to.
         val next = if (index < 0) {
             null
         } else {
@@ -201,8 +201,12 @@ fun FileOperationPopup(request: FileOperationRequest, state: AppState, onFinish:
         submit(
             result = {
                 val outcome = f.delete(now.target)
-                if (outcome is FileOperationResult.Success && next != null) {
-                    sessionNow.tree.select(next)
+                if (outcome is FileOperationResult.Success) {
+                    val selection = sessionNow.tree.selected
+                    when {
+                        next != null -> sessionNow.tree.select(next)
+                        selection != null && atOrBelow(selection) -> sessionNow.tree.clearSelection()
+                    }
                 }
                 outcome
             },
@@ -415,9 +419,16 @@ internal fun validationError(request: FileOperationRequest, files: FileOperation
     }
 }
 
-/** Whether [destination] and [target] name the same file, as a case-only rename does on APFS. */
-private fun isSameTarget(destination: Path, target: Path): Boolean =
-    destination == target || runCatching { Files.isSameFile(destination, target) }.getOrDefault(false)
+/** A case-only rename on a case-insensitive volume: same parent, a differently cased name, one file. */
+private fun isSameTarget(destination: Path, target: Path): Boolean {
+    if (destination == target) return true
+    if (destination.parent != target.parent) return false
+    val targetName = target.fileName?.toString() ?: return false
+    val destinationName = destination.fileName?.toString() ?: return false
+    if (targetName == destinationName) return false
+    if (!targetName.equals(destinationName, ignoreCase = true)) return false
+    return runCatching { Files.isSameFile(destination, target) }.getOrDefault(false)
+}
 
 private fun moveConflictError(files: FileOperations, root: Path, source: Path, text: String): String? {
     val name = source.fileName?.toString() ?: return null

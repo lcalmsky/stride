@@ -94,7 +94,7 @@ class FileOperations(
 
     /** P8/P10: `<relative directory> is not a directory` when a Move or Copy writes into no directory. */
     fun directoryError(directory: Path): String? =
-        if (Files.isDirectory(directory.toAbsolutePath().normalize(), LinkOption.NOFOLLOW_LINKS)) {
+        if (Files.isDirectory(directory.toAbsolutePath().normalize())) {
             null
         } else {
             "${relativeDisplay(directory)} is not a directory"
@@ -204,6 +204,7 @@ class FileOperations(
         if (!Files.exists(key, LinkOption.NOFOLLOW_LINKS)) {
             return FileOperationResult.Failure("$name no longer exists")
         }
+        outsideThroughLinkError(key.parent ?: rootKey)?.let { return FileOperationResult.Failure(it) }
         busyProvider()?.let { return FileOperationResult.Failure("Git is busy: $it") }
         if (!trashSupported()) return FileOperationResult.Failure(NO_TRASH_MESSAGE)
         val trashed = try {

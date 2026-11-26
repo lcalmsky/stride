@@ -60,6 +60,11 @@ class ProjectTreeModel(
         selected = key(file)
     }
 
+    /** Drops the keyboard selection; the highlighted editor's file is shown again. */
+    fun clearSelection() {
+        selected = null
+    }
+
     /**
      * Carries the expanded entries, the cached children and the selection at or below [old] to
      * the same place below [new], as a rename or move does.

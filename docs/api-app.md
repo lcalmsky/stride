@@ -342,7 +342,9 @@ Compare Files and the rest), as does fixing Kotlin `package` lines after a move.
 
   The first ↑/↓ with no selection selects the highlighted row (the selected editor's file, else
   the root). The list scrolls so the selected row stays visible.
-- **⌘1** follows IntelliJ's ActivateToolWindow rule: a hidden tree shows and takes the keyboard, a visible tree without the keyboard takes it, and a tree that has it hides and hands it to the editor.
+- **⌘1** follows IntelliJ's ActivateToolWindow rule: a hidden tree shows and takes the keyboard, a
+  visible tree without the keyboard takes it, and a tree that has it hides and hands it to the
+  editor.
 - **F4** is `EDIT_SOURCE`, bound `GLOBAL`, and the window handler sees it before the panel, so
   `dispatchAction(EDIT_SOURCE)` gets a `PROJECT_TREE` branch: a file row opens and takes the
   keyboard (`ProjectViewEditSource`), a directory row does nothing and the key is consumed.
@@ -418,10 +420,11 @@ app refreshes git status (`git.refresh()`).
 ### P6 Checks every write shares
 
 - **Inside the root.** Every source and target resolves (normalized; the nearest existing directory
-  of a target is also resolved through links and must stay under the root's real path, otherwise
-  `<relative path> is outside the project`) under the project root; the root itself cannot be
-  renamed, moved or deleted (`The project root cannot be changed here`). A name or relative path with an empty segment, `.`, `..`, a leading `/` or a NUL
-  is refused: `<text> is not a valid name`.
+  of a target, and the parent of a source, is also resolved through links and must stay under the
+  root's real path, otherwise `<relative path> is outside the project`) under the project root; the
+  root itself cannot be renamed, moved or deleted (`The project root cannot be changed here`). A
+  name or relative path with an empty segment, `.`, `..`, a leading `/` or a NUL is refused:
+  `<text> is not a valid name`.
 - **Checked twice.** The popup checks as the user types (error line, ↩ does nothing), and the
   write checks again right before it runs: the source still exists (`<name> no longer exists`),
   the target does not (`<name> already exists`), git is not busy. Creation uses
@@ -534,10 +537,13 @@ and the caches and git refresh as in P6.
 
 - **Reveal in Finder.** macOS: `open -R <absolute path>`. Elsewhere `Desktop.browseFileDirectory`
   when supported, otherwise `Reveal is not supported on this system`. A launch failure reads
-  `Reveal failed: <reason>`.
+  `Reveal failed: <reason>`. The launch runs off the UI thread; a failure arrives later in the
+  status bar.
 - **Open in Terminal** opens the terminal tool window at the target directory (a file's parent).
-  When the shell has not started, it starts there. When it runs, the app writes `cd` only if the
-  shell has no child process (`ProcessHandle.of(pid).children()` empty): Ctrl-U, then
+  A directory path with a control character (below U+0020, or U+007F) is refused with
+  `Open in Terminal refused: the path has control characters`. When the shell has not started, it
+  starts there. When it runs, the app writes `cd` only if the shell has no child process
+  (`ProcessHandle.of(pid).children()` empty): Ctrl-U, then
   ` cd -- '<dir>'` with `'` written as `'\''`, then Enter. A shell with a child process reads
   `The terminal is running a program: cd <dir> there yourself`, and so does a pid or child list
   that cannot be read (the check refuses rather than writing into a running program). The tool

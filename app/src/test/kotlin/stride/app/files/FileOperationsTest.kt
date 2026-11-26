@@ -535,6 +535,64 @@ class FileOperationsTest {
     }
 
     @Test
+    fun `a project root that is a symlink still renames, moves and copies at the top level`() {
+        val real = Files.createDirectories(temp.resolve("real-project"))
+        val linkedRoot = Files.createSymbolicLink(temp.resolve("root-link"), real)
+        val linked = FileOperationsFixture(linkedRoot, trash)
+        try {
+            val a = linked.write("A.kt", "a")
+            val nested = linked.write("dst/B.kt", "b")
+
+            assertEquals("Renamed A.kt to C.kt", linked.files.move(a, linkedRoot.resolve("C.kt")).message)
+            assertTrue(Files.isRegularFile(real.resolve("C.kt")))
+
+            assertEquals("Moved B.kt to .", linked.files.move(nested, linkedRoot.resolve("B.kt")).message)
+            assertTrue(Files.isRegularFile(real.resolve("B.kt")))
+
+            val copied = linked.files.copy(linkedRoot.resolve("B.kt"), linkedRoot.resolve("E.kt"))
+
+            assertEquals("Copied B.kt to E.kt", copied.message)
+            assertTrue(Files.isRegularFile(real.resolve("E.kt")))
+        } finally {
+            linked.close()
+        }
+    }
+
+    @Test
+    fun `a linked directory inside the root takes a rename, a move and a copy`() {
+        val directory = Files.createDirectories(temp.resolve("real-dir"))
+        Files.createSymbolicLink(temp.resolve("link"), directory)
+        val nested = fixture.write("link/X.kt", "x")
+        val other = fixture.write("other.txt", "o")
+        val copied = fixture.write("copy.txt", "c")
+
+        assertEquals("Renamed link/X.kt to link/Y.kt", files.move(nested, temp.resolve("link/Y.kt")).message)
+        assertTrue(Files.isRegularFile(directory.resolve("Y.kt")))
+
+        assertEquals("Moved other.txt to link", files.move(other, temp.resolve("link/other.txt")).message)
+        assertTrue(Files.isRegularFile(directory.resolve("other.txt")))
+
+        assertEquals(
+            "Copied copy.txt to link/copy.txt",
+            files.copy(copied, temp.resolve("link/copy.txt")).message,
+        )
+        assertTrue(Files.isRegularFile(directory.resolve("copy.txt")))
+    }
+
+    @Test
+    fun `a delete through a link that points outside the root is refused`() {
+        val outside = Files.createDirectories(trash.resolve("outside"))
+        val victim = outside.resolve("x.txt").also { Files.writeString(it, "x") }
+        Files.createSymbolicLink(temp.resolve("link"), outside)
+
+        val result = files.delete(temp.resolve("link/x.txt"))
+
+        assertEquals("link is outside the project", result.message)
+        assertTrue(Files.isRegularFile(victim))
+        assertFalse(Files.exists(trash.resolve("x.txt")))
+    }
+
+    @Test
     fun `a symlink is moved as the link, not as what it points to`() {
         val outsideFile = trash.resolve("target.txt").also { Files.writeString(it, "t") }
         val link = Files.createSymbolicLink(temp.resolve("link.txt"), outsideFile)
