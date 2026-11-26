@@ -1387,11 +1387,13 @@ Help >
 ### M10 Differences from IntelliJ
 
 - Shortcuts are part of the row text, not a right-aligned column of native glyphs (M2).
-- IntelliJ rows with no stride action are left out: Attach Project, Close Project, Settings and
-  file properties, Local History, Invalidate Caches, Pull, Merge, Rebase, Stash and Shelve, Select
-  All (the text field handles ⌘A), Find Word at Caret, Safe Delete, Debug, Minimize and Zoom, the
-  tool window tab rows of Active Tool Window, Manage Projects…. About and Quit are the JDK's app
-  menu.
+- IntelliJ's Tools menu is not in the bar. This round's scope names the eleven menus above, and the
+  dump does not expand Tools, so its rows were not compared.
+- Every IntelliJ row with no stride action is left out, and an IntelliJ submenu left with no row is
+  left out with it. Among them: Attach Project, Close Project, Settings and file properties, Local
+  History, Invalidate Caches, Pull, Merge, Rebase, Stash and Shelve, Select All (the text field
+  handles ⌘A), Find Word at Caret, Safe Delete, Debug, Minimize and Zoom, the tool window tab rows
+  of Active Tool Window, Manage Projects…. About and Quit are the JDK's app menu.
 - Open… opens a folder only, and Select in Project View selects in the tree directly instead of
   offering targets.
 - Only the editor and the terminal hand component actions to the menu bar; Jump to Source in a
