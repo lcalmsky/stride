@@ -18,6 +18,7 @@ import javax.swing.JMenu
 import javax.swing.JMenuBar
 import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JSeparator
 import javax.swing.UIManager
 import javax.swing.KeyStroke as SwingKeyStroke
 import org.junit.jupiter.api.AfterAll
@@ -212,19 +213,15 @@ class MainMenuBarTest {
             state.focus = KeyContext.EDITOR
             var bar = buildBar(state)
             assertEquals("Generate…  ⌘N", findItem(menu(bar, "Code"), "Generate…")!!.text)
-            assertEquals("New…", findItem(menu(bar, "File"), "New…")!!.text)
-            assertEquals("Rollback Lines  ⌥⌘Z", findItem(menu(bar, "Git"), "Rollback Lines")!!.text)
             assertEquals("Rollback…", findItem(menu(bar, "Git"), "Rollback…")!!.text)
 
             state.focus = KeyContext.PROJECT_TREE
             bar = buildBar(state)
-            assertEquals("New…  ⌘N", findItem(menu(bar, "File"), "New…")!!.text)
             assertEquals("Generate…", findItem(menu(bar, "Code"), "Generate…")!!.text)
 
             state.focus = KeyContext.COMMIT_WINDOW
             bar = buildBar(state)
             assertEquals("Rollback…  ⌥⌘Z", findItem(menu(bar, "Git"), "Rollback…")!!.text)
-            assertEquals("Rollback Lines", findItem(menu(bar, "Git"), "Rollback Lines")!!.text)
         } finally {
             state.dispose()
         }
@@ -249,6 +246,19 @@ class MainMenuBarTest {
         }
     }
 
+    // T9: the menu outline.
+    @Test
+    fun `the eleven menus have the dump's submenus and rows`() {
+        val state = newState(Scenario.S3)
+        try {
+            val bar = buildBar(state)
+            openEveryMenu(bar)
+            assertEquals(MAIN_MENU_OUTLINE, outline(bar))
+        } finally {
+            state.dispose()
+        }
+    }
+
     // T5: choosing a row resolves it again.
     @Test
     fun `a row chosen after its state changed runs nothing`() {
@@ -258,7 +268,7 @@ class MainMenuBarTest {
             val dispatcher = Dispatcher()
             val bar = buildMainMenuBar(state, keymap, FolderChooserGuard { null }, dispatch = dispatcher::dispatch)
             openEveryMenu(bar)
-            val item = findItem(menu(bar, "File"), "New…")!!
+            val item = findItem(menu(bar, "File"), "Kotlin Class/File")!!
             assertTrue(item.isEnabled)
 
             state.closeSession()
@@ -299,7 +309,7 @@ class MainMenuBarTest {
             val dispatcher = Dispatcher()
             lateinit var bar: JMenuBar
             val chooser = FolderChooserGuard {
-                findItem(menu(bar, "File"), "New…")!!.doClick()
+                findItem(menu(bar, "File"), "Kotlin Class/File")!!.doClick()
                 null
             }
             bar = buildMainMenuBar(state, keymap, chooser, dispatch = dispatcher::dispatch)
@@ -309,6 +319,48 @@ class MainMenuBarTest {
 
             assertEquals(1, dispatcher.calls)
             assertNull(state.fileOperation)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `a generated row chosen while the context is modal runs nothing`() {
+        val folder = Files.createDirectories(temp.resolve("recent-modal"))
+        val state = newState(Scenario.S1)
+        try {
+            state.recentProjects.record(folder)
+            val bar = buildBar(state)
+            openEveryMenu(bar)
+            val item = findItem(menu(bar, "File"), "recent-modal")!!
+            assertTrue(item.isEnabled)
+
+            state.focus = KeyContext.CONTEXT_POPUP
+            item.doClick()
+
+            assertNull(state.session)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
+    fun `a generated row chosen while the folder chooser is open runs nothing`() {
+        val folder = Files.createDirectories(temp.resolve("recent-chooser"))
+        val state = newState(Scenario.S1)
+        try {
+            state.recentProjects.record(folder)
+            lateinit var bar: JMenuBar
+            val chooser = FolderChooserGuard {
+                findItem(menu(bar, "File"), "recent-chooser")!!.doClick()
+                null
+            }
+            bar = buildMainMenuBar(state, keymap, chooser)
+            openEveryMenu(bar)
+
+            findItem(menu(bar, "File"), "Open…")!!.doClick()
+
+            assertNull(state.session)
         } finally {
             state.dispose()
         }
@@ -528,6 +580,23 @@ class MainMenuBarTest {
         }
     }
 
+    private fun outline(bar: JMenuBar): String {
+        val lines = mutableListOf<String>()
+        fun visit(menu: JMenu, depth: Int) {
+            lines += "${"  ".repeat(depth)}${menu.text} >"
+            for (index in 0 until menu.menuComponentCount) {
+                when (val child = menu.getMenuComponent(index)) {
+                    is JMenu -> visit(child, depth + 1)
+                    is JSeparator -> lines += "${"  ".repeat(depth + 1)}---"
+                    is JMenuItem -> lines += "${"  ".repeat(depth + 1)}${child.text.substringBefore("  ")}"
+                    else -> Unit
+                }
+            }
+        }
+        for (index in 0 until bar.menuCount) visit(bar.getMenu(index), 0)
+        return lines.joinToString("\n")
+    }
+
     private fun findItem(menu: JMenu, text: String): JMenuItem? {
         for (index in 0 until menu.itemCount) {
             val item = menu.getItem(index) ?: continue
@@ -604,6 +673,202 @@ class MainMenuBarTest {
         private const val KOTLIN_FILE = "src/main/kotlin/api/OrderService.kt"
         private const val KOTLIN_TEXT = "class OrderService {}\n"
         private val KOTLIN_CARET = KOTLIN_TEXT.indexOf("OrderService") + 3
+
+        private val MAIN_MENU_OUTLINE = """
+            File >
+              New >
+                Kotlin Class/File
+                File
+                Directory
+              Open…
+              ---
+              Save All
+            Edit >
+              Undo
+              Redo
+              ---
+              Cut
+              Copy
+              Copy Paths
+              Copy Path/Reference… >
+                Copy Reference
+              Paste >
+                Paste
+                Paste from History…
+              Delete
+              ---
+              Find >
+                Find…
+                Replace…
+                Find Next / Move to Next Occurrence
+                Find Previous / Move to Previous Occurrence
+                Select All Occurrences
+                Add Selection for Next Occurrence
+                Unselect Occurrence
+                ---
+                Find in Files…
+                Replace in Files…
+              Find Usages >
+                Find Usages
+                Show Usages
+                ---
+                Highlight Usages in File
+              ---
+              Column Selection Mode
+              Extend Selection
+              Shrink Selection
+              ---
+              Toggle Case
+              Join Lines
+              Duplicate Line or Selection
+              ---
+              Indent Selection
+              Unindent Line or Selection
+              ---
+              Bookmarks >
+                Toggle Bookmark
+                ---
+                Show Bookmarks…
+            View >
+              Tool Windows >
+                Project
+                Git
+                Commit
+                Terminal
+                Run
+                Problems
+                Structure
+                Bookmarks
+                Find
+              ---
+              Quick Definition
+              Quick Documentation
+              ---
+              Parameter Info
+              Error Description
+              Jump to Source
+              ---
+              Recent Files
+              Recent Locations
+            Navigate >
+              Back
+              Forward
+              ---
+              Search Everywhere
+              ---
+              Go to Class…
+              Go to File…
+              Go to Symbol…
+              Go to Line:Column…
+              ---
+              Next Highlighted Error
+              Previous Highlighted Error
+              Last Edit Location
+              ---
+              Navigate in File >
+                Next Method
+                Previous Method
+                Move Caret to Matching Brace
+                ---
+                Next Change
+                Previous Change
+              ---
+              Select in Project View
+              Jump to Navigation Bar
+              ---
+              Go to Declaration or Usages
+              Go to Implementation(s)
+              Go to Type Declaration
+              Go to Super Method
+              Go to Test
+              ---
+              File Structure
+              Type Hierarchy
+              Call Hierarchy
+            Code >
+              Override Methods…
+              Implement Methods…
+              Generate…
+              ---
+              Code Completion >
+                Basic
+                Type-Matching
+                ---
+                Complete Current Statement
+                ---
+                Cyclic Expand Word
+              ---
+              Surround With…
+              Unwrap/Remove…
+              ---
+              Folding >
+                Expand
+                Expand All
+                ---
+                Collapse
+                Collapse All
+              ---
+              Comment with Line Comment
+              Comment with Block Comment
+              Reformat Code
+              Optimize Imports
+              ---
+              Move Statement Down
+              Move Statement Up
+              Move Line Down
+              Move Line Up
+            Refactor >
+              Refactor This…
+              Rename…
+              Rename File…
+              ---
+              Extract/Introduce >
+                Introduce Variable…
+                ---
+                Extract Method…
+              Inline…
+              ---
+              Move…
+              Copy…
+            Build >
+              Build Project
+            Run >
+              Run…
+              ---
+              Stop
+            Git >
+              Commit…
+              Push…
+              Update Project…
+              Fetch
+              ---
+              Branches…
+              New Branch…
+              ---
+              Show VCS Log
+              ---
+              Uncommitted Changes >
+                Rollback…
+              ---
+              VCS Operations Popup…
+            Window >
+              Active Tool Window >
+                Hide Active Tool Window
+                Hide All Tool Windows
+              Editor Tabs >
+                Select Next Tab
+                Select Previous Tab
+                ---
+                Close Tab
+                Close Other Tabs
+                Close All Tabs
+                Close Tabs to the Left
+                Close Tabs to the Right
+                ---
+                Reopen Closed Tab
+            Help >
+              Find Action…
+        """.trimIndent()
 
         @BeforeAll
         @JvmStatic

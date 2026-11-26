@@ -117,9 +117,15 @@ private class MainMenuBuilder(
         if (component != null) component.run() else dispatch(row.action, state, chooser::choose)
     }
 
-    fun chooseCommand(row: MenuRow.Command) {
+    /** M5/M7: a generated row is generated again when chosen; only the row at the same path runs. */
+    fun chooseCommand(item: GroupItem, row: MenuRow.Command) {
         if (chooser.isOpen) return
-        if (row.enabled) row.run()
+        val kind = (item as? GroupGenerated)?.kind ?: return
+        val current = generatedRows(kind)
+            .map { generated -> if (modal() && generated is MenuRow.Command) generated.copy(enabled = false) else generated }
+            .filterIsInstance<MenuRow.Command>()
+            .firstOrNull { it.text == row.text }
+        if (current != null && current.enabled) current.run()
     }
 
     private class Entry(val row: MenuRow, val item: GroupItem?)
@@ -142,7 +148,7 @@ private class MainMenuBuilder(
                 if (item is GroupGenerated) {
                     generatedRows(item.kind).forEach { row ->
                         val disabled = if (modal() && row is MenuRow.Command) row.copy(enabled = false) else row
-                        entries += Entry(disabled, null)
+                        entries += Entry(disabled, item)
                     }
                 } else {
                     val row = resolve(item) ?: continue
@@ -179,13 +185,16 @@ private class MainMenuBuilder(
                         },
                     )
                 }
-                is MenuRow.Command -> add(
-                    JMenuItem(menuItemText(row.text, row.shortcut)).apply {
-                        isFocusable = false
-                        isEnabled = row.enabled
-                        addActionListener { chooseCommand(row) }
-                    },
-                )
+                is MenuRow.Command -> {
+                    val item = entry.item ?: return
+                    add(
+                        JMenuItem(menuItemText(row.text, row.shortcut)).apply {
+                            isFocusable = false
+                            isEnabled = row.enabled
+                            addActionListener { chooseCommand(item, row) }
+                        },
+                    )
+                }
             }
         }
 
