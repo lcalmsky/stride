@@ -33,11 +33,13 @@ enum class ActionId {
     ROLLBACK_LINES, NEXT_CHANGE, PREVIOUS_CHANGE, SHOW_DIFF,
     COMMIT_AND_PUSH, UPDATE_PROJECT, FETCH, ROLLBACK_CHANGES, TOGGLE_AMEND,
     SHOW_BRANCHES, NEW_BRANCH,
+    NEW_ELEMENT, RENAME_FILE, MOVE_ELEMENT, DELETE_ELEMENT, COPY_ELEMENT,
+    CUT_FILE, COPY_FILE, PASTE_FILE, REVEAL_IN_FINDER, OPEN_IN_TERMINAL,
 }
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
-    LIST_WINDOW, NAV_BAR, COMMIT_WINDOW,
+    LIST_WINDOW, NAV_BAR, COMMIT_WINDOW, PROJECT_TREE,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -370,4 +372,21 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     // Vcs.UpdateProject control T (→meta)
     bind("meta T", ActionId.UPDATE_PROJECT, KeyContext.GLOBAL)
     // Git.Fetch has no stroke in IntelliJ; VCS popup row 8 runs it.
+    // ProjectViewPopupMenu.NewElement meta N | control ENTER; the editor keeps Generate on both.
+    bind("meta N", ActionId.NEW_ELEMENT, KeyContext.PROJECT_TREE)
+    bind("control ENTER", ActionId.NEW_ELEMENT, KeyContext.PROJECT_TREE)
+    // RenameElement shift F6 in the tree
+    bind("shift F6", ActionId.RENAME_FILE, KeyContext.PROJECT_TREE)
+    // Move F6
+    bind("F6", ActionId.MOVE_ELEMENT, KeyContext.PROJECT_TREE)
+    // $Delete
+    bind("BACK_SPACE", ActionId.DELETE_ELEMENT, KeyContext.PROJECT_TREE)
+    bind("DELETE", ActionId.DELETE_ELEMENT, KeyContext.PROJECT_TREE)
+    bind("meta BACK_SPACE", ActionId.DELETE_ELEMENT, KeyContext.PROJECT_TREE)
+    // CopyElement F5
+    bind("F5", ActionId.COPY_ELEMENT, KeyContext.PROJECT_TREE)
+    // $Cut, $Copy and $Paste on the tree's file clipboard
+    bind("meta X", ActionId.CUT_FILE, KeyContext.PROJECT_TREE)
+    bind("meta C", ActionId.COPY_FILE, KeyContext.PROJECT_TREE)
+    bind("meta V", ActionId.PASTE_FILE, KeyContext.PROJECT_TREE)
 }

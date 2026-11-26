@@ -17,6 +17,7 @@ import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
 import stride.app.editor.find.FindOptions
+import stride.app.files.FileOperationRequest
 import stride.app.files.FileOperations
 import stride.app.generate.GenerateRequest
 import stride.app.generate.MemberChooseRequest
@@ -159,7 +160,14 @@ class AppState {
     var searchGeneration by mutableStateOf(0)
         private set
 
+    /** The focus context [openSearch] replaced; P4 reads it to pick the Actions tab's target. */
+    var searchOpenedFrom by mutableStateOf(KeyContext.GLOBAL)
+        private set
+
     var focus by mutableStateOf(KeyContext.GLOBAL)
+
+    /** The open project tree file-operation popup; `null` when it is closed. */
+    var fileOperation by mutableStateOf<FileOperationRequest?>(null)
 
     val findBar = FindBarState()
 
@@ -487,6 +495,7 @@ class AppState {
     /** Opens Search Everywhere on [tab], resetting the popup even when it is already open. */
     fun openSearch(tab: SearchTab) {
         searchTab = tab
+        searchOpenedFrom = focus
         searchGeneration++
         searchVisible = true
         focus = KeyContext.SEARCH_POPUP
@@ -614,6 +623,12 @@ class AppState {
         if (projectTreeVisible) treeFocusRequests++ else handFocusToEditor()
     }
 
+    /** Hands the keyboard to the project tree (P4's return rule). */
+    fun focusProjectTree() {
+        focus = KeyContext.PROJECT_TREE
+        treeFocusRequests++
+    }
+
     /** Hides the tree and the tool window panel; the next call restores the layout it hid. */
     fun hideAllWindows() {
         if (projectTreeVisible || toolWindows.visible) {
@@ -688,6 +703,8 @@ class AppState {
         session = null
         searchVisible = false
         searchTab = SearchTab.ALL
+        searchOpenedFrom = KeyContext.GLOBAL
+        fileOperation = null
         findBar.close()
         findInPathVisible = false
         findInPathQuery = ""

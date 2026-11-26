@@ -337,6 +337,44 @@ class KeymapTest {
     }
 
     @Test
+    fun `the project tree bindings resolve in their context`() {
+        // New is meta N and control ENTER in the tree; the editor keeps Generate on both.
+        assertEquals(ActionId.NEW_ELEMENT, action("meta N", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.NEW_ELEMENT, action("control ENTER", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.GENERATE, action("meta N", KeyContext.EDITOR))
+        assertEquals(ActionId.GENERATE, action("control ENTER", KeyContext.EDITOR))
+        // Rename and Move
+        assertEquals(ActionId.RENAME_FILE, action("shift F6", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.RENAME_ELEMENT, action("shift F6", KeyContext.EDITOR))
+        assertEquals(ActionId.MOVE_ELEMENT, action("F6", KeyContext.PROJECT_TREE))
+        // Delete in the tree and the editor's own command delete
+        assertEquals(ActionId.DELETE_ELEMENT, action("BACK_SPACE", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.DELETE_ELEMENT, action("DELETE", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.DELETE_ELEMENT, action("meta BACK_SPACE", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.EDITOR_DELETE_LINE, action("meta BACK_SPACE", KeyContext.EDITOR))
+        // Copy, cut and paste
+        assertEquals(ActionId.COPY_ELEMENT, action("F5", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.CUT_FILE, action("meta X", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.COPY_FILE, action("meta C", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.PASTE_FILE, action("meta V", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.CUT_LINE, action("meta X", KeyContext.EDITOR))
+        assertEquals(ActionId.COPY_LINE, action("meta C", KeyContext.EDITOR))
+        assertNull(action("meta V", KeyContext.EDITOR))
+        // GLOBAL bindings still answer in the tree, which is not modal.
+        assertEquals(ActionId.SAVE, action("meta S", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, action("meta 1", KeyContext.PROJECT_TREE))
+    }
+
+    @Test
+    fun `no stroke has two bindings in the same context`() {
+        for ((stroke, bindings) in keymap.bindings) {
+            for ((context, inContext) in bindings.groupBy { it.context }) {
+                assertEquals(1, inContext.size, "$stroke has ${inContext.size} bindings in $context")
+            }
+        }
+    }
+
+    @Test
     fun `non-mac swaps meta for control`() {
         val other = Keymap.forPlatform(false)
 

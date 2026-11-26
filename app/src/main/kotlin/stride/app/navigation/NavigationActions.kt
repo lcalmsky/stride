@@ -376,6 +376,7 @@ fun selectInProjectView(state: AppState): Boolean {
     val session = state.session ?: return false
     val editor = session.editors.selected ?: return false
     state.projectTreeVisible = true
+    session.tree.select(editor.file)
     if (session.tree.reveal(editor.file)) state.requestTreeReveal()
     return true
 }

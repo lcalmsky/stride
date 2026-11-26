@@ -268,6 +268,10 @@ class ProjectTreeModel(
     fun reveal(file: VFile): Boolean   // expands the file's ancestors; false outside the root
     fun handleEvents(events: List<VFileEvent>)
     fun children(directory: VFile): List<VFile>
+    var selected: Path?                // Compose state; null highlights the selected editor's file
+        private set
+    fun select(file: VFile)
+    fun moved(old: Path, new: Path)
 }
 ```
 
@@ -285,7 +289,8 @@ class ProjectTreeModel(
   without a bus.
 - `childrenLoader` is injectable so tests can observe when a directory is read; production
   code uses `VFile.children()`.
-- In the UI a directory row toggles on a single click and a file row opens on a single click.
+- In the UI a directory row toggles on a single click and a file row opens on a single click;
+  the click also selects the row, which is what the tree's keyboard actions work on (P4).
 
 ## Project tree keys and file operations
 
@@ -564,12 +569,13 @@ handler.
 | `Cut <name>` / `Copied <name>` | ⌘X / ⌘C in the tree |
 | `No file selected` | an action with no target (P4) |
 | `Cut, copy and paste files in the Project tree` | the clipboard actions from the Actions tab outside the tree |
-| `<text> is not a valid name`, `<name> is not a valid Kotlin name`, `<name> already exists`, `<name> already exists in <directory>`, `Cannot move <name> into itself` | popup error line (the write's own check uses the same text as a status message) |
+| `<text> is not a valid name`, `<name> is not a valid Kotlin name`, `<name> already exists`, `<name> already exists in <directory>`, `Cannot move <name> into itself`, `Cannot copy <name> into itself` | popup error line (the write's own check uses the same text as a status message) |
 | `<name> no longer exists`, `Git is busy: <what>`, `The project root cannot be changed here` | the check right before the write |
 | `<Operation> failed: <reason>`, `Delete failed: could not move <name> to the Trash` | the write failed (P6, P9) |
 | `This system has no Trash: delete it in the terminal` | Delete popup line |
 | `Reveal is not supported on this system`, `Reveal failed: <reason>` | Reveal in Finder |
 | `The terminal is running a program: cd <dir> there yourself` | Open in Terminal (P11) |
+| `Open in Terminal failed: the shell did not start` | Open in Terminal when the shell cannot start |
 | `Save failed: <file>: <reason>` (+ ` (and <n> more)`) | ⌘S |
 
 ### P14 Differences from IntelliJ
@@ -676,11 +682,13 @@ enum class ActionId {
     JUMP_TO_LAST_CHANGE, SHOW_USAGES, HIGHLIGHT_USAGES_IN_FILE,
     RECENT_LOCATIONS, SHOW_NAV_BAR, EDIT_SOURCE,
     GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
+    NEW_ELEMENT, RENAME_FILE, MOVE_ELEMENT, DELETE_ELEMENT, COPY_ELEMENT,
+    CUT_FILE, COPY_FILE, PASTE_FILE, REVEAL_IN_FINDER, OPEN_IN_TERMINAL,
 }
 
 enum class KeyContext {
     GLOBAL, EDITOR, EDITOR_FIELD, FIND_BAR, SEARCH_POPUP, RUN_WINDOW, TERMINAL, CONTEXT_POPUP,
-    LIST_WINDOW, NAV_BAR,
+    LIST_WINDOW, NAV_BAR, PROJECT_TREE,
 }
 
 data class Binding(val action: ActionId, val context: KeyContext)
@@ -845,6 +853,14 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `REOPEN_CLOSED_TAB` | — | (none) | — | — |
 | `TOGGLE_UI_FONT` | — | (none) | — | — |
 | `CLOSE_OTHER_TABS` | — | (none) | — | — |
+| `NEW_ELEMENT` | PROJECT_TREE | ⌘N , ⌃↩ | `NewElement` | :376, :377 |
+| `RENAME_FILE` | PROJECT_TREE | ⇧F6 | `RenameElement` | :379 |
+| `MOVE_ELEMENT` | PROJECT_TREE | F6 | `Move` | :381 |
+| `DELETE_ELEMENT` | PROJECT_TREE | ⌫ , ⌦ , ⌘⌫ | `$Delete` | :383, :384, :385 |
+| `COPY_ELEMENT` | PROJECT_TREE | F5 | `CopyElement` | :387 |
+| `CUT_FILE` | PROJECT_TREE | ⌘X | `$Cut` | :389 |
+| `COPY_FILE` | PROJECT_TREE | ⌘C | `$Copy` | :390 |
+| `PASTE_FILE` | PROJECT_TREE | ⌘V | `$Paste` | :391 |
 
 `KeyRouter` has no window dependency and is unit-tested. Modifier keys map to `ModifierKey`; a
 repeated down of an already-pressed modifier is ignored. `DoubleModifierDetector` turns a double

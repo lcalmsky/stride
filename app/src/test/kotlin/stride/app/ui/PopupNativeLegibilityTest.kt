@@ -41,6 +41,10 @@ import stride.app.vcs.ChangeMarkPopup
 import stride.app.vcs.ChangeMarkPopupRequest
 import stride.app.vcs.LineHunk
 import stride.app.editor.TextFileEditor
+import stride.app.files.FILE_OPERATION_POPUP_KEY
+import stride.app.files.FileOperationPage
+import stride.app.files.FileOperationPopup
+import stride.app.files.FileOperationRequest
 import stride.app.generate.MemberChooserPopup
 import stride.app.glass.GlassHoles
 import stride.app.glass.GlassRegistry
@@ -503,6 +507,18 @@ class PopupNativeLegibilityTest {
                 selectionPill = false,
             ) {
                 RenamePopup(initialName = "alphaOne", onRename = {}, onClose = {})
+            },
+            PopupCase(
+                name = "file-operation",
+                key = FILE_OPERATION_POPUP_KEY,
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.AMBER, Role.ERROR),
+                renderMillis = 600,
+            ) {
+                FileOperationPopup(
+                    request = FileOperationRequest(FileOperationPage.NEW_LIST, root.resolve("src")),
+                    state = popupState,
+                    onFinish = {},
+                )
             },
             PopupCase(
                 name = "refactoring-name",

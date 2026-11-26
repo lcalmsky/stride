@@ -57,6 +57,9 @@ import stride.app.editor.RENAME_FIELD_TAG
 import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
+import stride.app.files.FILE_OPERATION_ERROR_TAG
+import stride.app.files.FILE_OPERATION_FIELD_TAG
+import stride.app.files.FileOperationPage
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyEventType
@@ -80,6 +83,7 @@ import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
+import stride.app.ui.PROJECT_TREE_TAG
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
@@ -2194,6 +2198,576 @@ class KeyFlowUiTest {
             assertEquals(gamma, state.recentLocationsCaret)
         } finally {
             state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command 1 shows and focuses the project tree`() = runComposeUiTest {
+        val root = temp.resolve("tree-focus-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Main.kt"), "fun main() {}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            state.projectTreeVisible = false
+            setContent { KeyFlowHarness(state) }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.One) } }
+
+            waitUntil(timeoutMillis = 5_000) {
+                state.projectTreeVisible && state.focus == KeyContext.PROJECT_TREE
+            }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the tree arrows move the selection and expand and collapse`() = runComposeUiTest {
+        val root = temp.resolve("tree-arrows-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.createDirectories(root.resolve("docs"))
+        Files.writeString(root.resolve("src/Main.kt"), "fun main() {}\n")
+        Files.writeString(root.resolve("docs/notes.md"), "# notes\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            // No selection yet: the first arrow selects the row the editor highlights (the root).
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitForIdle()
+            assertEquals(root.toAbsolutePath().normalize(), session.tree.selected)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitForIdle()
+            assertEquals(root.resolve("docs").toAbsolutePath().normalize(), session.tree.selected)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            waitForIdle()
+            assertTrue(session.tree.rows().any { it.file.name == "notes.md" })
+
+            onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            waitForIdle()
+            assertEquals(root.resolve("docs/notes.md").toAbsolutePath().normalize(), session.tree.selected)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+            waitForIdle()
+            assertEquals(root.resolve("docs").toAbsolutePath().normalize(), session.tree.selected)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+            waitForIdle()
+            assertFalse(session.tree.rows().any { it.file.name == "notes.md" })
+            assertEquals(root.resolve("docs").toAbsolutePath().normalize(), session.tree.selected)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            waitForIdle()
+            assertEquals(root.toAbsolutePath().normalize(), session.tree.selected)
+            onRoot().performKeyInput { pressKey(Key.DirectionUp) }
+            waitForIdle()
+            assertEquals(root.toAbsolutePath().normalize(), session.tree.selected)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `enter opens the selected file and escape hands the keyboard to the editor`() = runComposeUiTest {
+        val root = temp.resolve("tree-enter-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Main.kt"), "fun main() {}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals("Main.kt", session.editors.selected?.file?.name)
+            onNode(hasSetTextAction()).assertIsFocused()
+
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            onNode(hasSetTextAction()).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `F4 opens the file selected in the tree`() = runComposeUiTest {
+        val root = temp.resolve("tree-f4-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.writeString(root.resolve("src/Main.kt"), "fun main() {}\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(root.resolve("src/Main.kt")))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.F4) }
+
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals("Main.kt", session.editors.selected?.file?.name)
+            onNode(hasSetTextAction()).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `new file from the tree creates it and opens its editor`() = runComposeUiTest {
+        val root = temp.resolve("tree-new-file-project")
+        Files.createDirectories(root)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.N) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_LIST }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_NAME }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).assertIsFocused()
+
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("notes/todo.md")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val created = root.resolve("notes/todo.md")
+            waitUntil(timeoutMillis = 5_000) { Files.exists(created) && state.fileOperation == null }
+            assertEquals("Created notes/todo.md", state.statusMessage)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            assertEquals(created.toAbsolutePath().normalize(), session.editors.selected?.file?.path?.toAbsolutePath()?.normalize())
+            onNode(hasSetTextAction()).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `new directory goes back to the list and closing returns to the tree`() = runComposeUiTest {
+        val root = temp.resolve("tree-new-directory-project")
+        Files.createDirectories(root)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.N) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_LIST }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_NAME }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("scratch")
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_LIST }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+            assertFalse(Files.exists(root.resolve("scratch")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `new kotlin class writes the package line`() = runComposeUiTest {
+        val root = temp.resolve("tree-new-kotlin-project")
+        val packageDirectory = root.resolve("src/main/kotlin/a/b")
+        Files.createDirectories(packageDirectory)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(packageDirectory))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.N) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_LIST }
+            waitForIdle()
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.KOTLIN }
+            waitForIdle()
+
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("Greeting")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val created = packageDirectory.resolve("Greeting.kt")
+            waitUntil(timeoutMillis = 5_000) { Files.exists(created) && state.fileOperation == null }
+            assertEquals("package a.b\n\nclass Greeting {\n}\n", Files.readString(created))
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `rename from the tree follows an unsaved editor and returns to the tree`() = runComposeUiTest {
+        val root = temp.resolve("tree-rename-project")
+        Files.createDirectories(root)
+        val old = root.resolve("Star.kt")
+        Files.writeString(old, "class Star\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(old)) as TextFileEditor
+            editor.updateValue(TextFieldValue("class Star { }\n", TextRange(0)))
+            session.tree.select(VFile(old))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.RENAME }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("Planet")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val renamed = root.resolve("Planet.kt")
+            waitUntil(timeoutMillis = 5_000) { Files.exists(renamed) && state.fileOperation == null }
+            assertEquals("Renamed Star.kt to Planet.kt", state.statusMessage)
+            assertEquals("Planet.kt", session.editors.selected?.file?.name)
+            assertTrue(editor.isModified)
+            assertEquals("class Star { }\n", editor.value.text)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `delete confirmation moves the file to the fake trash and closes its tab`() = runComposeUiTest {
+        val root = temp.resolve("tree-delete-project")
+        Files.createDirectories(root)
+        val doomed = root.resolve("Old.kt")
+        Files.writeString(doomed, "class Old\n")
+        val state = AppState()
+        try {
+            val trash = Files.createDirectories(temp.resolve("tree-delete-trash"))
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(doomed))
+            session.tree.select(VFile(doomed))
+            installFakeTrash(state, trash)
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.Backspace) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.DELETE }
+            waitForIdle()
+            onAllNodesWithText("Move Old.kt to the Trash?").assertCountEquals(1)
+            onAllNodesWithText("Closes 1 tabs").assertCountEquals(1)
+
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+            waitUntil(timeoutMillis = 5_000) { !Files.exists(doomed) && state.fileOperation == null }
+            assertTrue(Files.exists(trash.resolve("Old.kt")))
+            assertTrue(session.editors.openFiles.isEmpty())
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `backspace in a popup field edits the text instead of deleting the file`() = runComposeUiTest {
+        val root = temp.resolve("tree-popup-field-project")
+        Files.createDirectories(root)
+        val file = root.resolve("Alpha.kt")
+        Files.writeString(file, "class Alpha\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(file))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.ShiftLeft) { pressKey(Key.F6) } }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.RENAME }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextClearance()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("abc")
+
+            onRoot().performKeyInput { pressKey(Key.Backspace) }
+            waitForIdle()
+
+            assertEquals(FileOperationPage.RENAME, state.fileOperation?.page)
+            assertEquals("ab", state.fileOperation?.text?.text)
+            assertTrue(Files.exists(file))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `copy and move from the tree write the new paths`() = runComposeUiTest {
+        val root = temp.resolve("tree-copy-move-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.createDirectories(root.resolve("docs"))
+        val source = root.resolve("src/a.txt")
+        Files.writeString(source, "a")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(source))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { pressKey(Key.F5) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.COPY }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextClearance()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("src/b.txt")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val copy = root.resolve("src/b.txt")
+            waitUntil(timeoutMillis = 5_000) { Files.exists(copy) && state.fileOperation == null }
+            assertEquals("Copied a.txt to src/b.txt", state.statusMessage)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+
+            session.tree.select(VFile(source))
+            onRoot().performKeyInput { pressKey(Key.F6) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.MOVE }
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextClearance()
+            onNodeWithTag(FILE_OPERATION_FIELD_TAG).performTextInput("docs")
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            val moved = root.resolve("docs/a.txt")
+            waitUntil(timeoutMillis = 5_000) { Files.exists(moved) && state.fileOperation == null }
+            assertFalse(Files.exists(source))
+            assertEquals("Moved a.txt to docs", state.statusMessage)
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `paste of a taken name opens the copy popup with the error`() = runComposeUiTest {
+        val root = temp.resolve("tree-paste-conflict-project")
+        Files.createDirectories(root.resolve("src"))
+        Files.createDirectories(root.resolve("dst"))
+        val source = root.resolve("src/a.txt")
+        Files.writeString(source, "a")
+        Files.writeString(root.resolve("dst/a.txt"), "b")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(source))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.C) } }
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "Copied a.txt" }
+
+            session.tree.select(VFile(root.resolve("dst")))
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.V) } }
+
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.COPY }
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+            waitForIdle()
+            onNodeWithTag(FILE_OPERATION_ERROR_TAG).assertExists()
+            onAllNodesWithText("a.txt already exists").assertCountEquals(1)
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `find action new from the tree uses the tree target and returns to the tree`() = runComposeUiTest {
+        val root = temp.resolve("tree-actions-project")
+        Files.createDirectories(root.resolve("docs"))
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.select(VFile(root.resolve("docs")))
+            setContent { KeyFlowHarness(state) }
+            state.focusProjectTree()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            waitForIdle()
+
+            onRoot().performKeyInput {
+                withKeyDown(Key.MetaLeft) { withKeyDown(Key.ShiftLeft) { pressKey(Key.A) } }
+            }
+            waitUntil(timeoutMillis = 5_000) { state.searchVisible }
+            onNode(hasSetTextAction() and isFocused()).performTextInput("new")
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("New…").fetchSemanticsNodes().isNotEmpty()
+            }
+            onRoot().performKeyInput { pressKey(Key.Enter) }
+
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation?.page == FileOperationPage.NEW_LIST }
+            assertEquals(root.resolve("docs").toAbsolutePath().normalize(), state.fileOperation?.target)
+            assertEquals(KeyContext.CONTEXT_POPUP, state.focus)
+
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.fileOperation == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.PROJECT_TREE }
+            onNodeWithTag(PROJECT_TREE_TAG).assertIsFocused()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command N in the editor still opens generate`() = runComposeUiTest {
+        val root = temp.resolve("tree-editor-generate-project")
+        val packageDirectory = root.resolve("src/main/kotlin/demo")
+        Files.createDirectories(packageDirectory)
+        Files.writeString(
+            packageDirectory.resolve("Repository.kt"),
+            "package demo\n\ninterface Repository {\n    fun save(item: Int)\n}\n",
+        )
+        val file = packageDirectory.resolve("Store.kt")
+        Files.writeString(
+            file,
+            "package demo\n\nclass Store : Repository {\n    private val items = mutableListOf<Int>()\n}\n",
+        )
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            check(session.project.service<DeclarationIndex>().awaitReady(5_000)) { "declaration index did not finish" }
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+            val text = editor.value.text
+            editor.updateValue(TextFieldValue(text, TextRange(text.indexOf("private val"))))
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.N) } }
+
+            waitUntil(timeoutMillis = 5_000) { state.generate != null }
+            assertNull(state.fileOperation)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `command S saves every modified editor`() = runComposeUiTest {
+        val root = temp.resolve("tree-save-all-project")
+        Files.createDirectories(root)
+        val first = root.resolve("A.kt")
+        val second = root.resolve("B.kt")
+        Files.writeString(first, "class A\n")
+        Files.writeString(second, "class B\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val firstEditor = session.editors.openFile(VFile(first)) as TextFileEditor
+            val secondEditor = session.editors.openFile(VFile(second)) as TextFileEditor
+            firstEditor.updateValue(TextFieldValue("class A { }\n", TextRange(0)))
+            secondEditor.updateValue(TextFieldValue("class B { }\n", TextRange(0)))
+            assertTrue(firstEditor.isModified)
+            assertTrue(secondEditor.isModified)
+            setContent { KeyFlowHarness(state) }
+            onNode(hasSetTextAction()).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            waitForIdle()
+
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.S) } }
+
+            waitUntil(timeoutMillis = 5_000) { !firstEditor.isModified && !secondEditor.isModified }
+            assertEquals("class A { }\n", Files.readString(first))
+            assertEquals("class B { }\n", Files.readString(second))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    private fun installFakeTrash(state: AppState, trash: Path) {
+        val files = requireNotNull(state.session).files
+        files.trashSupported = { true }
+        files.moveToTrash = { path ->
+            Files.move(path, trash.resolve(path.fileName))
+            true
         }
     }
 }

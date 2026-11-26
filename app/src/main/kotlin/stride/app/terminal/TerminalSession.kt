@@ -93,9 +93,14 @@ class TerminalSession(private val project: Project) : Disposable {
     /** Starts the login shell in the project root. Does nothing when already started. */
     fun startDefault() {
         if (started || disposed) return
-        val process = runCatching { PtyShell.start(project.root, columns, rows) }.getOrNull() ?: return
+        val process = startShell(project.root, columns, rows) ?: return
         this.process = process
         start(PtyTtyConnector(process))
+    }
+
+    /** Test seam: starts the shell in the given directory; production runs [PtyShell.start]. */
+    internal var startShell: (Path, Int, Int) -> PtyProcess? = { dir, columns, rows ->
+        runCatching { PtyShell.start(dir, columns, rows) }.getOrNull()
     }
 
     /** Test seam: whether the shell has a child process; null when the check cannot be read. */
@@ -113,7 +118,7 @@ class TerminalSession(private val project: Project) : Disposable {
     fun openAt(dir: Path): String? {
         if (disposed) return runningMessage(dir)
         if (!started) {
-            val process = runCatching { PtyShell.start(dir, columns, rows) }.getOrNull() ?: return null
+            val process = startShell(dir, columns, rows) ?: return SHELL_START_FAILED
             this.process = process
             start(PtyTtyConnector(process))
             return null
@@ -237,6 +242,7 @@ class TerminalSession(private val project: Project) : Disposable {
         const val COLUMNS = 80
         const val ROWS = 24
         const val MAX_HISTORY_LINES = 1_000
+        const val SHELL_START_FAILED = "Open in Terminal failed: the shell did not start"
     }
 }
 

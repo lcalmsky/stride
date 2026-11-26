@@ -16,7 +16,7 @@ import java.nio.file.Path
 object ActionNames {
     val entries: Map<ActionId, String> = mapOf(
         ActionId.OPEN_FOLDER to "Open Folder",
-        ActionId.SAVE to "Save",
+        ActionId.SAVE to "Save All",
         ActionId.CLOSE_TAB to "Close Tab",
         ActionId.SEARCH_EVERYWHERE to "Search Everywhere",
         ActionId.NEXT_TAB to "Next Tab",
@@ -151,6 +151,16 @@ object ActionNames {
         ActionId.TOGGLE_AMEND to "Amend",
         ActionId.SHOW_BRANCHES to "Branches…",
         ActionId.NEW_BRANCH to "New Branch…",
+        ActionId.NEW_ELEMENT to "New…",
+        ActionId.RENAME_FILE to "Rename File…",
+        ActionId.MOVE_ELEMENT to "Move…",
+        ActionId.DELETE_ELEMENT to "Delete…",
+        ActionId.COPY_ELEMENT to "Copy…",
+        ActionId.CUT_FILE to "Cut File",
+        ActionId.COPY_FILE to "Copy File",
+        ActionId.PASTE_FILE to "Paste File",
+        ActionId.REVEAL_IN_FINDER to "Reveal in Finder",
+        ActionId.OPEN_IN_TERMINAL to "Open in Terminal",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

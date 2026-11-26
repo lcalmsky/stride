@@ -70,6 +70,12 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -107,6 +113,8 @@ import stride.app.editor.find.FindBar
 import stride.app.editor.find.FindBarState
 import stride.app.editor.find.findBarHeight
 import stride.app.editor.insertCompletion
+import stride.app.files.FileOperationPopup
+import stride.app.files.closeFileOperation
 import stride.app.glass.GlassHoles
 import stride.app.glass.GlassRegistry
 import stride.app.glass.GlassRuntime
@@ -216,6 +224,9 @@ private val resizeCursor: PointerIcon by lazy {
 private val horizontalResizeCursor: PointerIcon by lazy {
     PointerIcon(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR))
 }
+
+/** Test tag of the project tree panel, which owns the keyboard while `focus` is PROJECT_TREE. */
+const val PROJECT_TREE_TAG: String = "project-tree"
 
 @Composable
 fun App(
@@ -392,6 +403,7 @@ fun App(
                         if (treeVisible) {
                             ProjectTreePanel(
                                 session,
+                                state,
                                 Modifier
                                     .offset(x = DesignTokens.chromeInset, y = sidebarTop)
                                     .width(treeWidth)
@@ -1077,6 +1089,21 @@ fun App(
                 )
             }
         }
+        val fileOperation = state.fileOperation
+        if (fileOperation != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                FileOperationPopup(fileOperation, state) { created ->
+                    state.fileOperation = null
+                    closeFileOperation(state, fileOperation.returnContext, created)
+                }
+            }
+        }
         val rename = state.rename
         if (rename != null && session != null) {
             Box(
@@ -1292,7 +1319,7 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
         state.diffRequest != null || state.vcsPopup != null || state.pushRequest != null ||
         state.updateRequest != null || state.rollbackRequest != null || state.branchesPopup != null ||
-        state.changeMarkPopup != null ||
+        state.changeMarkPopup != null || state.fileOperation != null ||
         state.navigationBar != null || state.findBar.visible
 
 /** Hands the keyboard back to the editor only when the action left no popup open. */
@@ -1518,6 +1545,7 @@ private fun VerticalSplitter(onResize: (Dp) -> Unit) {
 @Composable
 private fun ProjectTreePanel(
     session: ProjectSession,
+    state: AppState,
     modifier: Modifier,
     focused: Boolean = false,
     focusRequests: Int = 0,
@@ -1530,6 +1558,26 @@ private fun ProjectTreePanel(
         runCatching { focusRequester.requestFocus() }
     }
     val shape = RoundedCornerShape(DesignTokens.sidebarRadius)
+    val rows = session.tree.rows()
+    val highlightKey = session.tree.selected
+        ?: session.editors.selected?.file?.path?.toAbsolutePath()?.normalize()
+    val highlightIndex = rows.indexOfFirst {
+        highlightKey != null && it.file.path.toAbsolutePath().normalize() == highlightKey
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(revealRequests) {
+        withFrameNanos { }
+        val key = session.editors.selected?.let { pathKey(it.file) } ?: return@LaunchedEffect
+        val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
+        if (index >= 0) listState.scrollToItem(index)
+    }
+    LaunchedEffect(highlightIndex, rows.size) {
+        if (highlightIndex < 0) return@LaunchedEffect
+        withFrameNanos { }
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.isEmpty() || visible.any { it.index == highlightIndex }) return@LaunchedEffect
+        listState.scrollToItem(highlightIndex)
+    }
     CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
         Column(
             modifier
@@ -1538,6 +1586,15 @@ private fun ProjectTreePanel(
                 .editorPressBlocker()
                 .focusHalo(focused)
                 .focusRequester(focusRequester)
+                .testTag(PROJECT_TREE_TAG)
+                .onFocusChanged { focus ->
+                    if (focus.hasFocus) {
+                        if (state.focus != KeyContext.PROJECT_TREE) state.focus = KeyContext.PROJECT_TREE
+                    } else if (state.focus == KeyContext.PROJECT_TREE) {
+                        state.focus = KeyContext.GLOBAL
+                    }
+                }
+                .onPreviewKeyEvent { event -> handleProjectTreeKey(event, state, session, rows) }
                 .focusable(),
         ) {
             Row(
@@ -1555,17 +1612,15 @@ private fun ProjectTreePanel(
                     fontWeight = FontWeight.Medium,
                 )
             }
-            val listState = rememberLazyListState()
-            LaunchedEffect(revealRequests) {
-                withFrameNanos { }
-                val key = session.editors.selected?.let { pathKey(it.file) } ?: return@LaunchedEffect
-                val index = session.tree.rows().indexOfFirst { pathKey(it.file) == key }
-                if (index >= 0) listState.scrollToItem(index)
-            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(Modifier.fillMaxSize(), state = listState) {
-                    items(session.tree.rows(), key = { it.file.path.toString() }) { row ->
-                        TreeRowItem(session, row)
+                    items(rows, key = { it.file.path.toString() }) { row ->
+                        TreeRowItem(
+                            session = session,
+                            row = row,
+                            selected = highlightKey != null &&
+                                row.file.path.toAbsolutePath().normalize() == highlightKey,
+                        )
                     }
                 }
                 VerticalScrollbar(
@@ -1578,12 +1633,98 @@ private fun ProjectTreePanel(
     }
 }
 
+/**
+ * P2's keys the panel handles itself, because the keymap has no binding for these unmodified
+ * strokes: ↑ ↓ move the selection, → and ← expand, collapse and walk to the child and parent,
+ * Enter toggles a directory or opens a file, Esc hands the keyboard to the editor.
+ */
+private fun handleProjectTreeKey(
+    event: KeyEvent,
+    state: AppState,
+    session: ProjectSession,
+    rows: List<TreeRow>,
+): Boolean {
+    if (event.type != KeyEventType.KeyDown) return false
+    fun highlightedIndex(): Int {
+        val selected = session.tree.selected
+        val bySelection = if (selected != null) {
+            rows.indexOfFirst { it.file.path.toAbsolutePath().normalize() == selected }
+        } else {
+            -1
+        }
+        if (bySelection >= 0) return bySelection
+        val editorFile = session.editors.selected?.file
+        val byEditor = if (editorFile != null) rows.indexOfFirst { samePath(editorFile, it.file) } else -1
+        return if (byEditor >= 0) byEditor else 0
+    }
+    fun select(index: Int): Boolean {
+        val row = rows.getOrNull(index) ?: return false
+        session.tree.select(row.file)
+        return true
+    }
+    val index = highlightedIndex()
+    return when (event.key) {
+        Key.Escape -> {
+            state.focusSelectedEditor()
+            true
+        }
+        Key.DirectionDown, Key.DirectionUp -> {
+            if (session.tree.selected == null) {
+                // The first arrow selects the row the editor already highlights.
+                select(index)
+            } else {
+                val step = if (event.key == Key.DirectionDown) 1 else -1
+                select((index + step).coerceIn(0, rows.lastIndex))
+            }
+            true
+        }
+        Key.DirectionRight -> {
+            val row = rows.getOrNull(index)
+            if (row != null && row.file.isDirectory) {
+                session.tree.select(row.file)
+                if (row.isExpanded) {
+                    val child = rows.getOrNull(index + 1)
+                    if (child != null && child.depth > row.depth) session.tree.select(child.file)
+                } else {
+                    session.tree.expand(row.file)
+                }
+            }
+            true
+        }
+        Key.DirectionLeft -> {
+            val row = rows.getOrNull(index)
+            if (row != null) {
+                session.tree.select(row.file)
+                if (row.file.isDirectory && row.isExpanded) {
+                    session.tree.collapse(row.file)
+                } else if (row.depth > 0) {
+                    val parent = rows.subList(0, index).lastOrNull { it.depth == row.depth - 1 }
+                    if (parent != null) session.tree.select(parent.file)
+                }
+            }
+            true
+        }
+        Key.Enter, Key.NumPadEnter -> {
+            val row = rows.getOrNull(index)
+            if (row != null) {
+                session.tree.select(row.file)
+                if (row.file.isDirectory) {
+                    session.tree.toggle(row.file)
+                } else {
+                    session.editors.openFile(row.file)
+                    state.focusSelectedEditor()
+                }
+            }
+            true
+        }
+        else -> false
+    }
+}
+
 @Composable
-private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
+private fun TreeRowItem(session: ProjectSession, row: TreeRow, selected: Boolean) {
     val interaction = remember(row.file.path) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val selectedFile = session.editors.selected?.file
-    val selected = selectedFile != null && samePath(selectedFile, row.file)
     val pill = rememberSelectionAlpha(selected)
     val capsuleShape = RoundedCornerShape(DesignTokens.radiusSmall)
     val capsule = if (selected) {
@@ -1609,6 +1750,7 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow) {
             .then(capsule)
             .hoverable(interaction)
             .clickable(interactionSource = interaction, indication = null) {
+                session.tree.select(row.file)
                 if (row.file.isDirectory) session.tree.toggle(row.file) else session.editors.openFile(row.file)
             },
         verticalAlignment = Alignment.CenterVertically,
@@ -2301,6 +2443,7 @@ private fun focusLabel(context: KeyContext): String? = when (context) {
     KeyContext.LIST_WINDOW -> "Window"
     KeyContext.NAV_BAR -> "Navigation"
     KeyContext.COMMIT_WINDOW -> "Commit"
+    KeyContext.PROJECT_TREE -> "Project"
     KeyContext.CONTEXT_POPUP -> null
 }
 

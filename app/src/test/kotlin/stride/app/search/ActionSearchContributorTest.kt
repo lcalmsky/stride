@@ -39,7 +39,7 @@ class ActionSearchContributorTest {
         try {
             val contributor = contributor(state)
             val ranked = contributor.fetch("save", 10)
-            assertEquals("Save", ranked.first().presentationText)
+            assertEquals("Save All", ranked.first().presentationText)
             assertEquals("⌘S", ranked.first().secondaryText)
             assertEquals(SearchTab.ACTIONS, contributor.tab)
 

@@ -9,6 +9,17 @@ import stride.app.editor.openPasteHistory
 import stride.app.editor.openRename
 import stride.app.editor.openSurroundWith
 import stride.app.editor.optimizeImports
+import stride.app.files.copyFile
+import stride.app.files.cutFile
+import stride.app.files.fileOperationTarget
+import stride.app.files.openFileInTerminal
+import stride.app.files.pasteFile
+import stride.app.files.revealFileInFinder
+import stride.app.files.startCopyElement
+import stride.app.files.startDeleteElement
+import stride.app.files.startMoveElement
+import stride.app.files.startNewElement
+import stride.app.files.startRenameFile
 import stride.app.generate.openGenerate
 import stride.app.generate.startGenerate
 import stride.app.navigation.UsageMatches
@@ -62,9 +73,12 @@ import stride.app.vcs.rollbackLines
 import stride.app.vcs.showSelectedDiff
 import stride.app.vcs.toggleAmend
 import stride.core.services.service
+import stride.core.vfs.VFile
 import stride.lang.GenerateKind
 import stride.lang.RefactoringKind
 import stride.search.SearchTab
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 
 /** Contexts whose own component consumes the navigation keys, so the bar must not take them. */
@@ -165,6 +179,16 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.ROLLBACK_CHANGES -> openRollback(state)
     ActionId.SHOW_BRANCHES -> openBranches(state)
     ActionId.NEW_BRANCH -> openNewBranch(state)
+    ActionId.NEW_ELEMENT -> startNewElement(state)
+    ActionId.RENAME_FILE -> startRenameFile(state)
+    ActionId.MOVE_ELEMENT -> startMoveElement(state)
+    ActionId.DELETE_ELEMENT -> startDeleteElement(state)
+    ActionId.COPY_ELEMENT -> startCopyElement(state)
+    ActionId.CUT_FILE -> cutFile(state)
+    ActionId.COPY_FILE -> copyFile(state)
+    ActionId.PASTE_FILE -> pasteFile(state)
+    ActionId.REVEAL_IN_FINDER -> revealFileInFinder(state)
+    ActionId.OPEN_IN_TERMINAL -> openFileInTerminal(state)
     ActionId.TOGGLE_AMEND -> toggleAmend(state)
     ActionId.NEXT_CHANGE, ActionId.PREVIOUS_CHANGE -> gotoChange(state, action == ActionId.NEXT_CHANGE)
     ActionId.SHOW_DIFF -> showSelectedDiff(state)
@@ -497,6 +521,15 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         KeyContext.LIST_WINDOW -> false
         KeyContext.TERMINAL, KeyContext.RUN_WINDOW, KeyContext.FIND_BAR, KeyContext.EDITOR_FIELD -> false
         KeyContext.GLOBAL -> state.focusSelectedEditor()
+        KeyContext.PROJECT_TREE -> {
+            val session = state.session ?: return false
+            val target = fileOperationTarget(state)
+            if (target != null && !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+                session.editors.openFile(VFile(target))
+                state.focusSelectedEditor()
+            }
+            true
+        }
         // The editor, and the Actions tab whose search popup already closed over it.
         else -> goToDeclaration(state)
     }

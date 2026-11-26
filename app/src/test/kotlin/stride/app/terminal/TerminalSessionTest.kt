@@ -143,6 +143,21 @@ class TerminalSessionTest {
     }
 
     @Test
+    fun `openAt answers with a failure when the shell cannot start`() {
+        val project = project("openAtStartFail")
+        try {
+            val session = project.service<TerminalSession>()
+            session.startShell = { _, _, _ -> null }
+            val dir = Files.createDirectory(temp.resolve("start-fail"))
+
+            assertEquals("Open in Terminal failed: the shell did not start", session.openAt(dir))
+            assertFalse(session.isStarted)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
     fun `openAt refuses when the shell has a child process`() {
         val project = project("openAtChild")
         try {

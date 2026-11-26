@@ -20,7 +20,7 @@ class GenerateKeymapTest {
     }
 
     @Test
-    fun `no other binding shares a generate stroke`() {
+    fun `no other binding shares a generate stroke in the editor`() {
         val expected = mapOf(
             KeyStroke.parse("meta N") to ActionId.GENERATE,
             KeyStroke.parse("control ENTER") to ActionId.GENERATE,
@@ -28,11 +28,13 @@ class GenerateKeymapTest {
             KeyStroke.parse("control I") to ActionId.IMPLEMENT_METHODS,
         )
         for ((stroke, action) in expected) {
-            val bindings = keymap.bindings[stroke].orEmpty()
-            assertEquals(1, bindings.size, "$stroke is bound ${bindings.size} times")
-            assertEquals(action, bindings.single().action)
-            assertEquals(KeyContext.EDITOR, bindings.single().context)
+            val inEditor = keymap.bindings[stroke].orEmpty().filter { it.context == KeyContext.EDITOR }
+            assertEquals(1, inEditor.size, "$stroke has ${inEditor.size} editor bindings")
+            assertEquals(action, inEditor.single().action)
         }
+        // New shares meta N and control ENTER with Generate; only the context separates them.
+        assertEquals(ActionId.NEW_ELEMENT, action("meta N", KeyContext.PROJECT_TREE))
+        assertEquals(ActionId.NEW_ELEMENT, action("control ENTER", KeyContext.PROJECT_TREE))
     }
 
     @Test

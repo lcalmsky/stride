@@ -428,7 +428,7 @@ class FileOperationsTest {
         fixture.write("a.txt", "a")
         fixture.write("b.txt", "b")
 
-        assertEquals("Cannot move d into itself", files.copy(dir, dir.resolve("inner")).message)
+        assertEquals("Cannot copy d into itself", files.copy(dir, dir.resolve("inner")).message)
         assertEquals("b.txt already exists", files.copy(temp.resolve("a.txt"), temp.resolve("b.txt")).message)
     }
 

@@ -218,7 +218,7 @@ class FileOperations(
             return FileOperationResult.Failure("$name no longer exists")
         }
         if (to == from || to.startsWith(from)) {
-            return FileOperationResult.Failure("Cannot move $name into itself")
+            return FileOperationResult.Failure("Cannot copy $name into itself")
         }
         if (Files.exists(to, LinkOption.NOFOLLOW_LINKS)) {
             return FileOperationResult.Failure("$targetName already exists")

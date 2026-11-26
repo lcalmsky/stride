@@ -28,6 +28,8 @@ import stride.app.ProjectSession
 import stride.app.editor.FoldRegion
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindOptions
+import stride.app.files.FileOperationPage
+import stride.app.files.FileOperationRequest
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyEventType
@@ -1212,6 +1214,35 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(40)
+    fun `project tree files snapshot`() {
+        val root = temp.resolve("files-project")
+        val packageDirectory = root.resolve("src/main/kotlin/api")
+        Files.createDirectories(packageDirectory)
+        Files.writeString(packageDirectory.resolve("OrderService.kt"), "package api\n\nclass OrderService\n")
+        Files.writeString(root.resolve("README.md"), "# api-server\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.tree.reveal(VFile(packageDirectory.resolve("OrderService.kt")))
+            session.tree.select(VFile(packageDirectory))
+            state.focusProjectTree()
+            state.fileOperation = FileOperationRequest(
+                page = FileOperationPage.NEW_LIST,
+                target = packageDirectory,
+                returnContext = KeyContext.PROJECT_TREE,
+            )
+            state.focus = KeyContext.CONTEXT_POPUP
+
+            renderApp("29-files.png", state, renderMillis = 1_200)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("29-files.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
@@ -1531,6 +1562,7 @@ class UiSnapshotTest {
             "26-commit-window.png",
             "27-diff.png",
             "28-branches.png",
+            "29-files.png",
         )
 
         private const val POLICY_PATH = "src/main/kotlin/demo/api/RetryPolicy.kt"
