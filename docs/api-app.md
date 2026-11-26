@@ -710,7 +710,11 @@ opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differenc
   failure, on every surface and in several states (caret on an identifier, on an empty line, at the
   end, other file kinds, read-only; tree target file, directory, root, inside and outside git).
   Find Usages and Go to Declaration with no identifier at the caret therefore report
-  `No identifier at the caret` instead of passing the key on, from their keys as well.
+  `No identifier at the caret` instead of passing the key on, from their keys as well. A
+  ⌘-click on a spot with no identifier (whitespace, an operator) is a pointer gesture, not a row
+  or a key, and stays silent: `goToDeclaration(state, offset, notify = false)` clears the status
+  line instead. The folding actions report `Nothing to fold here` or `Nothing to unfold here`
+  when they change nothing (Code folding).
 - **Where the keyboard goes after.** When the action left a popup that owns the keyboard
   (`popupOwnsFocus`), that popup captured `openedFrom` and returns there when it closes. Otherwise,
   when `state.focus` is still `openedFrom`, the surface gets Compose focus back (editor:
@@ -767,7 +771,11 @@ Some rows act on state that only a component holds: the text field's selection, 
 selected rows, a list window's index, the Git Log entries, the Run window's test tree. The surface
 hands the menu a handler for those actions when it opens it (`ComponentAction(enabled, text?,
 run)` per `ActionId`), IntelliJ's data-context providers. **The handler gives the result the
-component's own key gives**: it calls the same function where stride handles the key. The editor's
+component's own key gives**: it calls the same function where stride handles the key. The
+component's `enabled` beats the A3 update (`MenuRows`), so the surface passes `enabled` from the
+judgment its `run` uses; a handler that would do nothing in a state the menu opens in is a defect,
+like a pass-through row (A4). A handler that can always act (its menu opens only on a row, and it
+captured that row) leaves `enabled` at its default. The editor's
 ⌘X, ⌘C with a selection and ⌘V are handled by `BasicTextField` itself, so the editor's handlers
 reproduce them and a test compares the clipboard and the text after the key and after the row.
 
@@ -785,6 +793,11 @@ reproduce them and a test compares the clipboard and the text after the key and 
   window's own open callback; Problems' Show Quick-Fixes (`SHOW_INTENTION_ACTIONS`) opens the
   problem, then the ⌥↩ popup at it.
 - **Commit window**: Jump to Source opens the selected row (`openCommitRow`, what F4 does).
+  `commitMenuActions` takes its `enabled` and its target from `commitWindowSelectedRow`, the
+  judgment the Rollback… and Show Diff updates use, so the three rows are disabled together when
+  no row can be opened: an empty list, or a selected path that has left the list (a right-click
+  on a group row keeps that stale selection). With no selected path the window treats the first
+  row as selected, and all three act on it.
 - **Git Log**: Show Diff opens the selected commit's diff (`openCommitDiff`, what ↩ does).
 - **Run window test tree**: Run '<node>' (A10).
 - **Text fields.** The editor's text field replaces the framework's own text menu (Compose
@@ -1767,7 +1780,11 @@ through `FoldView.toView`, so they follow the caret's row in the folded text.
 `EXPAND_ALL_REGIONS` (⇧⌘=) and `COLLAPSE_ALL_REGIONS` (⇧⌘-) fold the editor the way IntelliJ's
 `ExpandRegion`, `CollapseRegion`, `ExpandAllRegions` and `CollapseAllRegions` do. The dispatcher
 forwards them to `TextFileEditor.applyAction`, which consumes the key whenever an editor is
-selected, also when nothing changes and also in a read-only editor.
+selected, also when nothing changes and also in a read-only editor. The dispatcher compares
+`foldedRegions` before and after: when nothing changed the status line shows
+`Nothing to fold here` (the two collapse actions) or `Nothing to unfold here` (the two expand
+actions), the same from the key and from the editor menu; when something changed it clears the
+status line.
 
 **Representation.** The document stays the field's `TextFieldValue.text`; folding is a view.
 `TextFileEditor.foldedRegions` holds the collapsed ranges as `FoldRegion(hiddenStart, hiddenEnd)`
@@ -2711,7 +2728,8 @@ member segments for the file, and a click on the inactive capsule does nothing.
 Decision N6: keys and Edit Source by context. Edit Source in the editor goes to the declaration at
 the caret (`goToDeclaration`, like `⌘B`); in a list tool window it opens the selected row like ↵
 (the dispatch returns `false` there and `ListToolWindow` handles `F4` and `⌘↓`, so `⌘↓` no longer
-moves the selection down); in the new popups and the navigation bar it is ↵'s alias; with the tree
+moves the selection down); in the Commit window the dispatch returns `false` too, so the window's
+own `F4` opens the selected row instead of going to the declaration at the editor's caret; in the new popups and the navigation bar it is ↵'s alias; with the tree
 or nothing focused it hands the keyboard to the selected editor. Chosen from the Search Everywhere
 Actions tab (focus still `SEARCH_POPUP`), Edit Source goes to the declaration and the navigation
 bar opens. `F4` and `⌥Home` are not taken from the terminal, the Run window or a text field: the
@@ -4898,7 +4916,9 @@ stack. A history entry whose file no longer exists is dropped when it is reached
 `File not found: <path>` instead of opening an empty tab.
 
 `GOTO_DECLARATION` (`⌘B`, and `⌘`-click through `TextFileEditor.onGoToDeclarationAt`) reads
-the word at the caret; a leading `$` is a string-template marker in every language but Java, so
+the word at the caret; with no identifier there `⌘B`, Edit Source and the editor menu's Go To row
+report `No identifier at the caret`, while a ⌘-click stays silent and clears the status line
+(`notify = false`); a leading `$` is a string-template marker in every language but Java, so
 it is left out of the name. A declaration of that name in the current file wins (nearest
 preceding line, else the first one), using the declarations `TextFileEditor` parses once per
 text revision. Otherwise the `DeclarationIndex` snapshot is filtered to the name and ordered by
