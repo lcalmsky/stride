@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import stride.app.actions.ContextMenuRequest
 import stride.app.editor.ClipboardHistory
 import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryRequest
@@ -168,6 +169,9 @@ class AppState {
 
     /** The open project tree file-operation popup; `null` when it is closed. */
     var fileOperation by mutableStateOf<FileOperationRequest?>(null)
+
+    /** The open context menu; `null` when it is closed (A4). */
+    var contextMenu by mutableStateOf<ContextMenuRequest?>(null)
 
     val findBar = FindBarState()
 
@@ -725,6 +729,7 @@ class AppState {
         searchTab = SearchTab.ALL
         searchOpenedFrom = KeyContext.GLOBAL
         fileOperation = null
+        contextMenu = null
         findBar.close()
         findInPathVisible = false
         findInPathQuery = ""

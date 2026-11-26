@@ -41,6 +41,19 @@ fun formatKeyStroke(stroke: KeyStroke, macOs: Boolean = true): String {
 fun shortcutText(keymap: Keymap, action: ActionId): String =
     keymap.strokesFor(action).firstOrNull()?.let { formatKeyStroke(it, keymap.isMacOs) }.orEmpty()
 
+/**
+ * A12: a stroke that would run [action] from [context], formatted for [keymap]'s platform; empty
+ * when no key does, so a menu never shows a key that does something else here. A stroke the
+ * action's binding leads ranks before one it shares with a binding made earlier — the tree's
+ * Delete… shows ⌫, not the ⌘⌫ the editor bound first.
+ */
+fun menuShortcutText(keymap: Keymap, action: ActionId, context: KeyContext): String =
+    keymap.strokesFor(action)
+        .sortedBy { stroke -> keymap.bindings[stroke].orEmpty().indexOfFirst { it.action == action } }
+        .firstOrNull { keymap.actionFor(it, context) == action }
+        ?.let { formatKeyStroke(it, keymap.isMacOs) }
+        .orEmpty()
+
 /** A short label for [key] such as `O`, `↑` or `F12`. */
 fun keyLabel(key: Key): String = when (key) {
     Key.A -> "A"

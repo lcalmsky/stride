@@ -1029,6 +1029,7 @@ enum class ActionId {
     GOTO_IMPLEMENTATION, GOTO_TYPE_DECLARATION, GOTO_SUPER_METHOD, TYPE_HIERARCHY, CALL_HIERARCHY,
     NEW_ELEMENT, RENAME_FILE, MOVE_ELEMENT, DELETE_ELEMENT, COPY_ELEMENT,
     CUT_FILE, COPY_FILE, PASTE_FILE, REVEAL_IN_FINDER, OPEN_IN_TERMINAL,
+    NEW_KOTLIN_FILE, NEW_FILE, NEW_DIRECTORY,
 }
 
 enum class KeyContext {
@@ -1072,8 +1073,9 @@ Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
 `Keymap.actionFor` prefers a binding whose context equals `focus`, then a `GLOBAL` binding, then
 `null`. `Keymap.forPlatform(false)` is the macOS table with `meta` and `ctrl` swapped on every
 stroke. `SEARCH_EVERYWHERE` carries no stroke: `DoubleModifierDetector` produces it.
-`REOPEN_CLOSED_TAB`, `CLOSE_OTHER_TABS` and `TOGGLE_UI_FONT` also carry no stroke; they are reached from the
-Actions tab.
+`REOPEN_CLOSED_TAB`, `CLOSE_OTHER_TABS`, `TOGGLE_UI_FONT`, `NEW_KOTLIN_FILE`, `NEW_FILE` and
+`NEW_DIRECTORY` also carry no stroke; the first three are reached from the Actions tab, the New
+rows from the project tree's New submenu (A11).
 
 ### macOS bindings
 

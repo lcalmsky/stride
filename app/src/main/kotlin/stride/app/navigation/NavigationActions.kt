@@ -8,6 +8,8 @@ import stride.app.editor.EditActions
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindModel
 import stride.app.editor.find.FindOptions
+import stride.app.files.fileOperationContext
+import stride.app.files.fileOperationTarget
 import stride.app.keys.KeyContext
 import stride.app.search.FindTabKind
 import stride.core.services.service
@@ -358,6 +360,15 @@ fun showBookmarks(state: AppState): Boolean {
 /** Copies the absolute path, or `relative/path:line` when [reference] is set. */
 fun copyPath(state: AppState, reference: Boolean): Boolean {
     val session = state.session ?: return false
+    if (fileOperationContext(state) == KeyContext.PROJECT_TREE) {
+        // A4: from the tree both rows copy the target's project-relative path; there is no line
+        // to append, because the tree has no caret.
+        val target = fileOperationTarget(state) ?: return false
+        val relative = relativePath(session, VFile(target))
+        val text = relative.ifEmpty { target.toAbsolutePath().normalize().toString() }
+        if (state.clipboard.writeText(text)) state.statusMessage = "Copied $text"
+        return true
+    }
     val editor = session.editors.selected ?: return false
     val text = if (reference) {
         val line = (editor as? TextFileEditor)?.let {

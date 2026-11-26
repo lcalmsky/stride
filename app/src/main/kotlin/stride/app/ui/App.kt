@@ -100,6 +100,11 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.actions.ActionGroups
+import stride.app.actions.ContextMenuPopup
+import stride.app.actions.closeContextMenu
+import stride.app.actions.contextMenuRequest
+import stride.app.actions.openContextMenu
 import stride.app.editor.CodeScan
 import stride.app.editor.CompletionPopup
 import stride.app.editor.FileEditor
@@ -1249,6 +1254,20 @@ fun App(
                 )
             }
         }
+        val contextMenu = state.contextMenu
+        if (contextMenu != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                ContextMenuPopup(contextMenu, state, chooseFolder) {
+                    closeContextMenu(state, contextMenu)
+                }
+            }
+        }
     }
     }
 }
@@ -1311,7 +1330,7 @@ private fun ParameterInfoHost(state: AppState, session: ProjectSession) {
 }
 
 /** True while a popup or the find bar owns the keyboard, so closing the search must not refocus. */
-private fun popupOwnsFocus(state: AppState): Boolean =
+internal fun popupOwnsFocus(state: AppState): Boolean =
     state.searchVisible || state.findInPathVisible || state.recentFilesVisible ||
         state.declarationChooserVisible || state.navigationTargets != null ||
         state.testChooserVisible || state.fileStructureVisible ||
@@ -1324,6 +1343,7 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.diffRequest != null || state.vcsPopup != null || state.pushRequest != null ||
         state.updateRequest != null || state.rollbackRequest != null || state.branchesPopup != null ||
         state.changeMarkPopup != null || state.fileOperation != null ||
+        state.contextMenu != null ||
         state.navigationBar != null || state.findBar.visible
 
 /** Hands the keyboard back to the editor only when the action left no popup open. */
@@ -1343,7 +1363,7 @@ private val TOOL_WINDOW_CONTEXTS = setOf(
  * Hands the keyboard back to the tool window that had it before the popup, when that window is
  * still the visible active one; the editor takes it otherwise.
  */
-private fun refocusAfterPopup(state: AppState, returnContext: KeyContext?) {
+internal fun refocusAfterPopup(state: AppState, returnContext: KeyContext?) {
     val windows = state.toolWindows
     val active = windows.active()
     if (returnContext != null && returnContext in TOOL_WINDOW_CONTEXTS &&
@@ -1358,7 +1378,7 @@ private fun refocusAfterPopup(state: AppState, returnContext: KeyContext?) {
     }
 }
 
-private fun refocusEditor(state: AppState) {
+internal fun refocusEditor(state: AppState) {
     state.focus = KeyContext.EDITOR
     (state.session?.editors?.selected as? TextFileEditor)?.let { editor ->
         runCatching { editor.focusRequester.requestFocus() }
@@ -1616,7 +1636,14 @@ private fun ProjectTreePanel(
                     fontWeight = FontWeight.Medium,
                 )
             }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    // A5: below the last row nothing is selected; the menu still opens on the
+                    // tree's target, the selection or the highlighted row.
+                    .contextMenuRequest { position -> openTreeContextMenu(state, position) },
+            ) {
                 LazyColumn(Modifier.fillMaxSize(), state = listState) {
                     items(rows, key = { it.file.path.toString() }) { row ->
                         TreeRowItem(
@@ -1624,6 +1651,11 @@ private fun ProjectTreePanel(
                             row = row,
                             selected = highlightKey != null &&
                                 row.file.path.toAbsolutePath().normalize() == highlightKey,
+                            onRightClick = { position ->
+                                // A5: a right press selects the row; it never toggles or opens.
+                                session.tree.select(row.file)
+                                openTreeContextMenu(state, position)
+                            },
                         )
                     }
                 }
@@ -1635,6 +1667,11 @@ private fun ProjectTreePanel(
             }
         }
     }
+}
+
+/** A4: the tree's own menu, opened from the tree's context whatever the keyboard's owner was. */
+private fun openTreeContextMenu(state: AppState, position: Offset) {
+    openContextMenu(state, ActionGroups.PROJECT_VIEW_POPUP_MENU, KeyContext.PROJECT_TREE, position)
 }
 
 /**
@@ -1727,7 +1764,12 @@ private fun handleProjectTreeKey(
 }
 
 @Composable
-private fun TreeRowItem(session: ProjectSession, row: TreeRow, selected: Boolean) {
+private fun TreeRowItem(
+    session: ProjectSession,
+    row: TreeRow,
+    selected: Boolean,
+    onRightClick: (Offset) -> Unit = {},
+) {
     val interaction = remember(row.file.path) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val pill = rememberSelectionAlpha(selected)
@@ -1754,6 +1796,7 @@ private fun TreeRowItem(session: ProjectSession, row: TreeRow, selected: Boolean
             .height(DesignTokens.treeRowHeight)
             .then(capsule)
             .hoverable(interaction)
+            .contextMenuRequest(onRightClick)
             .clickable(interactionSource = interaction, indication = null) {
                 session.tree.select(row.file)
                 if (row.file.isDirectory) session.tree.toggle(row.file) else session.editors.openFile(row.file)

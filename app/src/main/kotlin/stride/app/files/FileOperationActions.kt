@@ -63,17 +63,57 @@ internal fun fileOperationTarget(state: AppState): Path? {
 
 /** P7: `NEW_ELEMENT` — the New popup in the selected directory, else the selected file's parent. */
 fun startNewElement(state: AppState): Boolean {
-    val session = state.session ?: return false
+    val directory = newTargetDirectory(state) ?: return false
+    openFileOperation(state, FileOperationRequest(FileOperationPage.NEW_LIST, directory))
+    return true
+}
+
+/** A11: a New row — the New popup directly on [kind]'s name page, with P7's target directory. */
+fun startNewKind(state: AppState, kind: NewKind): Boolean {
+    val directory = newTargetDirectory(state) ?: return false
+    val request = when (kind) {
+        NewKind.KOTLIN -> FileOperationRequest(
+            FileOperationPage.KOTLIN,
+            directory,
+            newKind = kind,
+        )
+        NewKind.FILE -> FileOperationRequest(
+            FileOperationPage.NEW_NAME,
+            directory,
+            newKind = kind,
+            newDirectory = false,
+        )
+        NewKind.DIRECTORY -> FileOperationRequest(
+            FileOperationPage.NEW_NAME,
+            directory,
+            newKind = kind,
+            newDirectory = true,
+        )
+    }
+    openFileOperation(state, request)
+    return true
+}
+
+/** P7's target directory: the tree target when it is a directory, otherwise its parent. */
+private fun newTargetDirectory(state: AppState): Path? {
+    val session = state.session ?: return null
     val target = fileOperationTarget(state)
     val root = session.project.root.toAbsolutePath().normalize()
-    val directory = when {
+    return when {
         target == null -> root
         Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) -> target
         else -> target.parent ?: root
     }
-    openFileOperation(state, FileOperationRequest(FileOperationPage.NEW_LIST, directory))
-    return true
 }
+
+/** The P4 target when it is a file an editor can open; `null` for a directory or no target. */
+internal fun openableFileTarget(state: AppState): Path? {
+    val target = fileOperationTarget(state) ?: return null
+    return target.takeUnless { Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) }
+}
+
+/** A3: whether the session's file clipboard holds a path `PASTE_FILE` can paste. */
+internal fun fileClipboardFilled(state: AppState): Boolean = state.session?.files?.clipboard != null
 
 /** P8: `RENAME_FILE` — a field prefilled with the name, the stem selected for a file. */
 fun startRenameFile(state: AppState): Boolean {

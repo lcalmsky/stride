@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toComposeImageBitmap
@@ -30,6 +31,10 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import org.junit.jupiter.api.extension.ExtendWith
 import stride.app.AppState
+import stride.app.actions.ActionGroups
+import stride.app.actions.ContextMenuPopup
+import stride.app.actions.ContextMenuRequest
+import stride.app.actions.MenuRow
 import stride.app.editor.CompletionPopup
 import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryPopup
@@ -47,6 +52,8 @@ import stride.app.files.FileOperationPopup
 import stride.app.files.FileOperationRequest
 import stride.app.generate.MemberChooserPopup
 import stride.app.glass.GlassHoles
+import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.glass.GlassRegistry
 import stride.app.glass.LocalNativeGlass
 import stride.app.navigation.Bookmark
@@ -768,6 +775,32 @@ class PopupNativeLegibilityTest {
                         ),
                     ),
                     state = popupState,
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "context-menu",
+                key = "context-menu-0",
+                roles = listOf(Role.TEXT, Role.SECONDARY),
+                renderMillis = 600,
+            ) {
+                ContextMenuPopup(
+                    request = ContextMenuRequest(
+                        groupId = ActionGroups.PROJECT_VIEW_POPUP_MENU,
+                        openedFrom = KeyContext.PROJECT_TREE,
+                        position = Offset(120f, 120f),
+                        rows = listOf(
+                            MenuRow.Action(ActionId.RENAME_FILE, "Rename…", "⇧F6", enabled = true),
+                            MenuRow.Separator,
+                            MenuRow.Action(ActionId.DELETE_ELEMENT, "Delete…", "⌫", enabled = false),
+                            MenuRow.Submenu(
+                                "Refactor",
+                                listOf(MenuRow.Action(ActionId.MOVE_ELEMENT, "Move…", "F6", enabled = true)),
+                            ),
+                        ),
+                    ),
+                    state = popupState,
+                    chooseFolder = { null },
                     onClose = {},
                 )
             },

@@ -30,4 +30,30 @@ class KeyStrokeTextTest {
         assertEquals("⇧⌘A", shortcutText(MacKeymap.keymap, ActionId.GOTO_ACTION))
         assertEquals("", shortcutText(MacKeymap.keymap, ActionId.OPEN_FOLDER))
     }
+
+    @Test
+    fun `the menu column shows a stroke only where it runs that action`() {
+        assertEquals("⌫", menuShortcutText(MacKeymap.keymap, ActionId.DELETE_ELEMENT, KeyContext.PROJECT_TREE))
+        assertEquals("⇧⌘C", menuShortcutText(MacKeymap.keymap, ActionId.COPY_PATHS, KeyContext.PROJECT_TREE))
+        // ⌥⌘Z is Rollback Lines in the editor, so Rollback… shows no key there.
+        assertEquals("", menuShortcutText(MacKeymap.keymap, ActionId.ROLLBACK_CHANGES, KeyContext.EDITOR))
+        assertEquals(
+            "⌥⌘Z",
+            menuShortcutText(MacKeymap.keymap, ActionId.ROLLBACK_CHANGES, KeyContext.COMMIT_WINDOW),
+        )
+        // ⌘D is bound in the Commit window only.
+        assertEquals("", menuShortcutText(MacKeymap.keymap, ActionId.SHOW_DIFF, KeyContext.LIST_WINDOW))
+        assertEquals("⌘D", menuShortcutText(MacKeymap.keymap, ActionId.SHOW_DIFF, KeyContext.COMMIT_WINDOW))
+    }
+
+    @Test
+    fun `the menu column follows the keymap's platform`() {
+        val keymap = Keymap.forPlatform(false)
+        assertEquals(
+            "Shift+Ctrl+C",
+            menuShortcutText(keymap, ActionId.COPY_PATHS, KeyContext.PROJECT_TREE),
+        )
+        // Only the modifiers change with the platform; the key labels stay the app's glyphs.
+        assertEquals("⌫", menuShortcutText(keymap, ActionId.DELETE_ELEMENT, KeyContext.PROJECT_TREE))
+    }
 }

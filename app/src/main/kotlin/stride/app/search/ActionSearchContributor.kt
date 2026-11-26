@@ -161,6 +161,9 @@ object ActionNames {
         ActionId.PASTE_FILE to "Paste File",
         ActionId.REVEAL_IN_FINDER to "Reveal in Finder",
         ActionId.OPEN_IN_TERMINAL to "Open in Terminal",
+        ActionId.NEW_KOTLIN_FILE to "Kotlin Class/File",
+        ActionId.NEW_FILE to "File",
+        ActionId.NEW_DIRECTORY to "Directory",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

@@ -8,6 +8,9 @@ import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.ReloadSummary
 import stride.app.editor.TextFileEditor
+import stride.app.files.fileOperationContext
+import stride.app.files.fileOperationTarget
+import stride.app.files.openableFileTarget
 import stride.app.keys.KeyContext
 
 /** The id the data layer registers the Commit window under. */
@@ -94,7 +97,21 @@ fun openRollback(state: AppState): Boolean {
     val session = state.session ?: return false
     val window = session.commit
     val fromWindow = state.focus == KeyContext.COMMIT_WINDOW
-    val editor = if (fromWindow) null else session.editors.selected as? TextFileEditor
+    val fromTree = !fromWindow && fileOperationContext(state) == KeyContext.PROJECT_TREE
+    val editor = if (fromWindow || fromTree) null else session.editors.selected as? TextFileEditor
+    // A4: from the tree the target is the tree's row, so its file is pre-checked the same way the
+    // selected editor's file is.
+    val treePath = if (fromTree) {
+        fileOperationTarget(state)?.let {
+            realPathOf(
+                it,
+                session.project.root.toAbsolutePath().normalize(),
+                realProjectRoot(session.project.root),
+            )
+        }
+    } else {
+        null
+    }
     window.syncRows(commitRows(session, window))
     val rows = rollbackRows(window.rows)
     val editorPath = editor?.let {
@@ -107,7 +124,7 @@ fun openRollback(state: AppState): Boolean {
     val initial = if (fromWindow) {
         window.selectedRow()?.path?.takeIf { path -> rows.any { it.path == path } }
     } else {
-        editorPath?.takeIf { path -> rows.any { it.path == path } }
+        (treePath ?: editorPath)?.takeIf { path -> rows.any { it.path == path } }
     }
     state.rollbackRequest = RollbackRequest(
         rows = rows,
@@ -265,14 +282,27 @@ fun commitAndPush(state: AppState): Boolean {
     return openCommit(state)
 }
 
-/** Opens the selected row's working-tree diff; outside the Commit window it does nothing. */
+/**
+ * Opens the selected row's working-tree diff. Outside the Commit window — the Git submenu — it is
+ * the P4 target's diff, through the function the VCS popup's Show Diff row calls.
+ */
 fun showSelectedDiff(state: AppState): Boolean {
-    if (state.focus != KeyContext.COMMIT_WINDOW) return false
+    if (state.focus != KeyContext.COMMIT_WINDOW) return showTargetDiff(state)
     val session = state.session ?: return false
     val window = session.commit
     window.syncRows(commitRows(session))
     val row = window.selectedRow() ?: return false
     return openWorkingTreeDiff(state, row.path)
+}
+
+private fun showTargetDiff(state: AppState): Boolean {
+    if (state.session == null) return false
+    val target = openableFileTarget(state)
+    if (target == null) {
+        state.statusMessage = "No file selected"
+        return true
+    }
+    return openWorkingTreeDiff(state, target)
 }
 
 /** The project root git itself works in; a project opened through a symlink is the same place. */
