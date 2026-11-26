@@ -111,6 +111,30 @@ class GitUpdateTest {
     }
 
     @Test
+    fun `update fetches a remote whose name reads as an option`() {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "base\n")
+        repo.commitAll("Initial commit")
+        val bare = repo.bareRemote()
+        repo.git("remote", "remove", "origin")
+        repo.git("remote", "add", "--", "--detach", bare.toString())
+        repo.git("push", "-u", "--", "--detach", "refs/heads/main:refs/heads/main")
+        val up = Upstream(repo, bare)
+        val clone = cloneOf(up)
+        val remoteHead = commitIn(up, clone, "src/One.kt", "one\n", "Remote one")
+
+        val (plan, result) = withService(repo) { service ->
+            val ready = assertInstanceOf(UpdatePlan.Ready::class.java, service.updatePlan())
+            ready to service.update(ready, UpdateStrategy.FAST_FORWARD)
+        }
+
+        assertEquals(1, plan.incoming.size)
+        assertEquals("Remote one", plan.incoming.single().subject)
+        assertTrue(result.ok, result.message)
+        assertEquals(remoteHead, repo.git("rev-parse", "HEAD").trim())
+    }
+
+    @Test
     fun `a diverged branch offers merge and rebase and defaults from git config`() {
         val up = diverged()
 

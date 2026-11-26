@@ -59,6 +59,7 @@ import stride.search.FileNameIndex
 import stride.search.SearchTab
 import stride.app.ui.theme.Appearance
 import stride.app.ui.theme.AppearanceState
+import stride.app.vcs.BranchList
 import stride.app.vcs.CliGitExecutor
 import stride.app.vcs.DiffRow
 import stride.app.vcs.DiffRows
@@ -66,6 +67,7 @@ import stride.app.vcs.HunkKind
 import stride.app.vcs.TEST_GIT
 import stride.app.vcs.TestGitRepo
 import stride.app.vcs.commitRows
+import stride.app.vcs.openBranches
 import stride.app.vcs.openWorkingTreeDiff
 
 /**
@@ -1174,6 +1176,42 @@ class UiSnapshotTest {
     }
 
     @Test
+    @Order(39)
+    fun `branches popup snapshot`() {
+        val repo = retryProject()
+        repo.bareRemote()
+        repo.git("push", "-q", "-u", "origin", "main")
+        repo.git("branch", "feature/login")
+        repo.git("branch", "fix/retry-delay")
+        repo.git("push", "-q", "origin", "feature/login")
+        val state = AppState()
+        try {
+            openGitProject(repo, state)
+            assertTrue(openBranches(state))
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline && state.branchesPopup?.list !is BranchList.Ready) {
+                Thread.sleep(20)
+            }
+            val list = checkNotNull(state.branchesPopup?.list as? BranchList.Ready) {
+                "the branch list did not load"
+            }
+            assertEquals("main", list.current)
+            assertEquals(listOf("main", "feature/login", "fix/retry-delay"), list.local.map { it.name })
+            val current = requireNotNull(list.local.firstOrNull { it.current })
+            assertEquals("origin/main", current.upstream)
+            assertEquals(0, current.ahead)
+            assertEquals(0, current.behind)
+            assertTrue(list.remote.any { it.display == "origin/main" })
+            assertTrue(list.remote.any { it.display == "origin/feature/login" })
+
+            renderApp("28-branches.png", state, renderMillis = 1_200)
+            assertTrue(Files.exists(SnapshotRenderer.snapshotDir().resolve("28-branches.png")))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     @Order(99)
     fun `every snapshot was written`() {
         for (name in SNAPSHOTS) {
@@ -1492,6 +1530,7 @@ class UiSnapshotTest {
             "13-search-over-code-light.png",
             "26-commit-window.png",
             "27-diff.png",
+            "28-branches.png",
         )
 
         private const val POLICY_PATH = "src/main/kotlin/demo/api/RetryPolicy.kt"

@@ -63,6 +63,27 @@ class GitPushTest {
     }
 
     @Test
+    fun `a remote whose name reads as an option pushes the branch it tracks`() {
+        val repo = repoWithCommit()
+        val bare = repo.bareRemote()
+        repo.git("remote", "remove", "origin")
+        repo.git("remote", "add", "--", "--detach", bare.toString())
+        repo.git("push", "-u", "--", "--detach", "refs/heads/main:refs/heads/main")
+        repo.write("src/Main.kt", "fun main() { println() }\n")
+        repo.commitAll("Second commit")
+
+        val plan = withService(repo) { it.pushPlan() }
+        val ready = assertInstanceOf(PushPlan.Ready::class.java, plan)
+        assertEquals("--detach", ready.remote)
+        assertEquals(1, ready.outgoing.size)
+        assertEquals("Second commit", ready.outgoing.single().subject)
+
+        val result = withService(repo) { it.push(ready) }
+        assertTrue(result.ok, result.message)
+        assertEquals("Pushed 1 commits to --detach/main", result.message)
+    }
+
+    @Test
     fun `nothing ahead of the upstream is refused`() {
         val repo = repoWithCommit()
         repo.bareRemote()

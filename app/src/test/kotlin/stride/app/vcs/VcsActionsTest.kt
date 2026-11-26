@@ -76,6 +76,17 @@ class VcsActionsTest {
     }
 
     @Test
+    fun `the branches strokes bind nowhere and meta alt N stays Inline`() {
+        val inline = KeyStroke.parse("meta alt N")
+        val bindings = keymap.bindings[inline].orEmpty()
+        assertEquals(1, bindings.size, "$inline is bound ${bindings.size} times in all contexts")
+        assertEquals(ActionId.INLINE, bindings.single().action)
+        assertEquals(KeyContext.EDITOR, bindings.single().context)
+        assertTrue(keymap.strokesFor(ActionId.SHOW_BRANCHES).isEmpty(), "Branches… has no stroke")
+        assertTrue(keymap.strokesFor(ActionId.NEW_BRANCH).isEmpty(), "New Branch… has no stroke")
+    }
+
+    @Test
     fun `commit and push and update project resolve through the router`() {
         val router = KeyRouter(Keymap.forPlatform(true))
 

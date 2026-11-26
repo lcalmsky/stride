@@ -944,7 +944,8 @@ class GitService(private val project: Project) : Disposable {
                 remote = upstream.first
                 remoteRef = upstream.second
                 newBranch = false
-                range = "${remote}/${shortRef(remoteRef)}..HEAD"
+                // The full ref: a remote named `--detach` would read as an option in the short form.
+                range = "refs/remotes/${remote}/${shortRef(remoteRef)}..HEAD"
             }
             // The upstream setting outlives the remote branch (a prune leaves it behind), so this
             // is a new branch push to the same place, not a branch with nothing to send.
@@ -982,7 +983,7 @@ class GitService(private val project: Project) : Disposable {
         val behind = if (!tracksRemote) 0 else {
             readQuiet(
                 GitCommand(
-                    listOf("rev-list", "--count", "HEAD..${remote}/${shortRef(remoteRef)}"),
+                    listOf("rev-list", "--count", "HEAD..refs/remotes/${remote}/${shortRef(remoteRef)}"),
                     projectRoot,
                     timeouts.read,
                 ),
@@ -1015,6 +1016,8 @@ class GitService(private val project: Project) : Disposable {
                     add("--porcelain")
                     add("--no-follow-tags")
                     if (plan.newBranch) add("-u")
+                    // `--` ends the options, so a remote named `--detach` stays a remote.
+                    add("--")
                     add(plan.remote)
                     add("refs/heads/${plan.branch}:${plan.remoteRef}")
                 }
@@ -1590,7 +1593,8 @@ class GitService(private val project: Project) : Disposable {
                 sshBatchModeEnvironment(executor, projectRoot, timeouts.read)
             }
             val fetched = write(
-                GitCommand(listOf("fetch", remote), projectRoot, timeouts.fetch, write = true, environment = environment),
+                // `--` ends the options, so a remote named `--detach` stays a remote.
+                GitCommand(listOf("fetch", "--", remote), projectRoot, timeouts.fetch, write = true, environment = environment),
             )
             refreshStatus()
             fetched

@@ -149,6 +149,8 @@ object ActionNames {
         ActionId.FETCH to "Fetch",
         ActionId.ROLLBACK_CHANGES to "Rollback…",
         ActionId.TOGGLE_AMEND to "Amend",
+        ActionId.SHOW_BRANCHES to "Branches…",
+        ActionId.NEW_BRANCH to "New Branch…",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */

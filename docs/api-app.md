@@ -3837,7 +3837,10 @@ These are members of `GitService`, written in extension form only to list them, 
   by default, that `Tab` or a click toggles. When the start is not HEAD, the box is on and the
   project has unsaved editors, the dimmed line `Saves <n> unsaved editors first` follows it, because
   that new branch is a checkout (V20). `↩` runs when there is no problem; `Esc` goes back to
-  the page it came from, or closes when the page was opened directly (Find Action).
+  the page it came from, or closes when the page was opened directly (Find Action). A rename
+  leaves the old name out of the names it checks against: the old name in the field draws no
+  problem and `↩` does nothing until the name changes, and a name that is a folder of the old one
+  is allowed, as git's own rename is (measured).
 - **Delete page.** Shown when `deletePlan` answers `Unmerged`: `Delete <branch>?`, `<n> commits are
   not merged into <reference>` (`1 commit is`), the commits (at most 20, then `… <n> more`), and a
   `Delete` capsule. `↩` deletes with force, `Esc` goes back to the menu. A `Merged` answer deletes at

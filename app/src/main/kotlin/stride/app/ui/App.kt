@@ -78,6 +78,8 @@ import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -193,7 +195,10 @@ import stride.app.vcs.LineHunk
 import stride.app.vcs.PushPopup
 import stride.app.vcs.RollbackPopup
 import stride.app.vcs.UpdatePopup
+import stride.app.vcs.BranchState
+import stride.app.vcs.BranchesPopup
 import stride.app.vcs.VcsPopup
+import stride.app.vcs.openBranches
 import stride.app.vcs.openChangeMarkPopup
 import stride.core.services.service
 import stride.core.vfs.VFile
@@ -456,6 +461,7 @@ fun App(
                                 state.focusSelectedEditor()
                             },
                             onSegmentPosition = { left -> navBarLeft = left },
+                            onOpenBranches = { openBranches(state) },
                             modifier = Modifier.align(Alignment.BottomStart),
                         )
                         val navigationBarList = state.navigationBar?.list
@@ -985,6 +991,22 @@ fun App(
                 }
             }
         }
+        val branchesPopup = state.branchesPopup
+        val branchesReturnContext = remember(branchesPopup != null) { if (branchesPopup != null) state.focus else null }
+        if (branchesPopup != null && session != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .onFocusChanged { focus ->
+                        if (focus.hasFocus) state.focus = KeyContext.CONTEXT_POPUP
+                    },
+            ) {
+                BranchesPopup(branchesPopup, state) {
+                    state.branchesPopup = null
+                    refocusAfterPopup(state, branchesReturnContext)
+                }
+            }
+        }
         val changeMarkPopup = state.changeMarkPopup
         if (changeMarkPopup != null && session != null) {
             val selectedEditor = session.editors.selected
@@ -1269,7 +1291,8 @@ private fun popupOwnsFocus(state: AppState): Boolean =
         state.quickDoc != null || state.quickDefinition != null || state.surround != null ||
         state.errorDescription != null || state.showUsages != null || state.recentLocationsVisible ||
         state.diffRequest != null || state.vcsPopup != null || state.pushRequest != null ||
-        state.updateRequest != null || state.rollbackRequest != null || state.changeMarkPopup != null ||
+        state.updateRequest != null || state.rollbackRequest != null || state.branchesPopup != null ||
+        state.changeMarkPopup != null ||
         state.navigationBar != null || state.findBar.visible
 
 /** Hands the keyboard back to the editor only when the action left no popup open. */
@@ -1894,6 +1917,7 @@ private fun BottomChromeRow(
     onOpenFile: (VFile) -> Unit = {},
     onClose: () -> Unit = {},
     onSegmentPosition: (Dp) -> Unit = {},
+    onOpenBranches: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1929,7 +1953,7 @@ private fun BottomChromeRow(
             }
             Spacer(Modifier.weight(1f))
         }
-        StatusCapsule(session, focusLabel, message)
+        StatusCapsule(session, focusLabel, message, onOpenBranches)
     }
 }
 
@@ -1963,6 +1987,7 @@ private fun StatusCapsule(
     session: ProjectSession,
     focusLabel: String? = null,
     message: String? = null,
+    onOpenBranches: () -> Unit = {},
 ) {
     val editor = session.editors.selected
     val textEditor = editor as? TextFileEditor
@@ -1978,6 +2003,11 @@ private fun StatusCapsule(
         horizontalArrangement = Arrangement.spacedBy(DesignTokens.space16),
     ) {
         CompositionLocalProvider(LocalTextStyle provides DesignTokens.chromeTextStyle) {
+            val snapshot = session.git.snapshot
+            val branch = snapshot.branch
+            if (snapshot.repository != null && branch != null) {
+                BranchStatusItem(branchLabel(branch), onOpenBranches)
+            }
             if (editor != null) {
                 if (textEditor != null) {
                     val (line, column) = lineAndColumn(textEditor.value.text, textEditor.value.selection.start)
@@ -2017,6 +2047,26 @@ private fun FocusChip(label: String) {
             maxLines = 1,
         )
     }
+}
+
+/** The branch name, the short id on a detached HEAD, the unborn branch's name before a commit. */
+private fun branchLabel(branch: BranchState): String =
+    branch.branch ?: branch.head?.take(7) ?: "HEAD"
+
+/** The status bar's branch item: in the status item style, clickable, never holding the keyboard. */
+@Composable
+private fun BranchStatusItem(text: String, onOpen: () -> Unit) {
+    Text(
+        text,
+        color = DesignTokens.textSecondaryOnGlass,
+        fontSize = DesignTokens.statusTextSize,
+        fontFamily = DesignTokens.uiFont,
+        maxLines = 1,
+        modifier = Modifier
+            .testTag("status-branch")
+            .pointerInput(Unit) { detectTapGestures { onOpen() } }
+            .semantics { onClick { onOpen(); true } },
+    )
 }
 
 @Composable

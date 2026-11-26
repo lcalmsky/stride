@@ -74,6 +74,7 @@ import stride.app.ui.theme.UiFontChoice
 import stride.app.ui.toolwindow.ToolWindow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.app.ui.toolwindow.ToolWindowManager
+import stride.app.vcs.BranchesRequest
 import stride.app.vcs.ChangeMarkPopupRequest
 import stride.app.vcs.CommitToolWindowContent
 import stride.app.vcs.CommitWindowState
@@ -303,6 +304,9 @@ class AppState {
 
     /** The open rollback confirmation popup; `null` when it is closed. */
     internal var rollbackRequest by mutableStateOf<RollbackRequest?>(null)
+
+    /** The open branches popup; `null` when it is closed. */
+    internal var branchesPopup by mutableStateOf<BranchesRequest?>(null)
 
     /** The open gutter change popup; `null` when it is closed. */
     internal var changeMarkPopup by mutableStateOf<ChangeMarkPopupRequest?>(null)
@@ -714,6 +718,8 @@ class AppState {
         vcsPopup = null
         pushRequest = null
         updateRequest = null
+        rollbackRequest = null
+        branchesPopup = null
         changeMarkPopup = null
         statusMessage = null
         projectTreeVisible = true

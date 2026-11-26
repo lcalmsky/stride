@@ -51,7 +51,9 @@ import stride.app.run.runMain
 import stride.app.vcs.commitAndPush
 import stride.app.vcs.fetchFromVcs
 import stride.app.vcs.gotoChange
+import stride.app.vcs.openBranches
 import stride.app.vcs.openCommit
+import stride.app.vcs.openNewBranch
 import stride.app.vcs.openPush
 import stride.app.vcs.openRollback
 import stride.app.vcs.openUpdate
@@ -161,6 +163,8 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.ROLLBACK_LINES -> rollbackLines(state)
     ActionId.ROLLBACK_CHANGES -> openRollback(state)
+    ActionId.SHOW_BRANCHES -> openBranches(state)
+    ActionId.NEW_BRANCH -> openNewBranch(state)
     ActionId.TOGGLE_AMEND -> toggleAmend(state)
     ActionId.NEXT_CHANGE, ActionId.PREVIOUS_CHANGE -> gotoChange(state, action == ActionId.NEXT_CHANGE)
     ActionId.SHOW_DIFF -> showSelectedDiff(state)

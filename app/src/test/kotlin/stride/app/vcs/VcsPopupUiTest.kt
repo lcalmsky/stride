@@ -86,12 +86,15 @@ class VcsPopupUiTest {
                 for (text in listOf("Commit…", "Push…", "Rollback Lines", "Show Diff", "Commit Window", "Git Log")) {
                     onNodeWithText(text).assertIsDisplayed()
                 }
+                onNodeWithText("Branches…").assertIsDisplayed()
+                onNodeWithText("0").assertIsDisplayed()
                 for (shortcut in listOf("⌘K", "⇧⌘K", "⌘D", "⌘0", "⌘9")) {
                     onNodeWithText(shortcut).assertIsDisplayed()
                 }
                 // Row 9 shares Rollback Lines' stroke, as COMMIT_WINDOW shares it with EDITOR.
                 assertEquals(2, onAllNodesWithText("⌥⌘Z").fetchSemanticsNodes().size)
-                onNodeWithText("main").assertIsDisplayed()
+                // The title's branch and the status bar's branch item both read `main`.
+                assertEquals(2, onAllNodesWithText("main").fetchSemanticsNodes().size)
 
                 onRoot().performKeyInput { pressKey(Key.Five) }
 
@@ -174,6 +177,11 @@ class VcsPopupUiTest {
             onRoot().performKeyInput { pressKey(Key.One) }
             waitForIdle()
             assertTrue(state.vcsPopup != null)
+
+            onRoot().performKeyInput { pressKey(Key.Zero) }
+            waitForIdle()
+            assertTrue(state.vcsPopup != null)
+            assertNull(state.branchesPopup)
         } finally {
             state.dispose()
         }
@@ -203,6 +211,11 @@ class VcsPopupUiTest {
             onRoot().performKeyInput { pressKey(Key.One) }
             waitForIdle()
             assertTrue(state.vcsPopup != null)
+
+            onRoot().performKeyInput { pressKey(Key.Zero) }
+            waitForIdle()
+            assertTrue(state.vcsPopup != null)
+            assertNull(state.branchesPopup)
         } finally {
             state.dispose()
         }

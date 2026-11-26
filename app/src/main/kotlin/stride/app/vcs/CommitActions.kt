@@ -301,6 +301,15 @@ internal fun modifiedEditorPaths(session: ProjectSession): List<Path> {
         .map { realPathOf(it.file.path, lexicalRoot, realRoot) }
 }
 
+/** The open editors under the project root that Update and Checkout save before git runs. */
+internal fun saveableEditors(session: ProjectSession): List<TextFileEditor> {
+    val lexicalRoot = session.project.root.toAbsolutePath().normalize()
+    val realRoot = realProjectRoot(lexicalRoot)
+    return session.editors.openFiles
+        .filterIsInstance<TextFileEditor>()
+        .filter { it.isModified && realPathOf(it.file.path, lexicalRoot, realRoot).startsWith(realRoot) }
+}
+
 /** The window's list for the current snapshot and the answers git has given about its editors. */
 internal fun commitRows(session: ProjectSession, window: CommitWindowState = session.commit): List<CommitRow> {
     val snapshot = session.git.snapshot
@@ -439,11 +448,7 @@ internal fun runUpdate(state: AppState, plan: UpdatePlan.Ready, strategy: Update
         state.statusMessage = cleanTreeMessage(changed)
         return
     }
-    val lexicalRoot = session.project.root.toAbsolutePath().normalize()
-    val realRoot = realProjectRoot(lexicalRoot)
-    val editors = session.editors.openFiles
-        .filterIsInstance<TextFileEditor>()
-        .filter { it.isModified && realPathOf(it.file.path, lexicalRoot, realRoot).startsWith(realRoot) }
+    val editors = saveableEditors(session)
     for (editor in editors) {
         try {
             editor.save()
@@ -466,7 +471,7 @@ internal fun runUpdate(state: AppState, plan: UpdatePlan.Ready, strategy: Update
 }
 
 /** The editors take their text on the UI thread, and git runs on the service's IO scope. */
-private fun reloadEditors(session: ProjectSession): ReloadSummary? = runCatching {
+internal fun reloadEditors(session: ProjectSession): ReloadSummary? = runCatching {
     var summary: ReloadSummary? = null
     EventQueue.invokeAndWait { summary = session.editors.reloadChangedFromDisk() }
     summary

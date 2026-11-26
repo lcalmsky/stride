@@ -160,7 +160,8 @@ private suspend fun editorHasChanges(git: GitService, editor: TextFileEditor?): 
 }
 
 private class VcsRow(
-    val number: Int,
+    /** The digit that runs the row; `null` for the one-row message forms, which have none. */
+    val number: Int?,
     val label: String,
     val shortcut: String,
     val enabled: Boolean,
@@ -168,7 +169,7 @@ private class VcsRow(
 )
 
 /**
- * The VCS Operations quick list: the branch in the title and the nine numbered commands with their
+ * The VCS Operations quick list: the branch in the title and the ten numbered commands with their
  * shortcuts. A digit runs its row, ↑/↓ select, ↵ runs, Esc closes; a dimmed row does nothing.
  */
 @Composable
@@ -183,9 +184,9 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
     fun shortcut(action: ActionId): String = shortcutText(keymap, action)
 
     val rows = if (request.error != null) {
-        listOf(VcsRow(0, request.error.orEmpty(), "", false) {})
+        listOf(VcsRow(null, request.error.orEmpty(), "", false) {})
     } else if (request.outsideRepository) {
-        listOf(VcsRow(0, "Not a Git repository", "", false) {})
+        listOf(VcsRow(null, "Not a Git repository", "", false) {})
     } else {
         listOf(
             VcsRow(1, "Commit…", shortcut(ActionId.COMMIT), true) { openCommit(state) },
@@ -207,6 +208,7 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
             VcsRow(9, "Rollback…", shortcut(ActionId.ROLLBACK_CHANGES), request.rollbackEnabled) {
                 openRollback(state)
             },
+            VcsRow(0, "Branches…", "", true) { openBranches(state) },
         )
     }
     val index = selected.coerceIn(0, rows.lastIndex.coerceAtLeast(0))
@@ -271,6 +273,7 @@ fun VcsPopup(request: VcsPopupRequest, state: AppState, onClose: () -> Unit) {
                             Key.Seven, Key.NumPad7 -> { runDigit(7); true }
                             Key.Eight, Key.NumPad8 -> { runDigit(8); true }
                             Key.Nine, Key.NumPad9 -> { runDigit(9); true }
+                            Key.Zero, Key.NumPad0 -> { runDigit(0); true }
                             else -> false
                         }
                     }
@@ -331,7 +334,7 @@ private fun VcsPopupRow(row: VcsRow, selected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = DesignTokens.space16),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (row.number > 0) {
+        if (row.number != null) {
             Text(
                 row.number.toString(),
                 color = DesignTokens.textOnBusyGlass,

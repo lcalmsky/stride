@@ -75,9 +75,17 @@ import stride.app.search.SearchEverywherePopup
 import stride.app.search.ShowUsagesPopup
 import stride.app.search.ShowUsagesRequest
 import stride.app.ui.theme.Appearance
+import stride.app.vcs.BranchList
+import stride.app.vcs.BranchesNamePage
+import stride.app.vcs.BranchesPage
+import stride.app.vcs.BranchesPopup
+import stride.app.vcs.BranchesRequest
 import stride.app.vcs.ChangeKind
 import stride.app.vcs.CommitRow
+import stride.app.vcs.DeletePlan
+import stride.app.vcs.LocalBranch
 import stride.app.vcs.LogEntry
+import stride.app.vcs.RemoteBranch
 import stride.app.vcs.PushPlan
 import stride.app.vcs.PushPopup
 import stride.app.vcs.PushRequest
@@ -760,6 +768,73 @@ class PopupNativeLegibilityTest {
                 VcsPopup(request, popupState, {})
             },
             PopupCase(
+                name = "branches-list",
+                key = "popup-branches",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.ACCENT, Role.ERROR),
+                renderMillis = 600,
+            ) {
+                BranchesPopup(
+                    request = BranchesRequest(
+                        token = 1L,
+                        list = branchList(),
+                    ),
+                    state = popupState,
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "branches-name",
+                key = "popup-branches",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.ACCENT, Role.ERROR),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                BranchesPopup(
+                    request = BranchesRequest(
+                        token = 1L,
+                        page = BranchesPage.NAME,
+                        list = branchList(),
+                        namePage = BranchesNamePage.New(null, "HEAD"),
+                        name = TextFieldValue("main"),
+                    ),
+                    state = popupState,
+                    onClose = {},
+                )
+            },
+            PopupCase(
+                name = "branches-delete",
+                key = "popup-branches",
+                roles = listOf(Role.TEXT, Role.BUSY, Role.SECONDARY, Role.ACCENT, Role.ERROR),
+                renderMillis = 600,
+                selectionPill = false,
+            ) {
+                BranchesPopup(
+                    request = BranchesRequest(
+                        token = 1L,
+                        page = BranchesPage.DELETE,
+                        list = branchList(),
+                        delete = DeletePlan.Unmerged(
+                            name = "feature/login",
+                            id = "1".repeat(40),
+                            reference = "HEAD",
+                            commits = listOf(
+                                LogEntry(
+                                    id = "2".repeat(40),
+                                    shortId = "2b3c4d5",
+                                    author = "Test Author",
+                                    time = Instant.parse("2026-01-01T00:00:00Z"),
+                                    refs = emptyList(),
+                                    subject = "Add the login form",
+                                ),
+                            ),
+                            moreCommits = 2,
+                        ),
+                    ),
+                    state = popupState,
+                    onClose = {},
+                )
+            },
+            PopupCase(
                 name = "push",
                 key = "popup-push",
                 roles = listOf(Role.TEXT, Role.SECONDARY, Role.ACCENT2, Role.AMBER),
@@ -863,6 +938,16 @@ class PopupNativeLegibilityTest {
             },
         )
     }
+
+    private fun branchList(): BranchList.Ready = BranchList.Ready(
+        current = "main",
+        head = "0".repeat(40),
+        local = listOf(
+            LocalBranch("main", "0".repeat(40), "origin/main", false, 0, 0, true, null),
+            LocalBranch("feature/login", "1".repeat(40), "origin/feature/login", false, 1, 0, false, null),
+        ),
+        remote = listOf(RemoteBranch("origin", "main", "0".repeat(40))),
+    )
 
     private fun pixelsIn(pixels: IntArray, xs: IntRange, ys: IntRange): IntArray =
         IntArray(xs.count() * ys.count()) { position ->
