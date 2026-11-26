@@ -38,6 +38,7 @@ import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
+import stride.app.run.contextRun
 import stride.app.vcs.CliGitExecutor
 import stride.app.vcs.TEST_GIT
 import stride.app.vcs.TestGitRepo
@@ -397,6 +398,11 @@ class ActionMenuTest {
         val repo = TestGitRepo.create(temp)
         repo.write("src/Main.kt", "first\n")
         repo.write("src/Other.kt", "other\n")
+        repo.write("build.gradle.kts", "")
+        repo.write(
+            "src/test/kotlin/sample/orders/OrderServiceTest.kt",
+            "class OrderServiceTest {\n    @Test\n    fun placesOrder() {\n    }\n}\n",
+        )
         repo.commitAll("Initial commit")
         repo.write("src/Other.kt", "other changed\n")
         state.openFolder(repo.root)
@@ -407,12 +413,17 @@ class ActionMenuTest {
         val changed = repo.root.resolve("src/Other.kt")
         val directory = repo.root.resolve("src")
 
+        val testFile = repo.root.resolve("src/test/kotlin/sample/orders/OrderServiceTest.kt")
         val states: List<Pair<String, () -> Unit>> = listOf(
             "unchanged file" to { session.tree.select(VFile(unchanged)) },
             "changed file" to { session.tree.select(VFile(changed)) },
             "directory" to { session.tree.select(VFile(directory)) },
+            "test file" to { session.tree.select(VFile(testFile)) },
         )
         for ((_, select) in states) {
+            select()
+            state.focus = KeyContext.PROJECT_TREE
+            assertRunContextRowResolves(state, ActionGroups.projectViewPopupMenu)
             assertTrue(
                 assertEveryEnabledRowIsConsumed(ActionGroups.projectViewPopupMenu, KeyContext.PROJECT_TREE, reset = select) > 0,
             )
@@ -669,6 +680,7 @@ class ActionMenuTest {
         repo.write("data.json", "{\n  \"name\": \"order\"\n}\n")
         repo.write("notes.txt", "plain text\n")
         repo.write("locked.txt", "class Locked\n")
+        repo.write("script.kts", "println(\"hello\")\n")
         repo.commitAll("Initial commit")
         state.openFolder(repo.root)
         val session = requireNotNull(state.session)
@@ -695,8 +707,12 @@ class ActionMenuTest {
                 "plain text" to { show(text, "plain text\n", TextRange(2)) },
                 // A file the editor cannot read opens read-only over empty text.
                 "read-only" to { session.editors.openFile(VFile(locked)) },
+                "Kotlin script" to { session.editors.openFile(VFile(repo.root.resolve("script.kts"))) },
             )
             for ((_, reset) in states) {
+                reset()
+                state.focus = KeyContext.EDITOR
+                assertRunContextRowResolves(state, ActionGroups.editorPopupMenu)
                 assertTrue(
                     assertEveryEnabledRowIsConsumed(
                         ActionGroups.editorPopupMenu,
@@ -775,6 +791,7 @@ class ActionMenuTest {
         assertNull(session.commit.selectedRow())
         assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
         assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
+        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.EDIT_SOURCE).enabled)
         assertFalse(dispatchAction(ActionId.ROLLBACK_CHANGES, state) { null })
         assertNull(state.rollbackRequest)
         assertFalse(dispatchAction(ActionId.SHOW_DIFF, state) { null })
@@ -785,6 +802,7 @@ class ActionMenuTest {
         runBlocking { session.git.refreshNow() }
         assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
         assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
+        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.EDIT_SOURCE).enabled)
         assertNotNull(session.commit.selectedRow())
         assertTrue(dispatchAction(ActionId.SHOW_DIFF, state) { null })
         waitFor { state.diffRequest != null }
@@ -845,11 +863,18 @@ class ActionMenuTest {
             ),
         )
 
-        val surfaces = listOf(
+        val dispatchable = listOf(
             Triple(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+        )
+        for ((group, context, components) in dispatchable) {
+            assertTrue(
+                assertEveryEnabledRowIsConsumed(group, context, components) > 0,
+                "${group.id} dispatched no row",
+            )
+        }
+        // These menus hold only their surface's own handlers, so nothing may reach the dispatcher.
+        val componentOnly = listOf(
             Triple(ActionGroups.vcsLogContextMenu, KeyContext.LIST_WINDOW, setOf(ActionId.SHOW_DIFF)),
-            Triple(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW, emptySet()),
-            Triple(ActionGroups.consoleViewPopupMenu, KeyContext.RUN_WINDOW, emptySet()),
             Triple(ActionGroups.terminalContextMenu, KeyContext.TERMINAL, setOf(ActionId.COPY, ActionId.PASTE)),
             Triple(ActionGroups.usageViewPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
             Triple(ActionGroups.structureViewPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
@@ -861,19 +886,71 @@ class ActionMenuTest {
                 setOf(ActionId.EDIT_SOURCE, ActionId.SHOW_INTENTION_ACTIONS),
             ),
         )
-        for ((group, context, components) in surfaces) {
-            assertEveryEnabledRowIsConsumed(group, context, components)
+        for ((group, context, components) in componentOnly) {
+            assertEquals(
+                0,
+                assertEveryEnabledRowIsConsumed(group, context, components),
+                "${group.id} dispatched a row that belongs to its surface",
+            )
         }
 
         // A clean Commit window has no file row: its own rows are disabled and the Git submenu is
         // the only place a row stays enabled.
         repo.write("src/Main.kt", "first\n")
         runBlocking { session.git.refreshNow() }
-        assertEveryEnabledRowIsConsumed(
-            ActionGroups.changesViewPopupMenu,
-            KeyContext.COMMIT_WINDOW,
-            setOf(ActionId.EDIT_SOURCE),
+        assertTrue(
+            assertEveryEnabledRowIsConsumed(
+                ActionGroups.changesViewPopupMenu,
+                KeyContext.COMMIT_WINDOW,
+                setOf(ActionId.EDIT_SOURCE),
+            ) > 0,
+            "the clean Commit window dispatched no branch row",
         )
+    }
+
+    @Test
+    fun `the run window rows follow the three run states`() {
+        val session = openProject("a.kt")
+        val manager = session.project.service<RunManager>()
+        val configuration = RunConfiguration(
+            name = "build",
+            workingDir = session.project.root,
+            args = listOf("classes"),
+            kind = RunKind.TASK,
+        )
+        state.focus = KeyContext.RUN_WINDOW
+        val groups = listOf(ActionGroups.testTreePopupMenu, ActionGroups.consoleViewPopupMenu)
+
+        fun start() {
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess(blocking = true), "fake") }
+            manager.run(configuration)
+        }
+
+        fun finish() {
+            manager.stop()
+            waitFor { !manager.canStop }
+        }
+
+        fun assertState(rerun: Boolean, stop: Boolean, dispatched: Int, ensure: () -> Unit = {}) {
+            for (group in groups) {
+                ensure()
+                val rows = resolveMenuRows(MacKeymap.keymap, state, group)
+                assertEquals(rerun, rows.action(ActionId.RERUN).enabled, "${group.id}: Rerun")
+                assertEquals(stop, rows.action(ActionId.STOP).enabled, "${group.id}: Stop")
+                assertEquals(
+                    dispatched,
+                    assertEveryEnabledRowIsConsumed(group, KeyContext.RUN_WINDOW),
+                    "${group.id}: dispatched rows",
+                )
+            }
+        }
+
+        assertNull(manager.lastRun)
+        assertState(rerun = false, stop = false, dispatched = 0)
+
+        assertState(rerun = true, stop = true, dispatched = 2) { start() }
+
+        assertState(rerun = true, stop = false, dispatched = 1) { finish() }
     }
 
     @Test
@@ -981,6 +1058,17 @@ class ActionMenuTest {
             assertTrue(dispatchAction(row.action, state) { null }, "${group.id}: ${row.action} was handed back")
         }
         return rows.size
+    }
+
+    private fun assertRunContextRowResolves(state: AppState, group: ActionGroup) {
+        val row = resolveMenuRows(MacKeymap.keymap, state, group).flatMap { it.leaves() }
+            .filterIsInstance<MenuRow.Action>()
+            .singleOrNull { it.action == ActionId.RUN_CONTEXT }
+        assertEquals(contextRun(state) != null, row != null, "${group.id}: Run row visibility")
+        if (row != null) {
+            assertTrue(row.enabled, "${group.id}: Run row is disabled")
+            assertNotNull(contextRun(state), "${group.id}: Run row has nothing to run")
+        }
     }
 
     private fun clearPopups() {

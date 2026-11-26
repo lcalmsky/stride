@@ -23,6 +23,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -811,6 +812,36 @@ class ContextMenuUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `a control right click on a commit check box leaves its check alone`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 2 }
+            val other = session.commit.rows.first { it.path.fileName.toString() == "Other.kt" }
+            val checkedBefore = session.commit.inclusion.isChecked(other)
+
+            val listLeft = onNodeWithTag(COMMIT_LIST_TAG).fetchSemanticsNode().boundsInRoot.left
+            val rowY = commitRow("Other.kt").fetchSemanticsNode().boundsInRoot.center.y
+            val checkBox = Offset(listLeft + with(density) { 18.dp.toPx() }, rowY)
+
+            onRoot().performKeyInput { keyDown(Key.CtrlLeft) }
+            onRoot().performMouseInput { click(checkBox) }
+            onRoot().performKeyInput { keyUp(Key.CtrlLeft) }
+            waitForMenu(state)
+
+            assertEquals(checkedBefore, session.commit.inclusion.isChecked(other))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `the commit window's show diff and jump to source rows run their actions`() = runComposeUiTest {
         val repo = changedRepo()
         val state = AppState()
@@ -1281,6 +1312,39 @@ class ContextMenuUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `a meta click on an empty spot stays silent while the key reports it`() = runComposeUiTest {
+        val content = "val order = OrderService()\n\n"
+        val (state, editor) = openTextProject("Main.kt", content)
+        try {
+            setContent { ContextMenuHarness(state) }
+            waitForIdle()
+            val field = onNode(hasSetTextAction())
+            field.performClick()
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            val blankAt = content.indexOf('\n') + 1
+            editor.updateValue(TextFieldValue(content, TextRange(blankAt)))
+            waitForIdle()
+            val blank = field.textLayout().getBoundingBox(blankAt)
+            state.statusMessage = "No identifier at the caret"
+
+            onRoot().performKeyInput { keyDown(Key.MetaLeft) }
+            field.performMouseInput { click(Offset(blank.center.x, blank.center.y)) }
+            onRoot().performKeyInput { keyUp(Key.MetaLeft) }
+            waitForIdle()
+
+            assertNull(state.statusMessage)
+
+            editor.updateValue(TextFieldValue(content, TextRange(blankAt)))
+            waitForIdle()
+            onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.B) } }
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "No identifier at the caret" }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `a right click on a tab's close button opens that tab's menu without closing it`() = runComposeUiTest {
         val root = temp.resolve("tab-close-project")
         Files.createDirectories(root)
@@ -1354,12 +1418,18 @@ class ContextMenuUiTest {
 
             commitRow("Other.kt").performMouseInput {
                 rightClick(center)
+                advanceEventTime(170)
                 rightClick(center)
             }
             waitForIdle()
 
             assertTrue(session.editors.openFiles.isEmpty())
             assertNull(state.diffRequest)
+            closeMenu(state)
+
+            // The same row with the primary button: the second press reaches the row's double click.
+            commitRow("Other.kt").performMouseInput { doubleClick(center) }
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "Other.kt" }
         } finally {
             state.dispose()
         }
@@ -1387,12 +1457,18 @@ class ContextMenuUiTest {
 
             onNodeWithText("B.kt:2").performMouseInput {
                 rightClick(center)
+                advanceEventTime(170)
                 rightClick(center)
             }
             waitForIdle()
 
             assertEquals("A.kt", session.editors.selected?.file?.name)
             assertEquals(listOf("A.kt"), session.editors.openFiles.map { it.file.name })
+            closeMenu(state)
+
+            // The same row with the primary button: the second press reaches the row's double click.
+            onNodeWithText("B.kt:2").performMouseInput { doubleClick(center) }
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "B.kt" }
         } finally {
             state.dispose()
         }
@@ -1414,11 +1490,17 @@ class ContextMenuUiTest {
 
             onNodeWithText("Second commit").performMouseInput {
                 rightClick(center)
+                advanceEventTime(170)
                 rightClick(center)
             }
             waitForIdle()
 
             assertTrue(heldFor(500) { state.diffRequest == null }, "the right clicks opened a diff")
+            closeMenu(state)
+
+            // The same row with the primary button: the second press reaches the row's double click.
+            onNodeWithText("Second commit").performMouseInput { doubleClick(center) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
         } finally {
             state.dispose()
         }
@@ -1543,6 +1625,12 @@ class ContextMenuUiTest {
     @OptIn(ExperimentalTestApi::class)
     private fun ComposeUiTest.rightClick(name: String) {
         onNodeWithText(name).performMouseInput { rightClick(center) }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.closeMenu(state: AppState) {
+        onRoot().performKeyInput { pressKey(Key.Escape) }
+        waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
     }
 
     @OptIn(ExperimentalTestApi::class)

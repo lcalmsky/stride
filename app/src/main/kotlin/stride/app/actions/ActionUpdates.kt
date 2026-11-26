@@ -22,7 +22,7 @@ data class ActionUpdate(val visible: Boolean = true, val enabled: Boolean = true
  */
 fun actionUpdate(action: ActionId, state: AppState): ActionUpdate = when (action) {
     ActionId.PASTE_FILE -> ActionUpdate(enabled = fileClipboardFilled(state))
-    ActionId.EDIT_SOURCE -> treeEditSource(state)
+    ActionId.EDIT_SOURCE -> editSourceUpdate(state)
     ActionId.CLOSE_OTHER_TABS -> tabUpdate(state) { it.canCloseOthers() }
     ActionId.CLOSE_ALL_TABS -> tabUpdate(state) { it.canCloseAll() }
     ActionId.CLOSE_TABS_TO_THE_LEFT -> tabUpdate(state) { it.canCloseTabsToTheLeft() }
@@ -48,9 +48,10 @@ private fun tabUpdate(state: AppState, predicate: (FileEditorManager) -> Boolean
     return ActionUpdate(enabled = predicate(editors))
 }
 
-private fun treeEditSource(state: AppState): ActionUpdate {
-    if (fileOperationContext(state) != KeyContext.PROJECT_TREE) return ActionUpdate()
-    return ActionUpdate(enabled = openableFileTarget(state) != null)
+private fun editSourceUpdate(state: AppState): ActionUpdate = when {
+    state.focus == KeyContext.COMMIT_WINDOW -> ActionUpdate(enabled = commitWindowSelectedRow(state) != null)
+    fileOperationContext(state) != KeyContext.PROJECT_TREE -> ActionUpdate()
+    else -> ActionUpdate(enabled = openableFileTarget(state) != null)
 }
 
 /**

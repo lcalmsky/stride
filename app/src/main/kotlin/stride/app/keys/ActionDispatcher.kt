@@ -378,8 +378,18 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.EDITOR_CODE_BLOCK_END, ActionId.METHOD_UP, ActionId.METHOD_DOWN,
     ActionId.MOVE_STATEMENT_UP, ActionId.MOVE_STATEMENT_DOWN,
     ActionId.EDITOR_COMPLETE_STATEMENT, ActionId.EDITOR_SCROLL_TO_CENTER,
-    ActionId.EXPAND_REGION, ActionId.COLLAPSE_REGION, ActionId.EXPAND_ALL_REGIONS, ActionId.COLLAPSE_ALL_REGIONS,
     -> (state.session?.editors?.selected as? TextFileEditor)?.applyAction(action) ?: false
+    ActionId.EXPAND_REGION, ActionId.COLLAPSE_REGION, ActionId.EXPAND_ALL_REGIONS, ActionId.COLLAPSE_ALL_REGIONS -> {
+        val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
+        val before = editor.foldedRegions
+        editor.applyAction(action)
+        state.statusMessage = when {
+            editor.foldedRegions != before -> null
+            action == ActionId.EXPAND_REGION || action == ActionId.EXPAND_ALL_REGIONS -> "Nothing to unfold here"
+            else -> "Nothing to fold here"
+        }
+        true
+    }
     ActionId.SELECT_NEXT_OCCURRENCE -> {
         val editor = state.session?.editors?.selected as? TextFileEditor ?: return false
         state.statusMessage = if (editor.selectNextOccurrence()) null else "No more occurrences"
@@ -541,8 +551,9 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.EDIT_SOURCE -> when (state.focus) {
-        // A list window opens the selected row from its own handler; the key must reach it.
-        KeyContext.LIST_WINDOW -> false
+        // A list window and the Commit window open the selected row from their own handler; the
+        // key must reach it.
+        KeyContext.LIST_WINDOW, KeyContext.COMMIT_WINDOW -> false
         KeyContext.TERMINAL, KeyContext.RUN_WINDOW, KeyContext.FIND_BAR, KeyContext.EDITOR_FIELD -> false
         KeyContext.GLOBAL -> state.focusSelectedEditor()
         KeyContext.PROJECT_TREE -> {

@@ -118,6 +118,31 @@ class ActionDispatcherTest {
     }
 
     @Test
+    fun `the folding actions report when there is nothing to fold`() {
+        state.focus = KeyContext.EDITOR
+        val session = openProjectWith("a.kt")
+        val editor = session.editors.selected as TextFileEditor
+        editor.updateValue(TextFieldValue("val a = 1\n", TextRange(0)))
+
+        for (action in listOf(ActionId.COLLAPSE_REGION, ActionId.COLLAPSE_ALL_REGIONS)) {
+            state.statusMessage = null
+            assertTrue(dispatchAction(action, state) { null })
+            assertEquals("Nothing to fold here", state.statusMessage, action.name)
+        }
+        for (action in listOf(ActionId.EXPAND_REGION, ActionId.EXPAND_ALL_REGIONS)) {
+            state.statusMessage = null
+            assertTrue(dispatchAction(action, state) { null })
+            assertEquals("Nothing to unfold here", state.statusMessage, action.name)
+        }
+
+        editor.updateValue(TextFieldValue("fun f() {\n  val a = 1\n}\n", TextRange(0)))
+        state.statusMessage = "Nothing to fold here"
+        assertTrue(dispatchAction(ActionId.COLLAPSE_REGION, state) { null })
+        assertEquals(1, editor.foldedRegions.size)
+        assertNull(state.statusMessage)
+    }
+
+    @Test
     fun `the folding actions reach the selected editor`() {
         state.focus = KeyContext.EDITOR
         assertFalse(dispatchAction(ActionId.COLLAPSE_REGION, state) { null })

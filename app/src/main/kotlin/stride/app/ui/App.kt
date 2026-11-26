@@ -364,7 +364,9 @@ fun App(
                                     session,
                                     state.findBar,
                                     onFocusContext = { state.focus = it },
-                                    onGoToDeclaration = { _, offset -> goToDeclaration(state, offset) },
+                                    onGoToDeclaration = { _, offset ->
+                                        goToDeclaration(state, offset, notify = false)
+                                    },
                                     onChangeMarkClick = { editor, hunk -> openChangeMarkPopup(state, editor, hunk) },
                                     onJump = { editor -> session.history.record(navigationLocation(editor)) },
                                     onTextChange = { editor, changes, recorded, recordIndex ->

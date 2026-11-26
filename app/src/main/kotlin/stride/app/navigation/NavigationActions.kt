@@ -144,14 +144,21 @@ fun openBookmark(state: AppState, bookmark: Bookmark): Boolean {
     return true
 }
 
-/** Go to Declaration at the caret, or at [offset] for a ⌘-click. */
-fun goToDeclaration(state: AppState, offset: Int = selectedTextEditor(state)?.value?.selection?.start ?: 0): Boolean {
+/**
+ * Go to Declaration at the caret, or at [offset] for a ⌘-click. [notify] is `false` for the
+ * ⌘-click, whose empty spots stay silent the way IntelliJ's do.
+ */
+fun goToDeclaration(
+    state: AppState,
+    offset: Int = selectedTextEditor(state)?.value?.selection?.start ?: 0,
+    notify: Boolean = true,
+): Boolean {
     val session = state.session ?: return false
     val editor = selectedTextEditor(state) ?: return false
     val text = editor.value.text
     val name = identifierAt(text, editor.file.name, offset)
     if (name == null) {
-        state.statusMessage = "No identifier at the caret"
+        state.statusMessage = if (notify) "No identifier at the caret" else null
         return true
     }
     val path = editor.file.path.toAbsolutePath().normalize()
