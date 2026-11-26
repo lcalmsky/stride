@@ -21,6 +21,7 @@ class NativeAppearanceOrderTest {
         val command = mutableListOf(
             Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
             "-Djava.awt.headless=false",
+            "-Dapple.awt.UIElement=true",
             "-cp",
             requireNotNull(classpath),
         )
