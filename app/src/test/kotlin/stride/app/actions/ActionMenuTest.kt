@@ -42,6 +42,8 @@ import stride.app.run.contextRun
 import stride.app.vcs.CliGitExecutor
 import stride.app.vcs.TEST_GIT
 import stride.app.vcs.TestGitRepo
+import stride.app.vcs.commitMenuActions
+import stride.app.vcs.commitWindowSelectedRow
 import stride.core.services.Application
 import stride.core.services.service
 import stride.core.vfs.VFile
@@ -780,6 +782,7 @@ class ActionMenuTest {
     fun `the commit window rows are enabled exactly when they open something`() {
         val repo = TestGitRepo.create(temp)
         repo.write("src/Main.kt", "first\n")
+        repo.write("src/Other.kt", "alpha\n")
         repo.commitAll("Initial commit")
         state.openFolder(repo.root)
         val session = requireNotNull(state.session)
@@ -787,28 +790,64 @@ class ActionMenuTest {
         runBlocking { session.git.refreshNow() }
         state.focus = KeyContext.COMMIT_WINDOW
 
-        // A clean tree lists no file row: both rows are disabled and their dispatch opens nothing.
+        // (a) A clean tree lists no file row: all three rows are disabled and open nothing.
         assertNull(session.commit.selectedRow())
-        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
-        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
-        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.EDIT_SOURCE).enabled)
+        assertCommitRowsEnabled(rollback = false, diff = false, jump = false)
         assertFalse(dispatchAction(ActionId.ROLLBACK_CHANGES, state) { null })
         assertNull(state.rollbackRequest)
         assertFalse(dispatchAction(ActionId.SHOW_DIFF, state) { null })
         assertNull(state.diffRequest)
+        commitMenuActions(state).getValue(ActionId.EDIT_SOURCE).run()
+        assertTrue(session.editors.openFiles.isEmpty())
 
-        // One changed file gives the window a row: both rows enable and open their popup.
+        // (b) One changed file gives the window a row, and with no path picked yet it acts on the
+        // first row, exactly as its keys do.
         repo.write("src/Main.kt", "second\n")
         runBlocking { session.git.refreshNow() }
-        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
-        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
-        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.EDIT_SOURCE).enabled)
+        assertNull(session.commit.selectedPath)
+        assertCommitRowsEnabled(rollback = true, diff = true, jump = true)
         assertNotNull(session.commit.selectedRow())
         assertTrue(dispatchAction(ActionId.SHOW_DIFF, state) { null })
         waitFor { state.diffRequest != null }
         state.diffRequest = null
         assertTrue(dispatchAction(ActionId.ROLLBACK_CHANGES, state) { null })
         assertNotNull(state.rollbackRequest)
+        state.rollbackRequest = null
+
+        // (c) A selection the list no longer holds leaves every row disabled, and Jump to Source
+        // opens nothing.
+        val otherPath = repo.write("src/Other.kt", "beta\n")
+        runBlocking { session.git.refreshNow() }
+        session.commit.selectedPath = otherPath
+        assertCommitRowsEnabled(rollback = true, diff = true, jump = true)
+        repo.git("checkout", "--", "src/Other.kt")
+        runBlocking { session.git.refreshNow() }
+        assertNull(commitWindowSelectedRow(state))
+        assertCommitRowsEnabled(rollback = false, diff = false, jump = false)
+        commitMenuActions(state).getValue(ActionId.EDIT_SOURCE).run()
+        assertTrue(session.editors.openFiles.isEmpty())
+    }
+
+    /** The Commit window's menu as its surface opens it, with the component map it hands over. */
+    private fun commitMenuRows(): List<MenuRow.Action> {
+        state.contextMenu = null
+        openContextMenu(
+            state,
+            ActionGroups.changesViewPopupMenu.id,
+            KeyContext.COMMIT_WINDOW,
+            Offset.Zero,
+            commitMenuActions(state),
+        )
+        val rows = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+        state.contextMenu = null
+        return rows
+    }
+
+    private fun assertCommitRowsEnabled(rollback: Boolean, diff: Boolean, jump: Boolean) {
+        val rows = commitMenuRows()
+        assertEquals(rollback, rows.action(ActionId.ROLLBACK_CHANGES).enabled)
+        assertEquals(diff, rows.action(ActionId.SHOW_DIFF).enabled)
+        assertEquals(jump, rows.action(ActionId.EDIT_SOURCE).enabled)
     }
 
     @Test

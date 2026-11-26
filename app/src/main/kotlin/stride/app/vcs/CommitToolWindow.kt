@@ -179,11 +179,7 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
             ActionGroups.CHANGES_VIEW_POPUP_MENU,
             KeyContext.COMMIT_WINDOW,
             position,
-            mapOf(
-                ActionId.EDIT_SOURCE to ComponentAction {
-                    window.selectedRow()?.let { openCommitRow(state, session, it) }
-                },
-            ),
+            commitMenuActions(state),
         )
     }
 
@@ -324,6 +320,25 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
             }
         }
     }
+}
+
+/**
+ * A7: the Changes view's Jump to Source row. A3 makes a component row follow the surface's
+ * `enabled`, so it asks the judgment Rollback… and Show Diff use: with no row to open the row is
+ * disabled, the same state those two refuse.
+ */
+internal fun commitMenuActions(state: AppState): Map<ActionId, ComponentAction> {
+    val open: () -> Unit = {
+        val session = state.session
+        val row = commitWindowSelectedRow(state)
+        if (session != null && row != null) openCommitRow(state, session, row)
+    }
+    return mapOf(
+        ActionId.EDIT_SOURCE to ComponentAction(
+            enabled = commitWindowSelectedRow(state) != null,
+            run = open,
+        ),
+    )
 }
 
 private fun openCommitRow(state: AppState, session: ProjectSession, row: CommitRow) {

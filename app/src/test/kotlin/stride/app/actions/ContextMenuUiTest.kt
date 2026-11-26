@@ -1405,6 +1405,53 @@ class ContextMenuUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `a stale commit selection disables every row of the group menu`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 2 }
+
+            // The selected file leaves the list while `selectedPath` still names it.
+            val otherPath = repo.root.resolve("src/Other.kt")
+            commitRow("Other.kt").performClick()
+            waitUntil(timeoutMillis = 5_000) { session.commit.selectedPath == otherPath }
+            repo.git("checkout", "--", "src/Other.kt")
+            runBlocking { session.git.refreshNow() }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 1 }
+            assertNull(session.commit.selectedRow())
+
+            onNodeWithText("Changes (1)").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            val stale = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+            for (action in listOf(ActionId.EDIT_SOURCE, ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF)) {
+                assertFalse(stale.first { it.action == action }.enabled, action.name)
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + action.name).assertIsNotEnabled()
+            }
+            closeMenu(state)
+            assertTrue(session.editors.openFiles.isEmpty())
+
+            // A file row the list still holds enables all three, and Jump to Source opens it.
+            commitRow("Main.kt").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            val live = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+            for (action in listOf(ActionId.EDIT_SOURCE, ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF)) {
+                assertTrue(live.first { it.action == action }.enabled, action.name)
+            }
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "Main.kt" }
+            assertEquals(KeyContext.EDITOR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `two quick right clicks on a commit row open no editor`() = runComposeUiTest {
         val repo = changedRepo()
         val state = AppState()

@@ -49,7 +49,6 @@ private fun tabUpdate(state: AppState, predicate: (FileEditorManager) -> Boolean
 }
 
 private fun editSourceUpdate(state: AppState): ActionUpdate = when {
-    state.focus == KeyContext.COMMIT_WINDOW -> ActionUpdate(enabled = commitWindowSelectedRow(state) != null)
     fileOperationContext(state) != KeyContext.PROJECT_TREE -> ActionUpdate()
     else -> ActionUpdate(enabled = openableFileTarget(state) != null)
 }
