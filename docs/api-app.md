@@ -763,8 +763,10 @@ terminal selection clear, double-click open).
 Some rows act on state that only a component holds: the text field's selection, the terminal's
 selected rows, a list window's index, the Git Log entries, the Run window's test tree. The surface
 hands the menu a handler for those actions when it opens it (`ComponentAction(enabled, text?,
-run)` per `ActionId`), IntelliJ's data-context providers. **The handler and the component's own key
-path call the same function.**
+run)` per `ActionId`), IntelliJ's data-context providers. **The handler gives the result the
+component's own key gives**: it calls the same function where stride handles the key. The editor's
+⌘X, ⌘C with a selection and ⌘V are handled by `BasicTextField` itself, so the editor's handlers
+reproduce them and a test compares the clipboard and the text after the key and after the row.
 
 - **New `ActionId`s `COPY` and `PASTE`** (IntelliJ `$Copy`, `$Paste`) exist only as component
   actions. `dispatchAction` returns `false` for them, so a stroke still reaches the focused
@@ -783,7 +785,9 @@ path call the same function.**
 - **Git Log**: Show Diff opens the selected commit's diff (`openCommitDiff`, what ↩ does).
 - **Run window test tree**: Run '<node>' (A10).
 - **Text fields.** The editor's text field replaces the framework's own text menu (Compose
-  `TextContextMenu`) with the editor menu. Other text fields (the commit message, the find bar,
+  `TextContextMenu`) with the editor menu. The framework menu collapses the selection on a right
+  press, so the editor provides a `LocalTextContextMenu` that draws only the field, and while the
+  stride menu holds the keyboard the field ignores reports that only collapse its selection. Other text fields (the commit message, the find bar,
   popup name fields, the Run console input) keep the framework's menu.
 
 ### A8 The nine menus
@@ -879,8 +883,8 @@ rows; the Find window's Copy Path/Reference.
   names `Close All Tabs`, `Close Tabs to the Left`, `Close Tabs to the Right`, no strokes (the
   macOS keymap has none).
 - Left and Right are relative to the selected tab, which a right-click on a tab selects. The
-  selected tab stays selected; Close All leaves no tab and the keyboard goes to the tree or the
-  editor area as after ⌘W on the last tab.
+  selected tab stays selected; Close All leaves no tab and the keyboard goes where ⌘W on the last
+  tab leaves it (the global context: the editor field leaves the composition).
 - They share Close Other Tabs' loop: every closed file joins Reopen Closed Tab's list in tab order,
   and unsaved edits are dropped without a confirmation, as ⌘W and Close Other Tabs drop them today.
   IntelliJ saves documents instead; stride's close keeps its present meaning.
