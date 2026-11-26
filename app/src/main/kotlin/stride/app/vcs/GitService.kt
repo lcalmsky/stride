@@ -607,7 +607,7 @@ class GitService(private val project: Project) : Disposable {
                     return GitWriteResult(false, "Branch ${target.name} no longer exists")
                 }
                 creatingTracking = false
-                args = listOf("switch", "--no-guess", target.name)
+                args = listOf("switch", "--no-guess", "--", target.name)
             }
             is BranchTarget.Remote -> {
                 val remoteRef = "refs/remotes/${target.remote}/${target.name}"
@@ -629,7 +629,7 @@ class GitService(private val project: Project) : Disposable {
                         )
                     }
                     creatingTracking = false
-                    args = listOf("switch", "--no-guess", target.name)
+                    args = listOf("switch", "--no-guess", "--", target.name)
                 } else {
                     creatingTracking = true
                     args = listOf("switch", "-c", target.name, "--track", remoteRef)
@@ -772,7 +772,8 @@ class GitService(private val project: Project) : Disposable {
             val upstream = upstreamOf(new)
             if (upstream != null) {
                 val upstreamBranch = shortRef(upstream.second)
-                if (upstreamBranch != new) {
+                // A local upstream (`.`) is not a remote, so "./main" would name nothing pushable.
+                if (upstream.first != "." && upstreamBranch != new) {
                     append("; it still pushes to ").append(upstream.first).append("/").append(upstreamBranch)
                 }
             }

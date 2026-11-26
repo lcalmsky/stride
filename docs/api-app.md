@@ -3854,9 +3854,10 @@ These are members of `GitService`, written in extension form only to list them, 
   which move remote-tracking refs, refresh the Log's ref names the same way.
 
 **Names.** `BranchNames.problem` answers in process, for the live line: `Enter a branch name`
-(empty), `<name> is not a valid branch name` (git's `check-ref-format --branch` rules: no space or
-control character, none of `~ ^ : ? * [ \`, no `..`, `//` or `@{`, not `@` or `HEAD`, not starting
-with `-` or `/`, not ending with `/` or `.`, no component starting with `.` or ending with `.lock`),
+(empty), `<name> is not a valid branch name` (git's `check-ref-format --branch` rules: no `' '`,
+ASCII control character (0x00–0x1f) or `0x7f` (other Unicode spaces are accepted, measured U+2003),
+none of `~ ^ : ? * [ \`, no `..`, `//` or `@{`, not `@` or `HEAD`, not starting with `-` or `/`,
+not ending with `/` or `.`, no component starting with `.` or ending with `.lock`),
 `A branch named <name> already exists`, `<name> conflicts with the branch <other>` (one is a folder
 of the other, which git cannot store: measured `'refs/heads/a' exists; cannot create
 'refs/heads/a/b'`). git stays the judge: inside the write lock the service runs
@@ -3922,9 +3923,10 @@ refuses as ambiguous too).
      remote target whose same-named local branch tracks something else: `A local branch <name>
      already exists and does not track <remote>/<name>`.
 4. **Run** with `busy` `Checking out <name>…` and `timeouts.checkout` (120 s; checkout filters and
-   hooks run): `git switch --no-guess <name>` for a local branch (measured: `--no-guess` never turns
-   a missing local name into a new tracking branch; `switch` refuses a full `refs/heads/` name as
-   not a branch), and for a remote one the command above.
+   hooks run): `git switch --no-guess -- <name>` for a local branch (measured: `--no-guess` never
+   turns a missing local name into a new tracking branch; `switch` refuses a full `refs/heads/`
+   name as not a branch; without `--` git reads a ref named `--detach` as an option and detaches
+   HEAD, so `--` ends the options), and for a remote one the command above.
 5. **Judge by HEAD, not by the exit code.** A post-checkout hook's exit status becomes git's
    (measured: exit 1 with the switch done), and a timeout can stop git halfway. After git the
    service reads `git symbolic-ref -q --short HEAD`. On the target: success, `Checked out <name>`
@@ -3994,7 +3996,8 @@ exists`. `busy` is `Creating <name>…`.
 `-` is read as an option); never `-M`, which overwrites a branch. The current branch can be renamed,
 and so can a branch another worktree has checked out (measured). `busy` is `Renaming <old>…`.
 Success reads `Renamed <old> to <new>`, ending with `; it still pushes to <remote>/<branch>` when
-the upstream's branch name differs from the new name; a failure `Rename failed: <first line>`.
+the upstream's branch name differs from the new name and the upstream is a remote (a local
+upstream, `branch.<b>.remote` = `.`, adds nothing); a failure `Rename failed: <first line>`.
 
 **Delete.**
 
@@ -4092,7 +4095,7 @@ the upstream's branch name differs from the new name; a failure `Rename failed: 
 | `Created and checked out <name>` | a new branch with `Checkout branch` on ended on it; ends with V19's tails as `Checked out <name>` does |
 | `Created <name> from <start>` | a new branch with `Checkout branch` off |
 | `New branch failed: <first line>` | `git switch -c` or `git branch` failed or timed out, or the save before a new branch checked out from another start failed (`New branch failed: <reason>`) |
-| `Renamed <old> to <new>` | rename succeeded; ends with `; it still pushes to <remote>/<branch>` when the upstream's branch name differs from the new name |
+| `Renamed <old> to <new>` | rename succeeded; ends with `; it still pushes to <remote>/<branch>` when the upstream's branch name differs from the new name and the upstream is not local (`branch.<b>.remote` = `.`) |
 | `Rename failed: <first line>` | `git branch -m` failed or timed out |
 | `Cannot delete the current branch <b>: check out another branch first` | Delete of the checked-out branch |
 | `<b> is checked out in another worktree: <path>` | Delete of a branch another worktree has checked out |

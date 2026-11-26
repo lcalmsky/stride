@@ -19,7 +19,7 @@ object BranchNames {
         if (name == "@" || name == "HEAD") return false
         if (name.startsWith("-") || name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false
         if (name.contains("..") || name.contains("//") || name.contains("@{")) return false
-        if (name.any { it.isWhitespace() || it.isISOControl() || it in FORBIDDEN }) return false
+        if (name.any { it == ' ' || it.code < 0x20 || it.code == 0x7f || it in FORBIDDEN }) return false
         return name.split('/').all { it.isNotEmpty() && !it.startsWith(".") && !it.endsWith(".lock") }
     }
 

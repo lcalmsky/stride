@@ -2,6 +2,7 @@ package stride.app.vcs
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -147,6 +148,36 @@ class GitBranchesTest {
     }
 
     @Test
+    fun `the list on a detached HEAD has no current branch`() {
+        val fixture = fixture()
+        fixture.repo.git("checkout", "-q", "--detach")
+
+        val list = readyList(fixture)
+
+        assertNull(list.current)
+        assertEquals(fixture.head(), list.head)
+        assertEquals(listOf("main"), list.local.map { it.name })
+        assertFalse(list.local.single().current)
+        assertEquals(listOf("origin/main"), list.remote.map { it.display })
+    }
+
+    @Test
+    fun `the list before the first commit has no rows and the unborn branch`() {
+        val repo = TestGitRepo.create(temp)
+
+        val list = withService(repo) { service ->
+            service.refreshNow()
+            service.branches()
+        }
+
+        val ready = assertInstanceOf(BranchList.Ready::class.java, list)
+        assertEquals("main", ready.current)
+        assertNull(ready.head)
+        assertTrue(ready.local.isEmpty())
+        assertTrue(ready.remote.isEmpty())
+    }
+
+    @Test
     fun `outside a repository the list is refused`() {
         val repo = TestGitRepo.create(temp)
         val plain = Files.createDirectories(temp.resolve("plain"))
@@ -169,7 +200,39 @@ class GitBranchesTest {
         assertTrue(result.ok, result.message)
         assertEquals("Checked out topic", result.message)
         assertEquals("refs/heads/topic", fixture.repo.git("symbolic-ref", "HEAD").trim())
-        assertTrue(writes.contains("git switch --no-guess topic"), writes.toString())
+        assertTrue(writes.contains("git switch --no-guess -- topic"), writes.toString())
+    }
+
+    @Test
+    fun `a checkout of a branch named like an option switches to it`() {
+        val fixture = fixture()
+        fixture.repo.git("update-ref", "refs/heads/--detach", fixture.head())
+
+        val (result, writes) = withService(fixture.repo) { service ->
+            val result = service.checkout(BranchTarget.Local("--detach"))
+            result to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Checked out --detach", result.message)
+        assertEquals("refs/heads/--detach", fixture.repo.git("symbolic-ref", "HEAD").trim())
+        assertTrue(writes.contains("git switch --no-guess -- --detach"), writes.toString())
+    }
+
+    @Test
+    fun `a remote checkout of a branch named like an option that tracks it switches to it`() {
+        val fixture = fixture()
+        val id = fixture.head()
+        fixture.repo.git("update-ref", "refs/remotes/origin/--detach", id)
+        fixture.repo.git("update-ref", "refs/heads/--detach", id)
+        fixture.repo.git("config", "branch.--detach.remote", "origin")
+        fixture.repo.git("config", "branch.--detach.merge", "refs/heads/--detach")
+
+        val result = withService(fixture.repo) { it.checkout(BranchTarget.Remote("origin", "--detach")) }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Checked out --detach", result.message)
+        assertEquals("refs/heads/--detach", fixture.repo.git("symbolic-ref", "HEAD").trim())
     }
 
     @Test
@@ -265,6 +328,23 @@ class GitBranchesTest {
     }
 
     @Test
+    fun `a checkout from a detached HEAD with two orphan commits counts both`() {
+        val fixture = fixture()
+        fixture.repo.git("branch", "topic")
+        fixture.repo.git("checkout", "-q", "--detach")
+        fixture.repo.write("src/Orphan.kt", "one\n")
+        fixture.repo.commitAll("First orphan work")
+        fixture.repo.write("src/Orphan.kt", "two\n")
+        val orphan = fixture.repo.commitAll("Second orphan work")
+
+        val result = withService(fixture.repo) { it.checkout(BranchTarget.Local("topic")) }
+
+        assertFalse(result.ok)
+        assertEquals("HEAD has 2 commits on no branch: create a branch from it first (New Branch)", result.message)
+        assertEquals(orphan, fixture.head())
+    }
+
+    @Test
     fun `a checkout from a detached HEAD with no orphan commits switches`() {
         val fixture = fixture()
         fixture.localBranch("topic")
@@ -312,7 +392,7 @@ class GitBranchesTest {
 
         assertTrue(result.ok, result.message)
         assertEquals("Checked out feature/login", result.message)
-        assertTrue(writes.contains("git switch --no-guess feature/login"), writes.toString())
+        assertTrue(writes.contains("git switch --no-guess -- feature/login"), writes.toString())
         assertFalse(writes.any { it.contains(" -c ") }, writes.toString())
     }
 
@@ -330,6 +410,27 @@ class GitBranchesTest {
         assertFalse(result.ok)
         assertEquals(
             "A local branch feature/login already exists and does not track origin/feature/login",
+            result.message,
+        )
+        assertEquals("refs/heads/main", fixture.repo.git("symbolic-ref", "HEAD").trim())
+        assertTrue(writes.isEmpty(), writes.toString())
+    }
+
+    @Test
+    fun `a remote branch deleted after the list is refused with a fetch hint`() {
+        val fixture = fixture()
+        fixture.publish("feature/login")
+        fixture.publisher.git("push", "-q", "origin", "--delete", "feature/login")
+        fixture.repo.git("fetch", "-q", "--prune", "origin")
+
+        val (result, writes) = withService(fixture.repo) { service ->
+            val result = service.checkout(BranchTarget.Remote("origin", "feature/login"))
+            result to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertFalse(result.ok)
+        assertEquals(
+            "Branch origin/feature/login no longer exists: fetch to see the remote's branches",
             result.message,
         )
         assertEquals("refs/heads/main", fixture.repo.git("symbolic-ref", "HEAD").trim())
@@ -591,6 +692,34 @@ class GitBranchesTest {
     }
 
     @Test
+    fun `a rename of a branch named like an option moves it`() {
+        val fixture = fixture()
+        val id = fixture.head()
+        fixture.repo.git("update-ref", "refs/heads/--detach", id)
+
+        val result = withService(fixture.repo) { it.renameBranch("--detach", "renamed") }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Renamed --detach to renamed", result.message)
+        assertNull(fixture.branchId("--detach"))
+        assertEquals(id, fixture.branchId("renamed"))
+    }
+
+    @Test
+    fun `a rename with a local upstream names no remote`() {
+        val fixture = fixture()
+        fixture.repo.git("branch", "topic", "main")
+        fixture.repo.git("config", "branch.topic.remote", ".")
+        fixture.repo.git("config", "branch.topic.merge", "refs/heads/main")
+
+        val result = withService(fixture.repo) { it.renameBranch("topic", "topic-2") }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Renamed topic to topic-2", result.message)
+        assertEquals(".", fixture.repo.git("config", "--get", "branch.topic-2.remote").trim())
+    }
+
+    @Test
     fun `renaming the current branch moves HEAD's name`() {
         val fixture = fixture()
 
@@ -619,6 +748,22 @@ class GitBranchesTest {
         assertTrue(writes.isEmpty(), writes.toString())
         assertFalse(writes.any { it.startsWith("git branch -M") }, writes.toString())
         assertEquals("refs/heads/main", fixture.repo.git("symbolic-ref", "HEAD").trim())
+    }
+
+    @Test
+    fun `a delete of a branch named like an option removes it`() {
+        val fixture = fixture()
+        val id = fixture.head()
+        fixture.repo.git("update-ref", "refs/heads/--detach", id)
+
+        val result = withService(fixture.repo) { service ->
+            val plan = assertInstanceOf(DeletePlan.Merged::class.java, service.deletePlan("--detach"))
+            service.deleteBranch("--detach", plan.id, force = false)
+        }
+
+        assertTrue(result.ok, result.message)
+        assertEquals("Deleted branch --detach (was ${id.take(7)})", result.message)
+        assertNull(fixture.branchId("--detach"))
     }
 
     @Test
@@ -788,6 +933,160 @@ class GitBranchesTest {
         }
 
         assertEquals(before + 1, after)
+    }
+
+    @Test
+    fun `a failed branch list read keeps its prefix`() {
+        val fixture = fixture()
+
+        val list = withFailing(fixture.repo, "for-each-ref", "boom") { it.branches() }
+
+        assertEquals(BranchList.Refused("Branches failed: boom"), list)
+    }
+
+    @Test
+    fun `a failed rename keeps its prefix`() {
+        val fixture = fixture()
+
+        val result = withFailing(fixture.repo, "branch", "boom") { it.renameBranch("main", "trunk") }
+
+        assertFalse(result.ok)
+        assertEquals("Rename failed: boom", result.message)
+        assertEquals("refs/heads/main", fixture.repo.git("symbolic-ref", "HEAD").trim())
+    }
+
+    @Test
+    fun `a failed delete keeps its prefix`() {
+        val fixture = fixture()
+        fixture.repo.git("branch", "topic")
+        val id = fixture.branchId("topic")!!
+
+        val result = withFailing(fixture.repo, "branch", "boom") { it.deleteBranch("topic", id, force = false) }
+
+        assertFalse(result.ok)
+        assertEquals("Delete failed: boom", result.message)
+        assertEquals(id, fixture.branchId("topic"))
+    }
+
+    @Test
+    fun `failed new branch writes keep their prefix`() {
+        val fixture = fixture()
+
+        val plain = withFailing(fixture.repo, "branch", "boom") {
+            it.createBranch("fix-one", null, checkout = false)
+        }
+        val checkedOut = withFailing(fixture.repo, "switch", "boom") {
+            it.createBranch("fix-two", null, checkout = true)
+        }
+
+        assertEquals("New branch failed: boom", plain.message)
+        assertEquals("New branch failed: boom", checkedOut.message)
+        assertNull(fixture.branchId("fix-one"))
+        assertNull(fixture.branchId("fix-two"))
+    }
+
+    @Test
+    fun `every branch action refuses without git`() {
+        val fixture = fixture()
+
+        val results = withService(fixture.repo) { service ->
+            service.executor = MissingGitExecutor
+            listOf(
+                service.branches(),
+                service.checkout(BranchTarget.Local("main")),
+                service.createBranch("topic", null, checkout = false),
+                service.renameBranch("main", "trunk"),
+                service.deletePlan("main"),
+                service.deleteBranch("main", "id", force = false),
+            )
+        }
+
+        assertEquals(BranchList.Refused("Git is not installed"), results[0])
+        assertEquals(DeletePlan.Refused("Git is not installed"), results[4])
+        for (result in listOf(results[1], results[2], results[3], results[5])) {
+            assertEquals("Git is not installed", assertInstanceOf(GitWriteResult::class.java, result).message)
+        }
+    }
+
+    @Test
+    fun `a check-ref-format answer other than the name is refused`() {
+        val fixture = fixture()
+        val delegate = CliGitExecutor(TEST_GIT, fixture.repo.environment)
+
+        val (result, writes) = withService(fixture.repo) { service ->
+            service.executor = GitExecutor { command ->
+                if (command.args.firstOrNull() == "check-ref-format") {
+                    GitResult(0, "elsewhere\n".toByteArray(), "", timedOut = false)
+                } else {
+                    delegate.run(command)
+                }
+            }
+            val result = service.createBranch("topic", null, checkout = false)
+            result to service.console.filter { it.write }.map { it.command }
+        }
+
+        assertEquals("topic is not a valid branch name", result.message)
+        assertTrue(writes.isEmpty(), writes.toString())
+    }
+
+    @Test
+    fun `a name git would expand is refused before check-ref-format runs`() {
+        val fixture = fixture()
+        val delegate = CliGitExecutor(TEST_GIT, fixture.repo.environment)
+        val commands = CopyOnWriteArrayList<GitCommand>()
+
+        val result = withService(fixture.repo) { service ->
+            service.executor = GitExecutor { command ->
+                commands += command
+                delegate.run(command)
+            }
+            service.createBranch("@{-1}", null, checkout = false)
+        }
+
+        assertEquals("@{-1} is not a valid branch name", result.message)
+        assertTrue(
+            commands.none { it.args.firstOrNull() == "check-ref-format" },
+            commands.map { it.args }.toString(),
+        )
+    }
+
+    @Test
+    fun `an em space in a name is valid exactly as git judges it`() {
+        val fixture = fixture()
+        val name = "a\u2003b"
+
+        val result = withService(fixture.repo) { it.createBranch(name, null, checkout = false) }
+
+        assertTrue(result.ok, result.message)
+        assertEquals(fixture.head(), fixture.branchId(name))
+        val check = TestGitRepo.run(
+            listOf("git", "-C", fixture.repo.root.toString(), "check-ref-format", "--branch", name),
+            fixture.repo.root,
+            fixture.repo.environment,
+        )
+        assertEquals(0, check.exitCode, check.stderr)
+        assertEquals(name, check.stdout.trim())
+    }
+
+    /** Runs [block] against [repo] with every command whose first argument is [name] failing. */
+    private fun <T> withFailing(
+        repo: TestGitRepo,
+        name: String,
+        stderr: String,
+        block: suspend (GitService) -> T,
+    ): T = withService(repo) { service ->
+        service.executor = FailingNameExecutor(CliGitExecutor(TEST_GIT, repo.environment), name, stderr)
+        block(service)
+    }
+
+    /** Answers every command whose first argument is [name] with a failure carrying [stderr]. */
+    private class FailingNameExecutor(
+        private val delegate: GitExecutor,
+        private val name: String,
+        private val stderr: String,
+    ) : GitExecutor {
+        override fun run(command: GitCommand): GitResult =
+            if (command.args.firstOrNull() == name) GitResult(1, ByteArray(0), stderr, timedOut = false) else delegate.run(command)
     }
 
     /** Holds the first `git fetch` until [gate] opens, so a write can be observed while it runs. */
