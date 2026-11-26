@@ -338,10 +338,11 @@ Compare Files and the rest), as does fixing Kotlin `package` lines after a move.
 | → | collapsed: expand; expanded: first child | nothing |
 | ← | expanded: collapse; otherwise parent row | parent row |
 | ↩ | toggle | open the file and hand the keyboard to the editor |
-| Esc | hand the keyboard to the editor (`handFocusToEditor`) | same |
+| Esc | hand the keyboard to the editor (`handFocusToEditor`); with no text editor selected the tree keeps the keyboard | same |
 
   The first ↑/↓ with no selection selects the highlighted row (the selected editor's file, else
   the root). The list scrolls so the selected row stays visible.
+- **⌘1** follows IntelliJ's ActivateToolWindow rule: a hidden tree shows and takes the keyboard, a visible tree without the keyboard takes it, and a tree that has it hides and hands it to the editor.
 - **F4** is `EDIT_SOURCE`, bound `GLOBAL`, and the window handler sees it before the panel, so
   `dispatchAction(EDIT_SOURCE)` gets a `PROJECT_TREE` branch: a file row opens and takes the
   keyboard (`ProjectViewEditSource`), a directory row does nothing and the key is consumed.
@@ -416,9 +417,10 @@ app refreshes git status (`git.refresh()`).
 
 ### P6 Checks every write shares
 
-- **Inside the root.** Every source and target resolves (normalized, links not followed) under the
-  project root; the root itself cannot be renamed, moved or deleted (`The project root cannot be
-  changed here`). A name or relative path with an empty segment, `.`, `..`, a leading `/` or a NUL
+- **Inside the root.** Every source and target resolves (normalized; the nearest existing directory
+  of a target is also resolved through links and must stay under the root's real path, otherwise
+  `<relative path> is outside the project`) under the project root; the root itself cannot be
+  renamed, moved or deleted (`The project root cannot be changed here`). A name or relative path with an empty segment, `.`, `..`, a leading `/` or a NUL
   is refused: `<text> is not a valid name`.
 - **Checked twice.** The popup checks as the user types (error line, ↩ does nothing), and the
   write checks again right before it runs: the source still exists (`<name> no longer exists`),
@@ -550,7 +552,7 @@ and the caches and git refresh as in P6.
 
 ### P12 Save All (⌘S)
 
-`SAVE` saves every open text editor with unsaved text, the ones outside the project root too
+`SAVE` saves every open editor with unsaved text, the ones outside the project root too
 (IntelliJ's `SaveAll` saves every document; `saveableEditors` keeps its under-root filter for
 Update and Checkout). Each save catches its `IOException` and the rest still save; the message is
 `Save failed: <file>: <reason>` for the first failure, with ` (and <n> more)` when more failed.
@@ -569,12 +571,13 @@ handler.
 | `Cut <name>` / `Copied <name>` | ⌘X / ⌘C in the tree |
 | `No file selected` | an action with no target (P4) |
 | `Cut, copy and paste files in the Project tree` | the clipboard actions from the Actions tab outside the tree |
-| `<text> is not a valid name`, `<name> is not a valid Kotlin name`, `<name> already exists`, `<name> already exists in <directory>`, `Cannot move <name> into itself`, `Cannot copy <name> into itself` | popup error line (the write's own check uses the same text as a status message) |
-| `<name> no longer exists`, `Git is busy: <what>`, `The project root cannot be changed here` | the check right before the write |
+| `<text> is not a valid name`, `<name> is not a valid Kotlin name`, `<name> already exists`, `<name> already exists in <directory>`, `<relative directory> is not a directory`, `Cannot move <name> into itself`, `Cannot copy <name> into itself` | popup error line (the write's own check uses the same text as a status message) |
+| `<name> no longer exists`, `<relative path> is outside the project`, `Git is busy: <what>`, `The project root cannot be changed here` | the check right before the write |
 | `<Operation> failed: <reason>`, `Delete failed: could not move <name> to the Trash` | the write failed (P6, P9) |
 | `This system has no Trash: delete it in the terminal` | Delete popup line |
 | `Reveal is not supported on this system`, `Reveal failed: <reason>` | Reveal in Finder |
 | `The terminal is running a program: cd <dir> there yourself` | Open in Terminal (P11) |
+| `Open in Terminal refused: the path has control characters` | Open in Terminal (P11) |
 | `Open in Terminal failed: the shell did not start` | Open in Terminal when the shell cannot start |
 | `Save failed: <file>: <reason>` (+ ` (and <n> more)`) | ⌘S |
 
@@ -589,6 +592,7 @@ handler.
 - Navigation history, edit locations, Find and Problems results and run configurations keep the old
   path after a rename or move; the tree's Copy Path ⇧⌘C still copies the selected editor's path.
 - No progress or cancel for a large copy or delete; both block the window while they run.
+- A copy or New that fails midway leaves what it already wrote; the tree shows it.
 - A case-only rename of a tracked file on a case-insensitive volume is not seen by git (P5).
 - Open in Terminal writes `cd` into the one shell instead of opening a tab (P11).
 

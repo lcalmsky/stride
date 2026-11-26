@@ -191,8 +191,13 @@ fun FileOperationPopup(request: FileOperationRequest, state: AppState, onFinish:
         val key = now.target.toAbsolutePath().normalize()
         val index = rows.indexOfFirst { it.file.path.toAbsolutePath().normalize() == key }
         fun atOrBelow(path: Path) = path.toAbsolutePath().normalize().startsWith(key)
-        val next = rows.drop(index + 1).firstOrNull { !atOrBelow(it.file.path) }?.file
-            ?: rows.take(index.coerceAtLeast(0)).lastOrNull { !atOrBelow(it.file.path) }?.file
+        // A path that was not a visible row leaves the selection where it was.
+        val next = if (index < 0) {
+            null
+        } else {
+            rows.drop(index + 1).firstOrNull { !atOrBelow(it.file.path) }?.file
+                ?: rows.take(index).lastOrNull { !atOrBelow(it.file.path) }?.file
+        }
         submit(
             result = {
                 val outcome = f.delete(now.target)
@@ -351,7 +356,10 @@ fun FileOperationPopup(request: FileOperationRequest, state: AppState, onFinish:
                         )
                         ErrorLine(current.error)
                     }
-                    FileOperationPage.DELETE -> DeletePage(files, current.target)
+                    FileOperationPage.DELETE -> {
+                        DeletePage(files, current.target)
+                        ErrorLine(current.error)
+                    }
                 }
                 PopupHintBar(*hints(page, files).toTypedArray())
             }
@@ -392,7 +400,7 @@ internal fun validationError(request: FileOperationRequest, files: FileOperation
             files.nameError(text) ?: run {
                 val parent = request.target.parent ?: root
                 val destination = parent.resolve(text).normalize()
-                if (destination == request.target) null else files.existsError(destination)
+                if (isSameTarget(destination, request.target)) null else files.existsError(destination)
             }
         }
         FileOperationPage.MOVE -> {
@@ -407,6 +415,10 @@ internal fun validationError(request: FileOperationRequest, files: FileOperation
     }
 }
 
+/** Whether [destination] and [target] name the same file, as a case-only rename does on APFS. */
+private fun isSameTarget(destination: Path, target: Path): Boolean =
+    destination == target || runCatching { Files.isSameFile(destination, target) }.getOrDefault(false)
+
 private fun moveConflictError(files: FileOperations, root: Path, source: Path, text: String): String? {
     val name = source.fileName?.toString() ?: return null
     val directory = root.resolve(text).normalize()
@@ -415,8 +427,9 @@ private fun moveConflictError(files: FileOperations, root: Path, source: Path, t
     ) {
         return "Cannot move $name into itself"
     }
+    files.directoryError(directory)?.let { return it }
     val destination = directory.resolve(name).normalize()
-    return if (destination == source) null else files.existsError(destination)
+    return if (isSameTarget(destination, source)) null else files.existsError(destination)
 }
 
 private fun copyConflictError(files: FileOperations, root: Path, source: Path, text: String): String? {
@@ -425,6 +438,7 @@ private fun copyConflictError(files: FileOperations, root: Path, source: Path, t
     if (destination == source || destination.startsWith(source)) {
         return "Cannot copy $name into itself"
     }
+    files.directoryError(destination.parent ?: root)?.let { return it }
     return files.existsError(destination)
 }
 

@@ -43,8 +43,11 @@ import stride.lang.ProblemSeverity
 import stride.search.DeclarationIndex
 import stride.search.FileNameIndex
 import stride.search.SearchTab
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ActionDispatcherTest {
     @TempDir
@@ -861,7 +864,7 @@ class ActionDispatcherTest {
     @Test
     fun `hiding the project tree hands the keyboard back to the editor`() {
         openProjectWith("a.kt")
-        state.focus = KeyContext.GLOBAL
+        state.focus = KeyContext.PROJECT_TREE
 
         assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
 
@@ -887,13 +890,52 @@ class ActionDispatcherTest {
     fun `the project window action toggles the tree`() {
         openProjectWith()
         assertTrue(state.projectTreeVisible)
+        assertEquals(KeyContext.GLOBAL, state.focus)
 
-        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
-        assertFalse(state.projectTreeVisible)
-
+        // A visible tree without the keyboard takes it.
         assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
         assertTrue(state.projectTreeVisible)
+        assertEquals(KeyContext.PROJECT_TREE, state.focus)
         assertEquals(1, state.treeFocusRequests)
+
+        // A tree that has the keyboard hides; no text editor is open, so the context is GLOBAL.
+        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
+        assertFalse(state.projectTreeVisible)
+        assertEquals(KeyContext.GLOBAL, state.focus)
+
+        // A hidden tree shows and takes the keyboard.
+        assertTrue(dispatchAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, state) { null })
+        assertTrue(state.projectTreeVisible)
+        assertEquals(KeyContext.PROJECT_TREE, state.focus)
+        assertEquals(2, state.treeFocusRequests)
+    }
+
+    @Test
+    fun `reveal in finder launches off the ui thread and reports failures later`() {
+        val session = openProjectWith("a.kt")
+        state.focus = KeyContext.EDITOR
+        val files = session.files
+        files.revealSupported = { true }
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        files.launcher = {
+            entered.countDown()
+            release.await(2, TimeUnit.SECONDS)
+            throw IOException("no Finder")
+        }
+
+        assertTrue(dispatchAction(ActionId.REVEAL_IN_FINDER, state) { null })
+
+        assertEquals(null, state.statusMessage)
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+        release.countDown()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline &&
+            state.statusMessage?.startsWith("Reveal failed: ") != true
+        ) {
+            Thread.sleep(10)
+        }
+        assertTrue(state.statusMessage?.startsWith("Reveal failed: ") == true)
     }
 
     @Test

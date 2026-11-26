@@ -192,6 +192,32 @@ class TerminalSessionTest {
     }
 
     @Test
+    fun `openAt refuses a path with control characters without touching the shell`() {
+        val project = project("openAtControl")
+        try {
+            val session = project.service<TerminalSession>()
+            val started = mutableListOf<Path>()
+            session.startShell = { dir, _, _ ->
+                started.add(dir)
+                null
+            }
+
+            assertEquals(
+                "Open in Terminal refused: the path has control characters",
+                session.openAt(Path.of("bad\npath")),
+            )
+            assertEquals(
+                "Open in Terminal refused: the path has control characters",
+                session.openAt(Path.of("bad\u007fpath")),
+            )
+            assertTrue(started.isEmpty())
+            assertFalse(session.isStarted)
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
     fun `disposing the project closes the connector`() {
         val project = project("dispose")
         val session = project.service<TerminalSession>()

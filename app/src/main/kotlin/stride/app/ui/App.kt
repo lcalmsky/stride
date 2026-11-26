@@ -73,6 +73,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -1645,6 +1649,7 @@ private fun handleProjectTreeKey(
     rows: List<TreeRow>,
 ): Boolean {
     if (event.type != KeyEventType.KeyDown) return false
+    if (event.isMetaPressed || event.isCtrlPressed || event.isAltPressed || event.isShiftPressed) return false
     fun highlightedIndex(): Int {
         val selected = session.tree.selected
         val bySelection = if (selected != null) {
@@ -1665,7 +1670,7 @@ private fun handleProjectTreeKey(
     val index = highlightedIndex()
     return when (event.key) {
         Key.Escape -> {
-            state.focusSelectedEditor()
+            state.focusEditorOrTree()
             true
         }
         Key.DirectionDown, Key.DirectionUp -> {
@@ -1712,7 +1717,7 @@ private fun handleProjectTreeKey(
                     session.tree.toggle(row.file)
                 } else {
                     session.editors.openFile(row.file)
-                    state.focusSelectedEditor()
+                    state.focusEditorOrTree()
                 }
             }
             true

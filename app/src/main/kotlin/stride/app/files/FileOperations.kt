@@ -92,6 +92,14 @@ class FileOperations(
     /** P6: the refusal for the root or a path outside it, or null when the path may be written. */
     fun insideRootError(path: Path): String? = if (isInsideRoot(path)) null else ROOT_MESSAGE
 
+    /** P8/P10: `<relative directory> is not a directory` when a Move or Copy writes into no directory. */
+    fun directoryError(directory: Path): String? =
+        if (Files.isDirectory(directory.toAbsolutePath().normalize(), LinkOption.NOFOLLOW_LINKS)) {
+            null
+        } else {
+            "${relativeDisplay(directory)} is not a directory"
+        }
+
     /** P6: `<name> already exists` when [path] exists (links not followed), else null. */
     fun existsError(path: Path): String? =
         if (Files.exists(path.toAbsolutePath().normalize(), LinkOption.NOFOLLOW_LINKS)) {
@@ -154,6 +162,9 @@ class FileOperations(
         if (!caseOnly && Files.exists(to, LinkOption.NOFOLLOW_LINKS)) {
             return FileOperationResult.Failure("$targetName already exists")
         }
+        outsideThroughLinkError(to)?.let { return FileOperationResult.Failure(it) }
+        outsideThroughLinkError(from.parent ?: rootKey)?.let { return FileOperationResult.Failure(it) }
+        to.parent?.let { parent -> directoryError(parent)?.let { return FileOperationResult.Failure(it) } }
         busyProvider()?.let { return FileOperationResult.Failure("Git is busy: $it") }
         try {
             if (caseOnly) {
@@ -202,6 +213,7 @@ class FileOperations(
         }
         if (!trashed) return FileOperationResult.Failure("Delete failed: could not move $name to the Trash")
         for (editor in editors.openFiles.filter { isAtOrBelow(it.file.path, key) }) editors.closeFile(editor.file)
+        editors.forgetPaths(key)
         tree.handleEvents(listOf(VFileEvent.Deleted(VFile(key))))
         git.refresh()
         return FileOperationResult.Success(key, "Moved $name to the Trash")
@@ -223,10 +235,15 @@ class FileOperations(
         if (Files.exists(to, LinkOption.NOFOLLOW_LINKS)) {
             return FileOperationResult.Failure("$targetName already exists")
         }
+        outsideThroughLinkError(to)?.let { return FileOperationResult.Failure(it) }
+        outsideThroughLinkError(from.parent ?: rootKey)?.let { return FileOperationResult.Failure(it) }
+        to.parent?.let { parent -> directoryError(parent)?.let { return FileOperationResult.Failure(it) } }
         busyProvider()?.let { return FileOperationResult.Failure("Git is busy: $it") }
+        val written = ArrayList<Path>()
         try {
-            copyTree(from, to)
+            copyTree(from, to, written)
         } catch (e: IOException) {
+            refreshWritten(written)
             return FileOperationResult.Failure("Copy failed: ${reason(e)}")
         }
         tree.handleEvents(listOf(VFileEvent.Created(VFile(to))))
@@ -329,22 +346,30 @@ class FileOperations(
         if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             return FileOperationResult.Failure("$targetName already exists")
         }
+        outsideThroughLinkError(target)?.let { return FileOperationResult.Failure(it) }
         busyProvider()?.let { return FileOperationResult.Failure("Git is busy: $it") }
         val createdParents = ArrayList<Path>()
+        val written = ArrayList<Path>()
         try {
             var missing: Path? = target.parent
             while (missing != null && !Files.exists(missing)) {
                 createdParents.add(0, missing)
                 missing = missing.parent
             }
-            for (parent in createdParents) Files.createDirectory(parent)
+            for (parent in createdParents) {
+                Files.createDirectory(parent)
+                written.add(parent)
+            }
             if (directoryTarget) {
                 Files.createDirectory(target)
+                written.add(target)
             } else {
                 Files.createFile(target)
+                written.add(target)
                 if (!text.isNullOrEmpty()) Files.writeString(target, text)
             }
         } catch (e: IOException) {
+            refreshWritten(written)
             return FileOperationResult.Failure("$operation failed: ${reason(e)}")
         }
         tree.handleEvents(createdParents.map { VFileEvent.Created(VFile(it)) } + VFileEvent.Created(VFile(target)))
@@ -367,18 +392,28 @@ class FileOperations(
         git.refresh()
     }
 
-    private fun copyTree(from: Path, to: Path) {
+    private fun copyTree(from: Path, to: Path, written: MutableList<Path>) {
         Files.walkFileTree(from, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
-                Files.createDirectory(to.resolve(from.relativize(dir)))
+                val target = to.resolve(from.relativize(dir))
+                Files.createDirectory(target)
+                written.add(target)
                 return FileVisitResult.CONTINUE
             }
 
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                Files.copy(file, to.resolve(from.relativize(file)), LinkOption.NOFOLLOW_LINKS)
+                val target = to.resolve(from.relativize(file))
+                written.add(target)
+                Files.copy(file, target, LinkOption.NOFOLLOW_LINKS)
                 return FileVisitResult.CONTINUE
             }
         })
+    }
+
+    /** P14: after a write that failed midway, the tree shows the paths it did write. */
+    private fun refreshWritten(written: List<Path>) {
+        if (written.isNotEmpty()) tree.handleEvents(written.map { VFileEvent.Created(VFile(it)) })
+        git.refresh()
     }
 
     /** P5: on a case-insensitive volume the target resolves to the source file itself. */
@@ -414,6 +449,20 @@ class FileOperations(
     private fun isInsideRoot(path: Path): Boolean {
         val key = path.toAbsolutePath().normalize()
         return key != rootKey && key.startsWith(rootKey)
+    }
+
+    private val rootReal: Path by lazy { runCatching { rootKey.toRealPath() }.getOrDefault(rootKey) }
+
+    /**
+     * P6: refuses a target whose nearest existing ancestor is linked outside the root. The source
+     * is not followed by callers; only the directory that would hold the write is resolved.
+     */
+    private fun outsideThroughLinkError(path: Path): String? {
+        val key = path.toAbsolutePath().normalize()
+        var existing: Path? = key
+        while (existing != null && !Files.exists(existing)) existing = existing.parent
+        val real = existing?.let { runCatching { it.toRealPath() }.getOrNull() } ?: return null
+        return if (real.startsWith(rootReal)) null else "${relative(key)} is outside the project"
     }
 
     private fun displayName(path: Path): String = path.fileName?.toString() ?: path.toString()

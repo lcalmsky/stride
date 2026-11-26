@@ -617,16 +617,36 @@ class AppState {
         if (wasActiveAndFocused) handFocusToEditor()
     }
 
-    /** Shows or hides the project tree; showing it asks for the tree's focus, hiding hands it back. */
+    /**
+     * P2: IntelliJ's ActivateToolWindow rule for the project tree. A hidden tree shows and takes
+     * the keyboard, a visible tree without the keyboard takes it, and a tree that has it hides and
+     * hands the keyboard to the editor.
+     */
     fun toggleProjectTree() {
-        projectTreeVisible = !projectTreeVisible
-        if (projectTreeVisible) treeFocusRequests++ else handFocusToEditor()
+        if (!projectTreeVisible) {
+            projectTreeVisible = true
+            focusProjectTree()
+        } else if (focus != KeyContext.PROJECT_TREE) {
+            focusProjectTree()
+        } else {
+            projectTreeVisible = false
+            handFocusToEditor()
+        }
     }
 
     /** Hands the keyboard to the project tree (P4's return rule). */
     fun focusProjectTree() {
         focus = KeyContext.PROJECT_TREE
         treeFocusRequests++
+    }
+
+    /**
+     * P2: hands the keyboard to the selected text editor; when none can take it, the visible tree
+     * keeps it, so the focus context never drifts away from where the keyboard really is.
+     */
+    fun focusEditorOrTree() {
+        if (handFocusToEditor()) return
+        if (projectTreeVisible) focusProjectTree()
     }
 
     /** Hides the tree and the tool window panel; the next call restores the layout it hid. */

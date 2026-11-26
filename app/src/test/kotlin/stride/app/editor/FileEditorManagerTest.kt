@@ -1,5 +1,7 @@
 package stride.app.editor
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextRange
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import stride.core.extensions.ExtensionElement
 import stride.core.services.Application
 import stride.core.services.Project
 import stride.core.services.service
@@ -186,6 +189,35 @@ class FileEditorManagerTest {
         assertEquals(listOf("a.kt"), manager.recentFiles.map { it.name })
     }
 
+    @Test
+    fun `forgetting a path drops its recent and closed entries`() {
+        val dir = Files.createDirectories(temp.resolve("d"))
+        val a = write("d/A.kt")
+        val b = write("b.kt")
+        manager.openFile(VFile(a))
+        manager.openFile(VFile(b))
+        manager.closeFile(VFile(a))
+
+        manager.forgetPaths(dir)
+
+        assertEquals(listOf("b.kt"), manager.recentFiles.map { it.name })
+        assertNull(manager.reopenClosed())
+        assertEquals(listOf("b.kt"), manager.recentFiles.map { it.name })
+    }
+
+    @Test
+    fun `save all saves a modified editor that is not a text editor`() {
+        val path = write("a.fake")
+
+        val editor = manager.openFile(VFile(path)) as FakeFileEditor
+        assertTrue(editor.isModified)
+
+        assertNull(manager.saveAll())
+
+        assertTrue(editor.saved)
+        assertFalse(editor.isModified)
+    }
+
     private fun write(name: String, content: String = ""): Path {
         val path = temp.resolve(name)
         Files.writeString(path, content)
@@ -198,6 +230,15 @@ class FileEditorManagerTest {
         fun loadPlugins() {
             Application.resetForTests()
             Application.init(FileEditorManagerTest::class.java.classLoader)
+            // Save All takes every FileEditor; this provider supplies one that is not text.
+            Application.extensionArea.registerExtension(
+                FILE_EDITOR_PROVIDER_EP,
+                ExtensionElement(
+                    pluginId = "test",
+                    attributes = mapOf("implementation" to FakeFileEditorProvider::class.java.name),
+                    order = "first",
+                ),
+            )
         }
 
         @AfterAll
@@ -206,4 +247,29 @@ class FileEditorManagerTest {
             Application.resetForTests()
         }
     }
+}
+
+/** Editor for `.fake` files, so a test can see Save All reach a [FileEditor] that is not text. */
+class FakeFileEditor(override val file: VFile) : FileEditor {
+    override var isModified: Boolean = true
+        private set
+
+    var saved: Boolean = false
+        private set
+
+    override fun save() {
+        saved = true
+        isModified = false
+    }
+
+    @Composable
+    override fun Content(modifier: Modifier) = Unit
+
+    override fun dispose() = Unit
+}
+
+class FakeFileEditorProvider : FileEditorProvider {
+    override fun accept(project: Project, file: VFile): Boolean = file.name.endsWith(".fake")
+
+    override fun createEditor(project: Project, file: VFile): FileEditor = FakeFileEditor(file)
 }

@@ -25,6 +25,7 @@ import java.awt.EventQueue
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 
 class FileOperationsTest {
     @TempDir
@@ -351,6 +352,23 @@ class FileOperationsTest {
     }
 
     @Test
+    fun `delete drops the deleted paths from the recent and closed lists`() {
+        val dir = fixture.directory("d")
+        val a = fixture.write("d/A.kt", "")
+        val c = fixture.write("d/C.kt", "")
+        val keep = fixture.write("keep.kt", "")
+        editors.openFile(VFile(a))
+        val cEditor = editors.openFile(VFile(c))!!
+        editors.closeFile(cEditor.file)
+        editors.openFile(VFile(keep))
+
+        files.delete(dir)
+
+        assertEquals(listOf(keep), editors.recentFiles.map { it.path })
+        assertNull(editors.reopenClosed())
+    }
+
+    @Test
     fun `a refusing trash leaves the file and reads the P9 text`() {
         files.moveToTrash = { false }
         val file = fixture.write("keep.txt", "x")
@@ -489,6 +507,81 @@ class FileOperationsTest {
         assertEquals("a.txt no longer exists", files.paste(dir)?.message)
         assertNull(files.clipboard)
         assertNull(files.paste(dir))
+    }
+
+    @Test
+    fun `a move or copy into a missing directory reads the P13 text`() {
+        val file = fixture.write("a.txt", "x")
+        val other = fixture.write("b.txt", "b")
+
+        assertEquals("missing is not a directory", files.move(file, temp.resolve("missing/a.txt")).message)
+        assertEquals("missing is not a directory", files.copy(file, temp.resolve("missing/b.txt")).message)
+        assertEquals("b.txt is not a directory", files.move(file, other.resolve("a.txt")).message)
+        assertEquals("missing is not a directory", files.directoryError(temp.resolve("missing")))
+        assertNull(files.directoryError(temp))
+        assertTrue(Files.isRegularFile(file))
+        assertFalse(Files.exists(temp.resolve("missing")))
+    }
+
+    @Test
+    fun `a new file through a link that points outside the root is refused`() {
+        val outside = Files.createDirectories(trash.resolve("outside"))
+        Files.createSymbolicLink(temp.resolve("link"), outside)
+
+        val result = files.createFile(temp.resolve("link"), "x.txt")
+
+        assertEquals("link/x.txt is outside the project", result.message)
+        assertFalse(Files.exists(outside.resolve("x.txt")))
+    }
+
+    @Test
+    fun `a symlink is moved as the link, not as what it points to`() {
+        val outsideFile = trash.resolve("target.txt").also { Files.writeString(it, "t") }
+        val link = Files.createSymbolicLink(temp.resolve("link.txt"), outsideFile)
+
+        val result = files.move(link, temp.resolve("moved.txt"))
+
+        assertEquals("Renamed link.txt to moved.txt", result.message)
+        assertTrue(Files.isSymbolicLink(temp.resolve("moved.txt")))
+        assertEquals("t", Files.readString(outsideFile))
+    }
+
+    @Test
+    fun `a new file that fails midway leaves the directories it created`() {
+        val relative = "part/" + "x".repeat(300)
+
+        val result = files.createFile(temp, relative)
+
+        assertTrue(result is FileOperationResult.Failure)
+        assertTrue((result.message ?: "").startsWith("New file failed: "))
+        assertTrue(Files.isDirectory(temp.resolve("part")))
+        flushEdt()
+        assertTrue(tree.rows().any { it.file.path == temp.resolve("part") })
+    }
+
+    @Test
+    fun `a copy that fails midway leaves what it copied and the tree shows it`() {
+        val source = fixture.directory("src")
+        fixture.write("src/a.txt", "a")
+        val locked = fixture.write("src/z.bin", "z")
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("---------"))
+        try {
+            assumeTrue(
+                runCatching { Files.readAllBytes(locked) }.isFailure,
+                "the test user can read a file with no permissions",
+            )
+            val target = temp.resolve("e")
+
+            val result = files.copy(source, target)
+
+            assertTrue(result is FileOperationResult.Failure)
+            assertTrue((result.message ?: "").startsWith("Copy failed: "))
+            assertTrue(Files.isDirectory(target))
+            flushEdt()
+            assertTrue(tree.rows().any { it.file.path == target })
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rw-r--r--"))
+        }
     }
 
     @Test

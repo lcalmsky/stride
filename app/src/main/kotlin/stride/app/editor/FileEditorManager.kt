@@ -173,15 +173,22 @@ class FileEditorManager(private val project: Project) : Disposable {
         for (index in closedFiles.indices) closedFiles[index] = remap(closedFiles[index])
     }
 
+    /** Drops the recent and recently closed entries at or below [path], as a Delete does. */
+    fun forgetPaths(path: Path) {
+        val key = path.toAbsolutePath().normalize()
+        recentFilesState.removeAll { it.path.toAbsolutePath().normalize().startsWith(key) }
+        closedFiles.removeAll { it.path.toAbsolutePath().normalize().startsWith(key) }
+    }
+
     /**
-     * Saves every open text editor with unsaved text, the ones outside the project root too (P12);
+     * Saves every open editor with unsaved text, the ones outside the project root too (P12);
      * one failure does not stop the rest. Returns the first `Save failed: …` message, or `null`.
      */
     fun saveAll(): String? {
         var failures = 0
         var first: String? = null
         for (editor in openFilesState.toList()) {
-            if (editor !is TextFileEditor || !editor.isModified) continue
+            if (!editor.isModified) continue
             try {
                 editor.save()
             } catch (e: IOException) {

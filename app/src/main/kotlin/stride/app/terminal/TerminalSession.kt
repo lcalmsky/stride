@@ -116,6 +116,7 @@ class TerminalSession(private val project: Project) : Disposable {
      * Returns null when it did one of those, or the P11 message when it refused.
      */
     fun openAt(dir: Path): String? {
+        if (dir.toString().any { it < ' ' || it == '\u007F' }) return CONTROL_CHARACTERS_REFUSED
         if (disposed) return runningMessage(dir)
         if (!started) {
             val process = startShell(dir, columns, rows) ?: return SHELL_START_FAILED
@@ -243,6 +244,7 @@ class TerminalSession(private val project: Project) : Disposable {
         const val ROWS = 24
         const val MAX_HISTORY_LINES = 1_000
         const val SHELL_START_FAILED = "Open in Terminal failed: the shell did not start"
+        const val CONTROL_CHARACTERS_REFUSED = "Open in Terminal refused: the path has control characters"
     }
 }
 

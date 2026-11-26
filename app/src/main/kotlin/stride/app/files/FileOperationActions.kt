@@ -8,6 +8,7 @@ import stride.app.keys.KeyContext
 import stride.app.terminal.TerminalSession
 import stride.core.services.service
 import stride.core.vfs.VFile
+import java.awt.EventQueue
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -181,12 +182,19 @@ fun pasteFile(state: AppState): Boolean {
     return true
 }
 
-/** P11: Reveal in Finder for the tree target. */
+/**
+ * P11: Reveal in Finder for the tree target. The launch waits up to ten seconds on the helper
+ * process, so it runs on a daemon thread and only a failure comes back to the UI thread.
+ */
 fun revealFileInFinder(state: AppState): Boolean {
     val session = state.session ?: return false
     val target = fileOperationTarget(state) ?: return noTarget(state)
-    val result = session.files.revealInFinder(target)
-    state.statusMessage = result.message
+    val files = session.files
+    state.statusMessage = null
+    Thread({
+        val message = files.revealInFinder(target).message
+        if (message != null) EventQueue.invokeLater { state.statusMessage = message }
+    }, "stride-reveal-in-finder").apply { isDaemon = true }.start()
     return true
 }
 
@@ -214,13 +222,13 @@ fun closeFileOperation(state: AppState, returnContext: KeyContext, created: Path
     val session = state.session
     if (created != null && session != null) {
         session.editors.openFile(VFile(created))
-        state.focusSelectedEditor()
+        state.focusEditorOrTree()
         return
     }
     if (returnContext == KeyContext.PROJECT_TREE && state.projectTreeVisible) {
         state.focusProjectTree()
     } else {
-        state.focusSelectedEditor()
+        state.focusEditorOrTree()
     }
 }
 

@@ -526,7 +526,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
             val target = fileOperationTarget(state)
             if (target != null && !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
                 session.editors.openFile(VFile(target))
-                state.focusSelectedEditor()
+                state.focusEditorOrTree()
             }
             true
         }
