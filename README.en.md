@@ -159,6 +159,14 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 </tr>
 </table>
 
+### Menu bar
+
+- **Screen menu bar** the macOS screen menu bar at the top of the screen carries eleven menus, File, Edit, View, Navigate, Code, Refactor, Build, Run, Git, Window and Help, in IntelliJ's order and with the same submenus. Only the actions stride has appear as rows, and no menu row appears inside the window
+- **Resolved for the surface** every time a menu opens, its rows are resolved again for where the keyboard is (the editor, the project tree, the terminal, or a tool window). A row that cannot run there is dimmed, and while a popup holds the keyboard every row is dimmed. A row does what its shortcut does there, and choosing a row resolves it once more, so a row that can no longer run does nothing
+- **Shortcut text** the shortcut that runs on that surface is written after the row text. The same key that does different things in the editor and the tree is shown only on the row for that surface. The menu registers no shortcut, so keys are handled exactly as before without going through the menu, and a key press is neither run twice nor lost because of the menu
+- **Cut, Copy, Paste and Delete** Edit's Cut, Copy, Paste and Delete do what `⌘X`, `⌘C`, `⌘V` and `⌫` do where the keyboard is: the selection or line in the editor, a file in the tree, and Copy and Paste in the terminal
+- **Recent Projects** File › Recent Projects lists the folders opened before, most recent first, up to 20, and choosing one opens it. The open folder is left out, and folders with the same name are told apart by their parent path. Choosing a folder that no longer exists drops it from the list and shows `Folder not found: <path>` in the status line. The list is kept in the `recentProjects` key of the `stride` node in `java.util.prefs`, the same node as the UI font setting
+
 ### Liquid glass UI
 
 <table width="100%">
@@ -198,7 +206,7 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 ### Keyboard
 
-These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macOS default keymap; on non-macOS platforms Command and Control are swapped (`⌘S` becomes `Ctrl+S`, `⌃R` becomes `Meta+R`) and keys are shown with `Ctrl`, `Alt`, `Shift` and `Meta` labels. The full list and the context precedence are defined by the `bind(` calls in `app/src/main/kotlin/stride/app/keys/Keymap.kt`.
+These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macOS default keymap; on non-macOS platforms Command and Control are swapped (`⌘S` becomes `Ctrl+S`, `⌃R` becomes `Meta+R`) and keys are shown with `Ctrl`, `Alt`, `Shift` and `Meta` labels. The full list and the context precedence are defined by the `bind(` calls in `app/src/main/kotlin/stride/app/keys/Keymap.kt`. The shortcuts written after the menu bar rows are keys from this table too, and the menu takes no key of its own.
 
 | Key | Action |
 |---|---|
@@ -370,6 +378,8 @@ JDK 21 is required; the Gradle toolchain asks for 21.
 The app is split into six modules. `core` provides services, extension points, and `Disposer`; `lang` defines the language, file type, highlighter, commenter, intention, import optimizer, and problem provider APIs. `search` holds the file name index, the Kotlin and Java declaration index, and the Search Everywhere model, and `app` contains the Compose Desktop UI with the editor, navigation, bookmarks, Run window, and terminal. `plugins/lang-kotlin` and `plugins/lang-json` register the Kotlin and JSON lexers, highlighters, file types, and bracket-matching problem providers, and the Kotlin plugin also registers the import quick fixes, the `val`/`var` intention, the import optimizer, and the unused import warning.
 
 Every module declares extension points and registers extensions through a `META-INF/stride-plugin.xml` descriptor. The app descriptor opens the file type, syntax highlighter, commenter, intention, import optimizer, problem provider, refactoring provider, generate provider, editor, tree structure, and Search Everywhere contributor extension points, and the language plugins and the app itself register into them. Class and symbol search register as contributors over the declaration index, and the app assembles action search directly. The declaration index also reads supertypes, imports and member ranges, from which the hierarchy actions build a type graph. The Git features belong to the project service `GitService`, which runs the `git` command as a child process. It reads status with `git status --porcelain=v2`, and the gutter marks come from an in-process line diff of the file at HEAD against the editor text. The full contracts are in [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md). The context menus are drawn from the action groups in `stride.app.actions.ActionGroups`, code definitions that use IntelliJ's group ids, and whether a row is enabled now is decided by calling the same predicate function the action uses.
+
+The menu bar is built from the same action group definitions (`app/src/main/kotlin/stride/app/actions/ActionGroups.kt`) into a Swing menu (`actions/MainMenuBar.kt`) and is attached to the window only when it is the macOS screen menu bar. The items register no accelerator, so `KeyRouter` alone handles keys, and whether a row is enabled is decided by `canDispatch`, which answers what the dispatcher's action would return without running it.
 
 The editor keeps its scroll viewport and chrome insets separate: content runs to the window edge while the glass capsules and the sidebar float over it, and the insets feed caret scrolling, the gutter, and scrollbar padding. Documents of 1,000 lines or more place their content in a separate scroll layer and drop back below 800 lines.
 

@@ -159,6 +159,14 @@ brew install --cask lcalmsky/stride/stride
 </tr>
 </table>
 
+### 메뉴 막대
+
+- **화면 메뉴 막대** macOS 화면 위 메뉴 막대에 File, Edit, View, Navigate, Code, Refactor, Build, Run, Git, Window, Help 열한 메뉴가 IntelliJ 와 같은 순서와 하위 메뉴로 뜹니다. stride 에 있는 액션만 행으로 나오고, 창 안에는 메뉴 줄이 생기지 않습니다
+- **자리 기준 판정** 메뉴를 열 때마다 키보드가 있는 곳(에디터, 프로젝트 트리, 터미널, 도구 창)을 기준으로 행을 다시 판정합니다. 그 자리에서 실행할 수 없는 행은 흐리게 보이고, 팝업이 키보드를 가진 동안에는 모든 행이 흐립니다. 행은 그 자리에서 단축키를 누른 것과 같은 일을 하고, 고를 때 한 번 더 판정해 그사이 상태가 바뀌어 실행할 수 없게 된 행은 아무것도 하지 않습니다
+- **행 뒤 단축키** 행 글자 뒤에 그 자리에서 실행되는 단축키를 적어 보여 줍니다. 같은 키라도 에디터와 트리에서 하는 일이 다르면 그 자리의 행에만 붙습니다. 메뉴는 단축키를 등록하지 않으므로 키 입력은 메뉴를 거치지 않고 예전과 똑같이 처리되고, 한 번 누른 키가 메뉴 때문에 두 번 실행되거나 사라지지 않습니다
+- **Cut·Copy·Paste·Delete** Edit 의 Cut·Copy·Paste·Delete 는 키보드가 있는 곳의 `⌘X`·`⌘C`·`⌘V`·`⌫` 와 같은 일을 합니다. 에디터에서는 선택이나 줄, 트리에서는 파일, 터미널에서는 Copy·Paste 입니다
+- **Recent Projects** File › Recent Projects 는 전에 연 폴더를 최근 것부터 20개까지 보여 주고, 고르면 그 폴더를 엽니다. 지금 연 폴더는 빠지고, 이름이 같은 폴더는 상위 경로를 붙여 구별합니다. 사라진 폴더를 고르면 목록에서 지우고 상태 줄에 `Folder not found: <경로>` 를 띄웁니다. 목록은 `java.util.prefs` 의 `stride` 노드 `recentProjects` 키(UI 글꼴 설정과 같은 노드)에 남습니다
+
 ### 리퀴드 글래스 UI
 
 <table width="100%">
@@ -198,7 +206,7 @@ brew install --cask lcalmsky/stride/stride
 
 ### 키보드
 
-아래는 기본 키입니다. 단축키는 IntelliJ IDEA 의 macOS 기본 키맵과 호환됩니다. macOS 가 아닌 플랫폼에서는 Command 와 Control 이 서로 바뀌어(`⌘S` 는 `Ctrl+S`, `⌃R` 은 `Meta+R`) `Ctrl`·`Alt`·`Shift`·`Meta` 라벨로 표시됩니다. 전체 목록과 문맥별 우선순위의 정본은 `app/src/main/kotlin/stride/app/keys/Keymap.kt` 의 `bind(` 호출입니다.
+아래는 기본 키입니다. 단축키는 IntelliJ IDEA 의 macOS 기본 키맵과 호환됩니다. macOS 가 아닌 플랫폼에서는 Command 와 Control 이 서로 바뀌어(`⌘S` 는 `Ctrl+S`, `⌃R` 은 `Meta+R`) `Ctrl`·`Alt`·`Shift`·`Meta` 라벨로 표시됩니다. 전체 목록과 문맥별 우선순위의 정본은 `app/src/main/kotlin/stride/app/keys/Keymap.kt` 의 `bind(` 호출입니다. 메뉴 막대 행 뒤에 적힌 단축키도 이 표의 키이고, 메뉴는 키를 따로 받지 않습니다.
 
 | 키 | 동작 |
 |---|---|
@@ -370,6 +378,8 @@ JDK 21 이 필요합니다. Gradle toolchain 이 21 을 요구합니다.
 앱은 여섯 모듈로 나뉩니다. `core` 는 서비스·확장점·`Disposer` 를 제공하고, `lang` 은 언어와 파일 종류·하이라이터·주석 처리·인텐션·import 정리·문제 제공자 API 를 정의합니다. `search` 는 파일 이름 인덱스, Kotlin·Java 선언 인덱스, Search Everywhere 의 모델을, `app` 은 Compose Desktop UI 와 에디터·탐색·북마크·Run·터미널을 담습니다. `plugins/lang-kotlin` 과 `plugins/lang-json` 이 각각 Kotlin 과 JSON 의 렉서·하이라이터·파일 종류와 괄호 짝을 판정하는 문제 제공자를 등록하고, Kotlin 플러그인은 import 퀵픽스와 `val`·`var` 인텐션, import 정리기, 안 쓰는 import 경고도 등록합니다.
 
 모든 모듈은 `META-INF/stride-plugin.xml` 디스크립터로 확장점을 선언하고 확장을 등록합니다. 앱 디스크립터가 파일 종류, 문법 하이라이터, 주석 처리, 인텐션, import 정리, 문제 제공자, 리팩터링 제공자, 생성 제공자, 에디터, 트리 구조, Search Everywhere 기여자 확장점을 열고, 언어 플러그인과 앱 자신이 그 확장점에 등록합니다. 클래스·심볼 검색은 선언 인덱스를 읽는 기여자로 등록되고, 액션 검색은 앱이 직접 구성합니다. 선언 인덱스는 상위 타입과 import, 멤버 범위도 읽고, 계층 탐색 액션은 이 정보로 타입 그래프를 만듭니다. Git 기능은 `git` 명령을 자식 프로세스로 실행하는 프로젝트 서비스 `GitService` 가 맡습니다. 상태는 `git status --porcelain=v2` 로 읽고, 거터 표시는 HEAD 의 파일 내용과 에디터 텍스트를 프로세스 안에서 줄 단위로 비교해 만듭니다. 자세한 계약은 [core](docs/api-core.md) · [lang](docs/api-lang.md) · [search](docs/api-search.md) · [app](docs/api-app.md) 에 있습니다. 우클릭 메뉴는 `stride.app.actions.ActionGroups` 의 액션 그룹(IntelliJ 그룹 id 를 쓰는 코드 정의)을 읽어 그리고, 행의 활성 여부는 그 액션이 쓰는 판정 함수를 그대로 불러 정합니다.
+
+메뉴 막대도 같은 액션 그룹 정의(`app/src/main/kotlin/stride/app/actions/ActionGroups.kt`)에서 Swing 메뉴를 만들어(`actions/MainMenuBar.kt`) macOS 화면 메뉴 막대일 때만 창에 답니다. 항목에 가속기를 등록하지 않아 키는 `KeyRouter` 만 처리하고, 행의 활성 여부는 디스패처가 액션을 실행하지 않고 같은 결과를 판정하는 `canDispatch` 로 정합니다.
 
 에디터는 스크롤 뷰포트와 크롬 인셋을 따로 둡니다. 내용은 창 가장자리까지 이어지고 유리 캡슐과 사이드바가 그 위에 떠 있으며, 인셋은 캐럿 스크롤·거터·스크롤바 여백에 반영됩니다. 1,000줄 이상 문서는 내용을 별도 스크롤 레이어에 배치하고 800줄 아래로 내려가면 레이어를 풉니다.
 
