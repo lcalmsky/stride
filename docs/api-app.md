@@ -975,6 +975,208 @@ bound in the Commit window only.
 - Run '<context>' from the tree does not cover a build root without its own `src/test`, and it
   does not see Java test files, because stride's test locator reads Kotlin `@Test fun` only (A10).
 
+## Main menu bar
+
+The 23rd round of #13 gives the app the macOS screen menu bar: eleven menus (File, Edit, View,
+Navigate, Code, Refactor, Build, Run, Git, Window, Help) built from the action groups of the
+previous section, and File › Recent Projects, the list of folders opened before. The choices
+below were made under the user instruction of 2026-11-26 (recommended option applied). The
+IntelliJ source is the depth-3 main menu dump `.claude/handoff/13-r23-idea-main-menu.txt`; the
+JDK sources are the toolchain's JDK 21.0.11 (`lib/src.zip`) and the upstream tag
+`jdk-21.0.11+10` for the native side.
+
+The rule every section below follows: **the menu bar takes no part in key handling.** A key press
+runs exactly what `KeyRouter` chooses, including nothing, and the menu bar neither runs an action
+from a key press nor consumes a key. A row runs only when it is clicked, and then as its action
+runs from the surface that has the keyboard (A4).
+
+### M1 What this round includes
+
+| Item | IntelliJ | stride |
+|---|---|---|
+| Shortcuts shown, never registered | `KeymapUtil` text in the native menu | M2 |
+| Bar built from groups, installed only as the screen menu bar | `MainMenu`, `IdeMenuBar` | M3 |
+| Rows resolved when a menu opens | `AnAction.update` on menu open | M4 |
+| Choosing a row | `ActionUtil.performAction` | M5 |
+| Cut, Copy, Paste, Delete act on the surface with the keyboard | `$Cut`, `$Copy`, `$Paste`, `$Delete` | M6 |
+| File › Recent Projects | `$LRU`, `RecentProjectListGroup` | M7 |
+| The eleven menus | `FileMenu` … `HelpMenu`, `VcsGroups` | M8 |
+
+Not included: the Run widget, tool window toolbars and terminal tabs (the next round); the app
+menu (About, Settings, Quit), which the JDK builds from its own nib.
+
+### M2 Keys: the menu bar registers no shortcut
+
+Two paths could run a menu item from a key press.
+
+- **Swing.** A key event that no listener consumed reaches
+  `KeyboardManager.fireKeyboardAction` (`javax/swing/KeyboardManager.java:276-305`), which hands
+  it to every showing `JMenuBar`; `JMenuBar.processKeyBinding` walks its items
+  (`JMenuBar.java:681-719`), and `BasicMenuItemUI` maps each accelerator to `doClick`
+  (`BasicMenuItemUI.java:471-486`). The focus owner is skiko's `HardwareLayer`, a `Canvas`, so
+  the path starts from the `KeyEventPostProcessor` that `UIManager` installs
+  (`UIManager.java:1537-1551`). Compose consumes the AWT event only when `onPreviewKeyEvent`, the
+  scene or `onKeyEvent` returns `true` (`ComposeSceneMediator.onKeyEvent`). So exactly the keys
+  `KeyRouter` refuses (no binding, `dispatchAction` returning `false`, a modal context) reach the
+  menu bar.
+- **Native.** A key equivalent first goes to `AWTView performKeyEquivalent:`, which delivers it to
+  Java and returns `NO` (`AWTView.m:317-340`); a matching `NSMenuItem` then calls
+  `CMenuItem handleAction:`, which does nothing when the current event is a key press and the key
+  window is an AWT window (`CMenuItem.m:69-92`). Two cases escape that: while the input method has
+  marked text (a Hangul syllable being composed) or press-and-hold is active, the view skips the
+  delivery and the menu item still takes the event, so the key reaches neither `KeyRouter` nor
+  the row; and with no AWT key window (the window minimised) `handleAction:` runs the item.
+
+Candidates, measured with a headless probe (`JMenuBar.processKeyBinding` with ⌘K, Metal and Aqua
+gave the same results):
+
+| Candidate | Swing path | Native path | Verdict |
+|---|---|---|---|
+| K1 stock accelerators (Compose `MenuBar` `shortcut`, `JMenuItem.accelerator`) | runs the item: `true`, 1 run | key equivalent | rejected: runs every key `KeyRouter` refuses |
+| K2 accelerator for the native glyph, Swing binding switched off (`processKeyBinding` → `false` on the bar or the items) | `false`, 0 runs | key equivalent | rejected: the two native cases above consume or run keys, and Java cannot see them |
+| K3 no accelerator, the shortcut written in the item text | `false`, 0 runs | none | **chosen** |
+| K4 keys handled by menu accelerators instead of `KeyRouter` | — | — | rejected: the brief keeps keys in `KeyRouter`, and the context rules (A12, modal contexts) live there |
+| K5 accelerators plus a guard that drops a menu run when `EventQueue.getCurrentEvent()` is a key event | depends on event shape | key equivalent | rejected: the native action event carries only time and modifiers, so a click and a key cannot be told apart, and the composition case still loses the key |
+
+The contract:
+
+- **No item and no menu has an accelerator or a mnemonic**, and no menu bar component is
+  focusable. The bar's own F10 binding is absent because `AquaMenuBarUI` skips it when it is the
+  screen menu bar (`AquaMenuBarUI.java:74-78`), the only case M3 installs.
+- **The shortcut is part of the item text**: `<text>  <shortcut>` with two spaces, the shortcut
+  formatted by A12. `MenuRow.shortcut` stays a separate field and only the Swing adapter joins
+  the two, so a later switch to native glyphs touches one function.
+- **Test.** After every menu is resolved in every `KeyContext` and several states, no component
+  has an accelerator, a mnemonic or focus, and every keymap stroke given to the bar's
+  `processKeyBinding` returns `false` with no action run. A control bar with one stock
+  accelerator item returns `true`, so the probe reaches items. Adding one `setAccelerator` to the
+  builder fails the test.
+
+### M3 Where the bar is built and when it is installed
+
+- **Groups.** `ActionGroups` gets `MainMenu` and the eleven menu groups under IntelliJ's ids
+  (`FileMenu`, `EditMenu`, `ViewMenu`, `GoToMenu`, `CodeMenu`, `RefactoringMenu`, `BuildMenu`,
+  `RunMenu`, `VcsGroups`, `WindowMenu`, `HelpMenu`), with the item kinds of A2 plus the stroke row
+  (M6) and the generated row (M7).
+- **A Swing builder, not Compose `MenuBar`.** Compose `MenuBar` needs a window scope, so tests
+  could not build it without a window; it turns `shortcut` into an accelerator (K1); and it would
+  resolve rows on every recomposition instead of at open (M4). The builder makes a `JMenuBar`
+  with one `JMenu` per top menu.
+- **Installed only as the screen menu bar.** `AquaMenuBarUI` reads `apple.laf.useScreenMenuBar`
+  when the bar's UI is created and needs the Aqua look and feel (`AquaMenuBarUI.java:132-155`).
+  skiko sets both when `SkiaLayer` loads (`org.jetbrains.skiko.Setup.init`), and
+  `SystemAppearance.prepareProcess` now sets the property too, before any Swing class loads. The
+  bar is built in `Window(create = …)` after `ComposeWindow()` exists and installed with
+  `setJMenuBar` only when the platform is macOS, the look and feel id is `Aqua` and the property
+  reads `true`. Otherwise nothing is installed: an in-window menu row is the rejected always-on
+  row.
+- Tests build the bar but never attach it to a frame or call `addNotify`.
+
+### M4 Rows: resolved when a menu opens, for display only
+
+- **When.** AppKit calls `menuWillOpen:` (`ScreenMenu.m`), the JDK runs `setSelected(true)`,
+  `validate()` and `updateItems()` on the EDT in one `invokeAndWait`
+  (`ScreenMenu.java:132-147`). The menu's `setSelected(true)` override rebuilds its items from its
+  group, every time. A `MenuListener` is not used: a second `setSelected(true)` without a close
+  between does not fire it (probe), and a missed close would leave rows stale. Submenus rebuild on
+  their own open the same way.
+- **Context.** The rows resolve with `resolveMenuRows` (A3) against `state.focus` as it is: the
+  native menu never takes Java focus, so `state.focus` is the surface with the keyboard and is not
+  changed by opening.
+- **Enablement** is A3's, plus one condition: an action row is enabled only when
+  `canDispatch(action, state, focus)` is `true`. `canDispatch` sits beside `dispatchAction` in
+  `keys/ActionDispatcher.kt` and answers what `dispatchAction` would return, without running it,
+  case by case for every `return false`; a test compares the two for every menu bar action in
+  every non-modal context and several states. A component action (A7) replaces this for the
+  surfaces that hand one over (M6). So A4's rule holds: no enabled row passes a key on.
+- **Modal contexts** (`SEARCH_POPUP`, `CONTEXT_POPUP`, `NAV_BAR`): every row is disabled, as no
+  `GLOBAL` key answers there.
+- **Shortcut** (A12) with the same context: a row shows a key only when that key would run it from
+  the surface with the keyboard. ⌘N shows next to Code › Generate… in the editor and next to
+  File › New… in the tree, never both.
+- **Cost.** Opening reads app state only: no file system check, no git call, because AppKit's
+  main thread waits for it.
+
+### M5 Choosing a row
+
+- A click runs the item's `doClick` (`ScreenMenuItem.java:128-130`). Its listener resolves that
+  one row again against the current state and `state.focus`; when the row is disabled now, or
+  hidden, nothing runs. The rows shown at open are display only.
+- An enabled row runs its component action (A7) or `dispatchAction(action, state, chooseFolder)`,
+  as its key would. Focus is not restored afterwards because it never left; an action that moves
+  the keyboard keeps it where it put it.
+- **While the folder chooser is open no row runs.** The chooser's modal loop still dispatches menu
+  events, and a nested chooser or a closed tab under it is not a choice the user made.
+
+### M6 Cut, Copy, Paste and Delete
+
+IntelliJ's `$Cut`, `$Copy`, `$Paste` and `$Delete` act on the focused component. A **stroke row**
+names a stroke and a text instead of an action (`meta X` Cut, `meta C` Copy, `meta V` Paste,
+`BACK_SPACE` Delete). At open its action is `keymap.actionFor(stroke, state.focus)`, the action
+the stroke runs on the surface with the keyboard, and the row then resolves like an action row.
+With no action it is disabled and shows no key.
+
+| Surface with the keyboard | ⌘X / ⌘C / ⌘V | ⌫ |
+|---|---|---|
+| Editor | the editor's component actions (A7): `CUT_LINE`, `COPY_LINE`, `PASTE` | disabled |
+| Terminal | Copy and Paste, component actions the terminal view registers while it is shown | disabled |
+| Project tree | `CUT_FILE`, `COPY_FILE`, `PASTE_FILE` | `DELETE_ELEMENT` |
+| Others | by `canDispatch` | by `canDispatch` |
+
+The editor's handlers come from the selected `TextFileEditor.menuComponentActions`; the
+terminal's from a provider in `AppState` that `TerminalView` sets while composed and clears on
+dispose. No other surface registers handlers this round (M10).
+
+### M7 Recent Projects
+
+- **Rows.** File › Recent Projects (IntelliJ's `$LRU` text; the handoff called it Open Recent)
+  lists one row per folder opened before, most recent first, without the open folder. A row's
+  text is the folder name; names that occur twice show `name (~/parent)`. With no folder the
+  submenu is hidden. IntelliJ's Manage Projects… is left out (M10).
+- **Group item.** A generated item (`GroupGenerated(RECENT_PROJECTS)`) resolves to rows that are
+  not actions: `MenuRow.Command(text, enabled, run)`. Context menus never contain it.
+- **Choosing.** When the folder is no longer a directory the entry is dropped and the status line
+  reads `Folder not found: <path>`; otherwise `state.openFolder(path)`, the path a folder chosen
+  with Open… takes.
+- **Recording.** `AppState.openFolder` records the folder after `ProjectSession.open` returns
+  (the normalised absolute root), so a failed open is not recorded. The startup argument and
+  Open… both pass through it.
+- **Storage.** `java.util.prefs`, node `stride` (the node of `uiFont`), key `recentProjects`: the
+  paths separated by newlines, at most 20, the oldest dropped first, also while the value would
+  exceed `Preferences.MAX_VALUE_LENGTH`. A path containing a newline is not stored. The list is
+  read once at startup; reads and writes that fail are ignored, as for `uiFont`.
+- **Compatibility.** One new key in an existing node. Earlier versions ignore it, no existing key
+  changes meaning, and removing it only empties the list, so this is a minor version.
+- **Tests.** The test JVM sets `stride.recentProjects.disableDefaultStore=true`
+  (`strideTestDefaults`), which keeps the list in memory; tests that check storage inject their
+  own node, as `UiFontPreference` does.
+
+### M8 The eleven menus
+
+Rows follow IntelliJ's order and submenus in the dump. An IntelliJ row is kept when a stride
+`ActionId` does what it does; the rest are left out (M10). The row table is filled in when the
+groups are written.
+
+### M9 Checks a headless test cannot make
+
+- The eleven menus appear in the macOS menu bar after the app menu, and the window content does not
+  move down.
+- The JDK's default nib has no Window menu of its own that would appear next to ours.
+- `<text>  <shortcut>` reads well in the native menu (two spaces, no right-aligned column).
+- Rows rebuilt in `setSelected(true)` show in the menu that is opening, submenus included.
+- A click on a row runs it once, and a key whose stroke a row shows runs once, through `KeyRouter`.
+- While a Hangul syllable is being composed, ⌘ shortcuts behave as they did before the bar.
+- A click on a row while the folder chooser is open runs nothing.
+- Opening a menu does not change `state.focus` (the native menu takes no Java focus).
+
+### M10 Differences from IntelliJ
+
+- Shortcuts are part of the row text, not a right-aligned column of native glyphs (M2).
+- IntelliJ rows with no stride action are left out, among them Settings, Manage Projects…,
+  Minimize and Zoom (M8 fills in the list).
+- Only the editor and the terminal hand component actions to the menu bar; Jump to Source in a
+  list window or the Commit window is disabled there, and F4 or ↩ in the window does it.
+
 ## Search Everywhere
 
 ```kotlin
