@@ -1238,9 +1238,9 @@ View >
   ---
   Quick Definition
   Quick Documentation
-  ---
   Parameter Info
   Error Description
+  ---
   Jump to Source
   ---
   Recent Files
@@ -1258,6 +1258,7 @@ Navigate >
   ---
   Next Highlighted Error
   Previous Highlighted Error
+  ---
   Last Edit Location
   ---
   Navigate in File >
@@ -1341,7 +1342,6 @@ Git >
   New Branch…
   ---
   Show VCS Log
-  ---
   Uncommitted Changes >
     Rollback…
   ---

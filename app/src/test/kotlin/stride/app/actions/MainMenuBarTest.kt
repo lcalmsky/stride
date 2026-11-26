@@ -743,9 +743,9 @@ class MainMenuBarTest {
               ---
               Quick Definition
               Quick Documentation
-              ---
               Parameter Info
               Error Description
+              ---
               Jump to Source
               ---
               Recent Files
@@ -763,6 +763,7 @@ class MainMenuBarTest {
               ---
               Next Highlighted Error
               Previous Highlighted Error
+              ---
               Last Edit Location
               ---
               Navigate in File >
@@ -846,7 +847,6 @@ class MainMenuBarTest {
               New Branch…
               ---
               Show VCS Log
-              ---
               Uncommitted Changes >
                 Rollback…
               ---

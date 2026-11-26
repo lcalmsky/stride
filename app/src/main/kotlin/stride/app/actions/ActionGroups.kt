@@ -397,9 +397,9 @@ object ActionGroups {
             GroupSeparator,
             GroupAction(ActionId.QUICK_DEFINITION, "Quick Definition"),
             GroupAction(ActionId.QUICK_DOC, "Quick Documentation"),
-            GroupSeparator,
             GroupAction(ActionId.PARAMETER_INFO, "Parameter Info"),
             GroupAction(ActionId.SHOW_ERROR_DESCRIPTION, "Error Description"),
+            GroupSeparator,
             GroupAction(ActionId.EDIT_SOURCE, "Jump to Source"),
             GroupSeparator,
             GroupAction(ActionId.RECENT_FILES),
@@ -423,6 +423,7 @@ object ActionGroups {
             GroupSeparator,
             GroupAction(ActionId.GOTO_NEXT_ERROR, "Next Highlighted Error"),
             GroupAction(ActionId.GOTO_PREVIOUS_ERROR, "Previous Highlighted Error"),
+            GroupSeparator,
             GroupAction(ActionId.JUMP_TO_LAST_CHANGE),
             GroupSeparator,
             GroupSubmenu(
@@ -552,7 +553,6 @@ object ActionGroups {
             GroupAction(ActionId.NEW_BRANCH),
             GroupSeparator,
             GroupAction(ActionId.ACTIVATE_GIT_TOOL_WINDOW, "Show VCS Log"),
-            GroupSeparator,
             GroupSubmenu(
                 "Uncommitted Changes",
                 listOf(GroupAction(ActionId.ROLLBACK_CHANGES)),
