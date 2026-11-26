@@ -665,7 +665,9 @@ opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differenc
 ### A3 Rows: text, visibility and enablement
 
 - **When.** Rows resolve once, when the menu opens, against the app state with `state.focus` set
-  to the surface's context (A4). A row is `visible`, `enabled` and has a `text`.
+  to the surface's context (A4). A row is `visible`, `enabled` and has a `text`. Every row's
+  `enabled` is judged in that one pass, a component action's (A7) included: a surface hands over
+  the judgment, never an answer it took before the menu set `state.focus`.
 - **Text.** The group item's place text, otherwise `ActionNames.of(action)`. A row with dynamic
   text (Run '<name>') takes it from its update.
 - **One update per action**, `actionUpdate(action, state)` in `actions/ActionUpdates.kt`. The
@@ -693,7 +695,7 @@ opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differenc
 | `STOP` | disabled when nothing runs |
 | `ROLLBACK_CHANGES`, `SHOW_DIFF` in the Commit window | disabled with no selected file row |
 | Git submenu (`Git.ContextMenu`) | hidden outside a git repository |
-| Component actions (A7) | the surface's own `enabled` |
+| Component actions (A7) | the surface's own `enabled`, asked in the same pass |
 
 ### A4 How a row runs: the surface context
 
@@ -774,7 +776,14 @@ run)` per `ActionId`), IntelliJ's data-context providers. **The handler gives th
 component's own key gives**: it calls the same function where stride handles the key. The
 component's `enabled` beats the A3 update (`MenuRows`), so the surface passes `enabled` from the
 judgment its `run` uses; a handler that would do nothing in a state the menu opens in is a defect,
-like a pass-through row (A4). A handler that can always act (its menu opens only on a row, and it
+like a pass-through row (A4). **`enabled` is a function (`() -> Boolean`), not a value.** The
+surface builds its handlers before `openContextMenu` sets `state.focus = openedFrom`, so a value
+would be judged with the keyboard wherever it was, while the A3 updates and the handler's `run`
+see the surface. `resolveMenuRows` calls `enabled` on the line that reads the A3 update, the only
+place that calls it, so both are judged in the state the row runs in (A4 sets the same focus
+before `run`). An `enabled` reads live state, or a value captured for the pressed row that `run`
+uses too (the test tree's run configuration); it never wraps an answer computed outside it. A
+handler that can always act (its menu opens only on a row, and it
 captured that row) leaves `enabled` at its default. The editor's
 ⌘X, ⌘C with a selection and ⌘V are handled by `BasicTextField` itself, so the editor's handlers
 reproduce them and a test compares the clipboard and the text after the key and after the row.
@@ -797,7 +806,11 @@ reproduce them and a test compares the clipboard and the text after the key and 
   judgment the Rollback… and Show Diff updates use, so the three rows are disabled together when
   no row can be opened: an empty list, or a selected path that has left the list (a right-click
   on a group row keeps that stale selection). With no selected path the window treats the first
-  row as selected, and all three act on it.
+  row as selected, and all three act on it. `commitWindowSelectedRow` answers `null` while the
+  keyboard is outside the window, and a group row does not take the keyboard when it is pressed
+  (after Esc the editor has it and the window stays visible); the three rows still agree there,
+  enabled with a row to open and disabled without one, because each is judged after the menu set
+  `state.focus` to the window.
 - **Git Log**: Show Diff opens the selected commit's diff (`openCommitDiff`, what ↩ does).
 - **Run window test tree**: Run '<node>' (A10).
 - **Text fields.** The editor's text field replaces the framework's own text menu (Compose
