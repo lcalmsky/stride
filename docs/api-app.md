@@ -108,7 +108,7 @@ reduced to one `TextChange(offset, oldLength, newText)` by common prefix/suffix 
 ```kotlin
 @Service(Service.Level.PROJECT)
 class FileEditorManager(project: Project) : Disposable {
-    val openFiles: List<FileEditor>           // Compose snapshot list
+    val openFiles: List<FileEditor>           // immutable copy of the tab list, safe to walk off the UI thread
     var selected: FileEditor?                 // Compose snapshot state
     var onSelectionChanged: (FileEditor) -> Unit  // records the navigation history
     fun openFile(file: VFile): FileEditor?    // reuses an open tab and selects it
