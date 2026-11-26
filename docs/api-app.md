@@ -287,6 +287,303 @@ class ProjectTreeModel(
   code uses `VFile.children()`.
 - In the UI a directory row toggles on a single click and a file row opens on a single click.
 
+## Project tree keys and file operations
+
+The 19th round of #13 gives the project tree a keyboard and the app its first file writes:
+IntelliJ's `ProjectViewPopupMenu` New, Rename, Delete, Copy, Move and Cut/Copy/Paste, Edit
+Source, and the platform's Reveal in Finder and Open in Terminal, plus `SaveAll` on ⌘S. The
+choices below were made under the user instruction of 2026-11-26 (recommended option applied);
+the IntelliJ sources are the menu dump `.claude/handoff/13-r18-idea-menus.txt` and the key table
+`13-r18-idea-keys.tsv`. The measurements use git 2.50.1 on an APFS case-insensitive volume.
+
+### P1 What this round includes
+
+| Item | IntelliJ | stride |
+|---|---|---|
+| Tree selection and ↑ ↓ ← → ↩ F4 Esc | Project view | P2 |
+| New ⌘N, ⌃↩: Kotlin Class/File, File, Directory | `NewElement`, `NewGroup` (`Kotlin.NewFile`, `NewFile`, `NewDir`) | P7 |
+| Rename ⇧F6 | `RenameElement` on a file or directory | P8 |
+| Move F6 | `Move` | P8 |
+| Delete ⌫ ⌦ ⌘⌫ | `$Delete` | P9 |
+| Copy F5 | `CopyElement` | P10 |
+| Cut ⌘X, Copy ⌘C, Paste ⌘V in the tree | `$Cut`, `$Copy`, `$Paste` | P10 |
+| Reveal in Finder, Open in Terminal | `RevealIn` (`Open In` group), terminal plugin | P11 (no stroke, as in IntelliJ: the key table has no row for either) |
+| Save All ⌘S | `SaveAll` | P12 |
+
+Everything else in the tree menu stays in the handoff's differences list (Mark Directory As,
+Compare Files and the rest), as does fixing Kotlin `package` lines after a move.
+
+### P2 Selection and the `PROJECT_TREE` context
+
+- **Selection.** `ProjectTreeModel` gains a `selected: Path?` (Compose state, normalized like the
+  model's keys) with `select(file)`. While it is `null` the row of the selected editor's file is
+  highlighted exactly as before, so snapshots without keyboard use do not change. A row click
+  selects the row and keeps today's toggle/open behaviour. `reveal` from Select in Project View
+  (⌥F1) also selects the file.
+- **Context.** `KeyContext.PROJECT_TREE`. The tree panel sets it when it gains focus and, on losing
+  focus, resets the context to `GLOBAL` only when it is still `PROJECT_TREE` (the
+  `ToolWindowPanel` rule), so a popup or the editor that took focus keeps its own context.
+  `PROJECT_TREE` is not modal: GLOBAL bindings (⌘1, ⌘O, ⌘S, …) keep working in the tree.
+- **Keys handled by the panel itself** (`onPreviewKeyEvent`, the `ListToolWindow` shape), because
+  no keymap binding uses these unmodified strokes:
+
+| Key | Directory row | File row |
+|---|---|---|
+| ↓ / ↑ | next / previous visible row (stops at the ends) | same |
+| → | collapsed: expand; expanded: first child | nothing |
+| ← | expanded: collapse; otherwise parent row | parent row |
+| ↩ | toggle | open the file and hand the keyboard to the editor |
+| Esc | hand the keyboard to the editor (`handFocusToEditor`) | same |
+
+  The first ↑/↓ with no selection selects the highlighted row (the selected editor's file, else
+  the root). The list scrolls so the selected row stays visible.
+- **F4** is `EDIT_SOURCE`, bound `GLOBAL`, and the window handler sees it before the panel, so
+  `dispatchAction(EDIT_SOURCE)` gets a `PROJECT_TREE` branch: a file row opens and takes the
+  keyboard (`ProjectViewEditSource`), a directory row does nothing and the key is consumed.
+- **Threading.** Every `ProjectTreeModel` mutation runs on the UI thread. `handleEvents` called on
+  another thread (the VFS watcher publishes on `stride-vfs-watcher`) hands its work to
+  `EventQueue.invokeLater`, as `FileEditorManager.reloadTouchedEditors` does.
+
+### P3 Keys
+
+New `ActionId`s: `NEW_ELEMENT`, `RENAME_FILE`, `MOVE_ELEMENT`, `DELETE_ELEMENT`, `COPY_ELEMENT`,
+`CUT_FILE`, `COPY_FILE`, `PASTE_FILE`, `REVEAL_IN_FINDER`, `OPEN_IN_TERMINAL`. `SAVE` keeps its id
+and becomes Save All. The new `bind(` lines go at the end of `macBindings`, so the line column of
+the existing rows in the bindings table stays right.
+
+| Stroke | `PROJECT_TREE` | Other bindings of the stroke | Conflict |
+|---|---|---|---|
+| ⌘N, ⌃↩ | `NEW_ELEMENT` | `GENERATE` in `EDITOR` | none: `actionFor` prefers the focus context, and `GENERATE` has no GLOBAL binding |
+| ⇧F6 | `RENAME_FILE` | `RENAME_ELEMENT` in `EDITOR` | none |
+| F6 | `MOVE_ELEMENT` | — | none |
+| ⌫, ⌦, ⌘⌫ | `DELETE_ELEMENT` | ⌘⌫ `EDITOR_DELETE_LINE` in `EDITOR` | none |
+| F5 | `COPY_ELEMENT` | — | none |
+| ⌘X, ⌘C, ⌘V | `CUT_FILE`, `COPY_FILE`, `PASTE_FILE` | ⌘X/⌘C `CUT_LINE`/`COPY_LINE` in `EDITOR`; ⌘V unbound | none |
+| F4 | (GLOBAL `EDIT_SOURCE`, P2) | — | — |
+
+The editor's ⌘N stays Generate; the two are separated by context alone. A stale context is the
+real risk, not the table: every tree popup sets `CONTEXT_POPUP` in the same call that opens it
+(as `openRename` does), so the window handler never reads ⌫ typed into a popup field as
+`DELETE_ELEMENT`, and Delete itself only opens a confirmation (P9).
+
+Find Action names: `New…`, `Rename File…`, `Move…`, `Delete…`, `Copy…`, `Cut File`, `Copy File`,
+`Paste File`, `Reveal in Finder`, `Open in Terminal`, and `SAVE` becomes `Save All`.
+
+### P4 What an action works on, and where the keyboard goes back
+
+- **Target.** With focus `PROJECT_TREE` the target is the tree selection, or the highlighted row
+  when nothing is selected. `openSearch` records the context it replaces (`searchOpenedFrom`); an
+  action run from the Actions tab uses the tree target when that context was `PROJECT_TREE`, and
+  otherwise the selected editor's file. With no target: `New…` creates in the project root, the
+  others read `No file selected`. `CUT_FILE`, `COPY_FILE` and `PASTE_FILE` only use the tree
+  target; from the editor context the keymap never reaches them, and from the Actions tab
+  outside the tree they read `Cut, copy and paste files in the Project tree`.
+- **Return.** A popup opened from the tree records `PROJECT_TREE`; when it closes for any reason
+  the keyboard goes back to the tree (`state.focusProjectTree()`: `focus = PROJECT_TREE` and
+  `treeFocusRequests++`), unless the tree was hidden meanwhile, when it goes to the editor. One
+  exception: creating a file opens it, and the new editor takes the keyboard, as in IntelliJ.
+  A popup opened from the editor context returns to the editor.
+- `popupOwnsFocus` lists the new popup.
+
+### P5 Writes go to the file system; git reads the result
+
+| | A: file system only, then refresh | B: `git mv` / `git rm` for tracked files |
+|---|---|---|
+| Tracked file renamed, another deleted, a directory moved, then the Commit window commits them (measured, stride's own argv: `git add` of the untracked paths, then `commit --only` with both ends) | status before the commit: ` D` for the old paths, `?` for the new ones; the commit records `Keep.kt => Kept.kt`, `{d => e}/X.kt` and the deletion | status shows `R` at once; same commit |
+| Untracked or ignored file | works | `git mv` refuses: `fatal: not under version control` (exit 128), so a file-system fallback is needed anyway |
+| Modified tracked file | works | `git mv` works; `git rm` of a staged-and-modified file refuses (`staged content different`, exit 1) |
+| Index | untouched: what the user staged stays staged | every rename and delete writes the index under the git write lock |
+| Outside a repository, git missing | same code path | needs the A path anyway |
+
+**A is the contract.** The Commit window shows a rename as a deletion plus an untracked file
+until both are committed together, which is what git records either way. After every write the
+app refreshes git status (`git.refresh()`).
+
+- **Git busy.** A write while `git.busy` is set (checkout, update, rollback, … writing the working
+  tree) races with git, so every operation reads `git.busy` again right before it writes and
+  refuses with `Git is busy: <what>`. An in-progress merge or rebase does not refuse: IntelliJ
+  edits files then too.
+- **Case-only rename** (`Foo.kt` → `foo.kt`) is done through a temporary sibling name, because
+  `Files.move` returns without doing anything when source and target are the same file. On a
+  case-insensitive volume git then shows nothing (measured: empty status, `ls-files` still
+  `Foo.kt`), so the success message adds `; git still tracks Foo.kt` when the old path is tracked
+  (`git ls-files --error-unmatch`, read only, no write). The rename itself still happens.
+
+### P6 Checks every write shares
+
+- **Inside the root.** Every source and target resolves (normalized, links not followed) under the
+  project root; the root itself cannot be renamed, moved or deleted (`The project root cannot be
+  changed here`). A name or relative path with an empty segment, `.`, `..`, a leading `/` or a NUL
+  is refused: `<text> is not a valid name`.
+- **Checked twice.** The popup checks as the user types (error line, ↩ does nothing), and the
+  write checks again right before it runs: the source still exists (`<name> no longer exists`),
+  the target does not (`<name> already exists`), git is not busy. Creation uses
+  `Files.createFile` / `Files.createDirectory` and moves and copies run without
+  `REPLACE_EXISTING`, so a target that appears in between makes the write fail instead of
+  overwriting.
+- **Links.** A symbolic link is renamed, moved, copied and deleted as the link; nothing follows it.
+- **Refresh.** On macOS the JDK watch service polls (seconds), so after a write the operation
+  itself drops the tree's cached children of every touched parent (`handleEvents` with
+  `Created`/`Deleted` events, on the UI thread) and calls `git.refresh()`; the watcher's later
+  events find nothing new. Tests never wait for the watcher.
+- **Messages.** A failure reads `<Operation> failed: <reason>` (`New file failed: …`, `Rename
+  failed: …`, `Move failed: …`, `Delete failed: …`, `Copy failed: …`), where the reason is the
+  `IOException` message, else its class name. Success messages are in P13.
+- **Thread.** The writes run on the UI thread; they are single file-system calls, and a large
+  directory copy blocking the window is listed as a difference.
+
+### P7 New
+
+`NEW_ELEMENT` opens the New popup on the target directory: the selected row when it is a
+directory, otherwise its parent. The first page lists `Kotlin Class/File`, `File`, `Directory`
+(IntelliJ's `NewGroup` order, the rows stride can make); ↑ ↓ choose, ↩ opens the name page, Esc
+closes the popup. On the name page Esc goes back to the list.
+
+- **File.** The name may contain `/`; missing directories are created. The file is created empty,
+  revealed and selected in the tree, and opened; its editor takes the keyboard.
+- **Directory.** The name may contain `/`; every missing directory is created. It is revealed,
+  selected and expanded, and the keyboard goes back to the tree.
+- **Kotlin Class/File.** A name field over a kind list (↑ ↓ change the kind while the field keeps
+  the caret, as in IntelliJ's dialog): `Class`, `File`, `Interface`, `Data class`, `Enum class`,
+  `Object`. The name must be a Kotlin identifier (`[A-Za-z_][A-Za-z0-9_]*`, a trailing `.kt` is
+  dropped); otherwise `<name> is not a valid Kotlin name`. The file is `<Name>.kt`, then as File.
+  The text is the kind's template under an optional package line:
+
+| Kind | Text after the package line |
+|---|---|
+| Class | `class Name {\n}\n` |
+| File | nothing |
+| Interface | `interface Name {\n}\n` |
+| Data class | `data class Name()\n` |
+| Enum class | `enum class Name {\n}\n` |
+| Object | `object Name {\n}\n` |
+
+  The package is the target directory's path below the nearest ancestor named `kotlin` or `java`
+  whose parent's parent is `src` (`src/<set>/kotlin`), segments joined with `.`. It is written as
+  `package <p>\n\n` only when that path is non-empty and every segment is an identifier; otherwise
+  the file has no package line. The `File` kind with no package line is an empty file.
+
+### P8 Rename and Move
+
+Both are one move of a file or directory to a new path; Rename changes the name in place, Move the
+parent directory.
+
+- **Rename (⇧F6).** A field prefilled with the name, the part before the last `.` selected for a
+  file, all of it for a directory. A name with `/` is refused. The same name is a no-op that
+  closes the popup.
+- **Move (F6).** A field prefilled with the source's parent directory, relative to the root
+  (empty for the root itself). The target must be an existing directory under the root, not the
+  source or below it (`Cannot move <name> into itself`), and must not already hold the name.
+- **What follows the new path** (every path at or below the source):
+
+| Follows | How |
+|---|---|
+| Open editors | `FileEditorManager.replaceFile(old, new)`: a new editor for the new file at the same tab index, selected if the old one was; text kept with `setText` when it had unsaved text (it stays unsaved: nothing is written), the selection kept, clamped. Undo history and folds start over. The `FileEditor` interface does not change |
+| Recent and recently closed files | same position, new path |
+| Tree | expanded directories, the cached children and the selection move with it |
+| Bookmarks | path and relative path, same line |
+
+  Navigation history, edit locations, Find and Problems results and run configurations keep the
+  old path (differences).
+- **Unsaved editors** under the source therefore keep their unsaved text at the new path, as
+  IntelliJ's documents do.
+
+### P9 Delete
+
+| | A: move to the Trash after a confirmation; refuse when the Trash cannot take it | B: delete permanently after a confirmation | C: Trash when possible, otherwise permanent under the same confirmation |
+|---|---|---|---|
+| Undo | from the Trash in Finder | none | depends on a system capability the user never sees |
+| IntelliJ | a confirmation, then the delete; Local History keeps the content for a restore (stride has no Local History) | — | — |
+| A guard that turns itself off | no | — | yes: the Trash failing is exactly when the confirmation means something else |
+
+**A is the contract.** The popup reads `Move <name> to the Trash?` with, for a directory,
+`<n> files` (counted without following links, `10000+` past 10 000), and when open editors are
+under it, `Closes <n> tabs` and, in amber, `<m> with unsaved changes will be lost`. `↩ Move to
+Trash`, `Esc Cancel`. On ↩ the checks of P6 run again, then `Desktop.moveToTrash`. When the
+desktop has no Trash action, the popup shows `This system has no Trash: delete it in the
+terminal` and ↩ does nothing; when `moveToTrash` returns `false` or throws, the message is
+`Delete failed: could not move <name> to the Trash` and nothing else changes. After a delete the
+tabs under it close (unsaved text discarded), the tree selects the next row, else the previous,
+and the caches and git refresh as in P6.
+
+### P10 Copy, Cut, Paste
+
+- **Copy (F5).** A field prefilled with the source's path relative to the root, the name part
+  selected (IntelliJ prefills the same name and directory). The parent of the target must be an
+  existing directory under the root; the target must not exist. A directory is copied
+  recursively, links as links, attributes not copied; copying a directory into itself is
+  refused. The disk content is copied; when open editors under the source have unsaved text the
+  popup says `<n> unsaved editors: the saved content is copied`. The copy is revealed and
+  selected; the keyboard returns to the tree.
+- **Cut (⌘X) / Copy (⌘C)** remember the target in the session's file clipboard (one path and a
+  cut flag) and read `Cut <name>` / `Copied <name>`. The system clipboard is not touched.
+- **Paste (⌘V)** into the selected directory, or the selected file's parent. A copied path whose
+  name is free there is copied at once; when the name exists the Copy popup opens on that path
+  with the error shown, so the user picks another name. A cut path is moved as P8 does (editors
+  follow); when the name exists it reads `<name> already exists in <directory>`. A source that
+  is gone reads `<name> no longer exists` and empties the clipboard; a moved cut empties it too.
+
+### P11 Reveal in Finder, Open in Terminal
+
+- **Reveal in Finder.** macOS: `open -R <absolute path>`. Elsewhere `Desktop.browseFileDirectory`
+  when supported, otherwise `Reveal is not supported on this system`. A launch failure reads
+  `Reveal failed: <reason>`.
+- **Open in Terminal** opens the terminal tool window at the target directory (a file's parent).
+  When the shell has not started, it starts there. When it runs, the app writes `cd` only if the
+  shell has no child process (`ProcessHandle.of(pid).children()` empty): Ctrl-U, then
+  ` cd -- '<dir>'` with `'` written as `'\''`, then Enter. A shell with a child process reads
+  `The terminal is running a program: cd <dir> there yourself`, and so does a pid or child list
+  that cannot be read (the check refuses rather than writing into a running program). The tool
+  window shows and takes the keyboard in every case. IntelliJ opens a new terminal tab here; tabs
+  come with the terminal tabs item of the remaining order, which then replaces the `cd`.
+- **Test JVM.** The Trash, the Finder launch and the shell start are seams on the session's
+  `FileOperations` (and `TerminalSession`) that default to refusing when the system property
+  `stride.files.disableDefaultEffects` is `true`; the Gradle test tasks set it next to
+  `stride.git.disableDefaultExecutor`, so no test fills the real Trash or opens Finder.
+
+### P12 Save All (⌘S)
+
+`SAVE` saves every open text editor with unsaved text, the ones outside the project root too
+(IntelliJ's `SaveAll` saves every document; `saveableEditors` keeps its under-root filter for
+Update and Checkout). Each save catches its `IOException` and the rest still save; the message is
+`Save failed: <file>: <reason>` for the first failure, with ` (and <n> more)` when more failed.
+Then git refreshes. Before, ⌘S saved only the selected editor and an `IOException` escaped the key
+handler.
+
+### P13 Messages
+
+| Message | When |
+|---|---|
+| `Created <relative path>` | New, any kind |
+| `Renamed <old> to <new>` (+ `; git still tracks <old>`, P5) | Rename |
+| `Moved <name> to <directory>` | Move, Paste of a cut |
+| `Moved <name> to the Trash` | Delete |
+| `Copied <name> to <relative path>` | Copy, Paste of a copy |
+| `Cut <name>` / `Copied <name>` | ⌘X / ⌘C in the tree |
+| `No file selected` | an action with no target (P4) |
+| `Cut, copy and paste files in the Project tree` | the clipboard actions from the Actions tab outside the tree |
+| `<text> is not a valid name`, `<name> is not a valid Kotlin name`, `<name> already exists`, `<name> already exists in <directory>`, `Cannot move <name> into itself` | popup error line (the write's own check uses the same text as a status message) |
+| `<name> no longer exists`, `Git is busy: <what>`, `The project root cannot be changed here` | the check right before the write |
+| `<Operation> failed: <reason>`, `Delete failed: could not move <name> to the Trash` | the write failed (P6, P9) |
+| `This system has no Trash: delete it in the terminal` | Delete popup line |
+| `Reveal is not supported on this system`, `Reveal failed: <reason>` | Reveal in Finder |
+| `The terminal is running a program: cd <dir> there yourself` | Open in Terminal (P11) |
+| `Save failed: <file>: <reason>` (+ ` (and <n> more)`) | ⌘S |
+
+### P14 Differences from IntelliJ
+
+- One selected row: no ⇧/⌘ multi-selection, so every operation takes one file or directory.
+- No undo of a file operation (IntelliJ's ⌘Z after a rename); Delete is undone from the Trash.
+- No speed search (typing in the tree), no Home/End/Page keys, no ⇧Esc to hide the tree.
+- Rename of a `.kt` file does not rename the class inside, and Move does not fix `package` lines.
+- Copy and Paste use stride's own file clipboard, not the system clipboard, so Finder cannot paste
+  a file copied in the tree and the tree cannot paste one copied in Finder.
+- Navigation history, edit locations, Find and Problems results and run configurations keep the old
+  path after a rename or move; the tree's Copy Path ⇧⌘C still copies the selected editor's path.
+- No progress or cancel for a large copy or delete; both block the window while they run.
+- A case-only rename of a tracked file on a case-insensitive volume is not seen by git (P5).
+- Open in Terminal writes `cd` into the one shell instead of opening a tab (P11).
+
 ## Search Everywhere
 
 ```kotlin
