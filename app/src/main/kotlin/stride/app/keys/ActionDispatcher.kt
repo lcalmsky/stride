@@ -86,7 +86,7 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.SAVE -> {
         state.session?.let { session ->
-            session.editors.saveSelected()
+            session.editors.saveAll()?.let { state.statusMessage = it }
             session.git.refresh()
         }
         true

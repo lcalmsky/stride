@@ -3,6 +3,7 @@ package stride.app.terminal
 import androidx.compose.ui.input.key.Key
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -115,6 +116,61 @@ class TerminalSessionTest {
             assertTrue(session.sendKey(Key.L, false, false, false, false, 'l'))
             waitUntil { fake.written.toString() == "\r\u001b[Al" }
             assertEquals("\r\u001b[Al", fake.written.toString())
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `openAt writes Ctrl-U and the cd line when the shell has no child`() {
+        val project = project("openAtWrite")
+        try {
+            val session = project.service<TerminalSession>()
+            val fake = FakeTtyConnector()
+            session.start(fake)
+            session.hasChildProcess = { false }
+            val dir = Files.createDirectory(temp.resolve("it's here"))
+
+            assertNull(session.openAt(dir))
+
+            val expected = "\u0015 cd -- '${dir.toString().replace("'", "'\\''")}'\r"
+            waitUntil { fake.written.toString() == expected }
+            assertEquals(expected, fake.written.toString())
+            assertTrue(expected.contains("'\\''"))
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `openAt refuses when the shell has a child process`() {
+        val project = project("openAtChild")
+        try {
+            val session = project.service<TerminalSession>()
+            val fake = FakeTtyConnector()
+            session.start(fake)
+            session.hasChildProcess = { true }
+            val dir = Files.createDirectory(temp.resolve("child"))
+
+            assertEquals("The terminal is running a program: cd $dir there yourself", session.openAt(dir))
+            assertEquals("", fake.written.toString())
+        } finally {
+            project.dispose()
+        }
+    }
+
+    @Test
+    fun `openAt refuses when the child check cannot be read`() {
+        val project = project("openAtUnknown")
+        try {
+            val session = project.service<TerminalSession>()
+            val fake = FakeTtyConnector()
+            session.start(fake)
+            session.hasChildProcess = { null }
+            val dir = Files.createDirectory(temp.resolve("unknown"))
+
+            assertEquals("The terminal is running a program: cd $dir there yourself", session.openAt(dir))
+            assertEquals("", fake.written.toString())
         } finally {
             project.dispose()
         }

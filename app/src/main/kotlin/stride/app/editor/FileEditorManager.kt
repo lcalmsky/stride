@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import stride.app.vcs.ChangeMarks
 import stride.core.Disposable
 import stride.core.Disposer
@@ -119,6 +121,75 @@ class FileEditorManager(private val project: Project) : Disposable {
             }
         }
         return reloaded
+    }
+
+    /**
+     * Swaps [old] for an editor of [newFile] at the same tab index, as a rename or move does:
+     * the unsaved text is set again (nothing is written), the caret and selection are clamped to
+     * the new text and restored, and the recent and closed lists follow the path. Returns `null`
+     * when [old] is not open or no provider accepts [newFile].
+     */
+    fun replaceFile(old: FileEditor, newFile: VFile): FileEditor? {
+        if (disposed) return null
+        val index = openFilesState.indexOfFirst { it === old }
+        if (index < 0) return null
+        val key = keyOf(newFile)
+        if (openFilesState.any { it !== old && keyOf(it.file) == key }) return null
+        val provider = providers.firstOrNull { it.accept(project, newFile) } ?: return null
+        val replacement = provider.createEditor(project, newFile)
+        if (replacement is TextFileEditor) {
+            replacement.clipboard = clipboard
+            ChangeMarks.attach(project, replacement)
+            if (old is TextFileEditor) {
+                val text = old.value.text
+                val selection = old.value.selection
+                if (old.isModified) replacement.setText(text)
+                val length = replacement.value.text.length
+                replacement.updateValue(
+                    TextFieldValue(
+                        replacement.value.text,
+                        TextRange(selection.start.coerceIn(0, length), selection.end.coerceIn(0, length)),
+                    ),
+                )
+            }
+        }
+        openFilesState[index] = replacement
+        if (selected === old) select(replacement)
+        replacePaths(old.file.path, newFile.path)
+        detachMarks(old)
+        Disposer.dispose(old)
+        return replacement
+    }
+
+    /** Re-paths the recent and recently closed entries at or below [old] below [new]. */
+    fun replacePaths(old: Path, new: Path) {
+        val oldKey = old.toAbsolutePath().normalize()
+        val newKey = new.toAbsolutePath().normalize()
+        fun remap(file: VFile): VFile {
+            val path = file.path.toAbsolutePath().normalize()
+            return if (path.startsWith(oldKey)) VFile(newKey.resolve(oldKey.relativize(path)).normalize()) else file
+        }
+        for (index in recentFilesState.indices) recentFilesState[index] = remap(recentFilesState[index])
+        for (index in closedFiles.indices) closedFiles[index] = remap(closedFiles[index])
+    }
+
+    /**
+     * Saves every open text editor with unsaved text, the ones outside the project root too (P12);
+     * one failure does not stop the rest. Returns the first `Save failed: …` message, or `null`.
+     */
+    fun saveAll(): String? {
+        var failures = 0
+        var first: String? = null
+        for (editor in openFilesState.toList()) {
+            if (editor !is TextFileEditor || !editor.isModified) continue
+            try {
+                editor.save()
+            } catch (e: IOException) {
+                val message = "Save failed: ${editor.file.name}: ${e.message ?: e.javaClass.simpleName}"
+                if (first == null) first = message else failures++
+            }
+        }
+        return first?.let { if (failures > 0) "$it (and $failures more)" else it }
     }
 
     /**

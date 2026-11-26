@@ -44,6 +44,22 @@ class BookmarksTest {
     }
 
     @Test
+    fun `move re-paths the bookmarks at or below the moved path`() {
+        val manager = BookmarkManager()
+        manager.toggle(Bookmark(Paths.get("/project/src/A.kt"), "src/A.kt", 2, "x"))
+        manager.toggle(Bookmark(Paths.get("/project/B.kt"), "B.kt", 5, "y"))
+        manager.toggle(Bookmark(Paths.get("/project/source/C.kt"), "source/C.kt", 9, "z"))
+
+        manager.move(Paths.get("/project/src"), Paths.get("/project/lib"), Paths.get("/project"))
+
+        assertEquals(Paths.get("/project/lib/A.kt"), manager.entries[0].path)
+        assertEquals("lib/A.kt", manager.entries[0].relativePath)
+        assertEquals(2, manager.entries[0].line)
+        assertEquals(Paths.get("/project/B.kt"), manager.entries[1].path)
+        assertEquals(Paths.get("/project/source/C.kt"), manager.entries[2].path)
+    }
+
+    @Test
     fun `line and text helpers read the requested line`() {
         val text = "one\r\ntwo\r\nthree"
 

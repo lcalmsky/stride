@@ -7,8 +7,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import stride.core.vfs.VFile
 import stride.core.vfs.VFileEvent
+import java.awt.EventQueue
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class ProjectTreeModelTest {
     @TempDir
@@ -96,10 +99,59 @@ class ProjectTreeModelTest {
         assertFalse(model.rows().any { it.file.name == "new.txt" })
 
         model.handleEvents(listOf(VFileEvent.Created(VFile(created))))
+        flushEdt()
         assertTrue(model.rows().any { it.file.name == "new.txt" })
 
         Files.delete(created)
         model.handleEvents(listOf(VFileEvent.Deleted(VFile(created))))
+        flushEdt()
         assertFalse(model.rows().any { it.file.name == "new.txt" })
+    }
+
+    @Test
+    fun `moved carries expanded entries the cached children and the selection`() {
+        val old = Files.createDirectories(temp.resolve("old"))
+        Files.writeString(old.resolve("A.kt"), "")
+        val model = ProjectTreeModel(VFile(temp), emptyList())
+        model.expand(VFile(old))
+        model.select(VFile(old.resolve("A.kt")))
+        val new = temp.resolve("new")
+
+        Files.move(old, new)
+        model.moved(old, new)
+
+        assertEquals(new.resolve("A.kt"), model.selected)
+        assertTrue(model.rows().any { it.file.path == new.resolve("A.kt") })
+        assertFalse(model.rows().any { it.file.path.startsWith(old) })
+    }
+
+    @Test
+    fun `handleEvents from another thread rebuilds only on the UI thread`() {
+        val model = ProjectTreeModel(VFile(temp), emptyList())
+        val created = temp.resolve("new.txt")
+        Files.writeString(created, "")
+        val holding = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        EventQueue.invokeLater {
+            holding.countDown()
+            release.await()
+        }
+        assertTrue(holding.await(5, TimeUnit.SECONDS))
+        try {
+            val caller = Thread { model.handleEvents(listOf(VFileEvent.Created(VFile(created)))) }
+            caller.start()
+            caller.join()
+
+            assertFalse(model.rows().any { it.file.name == "new.txt" })
+        } finally {
+            release.countDown()
+        }
+        EventQueue.invokeAndWait {}
+
+        assertTrue(model.rows().any { it.file.name == "new.txt" })
+    }
+
+    private fun flushEdt() {
+        if (!EventQueue.isDispatchThread()) EventQueue.invokeAndWait {}
     }
 }

@@ -25,6 +25,7 @@ import com.pty4j.PtyProcess
 import stride.core.Disposable
 import stride.core.services.Project
 import stride.core.services.Service
+import java.nio.file.Path
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -96,6 +97,37 @@ class TerminalSession(private val project: Project) : Disposable {
         this.process = process
         start(PtyTtyConnector(process))
     }
+
+    /** Test seam: whether the shell has a child process; null when the check cannot be read. */
+    internal var hasChildProcess: (Long) -> Boolean? = { pid ->
+        runCatching {
+            ProcessHandle.of(pid).map { handle -> handle.children().findAny().isPresent }.orElse(null)
+        }.getOrNull()
+    }
+
+    /**
+     * Opens the terminal at [dir]: starts the shell there when it has not started, otherwise
+     * writes Ctrl-U and ` cd -- '<dir>'` and Enter when the shell has no child process (P11).
+     * Returns null when it did one of those, or the P11 message when it refused.
+     */
+    fun openAt(dir: Path): String? {
+        if (disposed) return runningMessage(dir)
+        if (!started) {
+            val process = runCatching { PtyShell.start(dir, columns, rows) }.getOrNull() ?: return null
+            this.process = process
+            start(PtyTtyConnector(process))
+            return null
+        }
+        val pid = process?.pid() ?: 0L
+        if (hasChildProcess(pid) != false) return runningMessage(dir)
+        write("\u0015 cd -- ${quoted(dir)}\r")
+        return null
+    }
+
+    private fun runningMessage(dir: Path): String =
+        "The terminal is running a program: cd $dir there yourself"
+
+    private fun quoted(dir: Path): String = "'" + dir.toString().replace("'", "'\\''") + "'"
 
     /** Sends user typing or a paste to the shell. */
     fun write(text: String) {

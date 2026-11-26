@@ -17,6 +17,7 @@ import stride.app.editor.TextClipboard
 import stride.app.editor.TextFileEditor
 import stride.app.editor.find.FindBarState
 import stride.app.editor.find.FindOptions
+import stride.app.files.FileOperations
 import stride.app.generate.GenerateRequest
 import stride.app.generate.MemberChooseRequest
 import stride.app.generate.prepareGenerateWithProviders
@@ -106,6 +107,9 @@ class ProjectSession private constructor(val project: Project) : Disposable {
     val tree: ProjectTreeModel
     val git: GitService
 
+    /** The project tree's file writes (P5–P10). */
+    val files: FileOperations
+
     /** Back/forward locations of this session. */
     val history = NavigationHistory()
 
@@ -127,6 +131,7 @@ class ProjectSession private constructor(val project: Project) : Disposable {
         val providers = ExtensionPointName<TreeStructureProvider>(TREE_STRUCTURE_PROVIDER_EP).extensionList()
         tree = ProjectTreeModel(VFile(project.root), providers, project)
         git = project.service()
+        files = FileOperations(project.root.toAbsolutePath().normalize(), editors, tree, bookmarks, git)
     }
 
     fun displayName(): String = project.root.fileName?.toString() ?: project.root.toString()

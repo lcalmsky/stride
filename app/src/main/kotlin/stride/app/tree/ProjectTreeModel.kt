@@ -10,6 +10,7 @@ import stride.core.vfs.VFS_CHANGES
 import stride.core.vfs.VFile
 import stride.core.vfs.VFileEvent
 import stride.core.vfs.VfsListener
+import java.awt.EventQueue
 import java.nio.file.Path
 
 /** One visible line of the project tree. */
@@ -40,6 +41,13 @@ class ProjectTreeModel(
 
     private var disposed = false
 
+    /**
+     * The row the keyboard last selected, or null while the highlighted editor's file is shown
+     * instead; Compose state, normalized like the model's keys.
+     */
+    var selected: Path? by mutableStateOf(null)
+        private set
+
     init {
         expanded.add(key(root))
         rebuild()
@@ -47,6 +55,32 @@ class ProjectTreeModel(
 
     /** Visible rows, root first. Reading this inside a composable subscribes it to refresh. */
     fun rows(): List<TreeRow> = rowsState
+
+    fun select(file: VFile) {
+        selected = key(file)
+    }
+
+    /**
+     * Carries the expanded entries, the cached children and the selection at or below [old] to
+     * the same place below [new], as a rename or move does.
+     */
+    fun moved(old: Path, new: Path) {
+        val oldKey = old.toAbsolutePath().normalize()
+        val newKey = new.toAbsolutePath().normalize()
+        fun remap(path: Path): Path =
+            if (path.startsWith(oldKey)) newKey.resolve(oldKey.relativize(path)).normalize() else path
+        val remappedExpanded = expanded.mapTo(HashSet()) { remap(it) }
+        expanded.clear()
+        expanded.addAll(remappedExpanded)
+        val remappedCache = HashMap<Path, List<VFile>>()
+        for ((directory, children) in childrenCache) {
+            remappedCache[remap(directory)] = children.map { VFile(remap(key(it))) }
+        }
+        childrenCache.clear()
+        childrenCache.putAll(remappedCache)
+        selected = selected?.let { remap(it) }
+        rebuild()
+    }
 
     fun expand(file: VFile) {
         if (expanded.add(key(file))) rebuild()
@@ -81,8 +115,19 @@ class ProjectTreeModel(
         return rowsState.any { key(it.file) == target }
     }
 
-    /** Drops the cached children of every event file's parent directory, then rebuilds. */
+    /**
+     * Drops the cached children of every event file's parent directory, then rebuilds. Called
+     * off the dispatch thread (the VFS watcher), the work goes to [EventQueue.invokeLater].
+     */
     fun handleEvents(events: List<VFileEvent>) {
+        if (EventQueue.isDispatchThread()) {
+            handleEventsOnUi(events)
+        } else {
+            EventQueue.invokeLater { handleEventsOnUi(events) }
+        }
+    }
+
+    private fun handleEventsOnUi(events: List<VFileEvent>) {
         if (disposed) return
         var changed = false
         for (event in events) {

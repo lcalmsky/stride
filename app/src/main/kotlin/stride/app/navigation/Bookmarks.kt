@@ -29,6 +29,20 @@ class BookmarkManager {
         items.removeAll { it == bookmark }
     }
 
+    /** Moves the bookmarks at or below [old] below [new], each keeping its line (P8). */
+    fun move(old: Path, new: Path, root: Path) {
+        val oldKey = old.toAbsolutePath().normalize()
+        val newKey = new.toAbsolutePath().normalize()
+        val rootKey = root.toAbsolutePath().normalize()
+        for (index in items.indices) {
+            val bookmark = items[index]
+            val path = bookmark.path.toAbsolutePath().normalize()
+            if (!path.startsWith(oldKey)) continue
+            val moved = newKey.resolve(oldKey.relativize(path)).normalize()
+            items[index] = bookmark.copy(path = moved, relativePath = rootKey.relativize(moved).toString())
+        }
+    }
+
     fun linesOf(path: Path): Set<Int> = items.filter { it.path == path }.map { it.line }.toSet()
 
     fun isEmpty(): Boolean = items.isEmpty()

@@ -4,6 +4,7 @@ import androidx.compose.ui.text.TextRange
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
@@ -20,6 +21,9 @@ import java.nio.file.Path
 class FileEditorManagerTest {
     @TempDir
     lateinit var temp: Path
+
+    @TempDir
+    lateinit var outside: Path
 
     private lateinit var project: Project
     private lateinit var manager: FileEditorManager
@@ -72,6 +76,51 @@ class FileEditorManagerTest {
 
         assertEquals("package b", Files.readString(path))
         assertFalse(editor.isModified)
+    }
+
+    @Test
+    fun `save all saves every modified editor including one outside the root`() {
+        val a = write("a.kt", "a")
+        val b = write("b.kt", "b")
+        val outer = outside.resolve("o.kt")
+        Files.writeString(outer, "o")
+        val editorA = manager.openFile(VFile(a)) as TextFileEditor
+        val editorB = manager.openFile(VFile(b)) as TextFileEditor
+        val editorOuter = manager.openFile(VFile(outer)) as TextFileEditor
+        editorA.setText("A")
+        editorB.setText("B")
+        editorOuter.setText("O")
+
+        assertNull(manager.saveAll())
+
+        assertEquals("A", Files.readString(a))
+        assertEquals("B", Files.readString(b))
+        assertEquals("O", Files.readString(outer))
+        assertFalse(editorA.isModified)
+        assertFalse(editorOuter.isModified)
+    }
+
+    @Test
+    fun `save all continues after a failure and reads the first with how many more`() {
+        val good = write("good.kt", "")
+        val badOne = write("one.kt", "1")
+        val badTwo = write("two.kt", "2")
+        val editorGood = manager.openFile(VFile(good)) as TextFileEditor
+        manager.openFile(VFile(badOne)) as TextFileEditor
+        manager.openFile(VFile(badTwo)) as TextFileEditor
+        editorGood.setText("ok")
+        (manager.openFiles[1] as TextFileEditor).setText("1x")
+        (manager.openFiles[2] as TextFileEditor).setText("2x")
+        Files.delete(badOne)
+        Files.createDirectory(badOne)
+        Files.delete(badTwo)
+        Files.createDirectory(badTwo)
+
+        val message = manager.saveAll()
+
+        assertTrue(message!!.startsWith("Save failed: one.kt: "))
+        assertTrue(message.endsWith("(and 1 more)"))
+        assertEquals("ok", Files.readString(good))
     }
 
     @Test
