@@ -37,10 +37,11 @@ The app installs to `/Applications/strIDE.app`. It is Apple Silicon (arm64) only
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"><br><br><img src="docs/images/problems.png" alt="Wavy underlines and the Problems window" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="The bottom path capsule turned into a navigation bar with a folder's children listed" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Hierarchy window with the supertypes and subtypes of Polygon expanded" width="480"><br><br><img src="docs/images/refactor-this.png" alt="The Refactor This popup opened on a local variable name" width="480"><br><br><img src="docs/images/generate.png" alt="The Implement Methods member chooser for Repository<Order>" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="Project tree and Kotlin editor" width="480"><br><br><img src="docs/images/multi-caret.png" alt="Kotlin editor with the same word selected at several carets" width="480"><br><br><img src="docs/images/folding.png" alt="Kotlin editor with a function body collapsed" width="480"><br><br><img src="docs/images/problems.png" alt="Wavy underlines and the Problems window" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="The bottom path capsule turned into a navigation bar with a folder's children listed" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Hierarchy window with the supertypes and subtypes of Polygon expanded" width="480"><br><br><img src="docs/images/refactor-this.png" alt="The Refactor This popup opened on a local variable name" width="480"><br><br><img src="docs/images/generate.png" alt="The Implement Methods member chooser for Repository<Order>" width="480"><br><br><img src="docs/images/files.png" alt="The New popup opened on a tree folder selected with the keyboard" width="480"></td>
 <td valign="top">
 
-- **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` toggles the tree, and `⌥F1` reveals the current file in it
+- **Project tree** a directory expands on a single click and a file opens on a single click. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, and `.idea` are hidden. Drag the splitter to set the width between 200 and 480 dp, `⌘1` gives the tree the keyboard as IntelliJ does and hides it when it already has the keyboard, and `⌥F1` reveals the current file in it. With the keyboard in the tree, `↑` and `↓` select a row, `→` and `←` expand and collapse a directory, `↵` and `F4` open a file, and `Esc` goes back to the editor
+- **File operations** in the tree, `⌘N` (or `⌃↩`) creates a Kotlin Class/File, a File or a Directory. A Kotlin class is one of Class, File, Interface, Data class, Enum class and Object, and below `src/main/kotlin` it gets the `package` line of its path. `⇧F6` renames, `F6` moves, `F5` copies, `⌫` moves to the Trash after a confirmation, and `⌘X`, `⌘C` and `⌘V` cut or copy a file and paste it. The tab of a renamed or moved file follows the new path with its unsaved edits, and the tabs of a deleted file close. File operations work on the disk without git commands, so the Commit window shows a deletion and a new file until both are committed together, which git records as a rename. The project root cannot be changed, and an operation that would write outside the project through a link is refused. Reveal in Finder and Open in Terminal are in the Actions tab
 - **Tabbed editor** open files become tabs, and opening the same file again selects its tab. Close with `⌘W` and switch with `⌘⇧]`·`⌃→` and `⌘⇧[`·`⌃←`. `Reopen Closed Tab` and `Close Other Tabs` in the Actions tab bring back a closed tab or close the rest. When git in the terminal or another program changes a file, a tab with no unsaved edits reads the disk again (`⌘Z` returns to the previous text), and a tab with unsaved edits is left alone
 - **Syntax highlighting** the Kotlin and JSON plugins each provide a lexer and a highlighter. Files larger than 2 MB open read-only without highlighting
 - **Editing** duplicate, delete, and move lines, toggle line and block comments, indent, and undo or redo from the keyboard. `⌘L` jumps to a `line` or `line:column`. With no selection, `⌘C`·`⌘X` copy or cut the whole line, and `⌘⇧V` pastes one of the last 20 copied texts
@@ -199,11 +200,18 @@ These are the default keys. Shortcuts are compatible with the IntelliJ IDEA macO
 | Key | Action |
 |---|---|
 | **File and tabs** | |
-| `⌘S` | Save |
+| `⌘S` | Save all open editors |
 | `⌘W` | Close tab |
 | `⌘⇧]` `⌃→` / `⌘⇧[` `⌃←` | Next tab / previous tab |
-| `⌘1` / `⌘⇧F12` | Toggle the project tree / hide and restore all tool windows |
+| `⌘1` / `⌘⇧F12` | Give the project tree the keyboard, or hide it / hide and restore all tool windows |
 | Actions tab | Reopen Closed Tab · Close Other Tabs |
+| **Project tree** | |
+| `↑` `↓` / `→` `←` / `↵` `F4` / `Esc` | Select a row / expand or collapse a directory / open a file / back to the editor |
+| `⌘N` `⌃↩` | New Kotlin class, file or directory |
+| `⇧F6` / `F6` / `F5` | Rename / move / copy |
+| `⌫` `⌦` `⌘⌫` | Move to the Trash |
+| `⌘X` / `⌘C` / `⌘V` | Cut / copy / paste a file |
+| Actions tab | Reveal in Finder · Open in Terminal |
 | **Search and navigation** | |
 | `⇧⇧` | Search Everywhere (All tab) |
 | `⌘O` | Go to class. Opens the folder chooser when there is no project |

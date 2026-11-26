@@ -37,10 +37,11 @@ brew install --cask lcalmsky/stride/stride
 
 <table width="100%">
 <tr>
-<td width="44%" valign="top"><img src="docs/images/editor.png" alt="프로젝트 트리와 Kotlin 에디터" width="480"><br><br><img src="docs/images/multi-caret.png" alt="여러 캐럿으로 같은 단어를 고른 Kotlin 에디터" width="480"><br><br><img src="docs/images/folding.png" alt="함수 본문을 접은 Kotlin 에디터" width="480"><br><br><img src="docs/images/problems.png" alt="물결 밑줄과 Problems 창" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="하단 경로 캡슐이 탐색 막대로 바뀌고 폴더의 하위 항목 목록이 뜬 모습" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Polygon 의 상위 타입과 하위 타입을 펼친 Hierarchy 창" width="480"><br><br><img src="docs/images/refactor-this.png" alt="지역 변수 이름에서 연 Refactor This 팝업" width="480"><br><br><img src="docs/images/generate.png" alt="Repository<Order> 의 멤버를 고르는 Implement Methods 팝업" width="480"></td>
+<td width="44%" valign="top"><img src="docs/images/editor.png" alt="프로젝트 트리와 Kotlin 에디터" width="480"><br><br><img src="docs/images/multi-caret.png" alt="여러 캐럿으로 같은 단어를 고른 Kotlin 에디터" width="480"><br><br><img src="docs/images/folding.png" alt="함수 본문을 접은 Kotlin 에디터" width="480"><br><br><img src="docs/images/problems.png" alt="물결 밑줄과 Problems 창" width="480"><br><br><img src="docs/images/navigation-bar.png" alt="하단 경로 캡슐이 탐색 막대로 바뀌고 폴더의 하위 항목 목록이 뜬 모습" width="480"><br><br><img src="docs/images/type-hierarchy.png" alt="Polygon 의 상위 타입과 하위 타입을 펼친 Hierarchy 창" width="480"><br><br><img src="docs/images/refactor-this.png" alt="지역 변수 이름에서 연 Refactor This 팝업" width="480"><br><br><img src="docs/images/generate.png" alt="Repository<Order> 의 멤버를 고르는 Implement Methods 팝업" width="480"><br><br><img src="docs/images/files.png" alt="키보드로 고른 트리 폴더 위에 연 New 팝업" width="480"></td>
 <td valign="top">
 
-- **프로젝트 트리** 폴더는 한 번 클릭에 펼치고 파일은 한 번 클릭에 엽니다. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, `.idea` 는 숨깁니다. 경계를 끌어 너비를 200–480 dp 사이에서 바꾸고, `⌘1` 로 트리를 여닫고 `⌥F1` 로 현재 파일을 트리에서 드러냅니다
+- **프로젝트 트리** 폴더는 한 번 클릭에 펼치고 파일은 한 번 클릭에 엽니다. `.git`, `build`, `.gradle`, `node_modules`, `.kotlin`, `.idea` 는 숨깁니다. 경계를 끌어 너비를 200–480 dp 사이에서 바꾸고, `⌘1` 은 IntelliJ 처럼 트리에 키보드를 주고 키보드를 가진 트리를 한 번 더 누르면 닫으며, `⌥F1` 로 현재 파일을 트리에서 드러냅니다. 트리에 키보드가 있으면 `↑`·`↓` 로 행을 고르고 `→`·`←` 로 폴더를 펼치거나 접으며, `↵`·`F4` 로 파일을 열고 `Esc` 로 에디터에 돌아갑니다
+- **파일 작업** 트리에서 `⌘N`(또는 `⌃↩`) 으로 Kotlin Class/File, File, Directory 를 만듭니다. Kotlin 클래스는 Class·File·Interface·Data class·Enum class·Object 중에서 고르고, `src/main/kotlin` 아래라면 경로대로 `package` 줄을 적습니다. `⇧F6` 은 이름 바꾸기, `F6` 은 이동, `F5` 는 복사, `⌫` 는 확인 뒤 휴지통으로 옮기기이고, `⌘X`·`⌘C`·`⌘V` 로 파일을 잘라 내거나 복사해 붙입니다. 이름을 바꾸거나 옮긴 파일의 탭은 저장하지 않은 편집을 그대로 가진 채 새 경로를 따라가고, 지운 파일의 탭은 닫힙니다. 파일 작업은 git 명령 없이 디스크에서 하므로 Commit 창에는 삭제와 새 파일로 보이다가 함께 커밋하면 이름 바꾸기로 기록됩니다. 프로젝트 루트는 바꿀 수 없고, 링크를 거쳐 프로젝트 밖에 쓰는 작업은 거부합니다. Reveal in Finder 와 Open in Terminal 은 Actions 탭에서 엽니다
 - **탭 에디터** 연 파일이 탭으로 열리고, 같은 파일을 다시 열면 그 탭을 고릅니다. 탭은 `⌘W` 로 닫고 `⌘⇧]`·`⌃→` 와 `⌘⇧[`·`⌃←` 로 오갑니다. 닫은 탭과 나머지 탭은 Actions 탭의 `Reopen Closed Tab`·`Close Other Tabs` 로 다룹니다. 터미널의 git 이나 다른 프로그램이 파일을 바꾸면 저장하지 않은 편집이 없는 탭은 디스크 내용을 다시 읽고(`⌘Z` 로 이전 글로 돌아갑니다), 저장하지 않은 편집이 있는 탭은 그대로 둡니다
 - **문법 하이라이트** Kotlin 플러그인과 JSON 플러그인이 각각 렉서와 하이라이터를 제공합니다. 2 MB 를 넘는 파일은 하이라이트 없이 읽기 전용으로 엽니다
 - **편집** 줄 복제·삭제·이동, 줄·블록 주석 토글, 들여쓰기, 실행 취소·다시 실행을 키보드로 합니다. `⌘L` 로 `줄` 이나 `줄:열` 로 이동합니다. 선택 없이 `⌘C`·`⌘X` 를 누르면 줄 전체를 복사·잘라내고, `⌘⇧V` 는 최근에 복사한 텍스트 20개 중에서 골라 붙여 넣습니다
@@ -199,11 +200,18 @@ brew install --cask lcalmsky/stride/stride
 | 키 | 동작 |
 |---|---|
 | **파일과 탭** | |
-| `⌘S` | 저장 |
+| `⌘S` | 열린 에디터 모두 저장 |
 | `⌘W` | 탭 닫기 |
 | `⌘⇧]` `⌃→` / `⌘⇧[` `⌃←` | 다음 탭 / 이전 탭 |
-| `⌘1` / `⌘⇧F12` | 프로젝트 트리 여닫기 / 모든 도구 창 숨기기·복원 |
+| `⌘1` / `⌘⇧F12` | 프로젝트 트리에 키보드 주기·닫기 / 모든 도구 창 숨기기·복원 |
 | Actions 탭 | Reopen Closed Tab · Close Other Tabs |
+| **프로젝트 트리** | |
+| `↑` `↓` / `→` `←` / `↵` `F4` / `Esc` | 행 고르기 / 폴더 펼치기·접기 / 파일 열기 / 에디터로 돌아가기 |
+| `⌘N` `⌃↩` | 새 Kotlin 클래스·파일·디렉터리 |
+| `⇧F6` / `F6` / `F5` | 이름 바꾸기 / 이동 / 복사 |
+| `⌫` `⌦` `⌘⌫` | 휴지통으로 옮기기 |
+| `⌘X` / `⌘C` / `⌘V` | 파일 잘라 내기 / 복사 / 붙여넣기 |
+| Actions 탭 | Reveal in Finder · Open in Terminal |
 | **검색과 이동** | |
 | `⇧⇧` | Search Everywhere (All 탭) |
 | `⌘O` | 클래스로 이동. 프로젝트가 없으면 폴더 열기 |
