@@ -262,25 +262,39 @@ class HierarchyToolWindowStateTest {
         val handler = CoroutineExceptionHandler { _, throwable -> failures.add(throwable) }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
         val state = HierarchyToolWindowState(scope)
+        val childGate = CompletableDeferred<Unit>()
         val children = (0 until 40).map { index ->
             HierarchyNode(
                 "Node$index",
                 expanded = true,
                 children = {
+                    childGate.await()
                     delay(1)
                     listOf(HierarchyNode("Leaf$index"))
                 },
             )
         }
         state.show(tree(HierarchyNode("Root", expanded = true, children = { children })))
+        withTimeout(30_000) {
+            while (state.rows.count { it.node != null } < 1 + 40) delay(1)
+        }
 
+        var pairs = 0
         repeat(100) { round ->
+            if (round == 50) childGate.complete(Unit)
             val text = "Node${round % 40}"
             val index = state.rows.indexOfFirst { it.node?.text == text }
-            if (index >= 0) state.toggle(index)
-            val back = state.rows.indexOfFirst { it.node?.text == text }
-            if (back >= 0) state.toggle(back)
+            // Toggle only as a pair: a node that appears between these two reads must not be left collapsed.
+            if (index >= 0) {
+                state.toggle(index)
+                val back = state.rows.indexOfFirst { it.node?.text == text }
+                if (back >= 0) {
+                    state.toggle(back)
+                    pairs++
+                }
+            }
         }
+        assertEquals(100, pairs, "every round toggles a node closed and open again")
 
         withTimeout(30_000) {
             while (state.rows.count { it.node != null } < 1 + 40 + 40) delay(5)
