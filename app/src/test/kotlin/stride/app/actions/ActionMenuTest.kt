@@ -51,6 +51,18 @@ class ActionMenuTest {
 
     private lateinit var state: AppState
 
+    /** Finder, the shell, Gradle, git's remote side and the window-opening rows: no test runs them. */
+    private val sideEffectActions = setOf(
+        ActionId.REVEAL_IN_FINDER,
+        ActionId.OPEN_IN_TERMINAL,
+        ActionId.BUILD_PROJECT,
+        ActionId.PUSH,
+        ActionId.FETCH,
+        ActionId.UPDATE_PROJECT,
+        ActionId.COMMIT,
+        ActionId.RUN_CONTEXT,
+    )
+
     @BeforeEach
     fun setUp() {
         state = AppState()
@@ -363,32 +375,47 @@ class ActionMenuTest {
     @Test
     fun `no enabled tree row hands its key back to the component`() {
         state.clipboard = RecordingClipboard()
-        val session = openProject("src/main/kotlin/api/OrderService.kt")
-        val file = session.tree.root.path.resolve("src/main/kotlin/api/OrderService.kt")
-        session.tree.select(VFile(file))
-
-        val actions = resolve().flatMap { it.leaves() }.filterIsInstance<MenuRow.Action>()
-            .filter { it.enabled }
-            .map { it.action }
-        assertTrue(actions.isNotEmpty())
-        // Finder, the shell, Gradle, git's remote commands and the Commit window are not run.
-        val skipped = setOf(
-            ActionId.REVEAL_IN_FINDER,
-            ActionId.OPEN_IN_TERMINAL,
-            ActionId.BUILD_PROJECT,
-            ActionId.PUSH,
-            ActionId.FETCH,
-            ActionId.UPDATE_PROJECT,
-            ActionId.COMMIT,
+        val plain = openProject("src/main/kotlin/api/OrderService.kt", "README.md")
+        val plainFile = plain.tree.root.path.resolve("src/main/kotlin/api/OrderService.kt")
+        val plainDirectory = plain.tree.root.path.resolve("src/main/kotlin/api")
+        // Outside a repository the Git submenu is hidden; every row that is left must consume.
+        for (select in listOf<() -> Unit>(
+            { plain.tree.select(VFile(plainFile)) },
+            { plain.tree.select(VFile(plainDirectory)) },
+        )) {
+            assertTrue(
+                assertEveryEnabledRowIsConsumed(ActionGroups.projectViewPopupMenu, KeyContext.PROJECT_TREE, reset = select) > 0,
+            )
+        }
+        assertTrue(
+            assertEveryEnabledRowIsConsumed(ActionGroups.projectViewPopupMenu, KeyContext.PROJECT_TREE) {
+                plain.tree.clearSelection()
+                plain.editors.closeAll()
+            } > 0,
         )
 
-        for (action in actions) {
-            if (action in skipped) continue
-            state.fileOperation = null
-            state.contextMenu = null
-            state.findInPathVisible = false
-            state.focus = KeyContext.PROJECT_TREE
-            assertTrue(dispatchAction(action, state) { null }, "$action was handed back")
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.write("src/Other.kt", "other\n")
+        repo.commitAll("Initial commit")
+        repo.write("src/Other.kt", "other changed\n")
+        state.openFolder(repo.root)
+        val session = requireNotNull(state.session)
+        session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { session.git.refreshNow() }
+        val unchanged = repo.root.resolve("src/Main.kt")
+        val changed = repo.root.resolve("src/Other.kt")
+        val directory = repo.root.resolve("src")
+
+        val states: List<Pair<String, () -> Unit>> = listOf(
+            "unchanged file" to { session.tree.select(VFile(unchanged)) },
+            "changed file" to { session.tree.select(VFile(changed)) },
+            "directory" to { session.tree.select(VFile(directory)) },
+        )
+        for ((_, select) in states) {
+            assertTrue(
+                assertEveryEnabledRowIsConsumed(ActionGroups.projectViewPopupMenu, KeyContext.PROJECT_TREE, reset = select) > 0,
+            )
         }
     }
 
@@ -636,33 +663,51 @@ class ActionMenuTest {
 
     @Test
     fun `no enabled editor row hands its key back to the component`() {
-        state.clipboard = RecordingClipboard()
-        val session = openProject("src/main/kotlin/api/OrderService.kt")
-        val file = session.tree.root.path.resolve("src/main/kotlin/api/OrderService.kt")
-        Files.writeString(file, "class OrderService\n")
-        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
-        editor.updateValue(TextFieldValue("class OrderService\n", TextRange(6)))
-
-        val actions = resolveEditor().flatMap { it.leaves() }.filterIsInstance<MenuRow.Action>()
-            .filter { it.enabled }
-            .map { it.action }
-        assertTrue(actions.isNotEmpty())
-        // Finder, the shell and the component rows: A7 runs the latter through the surface.
-        val skipped = setOf(
-            ActionId.REVEAL_IN_FINDER,
-            ActionId.OPEN_IN_TERMINAL,
-            ActionId.CUT_LINE,
-            ActionId.COPY_LINE,
-            ActionId.PASTE,
-        )
-
-        for (action in actions) {
-            if (action in skipped) continue
-            state.fileOperation = null
-            state.contextMenu = null
-            state.findInPathVisible = false
-            state.focus = KeyContext.EDITOR
-            assertTrue(dispatchAction(action, state) { null }, "$action was handed back")
+        state.clipboard = RecordingClipboard().apply { text = "clip" }
+        val repo = TestGitRepo.create(temp, "editor-menu")
+        repo.write("src/Main.kt", "class OrderService\n")
+        repo.write("data.json", "{\n  \"name\": \"order\"\n}\n")
+        repo.write("notes.txt", "plain text\n")
+        repo.write("locked.txt", "class Locked\n")
+        repo.commitAll("Initial commit")
+        state.openFolder(repo.root)
+        val session = requireNotNull(state.session)
+        session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { session.git.refreshNow() }
+        val kt = repo.root.resolve("src/Main.kt")
+        val json = repo.root.resolve("data.json")
+        val text = repo.root.resolve("notes.txt")
+        val locked = repo.root.resolve("locked.txt")
+        val lockedPermissions = Files.getPosixFilePermissions(locked)
+        Files.setPosixFilePermissions(locked, emptySet())
+        try {
+            fun show(file: Path, content: String, selection: TextRange) {
+                val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+                editor.updateValue(TextFieldValue(content, selection))
+            }
+            val ktText = "class OrderService\n\n"
+            val states: List<Pair<String, () -> Unit>> = listOf(
+                "Kotlin identifier" to { show(kt, ktText, TextRange(6)) },
+                "Kotlin blank line" to { show(kt, ktText, TextRange(19)) },
+                "Kotlin end of file" to { show(kt, ktText, TextRange(ktText.length)) },
+                "Kotlin selection" to { show(kt, ktText, TextRange(0, 5)) },
+                "JSON" to { show(json, "{\n  \"name\": \"order\"\n}\n", TextRange(7)) },
+                "plain text" to { show(text, "plain text\n", TextRange(2)) },
+                // A file the editor cannot read opens read-only over empty text.
+                "read-only" to { session.editors.openFile(VFile(locked)) },
+            )
+            for ((_, reset) in states) {
+                assertTrue(
+                    assertEveryEnabledRowIsConsumed(
+                        ActionGroups.editorPopupMenu,
+                        KeyContext.EDITOR,
+                        components = setOf(ActionId.CUT_LINE, ActionId.COPY_LINE, ActionId.PASTE),
+                        reset = reset,
+                    ) > 0,
+                )
+            }
+        } finally {
+            Files.setPosixFilePermissions(locked, lockedPermissions)
         }
     }
 
@@ -816,27 +861,153 @@ class ActionMenuTest {
                 setOf(ActionId.EDIT_SOURCE, ActionId.SHOW_INTENTION_ACTIONS),
             ),
         )
-        // The git, the shell and the file writes: this round does not run them from a menu test.
-        val skipped = setOf(
-            ActionId.COMMIT,
-            ActionId.PUSH,
-            ActionId.UPDATE_PROJECT,
-            ActionId.FETCH,
-            ActionId.SHOW_BRANCHES,
-            ActionId.NEW_BRANCH,
-        )
-
         for ((group, context, components) in surfaces) {
-            val rows = resolveMenu(group, context).flatMap { it.leaves() }.filterIsInstance<MenuRow.Action>()
-                .filter { it.enabled && it.action !in components && it.action !in skipped }
-            for (row in rows) {
-                state.contextMenu = null
-                state.diffRequest = null
-                state.rollbackRequest = null
-                state.focus = context
-                assertTrue(dispatchAction(row.action, state) { null }, "${group.id}: ${row.action} was handed back")
+            assertEveryEnabledRowIsConsumed(group, context, components)
+        }
+
+        // A clean Commit window has no file row: its own rows are disabled and the Git submenu is
+        // the only place a row stays enabled.
+        repo.write("src/Main.kt", "first\n")
+        runBlocking { session.git.refreshNow() }
+        assertEveryEnabledRowIsConsumed(
+            ActionGroups.changesViewPopupMenu,
+            KeyContext.COMMIT_WINDOW,
+            setOf(ActionId.EDIT_SOURCE),
+        )
+    }
+
+    @Test
+    fun `no enabled gutter row hands its key back to the component`() {
+        state.clipboard = RecordingClipboard()
+        val session = openProject("Main.kt")
+        val file = session.tree.root.path.resolve("Main.kt")
+        Files.writeString(file, "class Main\n")
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        val text = "class Main\n"
+
+        val states: List<Pair<String, () -> Unit>> = listOf(
+            "line without a bookmark" to {
+                editor.updateValue(TextFieldValue(text, TextRange(6)))
+                session.bookmarks.clear()
+                editor.bookmarkLines = emptySet()
+            },
+            "line with a bookmark" to {
+                editor.updateValue(TextFieldValue(text, TextRange(6)))
+                dispatchAction(ActionId.TOGGLE_BOOKMARK, state) { null }
+            },
+        )
+        for ((_, reset) in states) {
+            assertTrue(
+                assertEveryEnabledRowIsConsumed(
+                    ActionGroups.editorGutterPopupMenu,
+                    KeyContext.EDITOR,
+                    reset = reset,
+                ) > 0,
+            )
+        }
+    }
+
+    @Test
+    fun `no enabled tab row hands its key back to the component`() {
+        state.clipboard = RecordingClipboard()
+        val session = openProject("a.kt", "b.kt", "c.kt")
+        val root = session.tree.root.path
+        val names = listOf("a.kt", "b.kt", "c.kt")
+
+        val states: List<Pair<String, () -> Unit>> = listOf(
+            "one tab" to {
+                session.editors.closeAll()
+                session.editors.openFile(VFile(root.resolve("a.kt")))
+            },
+            "three tabs" to {
+                session.editors.closeAll()
+                names.forEach { session.editors.openFile(VFile(root.resolve(it))) }
+                session.editors.openFile(VFile(root.resolve("b.kt")))
+            },
+        )
+        for ((_, reset) in states) {
+            assertTrue(
+                assertEveryEnabledRowIsConsumed(
+                    ActionGroups.editorTabPopupMenu,
+                    KeyContext.EDITOR,
+                    reset = reset,
+                ) > 0,
+            )
+        }
+    }
+
+    @Test
+    fun `a row whose caret has no identifier reports it and consumes the action`() {
+        val session = openProject("Main.kt")
+        val file = session.tree.root.path.resolve("Main.kt")
+        val text = "class OrderService\n\n"
+        Files.writeString(file, text)
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+
+        // The newline's own offset still touches the identifier before it, so the blank line and
+        // the end of the file are the two positions with no identifier.
+        for (action in listOf(ActionId.FIND_USAGES, ActionId.GOTO_DECLARATION)) {
+            for (offset in listOf(text.indexOf('\n') + 1, text.length)) {
+                editor.updateValue(TextFieldValue(text, TextRange(offset)))
+                state.focus = KeyContext.EDITOR
+                state.statusMessage = null
+                assertTrue(dispatchAction(action, state) { null }, "$action at $offset was handed back")
+                assertEquals("No identifier at the caret", state.statusMessage)
             }
         }
+    }
+
+    /**
+     * A4: resolves [group] on [context] and dispatches every enabled row that runs through the
+     * dispatcher; each must report that it consumed its action. Returns how many rows ran.
+     */
+    private fun assertEveryEnabledRowIsConsumed(
+        group: ActionGroup,
+        context: KeyContext,
+        components: Set<ActionId> = emptySet(),
+        reset: () -> Unit = {},
+    ): Int {
+        fun restore() {
+            reset()
+            clearPopups()
+            state.focus = context
+        }
+        restore()
+        val rows = resolveMenuRows(MacKeymap.keymap, state, group).flatMap { it.leaves() }
+            .filterIsInstance<MenuRow.Action>()
+            .filter { it.enabled && it.action !in components && it.action !in sideEffectActions }
+        for (row in rows) {
+            restore()
+            assertTrue(dispatchAction(row.action, state) { null }, "${group.id}: ${row.action} was handed back")
+        }
+        return rows.size
+    }
+
+    private fun clearPopups() {
+        state.contextMenu = null
+        state.fileOperation = null
+        state.findInPathVisible = false
+        state.findBar.close()
+        state.showUsages = null
+        state.declarationChoices = emptyList()
+        state.declarationChooserVisible = false
+        state.testChoices = emptyList()
+        state.testChooserVisible = false
+        state.fileStructureVisible = false
+        state.contextActions = emptyList()
+        state.contextActionsVisible = false
+        state.pasteHistory = null
+        state.rename = null
+        state.generate = null
+        state.refactorThis = null
+        state.memberChoose = null
+        state.refactoringName = null
+        state.refactoringChoose = null
+        state.rollbackRequest = null
+        state.diffRequest = null
+        state.branchesPopup = null
+        state.bookmarksVisible = false
+        state.statusMessage = null
     }
 
     private fun resolveMenu(group: ActionGroup, context: KeyContext = KeyContext.PROJECT_TREE): List<MenuRow> {

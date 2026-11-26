@@ -149,7 +149,11 @@ fun goToDeclaration(state: AppState, offset: Int = selectedTextEditor(state)?.va
     val session = state.session ?: return false
     val editor = selectedTextEditor(state) ?: return false
     val text = editor.value.text
-    val name = identifierAt(text, editor.file.name, offset) ?: return false
+    val name = identifierAt(text, editor.file.name, offset)
+    if (name == null) {
+        state.statusMessage = "No identifier at the caret"
+        return true
+    }
     val path = editor.file.path.toAbsolutePath().normalize()
     val relative = relativePath(session, editor.file)
 
@@ -247,7 +251,11 @@ fun openUsagesFindWindow(state: AppState, name: String) {
 /** Find Usages: a Find window tab for the identifier at the caret, whole-word and case-sensitive. */
 fun findUsages(state: AppState): Boolean {
     val editor = selectedTextEditor(state) ?: return false
-    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start) ?: return false
+    val name = identifierAt(editor.value.text, editor.file.name, editor.value.selection.start)
+    if (name == null) {
+        state.statusMessage = "No identifier at the caret"
+        return true
+    }
     openUsagesFindWindow(state, name)
     state.statusMessage = null
     return true

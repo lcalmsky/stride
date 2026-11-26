@@ -1209,6 +1209,258 @@ class ContextMenuUiTest {
         }
     }
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click below the last tree row keeps the selection and opens its menu`() = runComposeUiTest {
+        val (state, session) = openProject()
+        try {
+            setContent { ContextMenuHarness(state) }
+            waitForIdle()
+            val source = session.tree.root.path.resolve("source.txt")
+
+            rightClick("source.txt")
+            waitForMenu(state)
+            assertEquals(source, session.tree.selected)
+            assertNull(session.editors.selected)
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+
+            val panel = onNodeWithTag(PROJECT_TREE_TAG).fetchSemanticsNode().boundsInRoot
+            onRoot().performMouseInput { rightClick(Offset(panel.left + 40f, panel.bottom - 12f)) }
+            waitForMenu(state)
+
+            assertEquals(source, session.tree.selected)
+            assertNull(session.editors.selected)
+            assertEquals(ActionGroups.PROJECT_VIEW_POPUP_MENU, state.contextMenu?.groupId)
+            // The rows resolved against the tree's selection: a file target keeps Jump to Source.
+            val editSource = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+                .first { it.action == ActionId.EDIT_SOURCE }
+            assertTrue(editSource.enabled)
+
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.path == source }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a meta right click on an identifier opens the editor menu instead of navigating`() = runComposeUiTest {
+        val content = "val order = OrderService()\n"
+        val (state, editor) = openTextProject("Main.kt", content)
+        try {
+            val root = requireNotNull(editor.file.path.parent)
+            Files.writeString(root.resolve("Other.kt"), "class OrderService\n")
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("Other.kt")))
+            session.editors.openFile(editor.file)
+            setContent { ContextMenuHarness(state) }
+            waitForIdle()
+            editor.updateValue(TextFieldValue(content, TextRange(0)))
+            waitForIdle()
+            val name = content.indexOf("OrderService")
+            val field = onNode(hasSetTextAction())
+            val box = field.textLayout().getBoundingBox(name)
+
+            onRoot().performKeyInput { keyDown(Key.MetaLeft) }
+            field.performMouseInput { rightClick(Offset(box.center.x, box.center.y)) }
+            onRoot().performKeyInput { keyUp(Key.MetaLeft) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.EDITOR_POPUP_MENU, state.contextMenu?.groupId)
+            // The press kept the tab and put the caret where it landed, not at the declaration.
+            assertEquals("Main.kt", session.editors.selected?.file?.name)
+            assertEquals(2, session.editors.openFiles.size)
+            assertTrue(editor.value.selection.start in name..name + "OrderService".length)
+            onNodeWithText("Select All").assertDoesNotExist()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a tab's close button opens that tab's menu without closing it`() = runComposeUiTest {
+        val root = temp.resolve("tab-close-project")
+        Files.createDirectories(root)
+        for (name in listOf("alpha.kt", "beta.kt", "gamma.kt")) Files.writeString(root.resolve(name), "$name\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            state.projectTreeVisible = false
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("alpha.kt")))
+            session.editors.openFile(VFile(root.resolve("beta.kt")))
+            session.editors.openFile(VFile(root.resolve("gamma.kt")))
+            setContent { ContextMenuHarness(state) }
+            waitForIdle()
+
+            val tab = onNode(hasText("beta.kt") and hasClickAction())
+            val bounds = tab.fetchSemanticsNode().boundsInRoot
+            val close = Offset(bounds.right - with(density) { 10.dp.toPx() }, bounds.center.y)
+            onRoot().performMouseInput { rightClick(close) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.EDITOR_TAB_POPUP_MENU, state.contextMenu?.groupId)
+            assertEquals("beta.kt", session.editors.selected?.file?.name)
+            assertEquals(
+                listOf("alpha.kt", "beta.kt", "gamma.kt"),
+                session.editors.openFiles.map { it.file.name },
+            )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a commit group row keeps the selected file row`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 2 }
+            assertEquals("Main.kt", session.commit.selectedRow()?.path?.fileName.toString())
+
+            onNodeWithText("Changes (2)").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.CHANGES_VIEW_POPUP_MENU, state.contextMenu?.groupId)
+            assertEquals("Main.kt", session.commit.selectedRow()?.path?.fileName.toString())
+            val rows = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+            assertTrue(rows.first { it.action == ActionId.SHOW_DIFF }.enabled)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `two quick right clicks on a commit row open no editor`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 2 }
+
+            commitRow("Other.kt").performMouseInput {
+                rightClick(center)
+                rightClick(center)
+            }
+            waitForIdle()
+
+            assertTrue(session.editors.openFiles.isEmpty())
+            assertNull(state.diffRequest)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `two quick right clicks on a list row open no editor`() = runComposeUiTest {
+        val root = temp.resolve("quick-right-list-project")
+        Files.createDirectories(root)
+        Files.writeString(root.resolve("A.kt"), "one\n")
+        Files.writeString(root.resolve("B.kt"), "alpha\nbeta\n")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(root.resolve("A.kt")))
+            session.bookmarks.toggle(Bookmark(root.resolve("B.kt").toAbsolutePath().normalize(), "B.kt", 1, "beta"))
+            state.toggleToolWindow("bookmarks", KeyContext.LIST_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("B.kt:2").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("B.kt:2").performMouseInput {
+                rightClick(center)
+                rightClick(center)
+            }
+            waitForIdle()
+
+            assertEquals("A.kt", session.editors.selected?.file?.name)
+            assertEquals(listOf("A.kt"), session.editors.openFiles.map { it.file.name })
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `two quick right clicks on a git log row open no diff`() = runComposeUiTest {
+        val repo = threeCommits()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Second commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Second commit").performMouseInput {
+                rightClick(center)
+                rightClick(center)
+            }
+            waitForIdle()
+
+            assertTrue(heldFor(500) { state.diffRequest == null }, "the right clicks opened a diff")
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `paste reports a clipboard source that is gone and clears the clipboard`() = runComposeUiTest {
+        val (state, session) = openProject()
+        try {
+            setContent { ContextMenuHarness(state) }
+            waitForIdle()
+            val source = session.tree.root.path.resolve("source.txt")
+            session.files.copy(source)
+            Files.delete(source)
+
+            rightClick("dest")
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.PASTE_FILE.name).assertIsEnabled()
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.PASTE_FILE.name).performClick()
+
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage == "source.txt no longer exists" }
+            assertNull(session.files.clipboard)
+
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            rightClick("dest")
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.PASTE_FILE.name).assertIsNotEnabled()
+        } finally {
+            state.dispose()
+        }
+    }
+
+    private fun heldFor(millis: Long, condition: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + millis
+        while (System.currentTimeMillis() < deadline) {
+            if (!condition()) return false
+            Thread.sleep(10)
+        }
+        return true
+    }
+
     private fun changedRepo(): TestGitRepo {
         val repo = TestGitRepo.create(temp)
         repo.write("src/Main.kt", "first\n")

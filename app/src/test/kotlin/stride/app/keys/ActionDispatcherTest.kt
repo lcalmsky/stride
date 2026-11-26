@@ -1011,7 +1011,7 @@ class ActionDispatcherTest {
     }
 
     @Test
-    fun `find usages without an identifier is not consumed and adds no tab`() {
+    fun `find usages without an editor is not consumed and without an identifier reports it`() {
         state.focus = KeyContext.EDITOR
         assertFalse(dispatchAction(ActionId.FIND_USAGES, state) { null })
 
@@ -1020,7 +1020,8 @@ class ActionDispatcherTest {
         val editor = session.editors.openFile(VFile(root.resolve("a.kt"))) as TextFileEditor
         editor.updateValue(TextFieldValue("a + b", TextRange(2)))
 
-        assertFalse(dispatchAction(ActionId.FIND_USAGES, state) { null })
+        assertTrue(dispatchAction(ActionId.FIND_USAGES, state) { null })
+        assertEquals("No identifier at the caret", state.statusMessage)
         assertTrue(state.findToolWindow.tabs.isEmpty())
     }
 
