@@ -8,12 +8,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.AnnotatedString
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import stride.app.actions.ComponentAction
 import stride.app.editor.TextFileEditor
+import stride.app.keys.ActionId
 import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowContextMenu
 import stride.app.ui.toolwindow.ListWindowRow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.search.DeclarationKind
@@ -28,6 +32,7 @@ fun StructureToolWindow(
     onOpen: (FileStructureEntry) -> Unit,
     onEscape: () -> Unit,
     modifier: Modifier = Modifier,
+    onContextMenu: ((Offset, Map<ActionId, ComponentAction>) -> Unit)? = null,
 ) {
     val text = editor.value.text
     var entries by remember(editor) { mutableStateOf(emptyList<FileStructureEntry>()) }
@@ -68,5 +73,6 @@ fun StructureToolWindow(
         onEscape = onEscape,
         selectOnFocus = selectAtCaret,
         modifier = modifier,
+        contextMenu = onContextMenu?.let { ListWindowContextMenu(open = it) },
     )
 }

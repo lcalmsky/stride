@@ -503,12 +503,15 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     }
     ActionId.STOP -> {
         val session = state.session ?: return false
-        session.project.service<RunManager>().stop()
+        val manager = session.project.service<RunManager>()
+        if (manager.canStop) manager.stop()
         true
     }
     ActionId.RERUN -> {
         val session = state.session ?: return false
-        if (session.project.service<RunManager>().rerun() != null) {
+        val manager = session.project.service<RunManager>()
+        if (manager.canRerun) {
+            manager.rerun()
             state.statusMessage = null
             state.toolWindows.activate("run")
         } else {

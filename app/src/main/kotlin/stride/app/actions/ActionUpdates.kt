@@ -7,6 +7,9 @@ import stride.app.files.fileOperationContext
 import stride.app.files.openableFileTarget
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.run.RunManager
+import stride.app.vcs.commitWindowSelectedRow
+import stride.core.services.service
 
 /** A3: how a row draws now — whether it exists on this surface, can run, and its dynamic text. */
 data class ActionUpdate(val visible: Boolean = true, val enabled: Boolean = true, val text: String? = null)
@@ -24,6 +27,9 @@ fun actionUpdate(action: ActionId, state: AppState): ActionUpdate = when (action
     ActionId.CLOSE_TABS_TO_THE_LEFT -> tabUpdate(state) { it.canCloseTabsToTheLeft() }
     ActionId.CLOSE_TABS_TO_THE_RIGHT -> tabUpdate(state) { it.canCloseTabsToTheRight() }
     ActionId.REOPEN_CLOSED_TAB -> tabUpdate(state) { it.hasClosedFiles() }
+    ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF -> commitWindowUpdate(state)
+    ActionId.RERUN -> runUpdate(state) { it.canRerun }
+    ActionId.STOP -> runUpdate(state) { it.canStop }
     else -> ActionUpdate()
 }
 
@@ -43,4 +49,16 @@ private fun tabUpdate(state: AppState, predicate: (FileEditorManager) -> Boolean
 private fun treeEditSource(state: AppState): ActionUpdate {
     if (fileOperationContext(state) != KeyContext.PROJECT_TREE) return ActionUpdate()
     return ActionUpdate(enabled = openableFileTarget(state) != null)
+}
+
+/** A3: the two Commit window rows read the row the window has selected, inside the window only. */
+private fun commitWindowUpdate(state: AppState): ActionUpdate {
+    if (state.focus != KeyContext.COMMIT_WINDOW) return ActionUpdate()
+    return ActionUpdate(enabled = commitWindowSelectedRow(state) != null)
+}
+
+/** A3: a Run row asks the same predicate its action and its key ask on [RunManager]. */
+private fun runUpdate(state: AppState, predicate: (RunManager) -> Boolean): ActionUpdate {
+    val session = state.session ?: return ActionUpdate()
+    return ActionUpdate(enabled = predicate(session.project.service<RunManager>()))
 }

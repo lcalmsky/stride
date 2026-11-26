@@ -6,7 +6,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import stride.app.actions.ActionGroups
+import stride.app.actions.ComponentAction
 import stride.app.actions.ContextMenuRequest
+import stride.app.actions.openContextMenu
 import stride.app.editor.ClipboardHistory
 import stride.app.editor.CompletionRequest
 import stride.app.editor.PasteHistoryRequest
@@ -24,6 +28,7 @@ import stride.app.generate.GenerateRequest
 import stride.app.generate.MemberChooseRequest
 import stride.app.generate.prepareGenerateWithProviders
 import stride.app.generate.projectTypes
+import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.Keymap
@@ -66,6 +71,7 @@ import stride.app.run.ContextAction
 import stride.app.run.RunConfiguration
 import stride.app.run.RunManager
 import stride.app.run.RunToolWindow
+import stride.app.run.openContextActions
 import stride.app.terminal.TerminalSession
 import stride.app.terminal.TerminalToolWindow
 import stride.app.tree.ProjectTreeModel
@@ -369,6 +375,7 @@ class AppState {
                         onRemove = { bookmark -> current.bookmarks.remove(bookmark) },
                         onEscape = { handFocusToEditor() },
                         modifier = modifier,
+                        onContextMenu = listWindowMenu(ActionGroups.BOOKMARKS_TOOL_WINDOW_POPUP_MENU),
                     )
                 }
             },
@@ -385,6 +392,7 @@ class AppState {
                     onEscape = { handFocusToEditor() },
                     modifier = modifier,
                     replace = findReplace,
+                    onContextMenu = listWindowMenu(ActionGroups.USAGE_VIEW_POPUP),
                 )
             },
         )
@@ -404,6 +412,7 @@ class AppState {
                         current.project.service<RunManager>(),
                         modifier,
                         focusRequests = toolWindows.focusRequests,
+                        state = this@AppState,
                     )
                 }
             },
@@ -436,6 +445,8 @@ class AppState {
                         },
                         onEscape = { handFocusToEditor() },
                         modifier = modifier,
+                        onContextMenu = listWindowMenu(ActionGroups.PROBLEMS_VIEW_TREE_POPUP),
+                        onShowQuickFixes = { openContextActions(this@AppState) },
                     )
                 }
             },
@@ -460,6 +471,7 @@ class AppState {
                         },
                         onEscape = { handFocusToEditor() },
                         modifier = modifier,
+                        onContextMenu = listWindowMenu(ActionGroups.STRUCTURE_VIEW_POPUP_MENU),
                     )
                 }
             },
@@ -490,10 +502,21 @@ class AppState {
                         current.project.service<TerminalSession>(),
                         modifier,
                         focusRequests = toolWindows.focusRequests,
+                        state = this@AppState,
                     )
                 }
             },
         )
+    }
+
+    /**
+     * A4: a list tool window's menu opens against the window's own context, so every row runs as
+     * its key would on that surface.
+     */
+    private fun listWindowMenu(
+        groupId: String,
+    ): (Offset, Map<ActionId, ComponentAction>) -> Unit = { position, actions ->
+        openContextMenu(this, groupId, KeyContext.LIST_WINDOW, position, actions)
     }
 
     /** Opens Search Everywhere on [tab], resetting the popup even when it is already open. */
@@ -576,6 +599,7 @@ class AppState {
                         },
                         onEscape = { handFocusToEditor() },
                         modifier = modifier,
+                        onContextMenu = listWindowMenu(ActionGroups.HIERARCHY_POPUP_MENU),
                     )
                 },
             )

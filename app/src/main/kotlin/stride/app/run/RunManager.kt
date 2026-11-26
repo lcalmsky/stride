@@ -96,6 +96,12 @@ class RunManager(private val project: Project) : Disposable {
     /** The configuration [rerun] starts: the selected tab's, else the last run. */
     val rerunTarget: RunConfiguration? get() = current?.configuration ?: lastRun
 
+    /** A3: whether Rerun has anything to start; the Rerun row and its key both read it. */
+    val canRerun: Boolean get() = rerunTarget != null
+
+    /** A3: whether Stop has anything to stop; the Stop row and its key both read it. */
+    val canStop: Boolean get() = current?.isRunning == true
+
     fun rerun(): RunSession? = rerunTarget?.let(::run)
 
     fun stop() {

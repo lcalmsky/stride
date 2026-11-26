@@ -30,6 +30,16 @@ object ActionGroups {
     const val EDITOR_POPUP_MENU: String = "EditorPopupMenu"
     const val EDITOR_GUTTER_POPUP_MENU: String = "EditorGutterPopupMenu"
     const val EDITOR_TAB_POPUP_MENU: String = "EditorTabPopupMenu"
+    const val CHANGES_VIEW_POPUP_MENU: String = "ChangesViewPopupMenu"
+    const val VCS_LOG_CONTEXT_MENU: String = "Vcs.Log.ContextMenu"
+    const val TEST_TREE_POPUP_MENU: String = "TestTreePopupMenu"
+    const val CONSOLE_VIEW_POPUP_MENU: String = "ConsoleView.PopupMenu"
+    const val TERMINAL_CONTEXT_MENU: String = "Terminal.ReworkedTerminalContextMenu"
+    const val USAGE_VIEW_POPUP: String = "UsageView.Popup"
+    const val PROBLEMS_VIEW_TREE_POPUP: String = "ProblemsView.ToolWindow.TreePopup"
+    const val STRUCTURE_VIEW_POPUP_MENU: String = "StructureViewPopupMenu"
+    const val HIERARCHY_POPUP_MENU: String = "HierarchyPopupMenu.Common"
+    const val BOOKMARKS_TOOL_WINDOW_POPUP_MENU: String = "Bookmarks.ToolWindow.PopupMenu"
 
     /** The shared Git submenu; each row calls what the matching VCS popup row calls (A8). */
     val gitContextMenu = ActionGroup(
@@ -192,8 +202,87 @@ object ActionGroups {
         ),
     )
 
+    /** The Commit window's file list (A8): the selected row's actions, then the Git submenu. */
+    val changesViewPopupMenu = ActionGroup(
+        CHANGES_VIEW_POPUP_MENU,
+        listOf(
+            GroupAction(ActionId.ROLLBACK_CHANGES, "Rollback…"),
+            GroupAction(ActionId.SHOW_DIFF),
+            GroupAction(ActionId.EDIT_SOURCE, "Jump to Source"),
+            GroupSeparator,
+            GroupReference(GIT_CONTEXT_MENU, "Git"),
+        ),
+    )
+
+    /** The Git window's Log tab (A8); the Console tab opens no menu. */
+    val vcsLogContextMenu = ActionGroup(
+        VCS_LOG_CONTEXT_MENU,
+        listOf(GroupAction(ActionId.SHOW_DIFF)),
+    )
+
+    /** The Run window over a test row (A8); `Run '<node>'` joins it with A10. */
+    val testTreePopupMenu = ActionGroup(
+        TEST_TREE_POPUP_MENU,
+        listOf(
+            GroupAction(ActionId.RERUN),
+            GroupAction(ActionId.STOP),
+        ),
+    )
+
+    /** The Run window everywhere else (A8). */
+    val consoleViewPopupMenu = ActionGroup(
+        CONSOLE_VIEW_POPUP_MENU,
+        listOf(
+            GroupAction(ActionId.RERUN),
+            GroupAction(ActionId.STOP),
+        ),
+    )
+
+    /** The terminal (A8); Copy and Paste are the terminal's own ⌘C and ⌘V (A7). */
+    val terminalContextMenu = ActionGroup(
+        TERMINAL_CONTEXT_MENU,
+        listOf(
+            GroupAction(ActionId.COPY, "Copy"),
+            GroupAction(ActionId.PASTE, "Paste"),
+        ),
+    )
+
+    /** One Jump to Source row over a list tool window's selected row (A7, A8). */
+    private fun jumpToSourceMenu(id: String): ActionGroup =
+        ActionGroup(id, listOf(GroupAction(ActionId.EDIT_SOURCE, "Jump to Source")))
+
+    val usageViewPopupMenu: ActionGroup = jumpToSourceMenu(USAGE_VIEW_POPUP)
+    val structureViewPopupMenu: ActionGroup = jumpToSourceMenu(STRUCTURE_VIEW_POPUP_MENU)
+    val hierarchyPopupMenu: ActionGroup = jumpToSourceMenu(HIERARCHY_POPUP_MENU)
+    val bookmarksToolWindowPopupMenu: ActionGroup = jumpToSourceMenu(BOOKMARKS_TOOL_WINDOW_POPUP_MENU)
+
+    /** The Problems window (A8): the quick fixes at the problem, then Jump to Source. */
+    val problemsViewTreePopup = ActionGroup(
+        PROBLEMS_VIEW_TREE_POPUP,
+        listOf(
+            GroupAction(ActionId.SHOW_INTENTION_ACTIONS, "Show Quick-Fixes"),
+            GroupAction(ActionId.EDIT_SOURCE, "Jump to Source"),
+        ),
+    )
+
     val all: List<ActionGroup> =
-        listOf(gitContextMenu, projectViewPopupMenu, editorPopupMenu, editorGutterPopupMenu, editorTabPopupMenu)
+        listOf(
+            gitContextMenu,
+            projectViewPopupMenu,
+            editorPopupMenu,
+            editorGutterPopupMenu,
+            editorTabPopupMenu,
+            changesViewPopupMenu,
+            vcsLogContextMenu,
+            testTreePopupMenu,
+            consoleViewPopupMenu,
+            terminalContextMenu,
+            usageViewPopupMenu,
+            structureViewPopupMenu,
+            hierarchyPopupMenu,
+            bookmarksToolWindowPopupMenu,
+            problemsViewTreePopup,
+        )
 
     val byId: Map<String, ActionGroup> = all.associateBy { it.id }
 }

@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import java.nio.file.Path
+import stride.app.actions.ComponentAction
 import stride.app.editor.TextFileEditor
 import stride.app.glass.nativeGlass
 import stride.app.keys.ActionId
@@ -34,6 +36,7 @@ import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberSelectionAlpha
 import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowContextMenu
 import stride.app.ui.toolwindow.ListWindowRow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 import stride.lang.ProblemSeverity
@@ -76,6 +79,8 @@ fun ProblemsToolWindow(
     onOpenFileProblem: (Path, FileProblem) -> Unit,
     onEscape: () -> Unit,
     modifier: Modifier = Modifier,
+    onContextMenu: ((Offset, Map<ActionId, ComponentAction>) -> Unit)? = null,
+    onShowQuickFixes: (() -> Unit)? = null,
 ) {
     if (model == null) {
         ToolWindowEmptyState("No file selected", modifier, focusRequests = focusRequests, onEscape = onEscape)
@@ -109,6 +114,21 @@ fun ProblemsToolWindow(
                         onOpen = { index -> fileProblems.getOrNull(index)?.let(onOpenEditorProblem) },
                         onEscape = onEscape,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contextMenu = onContextMenu?.let { opener ->
+                            ListWindowContextMenu(
+                                actions = { index ->
+                                    mapOf(
+                                        ActionId.SHOW_INTENTION_ACTIONS to ComponentAction(
+                                            run = {
+                                                fileProblems.getOrNull(index)?.let(onOpenEditorProblem)
+                                                onShowQuickFixes?.invoke()
+                                            },
+                                        ),
+                                    )
+                                },
+                                open = opener,
+                            )
+                        },
                     )
                 }
             }
@@ -137,6 +157,21 @@ fun ProblemsToolWindow(
                         onOpen = { index -> opens.getOrNull(index)?.invoke() },
                         onEscape = onEscape,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contextMenu = onContextMenu?.let { opener ->
+                            ListWindowContextMenu(
+                                actions = { index ->
+                                    mapOf(
+                                        ActionId.SHOW_INTENTION_ACTIONS to ComponentAction(
+                                            run = {
+                                                opens.getOrNull(index)?.invoke()
+                                                onShowQuickFixes?.invoke()
+                                            },
+                                        ),
+                                    )
+                                },
+                                open = opener,
+                            )
+                        },
                     )
                 }
             }

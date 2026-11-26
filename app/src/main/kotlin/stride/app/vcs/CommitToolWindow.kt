@@ -38,6 +38,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -61,7 +62,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import stride.app.AppState
 import stride.app.ProjectSession
+import stride.app.actions.ActionGroups
+import stride.app.actions.ComponentAction
+import stride.app.actions.contextMenuRequest
+import stride.app.actions.openContextMenu
 import stride.app.glass.nativeGlass
+import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
@@ -139,12 +145,12 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
         }
     }
 
-    // A diff, push, update, rollback, branches or VCS popup that closed onto this window gives
-    // the keyboard back to the part that had it; one that closed onto the editor left
+    // A diff, push, update, rollback, branches, VCS or context-menu popup that closed onto this
+    // window gives the keyboard back to the part that had it; one that closed onto the editor left
     // `state.focus` there and is left alone.
     val popupOpen = state.diffRequest != null || state.pushRequest != null ||
         state.updateRequest != null || state.vcsPopup != null || state.rollbackRequest != null ||
-        state.branchesPopup != null
+        state.branchesPopup != null || state.contextMenu != null
     LaunchedEffect(popupOpen) {
         if (popupOpen || state.focus != KeyContext.COMMIT_WINDOW) return@LaunchedEffect
         withFrameNanos { }
@@ -162,6 +168,23 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
     fun move(step: Int) {
         if (ordered.isEmpty()) return
         window.selectedPath = ordered[(index + step).coerceIn(0, ordered.lastIndex)].path
+    }
+
+    // A4/A5: a right press on a file row selects it and keeps its check box; a group row leaves
+    // the selection as it was. Jump to Source is A7's openCommitRow, which F4 also runs.
+    fun openMenu(row: CommitRow?, position: Offset) {
+        if (row != null) window.selectedPath = row.path
+        openContextMenu(
+            state,
+            ActionGroups.CHANGES_VIEW_POPUP_MENU,
+            KeyContext.COMMIT_WINDOW,
+            position,
+            mapOf(
+                ActionId.EDIT_SOURCE to ComponentAction {
+                    window.selectedRow()?.let { openCommitRow(state, session, it) }
+                },
+            ),
+        )
     }
 
     Column(
@@ -218,6 +241,8 @@ fun CommitToolWindowContent(state: AppState, modifier: Modifier) {
                 onSelect = { window.selectedPath = it.path },
                 onToggle = { window.inclusion.toggle(it) },
                 onOpen = { openCommitRow(state, session, it) },
+                onRowContextMenu = { row, position -> openMenu(row, position) },
+                onGroupContextMenu = { position -> openMenu(null, position) },
                 modifier = Modifier.weight(0.55f).fillMaxHeight(),
             )
             Column(
@@ -318,6 +343,8 @@ private fun FileList(
     onSelect: (CommitRow) -> Unit,
     onToggle: (CommitRow) -> Unit,
     onOpen: (CommitRow) -> Unit,
+    onRowContextMenu: (CommitRow, Offset) -> Unit,
+    onGroupContextMenu: (Offset) -> Unit,
     modifier: Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -338,7 +365,11 @@ private fun FileList(
         ) {
             var offset = 0
             for (group in groups) {
-                item(key = "group-${group.title}") { GroupRow("${group.title} (${group.rows.size})") }
+                item(key = "group-${group.title}") {
+                    GroupRow("${group.title} (${group.rows.size})") { position ->
+                        onGroupContextMenu(position)
+                    }
+                }
                 val groupOffset = offset
                 itemsIndexed(group.rows, key = { _, row -> row.path.toString() }) { position, row ->
                     FileRow(
@@ -356,6 +387,11 @@ private fun FileList(
                             runCatching { listFocus.requestFocus() }
                         },
                         onOpen = { onOpen(row) },
+                        onRightClick = { pointer ->
+                            onSelect(row)
+                            runCatching { listFocus.requestFocus() }
+                            onRowContextMenu(row, pointer)
+                        },
                     )
                 }
                 offset += group.rows.size
@@ -381,11 +417,12 @@ private fun itemIndexOf(groups: List<CommitGroup>, path: Path): Int {
 }
 
 @Composable
-private fun GroupRow(title: String) {
+private fun GroupRow(title: String, onRightClick: (Offset) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .height(DesignTokens.popupGroupHeight)
+            .contextMenuRequest(onRightClick)
             .padding(horizontal = DesignTokens.space16),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -409,6 +446,7 @@ private fun FileRow(
     onSelect: () -> Unit,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
+    onRightClick: (Offset) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -418,6 +456,8 @@ private fun FileRow(
             .height(DesignTokens.popupRowHeight)
             .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
+            // A5: the right press is consumed before the tap and check-box handlers see it.
+            .contextMenuRequest(onRightClick)
             .pointerInput(row) { detectTapGestures(onPress = { onSelect() }, onDoubleTap = { onOpen() }) }
             .padding(start = DesignTokens.space8, end = DesignTokens.space16),
         verticalAlignment = Alignment.CenterVertically,

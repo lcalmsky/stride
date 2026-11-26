@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -41,12 +42,19 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import stride.app.actions.ComponentAction
+import stride.app.actions.contextMenuRequest
+import stride.app.keys.ActionId
 import stride.app.ui.FileTypeIcon
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.selectionRow
+
+/** Test tag of the focusable list a list tool window renders. */
+internal const val LIST_WINDOW_TAG: String = "list-window"
 
 /** One row of a [ListToolWindow]; [indent] nests the primary text, [accent] paints it in `accent2`. */
 data class ListWindowRow(
@@ -55,6 +63,16 @@ data class ListWindowRow(
     val iconName: String? = null,
     val indent: Int = 0,
     val accent: Boolean = false,
+)
+
+/**
+ * A7: a list tool window's right-click menu. [actions] is the surface's own handlers for the row;
+ * the window adds Jump to Source from its open callback, and [open] hands the rows and the pointer
+ * to the surface that owns the app state.
+ */
+class ListWindowContextMenu(
+    val actions: (row: Int) -> Map<ActionId, ComponentAction> = { emptyMap() },
+    val open: (position: Offset, actions: Map<ActionId, ComponentAction>) -> Unit,
 )
 
 /**
@@ -80,6 +98,7 @@ fun ListToolWindow(
     onSelectionChange: ((Int) -> Unit)? = null,
     onRight: ((Int) -> Int?)? = null,
     onLeft: ((Int) -> Int?)? = null,
+    contextMenu: ListWindowContextMenu? = null,
 ) {
     var selectedIndex by remember { mutableStateOf(0) }
     var pendingSelection by remember { mutableStateOf(false) }
@@ -123,6 +142,7 @@ fun ListToolWindow(
     Column(
         modifier
             .focusRequester(focusRequester)
+            .testTag(LIST_WINDOW_TAG)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
@@ -191,6 +211,18 @@ fun ListToolWindow(
                             selectedIndex = rowIndex
                             onOpen(rowIndex)
                         },
+                        // A5: a right press selects the row and never opens it; the window never
+                        // opens a menu over an empty list, which has no row to press.
+                        onRightClick = contextMenu?.let { menu ->
+                            { position: Offset ->
+                                selectedIndex = rowIndex
+                                menu.open(
+                                    position,
+                                    menu.actions(rowIndex) +
+                                        (ActionId.EDIT_SOURCE to ComponentAction { onOpen(rowIndex) }),
+                                )
+                            }
+                        },
                     )
                 }
             }
@@ -253,7 +285,13 @@ fun ToolWindowEmptyState(
 }
 
 @Composable
-private fun ListRow(row: ListWindowRow, selected: Boolean, onSelect: () -> Unit, onOpen: () -> Unit) {
+private fun ListRow(
+    row: ListWindowRow,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onOpen: () -> Unit,
+    onRightClick: ((Offset) -> Unit)?,
+) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     Row(
@@ -262,6 +300,7 @@ private fun ListRow(row: ListWindowRow, selected: Boolean, onSelect: () -> Unit,
             .height(DesignTokens.popupRowHeight)
             .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
+            .then(if (onRightClick != null) Modifier.contextMenuRequest(onRightClick) else Modifier)
             .pointerInput(row) {
                 detectTapGestures(onTap = { onSelect() }, onDoubleTap = { onOpen() })
             }

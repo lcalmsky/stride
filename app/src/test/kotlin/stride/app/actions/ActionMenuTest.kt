@@ -32,10 +32,17 @@ import stride.app.keys.KeyEventType
 import stride.app.keys.KeyRouter
 import stride.app.keys.MacKeymap
 import stride.app.keys.dispatchAction
+import stride.app.run.FakeProcess
+import stride.app.run.ProcessStarter
+import stride.app.run.RunConfiguration
+import stride.app.run.RunKind
+import stride.app.run.RunManager
+import stride.app.run.StartedProcess
 import stride.app.vcs.CliGitExecutor
 import stride.app.vcs.TEST_GIT
 import stride.app.vcs.TestGitRepo
 import stride.core.services.Application
+import stride.core.services.service
 import stride.core.vfs.VFile
 
 class ActionMenuTest {
@@ -657,6 +664,180 @@ class ActionMenuTest {
             state.focus = KeyContext.EDITOR
             assertTrue(dispatchAction(action, state) { null }, "$action was handed back")
         }
+    }
+
+    @Test
+    fun `the five surface menus follow A8`() {
+        openProject("a.kt")
+
+        val commit = resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW)
+        assertEquals(
+            listOf(ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF, ActionId.EDIT_SOURCE),
+            commit.filterIsInstance<MenuRow.Action>().map { it.action },
+        )
+        assertEquals(
+            listOf("Rollback…", "Show Diff", "Jump to Source"),
+            commit.filterIsInstance<MenuRow.Action>().map { it.text },
+        )
+
+        assertEquals(
+            listOf(ActionId.SHOW_DIFF),
+            resolveMenu(ActionGroups.vcsLogContextMenu, KeyContext.LIST_WINDOW)
+                .filterIsInstance<MenuRow.Action>().map { it.action },
+        )
+        for (group in listOf(ActionGroups.testTreePopupMenu, ActionGroups.consoleViewPopupMenu)) {
+            assertEquals(
+                listOf(ActionId.RERUN, ActionId.STOP),
+                resolveMenu(group, KeyContext.RUN_WINDOW).filterIsInstance<MenuRow.Action>().map { it.action },
+            )
+        }
+        for (group in listOf(ActionGroups.usageViewPopupMenu, ActionGroups.structureViewPopupMenu,
+            ActionGroups.hierarchyPopupMenu, ActionGroups.bookmarksToolWindowPopupMenu)) {
+            assertEquals(
+                listOf(ActionId.EDIT_SOURCE to "Jump to Source"),
+                resolveMenu(group, KeyContext.LIST_WINDOW).filterIsInstance<MenuRow.Action>()
+                    .map { it.action to it.text },
+            )
+        }
+        assertEquals(
+            listOf(ActionId.SHOW_INTENTION_ACTIONS to "Show Quick-Fixes", ActionId.EDIT_SOURCE to "Jump to Source"),
+            resolveMenu(ActionGroups.problemsViewTreePopup, KeyContext.LIST_WINDOW)
+                .filterIsInstance<MenuRow.Action>().map { it.action to it.text },
+        )
+
+        val terminal = resolveMenu(ActionGroups.terminalContextMenu, KeyContext.TERMINAL)
+            .filterIsInstance<MenuRow.Action>()
+        assertEquals(listOf(ActionId.COPY, ActionId.PASTE), terminal.map { it.action })
+        assertEquals(listOf("⌘C", "⌘V"), terminal.map { it.shortcut })
+    }
+
+    @Test
+    fun `the commit window rows are enabled exactly when they open something`() {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.commitAll("Initial commit")
+        state.openFolder(repo.root)
+        val session = requireNotNull(state.session)
+        session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { session.git.refreshNow() }
+        state.focus = KeyContext.COMMIT_WINDOW
+
+        // A clean tree lists no file row: both rows are disabled and their dispatch opens nothing.
+        assertNull(session.commit.selectedRow())
+        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
+        assertFalse(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
+        assertFalse(dispatchAction(ActionId.ROLLBACK_CHANGES, state) { null })
+        assertNull(state.rollbackRequest)
+        assertFalse(dispatchAction(ActionId.SHOW_DIFF, state) { null })
+        assertNull(state.diffRequest)
+
+        // One changed file gives the window a row: both rows enable and open their popup.
+        repo.write("src/Main.kt", "second\n")
+        runBlocking { session.git.refreshNow() }
+        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.ROLLBACK_CHANGES).enabled)
+        assertTrue(resolveMenu(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW).action(ActionId.SHOW_DIFF).enabled)
+        assertNotNull(session.commit.selectedRow())
+        assertTrue(dispatchAction(ActionId.SHOW_DIFF, state) { null })
+        waitFor { state.diffRequest != null }
+        state.diffRequest = null
+        assertTrue(dispatchAction(ActionId.ROLLBACK_CHANGES, state) { null })
+        assertNotNull(state.rollbackRequest)
+    }
+
+    @Test
+    fun `rerun and stop are enabled exactly when their actions run`() {
+        val session = openProject("a.kt")
+        val manager = session.project.service<RunManager>()
+        state.focus = KeyContext.RUN_WINDOW
+        assertNull(manager.lastRun)
+        assertFalse(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.RERUN).enabled)
+        assertFalse(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.STOP).enabled)
+        assertTrue(dispatchAction(ActionId.RERUN, state) { null })
+        assertEquals("Nothing to rerun", state.statusMessage)
+        assertTrue(dispatchAction(ActionId.STOP, state) { null })
+        assertTrue(manager.sessions.isEmpty())
+
+        val process = FakeProcess(blocking = true)
+        manager.starter = ProcessStarter { StartedProcess(process, "fake") }
+        manager.run(
+            RunConfiguration(
+                name = "build",
+                workingDir = session.project.root,
+                args = listOf("classes"),
+                kind = RunKind.TASK,
+            ),
+        )
+        assertTrue(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.RERUN).enabled)
+        assertTrue(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.STOP).enabled)
+        assertTrue(dispatchAction(ActionId.STOP, state) { null })
+        waitFor { !manager.canStop }
+        assertFalse(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.STOP).enabled)
+        assertTrue(resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW).action(ActionId.RERUN).enabled)
+    }
+
+    @Test
+    fun `no enabled surface row hands its key back to the component`() {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.commitAll("Initial commit")
+        repo.write("src/Main.kt", "second\n")
+        state.openFolder(repo.root)
+        val session = requireNotNull(state.session)
+        session.git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { session.git.refreshNow() }
+        val manager = session.project.service<RunManager>()
+        manager.starter = ProcessStarter { StartedProcess(FakeProcess(blocking = true), "fake") }
+        manager.run(
+            RunConfiguration(
+                name = "build",
+                workingDir = session.project.root,
+                args = listOf("classes"),
+                kind = RunKind.TASK,
+            ),
+        )
+
+        val surfaces = listOf(
+            Triple(ActionGroups.changesViewPopupMenu, KeyContext.COMMIT_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+            Triple(ActionGroups.vcsLogContextMenu, KeyContext.LIST_WINDOW, setOf(ActionId.SHOW_DIFF)),
+            Triple(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW, emptySet()),
+            Triple(ActionGroups.consoleViewPopupMenu, KeyContext.RUN_WINDOW, emptySet()),
+            Triple(ActionGroups.terminalContextMenu, KeyContext.TERMINAL, setOf(ActionId.COPY, ActionId.PASTE)),
+            Triple(ActionGroups.usageViewPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+            Triple(ActionGroups.structureViewPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+            Triple(ActionGroups.hierarchyPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+            Triple(ActionGroups.bookmarksToolWindowPopupMenu, KeyContext.LIST_WINDOW, setOf(ActionId.EDIT_SOURCE)),
+            Triple(
+                ActionGroups.problemsViewTreePopup,
+                KeyContext.LIST_WINDOW,
+                setOf(ActionId.EDIT_SOURCE, ActionId.SHOW_INTENTION_ACTIONS),
+            ),
+        )
+        // The git, the shell and the file writes: this round does not run them from a menu test.
+        val skipped = setOf(
+            ActionId.COMMIT,
+            ActionId.PUSH,
+            ActionId.UPDATE_PROJECT,
+            ActionId.FETCH,
+            ActionId.SHOW_BRANCHES,
+            ActionId.NEW_BRANCH,
+        )
+
+        for ((group, context, components) in surfaces) {
+            val rows = resolveMenu(group, context).flatMap { it.leaves() }.filterIsInstance<MenuRow.Action>()
+                .filter { it.enabled && it.action !in components && it.action !in skipped }
+            for (row in rows) {
+                state.contextMenu = null
+                state.diffRequest = null
+                state.rollbackRequest = null
+                state.focus = context
+                assertTrue(dispatchAction(row.action, state) { null }, "${group.id}: ${row.action} was handed back")
+            }
+        }
+    }
+
+    private fun resolveMenu(group: ActionGroup, context: KeyContext = KeyContext.PROJECT_TREE): List<MenuRow> {
+        state.focus = context
+        return resolveMenuRows(MacKeymap.keymap, state, group)
     }
 
     private fun resolveEditor(): List<MenuRow> {

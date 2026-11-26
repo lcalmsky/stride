@@ -3,8 +3,12 @@ package stride.app.navigation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.AnnotatedString
+import stride.app.actions.ComponentAction
+import stride.app.keys.ActionId
 import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowContextMenu
 import stride.app.ui.toolwindow.ListWindowRow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 
@@ -17,6 +21,7 @@ fun BookmarksToolWindow(
     onRemove: (Bookmark) -> Unit,
     onEscape: () -> Unit,
     modifier: Modifier = Modifier,
+    onContextMenu: ((Offset, Map<ActionId, ComponentAction>) -> Unit)? = null,
 ) {
     val entries = bookmarks.toList()
     if (entries.isEmpty()) {
@@ -44,5 +49,6 @@ fun BookmarksToolWindow(
         onDelete = { index -> entries.getOrNull(index)?.let(onRemove) },
         onEscape = onEscape,
         modifier = modifier,
+        contextMenu = onContextMenu?.let { ListWindowContextMenu(open = it) },
     )
 }

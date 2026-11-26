@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -49,6 +50,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import stride.app.AppState
+import stride.app.actions.ActionGroups
+import stride.app.actions.ComponentAction
+import stride.app.actions.contextMenuRequest
+import stride.app.actions.openContextMenu
+import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.ui.CloseIcon
 import stride.app.glass.nativeGlass
 import stride.app.ui.theme.DesignTokens
@@ -65,9 +73,21 @@ private val consoleStyle = TextStyle(
     color = DesignTokens.text,
 )
 
-/** The run tool window: a header, the test tree and the console, side by side. */
+/** Test tag of the focusable run window. */
+internal const val RUN_WINDOW_TAG: String = "run-window"
+
+/**
+ * The run tool window: a header, the test tree and the console, side by side. [state] is the app
+ * state the right-click menus open against; it is optional only so a window can be rendered on its
+ * own, as the glass tests do.
+ */
 @Composable
-fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusRequests: Int = 0) {
+fun RunToolWindow(
+    manager: RunManager,
+    modifier: Modifier = Modifier,
+    focusRequests: Int = 0,
+    state: AppState? = null,
+) {
     val session = manager.current
     if (session == null) {
         Text(
@@ -82,27 +102,64 @@ fun RunToolWindow(manager: RunManager, modifier: Modifier = Modifier, focusReque
 
     val focusRequester = remember { FocusRequester() }
     var selected by remember(session) { mutableStateOf<TestMethodNode?>(null) }
+    var selectedClass by remember(session) { mutableStateOf<TestClassNode?>(null) }
     LaunchedEffect(focusRequests) {
         if (focusRequests > 0) {
             withFrameNanos { }
             runCatching { focusRequester.requestFocus() }
         }
     }
+    // A7: the test tree's row handlers travel with the menu request, so the row the menu opened on
+    // reaches them without the menu resolving the tree again.
+    val openMenu: (String, Offset, Map<ActionId, ComponentAction>) -> Unit = { groupId, position, actions ->
+        state?.let { openContextMenu(it, groupId, KeyContext.RUN_WINDOW, position, actions) }
+    }
 
     Column(
         modifier
             .focusRequester(focusRequester)
+            .testTag(RUN_WINDOW_TAG)
             .focusable(),
     ) {
         RunTabs(manager, session)
         RunHeader(session)
         if (session.configuration.kind == RunKind.TEST) {
             Row(Modifier.weight(1f).fillMaxWidth()) {
-                TestTreePane(session, selected, onSelect = { selected = it }, Modifier.weight(0.36f).fillMaxHeight())
-                ConsolePane(session, selected, Modifier.weight(0.64f).fillMaxHeight())
+                TestTreePane(
+                    session = session,
+                    selected = selected,
+                    selectedClass = selectedClass,
+                    onSelect = {
+                        selected = it
+                        selectedClass = null
+                    },
+                    onSelectClass = {
+                        selectedClass = it
+                        selected = null
+                    },
+                    onContextMenu = { position, actions ->
+                        openMenu(ActionGroups.TEST_TREE_POPUP_MENU, position, actions)
+                    },
+                    modifier = Modifier.weight(0.36f).fillMaxHeight(),
+                )
+                ConsolePane(
+                    session,
+                    selected,
+                    onContextMenu = { position ->
+                        openMenu(ActionGroups.CONSOLE_VIEW_POPUP_MENU, position, emptyMap())
+                    },
+                    Modifier.weight(0.64f).fillMaxHeight(),
+                )
             }
         } else {
-            ConsolePane(session, null, Modifier.weight(1f).fillMaxWidth())
+            ConsolePane(
+                session,
+                null,
+                onContextMenu = { position ->
+                    openMenu(ActionGroups.CONSOLE_VIEW_POPUP_MENU, position, emptyMap())
+                },
+                Modifier.weight(1f).fillMaxWidth(),
+            )
         }
     }
 }
@@ -207,30 +264,61 @@ private fun RunHeader(session: RunSession) {
     }
 }
 
+/**
+ * A5: a right press selects the class or method row under it and opens the test tree's menu.
+ * [actionsFor] is where the row's own handlers come from; A10's Run '<node>' row joins them there.
+ */
 @Composable
 private fun TestTreePane(
     session: RunSession,
     selected: TestMethodNode?,
+    selectedClass: TestClassNode?,
     onSelect: (TestMethodNode) -> Unit,
+    onSelectClass: (TestClassNode) -> Unit,
+    actionsFor: (classNode: TestClassNode?, method: TestMethodNode?) -> Map<ActionId, ComponentAction> =
+        { _, _ -> emptyMap() },
+    onContextMenu: (position: Offset, actions: Map<ActionId, ComponentAction>) -> Unit,
     modifier: Modifier,
 ) {
     LazyColumn(modifier) {
         for (classNode in session.tree.classes) {
             item(key = "class:${classNode.className}") {
-                ClassRow(classNode)
+                ClassRow(
+                    classNode,
+                    classNode === selectedClass,
+                    onRightClick = { position ->
+                        onSelectClass(classNode)
+                        onContextMenu(position, actionsFor(classNode, null))
+                    },
+                )
             }
             items(classNode.methods, key = { method -> "method:${method.className}.${method.name}" }) { method ->
-                MethodRow(method, method === selected, onClick = { onSelect(method) })
+                MethodRow(
+                    method,
+                    method === selected,
+                    onClick = { onSelect(method) },
+                    onRightClick = { position ->
+                        onSelect(method)
+                        onContextMenu(position, actionsFor(null, method))
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ClassRow(node: TestClassNode) {
+private fun ClassRow(node: TestClassNode, selected: Boolean, onRightClick: (Offset) -> Unit) {
     val color = statusColor(node.status)
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = DesignTokens.space8, vertical = DesignTokens.space4),
+        Modifier
+            .fillMaxWidth()
+            .selectionRow(selected = selected, hovered = hovered)
+            .hoverable(interaction)
+            .contextMenuRequest(onRightClick)
+            .padding(horizontal = DesignTokens.space8, vertical = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         StatusGlyph(node.status, color)
@@ -248,7 +336,12 @@ private fun ClassRow(node: TestClassNode) {
 }
 
 @Composable
-private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> Unit) {
+private fun MethodRow(
+    method: TestMethodNode,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onRightClick: (Offset) -> Unit,
+) {
     val color = statusColor(method.status)
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -260,6 +353,7 @@ private fun MethodRow(method: TestMethodNode, selected: Boolean, onClick: () -> 
                 hovered = hovered,
             )
             .hoverable(interaction)
+            .contextMenuRequest(onRightClick)
             .clickable(onClick = onClick)
             .padding(start = DesignTokens.space16, end = DesignTokens.space8, top = DesignTokens.space4, bottom = DesignTokens.space4),
         verticalAlignment = Alignment.CenterVertically,
@@ -288,13 +382,23 @@ private fun StatusGlyph(status: TestStatus, color: Color) {
 }
 
 @Composable
-private fun ConsolePane(session: RunSession, selected: TestMethodNode?, modifier: Modifier) {
+private fun ConsolePane(
+    session: RunSession,
+    selected: TestMethodNode?,
+    onContextMenu: (Offset) -> Unit,
+    modifier: Modifier,
+) {
     val listState = rememberLazyListState()
     LaunchedEffect(session.consoleLines.size) {
         if (session.consoleLines.isNotEmpty()) listState.scrollToItem(session.consoleLines.lastIndex)
     }
     Column(modifier.padding(horizontal = DesignTokens.space8, vertical = DesignTokens.space4)) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState) {
+        // A7: the standard-input field keeps the framework's text menu, so only the output takes
+        // the right press.
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth().contextMenuRequest(onContextMenu),
+            state = listState,
+        ) {
             items(session.consoleLines) { line ->
                 Text(line, style = consoleStyle, modifier = Modifier.fillMaxWidth())
             }

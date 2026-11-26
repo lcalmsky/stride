@@ -38,6 +38,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -46,6 +47,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +59,13 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import stride.app.AppState
+import stride.app.actions.ActionGroups
+import stride.app.actions.ComponentAction
+import stride.app.actions.contextMenuRequest
+import stride.app.actions.openContextMenu
 import stride.app.glass.nativeGlass
+import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.glassCapsule
@@ -71,6 +79,9 @@ import kotlin.time.Duration as TimeDuration
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+/** Test tag of the focusable Log list. */
+internal const val GIT_LOG_TAG: String = "git-log"
 
 internal const val MAX_DIFF_FILES: Int = 50
 
@@ -205,6 +216,20 @@ private fun GitLog(
         onOpen = { entry ->
             git.launch { openCommitDiff(git, state, entry, root) }
         },
+        // A4/A7: Show Diff is the component action openCommitDiff, which ↩ and a double click run.
+        onContextMenu = { entry, position ->
+            openContextMenu(
+                state,
+                ActionGroups.VCS_LOG_CONTEXT_MENU,
+                KeyContext.LIST_WINDOW,
+                position,
+                mapOf(
+                    ActionId.SHOW_DIFF to ComponentAction {
+                        git.launch { openCommitDiff(git, state, entry, root) }
+                    },
+                ),
+            )
+        },
     )
 }
 
@@ -265,6 +290,7 @@ private fun GitLogList(
     focusRequests: Int,
     onEscape: () -> Unit,
     onOpen: (LogEntry) -> Unit,
+    onContextMenu: (LogEntry, Offset) -> Unit,
 ) {
     var selected by remember(entries) { mutableStateOf(0) }
     val listState = rememberLazyListState()
@@ -293,6 +319,7 @@ private fun GitLogList(
     Column(
         modifier
             .focusRequester(focusRequester)
+            .testTag(GIT_LOG_TAG)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
@@ -332,6 +359,10 @@ private fun GitLogList(
                             selected = rowIndex
                             onOpen(entry)
                         },
+                        onRightClick = { position ->
+                            selected = rowIndex
+                            onContextMenu(entry, position)
+                        },
                     )
                 }
             }
@@ -351,6 +382,7 @@ private fun LogRow(
     selected: Boolean,
     onSelect: () -> Unit,
     onOpen: () -> Unit,
+    onRightClick: (Offset) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
@@ -360,6 +392,8 @@ private fun LogRow(
             .height(DesignTokens.treeRowHeight)
             .selectionRow(selected = selected, hovered = hovered)
             .hoverable(interaction)
+            // A5: a right press selects the commit and never opens its diff.
+            .contextMenuRequest(onRightClick)
             .pointerInput(entry) {
                 detectTapGestures(onTap = { onSelect() }, onDoubleTap = { onOpen() })
             }

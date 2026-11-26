@@ -23,17 +23,23 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performMouseInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.rightClick
 import androidx.compose.ui.test.runComposeUiTest
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
@@ -41,6 +47,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -61,14 +68,35 @@ import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.keys.KeyRouter
 import stride.app.keys.handleWindowKeyEvent
+import stride.app.navigation.Bookmark
+import stride.app.problems.CompilerMessage
+import stride.app.problems.ProblemsModel
+import stride.app.run.FakeProcess
+import stride.app.run.ProcessStarter
+import stride.app.run.RunConfiguration
+import stride.app.run.RunKind
+import stride.app.run.RunManager
+import stride.app.run.StartedProcess
+import stride.app.run.RUN_WINDOW_TAG
+import stride.app.terminal.FakeTtyConnector
+import stride.app.terminal.TERMINAL_TAG
+import stride.app.terminal.TerminalSession
 import stride.app.ui.App
 import stride.app.ui.FixedUiFontExtension
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.LocalWordmarkCaretBlink
 import stride.app.ui.PROJECT_TREE_TAG
 import stride.app.ui.theme.DesignTokens
+import stride.app.ui.toolwindow.LIST_WINDOW_TAG
+import stride.app.vcs.COMMIT_LIST_TAG
+import stride.app.vcs.CliGitExecutor
+import stride.app.vcs.GIT_LOG_TAG
+import stride.app.vcs.TEST_GIT
+import stride.app.vcs.TestGitRepo
 import stride.core.services.Application
+import stride.core.services.service
 import stride.core.vfs.VFile
+import stride.lang.ProblemSeverity
 
 @ExtendWith(FixedUiFontExtension::class)
 class ContextMenuUiTest {
@@ -696,6 +724,471 @@ class ContextMenuUiTest {
             state.dispose()
         }
     }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on the selected tab reaches the tab row through the root hit test`() =
+        runComposeUiTest {
+            val root = temp.resolve("selected-tab-project")
+            Files.createDirectories(root)
+            for (name in listOf("alpha.kt", "beta.kt", "gamma.kt")) {
+                Files.writeString(root.resolve(name), "$name\n")
+            }
+            val state = AppState()
+            try {
+                state.openFolder(root)
+                state.projectTreeVisible = false
+                val session = requireNotNull(state.session)
+                session.editors.openFile(VFile(root.resolve("alpha.kt")))
+                session.editors.openFile(VFile(root.resolve("beta.kt")))
+                session.editors.openFile(VFile(root.resolve("gamma.kt")))
+                session.editors.openFile(VFile(root.resolve("alpha.kt")))
+                assertEquals("alpha.kt", session.editors.selected?.file?.name)
+                assertEquals(
+                    listOf("alpha.kt", "beta.kt", "gamma.kt"),
+                    session.editors.openFiles.map { it.file.name },
+                )
+                setContent { ContextMenuHarness(state) }
+                waitForIdle()
+
+                // The selected tab carries the sliding pill; the pointer is injected on the root at
+                // the tab's own coordinates, so the real hit test decides which layer gets it.
+                val at = onNode(hasText("alpha.kt") and hasClickAction())
+                    .fetchSemanticsNode().boundsInRoot.center
+                onRoot().performMouseInput { rightClick(at) }
+                waitForMenu(state)
+
+                assertEquals(ActionGroups.EDITOR_TAB_POPUP_MENU, state.contextMenu?.groupId)
+                assertEquals("alpha.kt", session.editors.selected?.file?.name)
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.CLOSE_TABS_TO_THE_RIGHT.name)
+                    .performClick()
+                waitUntil(timeoutMillis = 5_000) {
+                    session.editors.openFiles.map { it.file.name } == listOf("alpha.kt")
+                }
+                assertEquals("alpha.kt", session.editors.selected?.file?.name)
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a commit file row selects it and leaves its check box`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { state.session!!.commit.rows.size == 2 }
+            val other = session.commit.rows.first { it.path.fileName.toString() == "Other.kt" }
+            val checkedBefore = session.commit.inclusion.isChecked(other)
+            // The window selects the first row; the right click must move the selection.
+            assertEquals("Main.kt", session.commit.selectedRow()?.path?.fileName.toString())
+
+            commitRow("Other.kt").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.CHANGES_VIEW_POPUP_MENU, state.contextMenu?.groupId)
+            assertEquals(other.path, session.commit.selectedPath)
+            assertEquals(checkedBefore, session.commit.inclusion.isChecked(other))
+            assertNull(state.diffRequest)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the commit window's show diff and jump to source rows run their actions`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { state.session!!.commit.rows.size == 2 }
+            val other = session.commit.rows.first { it.path.fileName.toString() == "Other.kt" }
+
+            // A7: Show Diff opens the selected row's working-tree diff, and its Esc returns to
+            // the list the same way the Commit window's own ⌘D does.
+            commitRow("Other.kt").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.SHOW_DIFF.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+
+            // A7: Jump to Source is openCommitRow, which F4 runs.
+            commitRow("Other.kt").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                session.editors.selected?.file?.path == other.path
+            }
+            assertEquals(KeyContext.EDITOR, state.focus)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a git log row opens its menu without opening the diff`() = runComposeUiTest {
+        val repo = threeCommits()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            state.toggleToolWindow("git", KeyContext.LIST_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Second commit").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("Second commit").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.VCS_LOG_CONTEXT_MENU, state.contextMenu?.groupId)
+            assertNull(state.diffRequest)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(GIT_LOG_TAG).assertIsFocused() }.isSuccess
+            }
+
+            onNodeWithText("Second commit").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.SHOW_DIFF.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            assertTrue(requireNotNull(state.diffRequest).title.endsWith("Second commit"))
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a run test row opens the test tree menu and escape returns`() =
+        runComposeUiTest {
+            val root = temp.resolve("run-menu-project")
+            Files.createDirectories(root.resolve("src/test/kotlin/demo"))
+            Files.writeString(root.resolve("build.gradle.kts"), "")
+            val state = AppState()
+            try {
+                state.openFolder(root)
+                val session = requireNotNull(state.session)
+                val manager = session.project.service<RunManager>()
+                val events = "##stride[test start class='demo.DemoTest' name='adds']\n" +
+                    "##stride[test pass class='demo.DemoTest' name='adds' duration='3']\n"
+                manager.starter = ProcessStarter { StartedProcess(FakeProcess(events.toByteArray(), 0), "fake") }
+                state.toggleToolWindow("run", KeyContext.RUN_WINDOW)
+                setContent { ContextMenuHarness(state) }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.RUN_WINDOW }
+                // The run starts after the first composition, as a user's key would.
+                manager.run(
+                    RunConfiguration(
+                        name = "demo.DemoTest",
+                        workingDir = root,
+                        args = listOf(":test", "--tests", "demo.DemoTest"),
+                        kind = RunKind.TEST,
+                    ),
+                )
+                waitUntil(timeoutMillis = 5_000) {
+                    onAllNodesWithText("adds").fetchSemanticsNodes().isNotEmpty()
+                }
+
+                onNodeWithText("adds").performMouseInput { rightClick(center) }
+                waitForMenu(state)
+
+                assertEquals(ActionGroups.TEST_TREE_POPUP_MENU, state.contextMenu?.groupId)
+                val rows = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+                // The run finished, so Rerun has a configuration and Stop has nothing to stop.
+                assertTrue(rows.first { it.action == ActionId.RERUN }.enabled)
+                assertFalse(rows.first { it.action == ActionId.STOP }.enabled)
+
+                onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+                onRoot().performKeyInput { pressKey(Key.Escape) }
+                waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.RUN_WINDOW }
+                waitUntil(timeoutMillis = 5_000) {
+                    runCatching { onNodeWithTag(RUN_WINDOW_TAG).assertIsFocused() }.isSuccess
+                }
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on the run console opens the console menu`() = runComposeUiTest {
+        val root = temp.resolve("run-console-project")
+        Files.createDirectories(root.resolve("src/main/kotlin/demo"))
+        Files.writeString(root.resolve("build.gradle.kts"), "")
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val manager = session.project.service<RunManager>()
+            manager.starter = ProcessStarter { StartedProcess(FakeProcess("hello\n".toByteArray(), 0), "fake") }
+            state.toggleToolWindow("run", KeyContext.RUN_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.RUN_WINDOW }
+            // The run starts after the first composition, as a user's key would.
+            manager.run(
+                RunConfiguration(
+                    name = "app",
+                    workingDir = root,
+                    args = listOf("run"),
+                    kind = RunKind.APPLICATION,
+                ),
+            )
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("hello").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            onNodeWithText("hello").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.CONSOLE_VIEW_POPUP_MENU, state.contextMenu?.groupId)
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.RUN_WINDOW }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on the terminal keeps the selection and its copy matches the key`() =
+        runComposeUiTest {
+            val root = temp.resolve("terminal-menu-project")
+            Files.createDirectories(root)
+            val state = AppState()
+            try {
+                state.openFolder(root)
+                val session = requireNotNull(state.session)
+                val terminal = session.project.service<TerminalSession>()
+                terminal.start(FakeTtyConnector("one\ntwo\nthree\n"))
+                // The emulator thread runs in real time; the composition's clock is virtual.
+                awaitReal { terminal.lines().getOrNull(2)?.trim() == "three" }
+                state.toggleToolWindow("terminal", KeyContext.TERMINAL)
+                setContent { ContextMenuHarness(state) }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.TERMINAL }
+
+                val box = onNodeWithTag(TERMINAL_TAG).fetchSemanticsNode().boundsInRoot
+                val line = with(density) { DesignTokens.codeLineHeight.toPx() }
+                val firstRow = Offset(box.left + 12f, box.top + line / 2f)
+
+                // No selection yet: Copy is disabled and running it leaves the clipboard alone.
+                setClipboard("stale")
+                onRoot().performMouseInput { rightClick(firstRow) }
+                waitForMenu(state)
+                assertEquals(ActionGroups.TERMINAL_CONTEXT_MENU, state.contextMenu?.groupId)
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.COPY.name).assertIsNotEnabled()
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.COPY.name).performClick()
+                assertEquals("stale", readClipboard())
+                onRoot().performKeyInput { pressKey(Key.Escape) }
+                waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+                waitUntil(timeoutMillis = 5_000) {
+                    runCatching { onNodeWithTag(TERMINAL_TAG).assertIsFocused() }.isSuccess
+                }
+
+                // A drag selects the first two rows; ⌘C records what the menu's Copy must repeat.
+                onNodeWithTag(TERMINAL_TAG).performTouchInput {
+                    swipe(
+                        start = Offset(12f, line / 2f),
+                        end = Offset(80f, line * 1.5f),
+                        durationMillis = 200,
+                    )
+                }
+                waitForIdle()
+                setClipboard("stale")
+                onRoot().performKeyInput { withKeyDown(Key.MetaLeft) { pressKey(Key.C) } }
+                waitUntil(timeoutMillis = 5_000) { readClipboard()?.contains("one") == true }
+                val keyCopy = requireNotNull(readClipboard())
+                assertTrue(keyCopy.contains("two"))
+
+                // A5: the right press keeps the selection, so Copy is enabled and copies the same text.
+                setClipboard("stale")
+                onRoot().performMouseInput { rightClick(firstRow) }
+                waitForMenu(state)
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.COPY.name).assertIsEnabled()
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.COPY.name).performClick()
+                waitUntil(timeoutMillis = 5_000) { readClipboard() == keyCopy }
+
+                waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.TERMINAL }
+                waitUntil(timeoutMillis = 5_000) {
+                    runCatching { onNodeWithTag(TERMINAL_TAG).assertIsFocused() }.isSuccess
+                }
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a bookmark row opens the list menu and jump to source opens it`() =
+        runComposeUiTest {
+            val root = temp.resolve("bookmark-menu-project")
+            Files.createDirectories(root)
+            Files.writeString(root.resolve("A.kt"), "one\n")
+            Files.writeString(root.resolve("B.kt"), "alpha\nbeta\n")
+            val state = AppState()
+            try {
+                state.openFolder(root)
+                val session = requireNotNull(state.session)
+                session.editors.openFile(VFile(root.resolve("A.kt")))
+                val target = root.resolve("B.kt").toAbsolutePath().normalize()
+                session.bookmarks.toggle(Bookmark(target, "B.kt", 1, "beta"))
+                state.toggleToolWindow("bookmarks", KeyContext.LIST_WINDOW)
+                setContent { ContextMenuHarness(state) }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+                waitUntil(timeoutMillis = 5_000) {
+                    onAllNodesWithText("B.kt:2").fetchSemanticsNodes().isNotEmpty()
+                }
+
+                onNodeWithText("B.kt:2").performMouseInput { rightClick(center) }
+                waitForMenu(state)
+
+                assertEquals(ActionGroups.BOOKMARKS_TOOL_WINDOW_POPUP_MENU, state.contextMenu?.groupId)
+                // A5: the right press selects the row; it never opens it.
+                assertEquals("A.kt", session.editors.selected?.file?.name)
+
+                onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+                onRoot().performKeyInput { pressKey(Key.Escape) }
+                waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+                waitUntil(timeoutMillis = 5_000) {
+                    runCatching { onNodeWithTag(LIST_WINDOW_TAG).assertIsFocused() }.isSuccess
+                }
+
+                onNodeWithText("B.kt:2").performMouseInput { rightClick(center) }
+                waitForMenu(state)
+                onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+                waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "B.kt" }
+                assertEquals(1, (session.editors.selected as TextFileEditor).value.text
+                    .take((session.editors.selected as TextFileEditor).value.selection.start).count { it == '\n' })
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a right click on a problems row opens it and shows the quick fixes`() = runComposeUiTest {
+        val root = temp.resolve("problems-menu-project")
+        Files.createDirectories(root)
+        val text = "fun main() {\n    println(1)\n}\n"
+        val file = root.resolve("Main.kt")
+        Files.writeString(file, text)
+        val state = AppState()
+        try {
+            state.openFolder(root)
+            val session = requireNotNull(state.session)
+            val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+            session.project.service<ProblemsModel>().publishBuild(
+                listOf(
+                    CompilerMessage(
+                        file.toAbsolutePath().normalize(),
+                        1,
+                        4,
+                        ProblemSeverity.ERROR,
+                        "Unresolved reference: println",
+                    ),
+                ),
+            )
+            state.toggleToolWindow("problems", KeyContext.LIST_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { editor.problems.isNotEmpty() }
+            waitUntil(timeoutMillis = 5_000) {
+                onAllNodesWithText("Unresolved reference", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            editor.updateValue(TextFieldValue(text, TextRange(0)))
+
+            onNodeWithText("Unresolved reference", substring = true).performMouseInput { rightClick(center) }
+            waitForMenu(state)
+
+            assertEquals(ActionGroups.PROBLEMS_VIEW_TREE_POPUP, state.contextMenu?.groupId)
+            // A5: the right press does not open the problem.
+            assertEquals(0, editor.value.selection.start)
+
+            onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.LIST_WINDOW }
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(LIST_WINDOW_TAG).assertIsFocused() }.isSuccess
+            }
+
+            // A7: Show Quick-Fixes opens the problem and then the ⌥↩ popup at it.
+            onNodeWithText("Unresolved reference", substring = true).performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.SHOW_INTENTION_ACTIONS.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.contextActionsVisible }
+        } finally {
+            state.dispose()
+        }
+    }
+
+    private fun changedRepo(): TestGitRepo {
+        val repo = TestGitRepo.create(temp)
+        repo.write("src/Main.kt", "first\n")
+        repo.write("src/Other.kt", "alpha\n")
+        repo.commitAll("Initial commit")
+        repo.write("src/Main.kt", "second\n")
+        repo.write("src/Other.kt", "beta\n")
+        return repo
+    }
+
+    private fun threeCommits(): TestGitRepo {
+        val repo = TestGitRepo.create(temp, "git-menu")
+        repo.write("src/Main.kt", "one\n")
+        repo.commitAll("Initial commit")
+        repo.write("src/Main.kt", "one\ntwo\n")
+        repo.commitAll("Second commit")
+        return repo
+    }
+
+    private fun openRepository(repo: TestGitRepo, state: AppState) {
+        state.openFolder(repo.root)
+        val git = requireNotNull(state.session).git
+        git.executor = CliGitExecutor(TEST_GIT, repo.environment)
+        runBlocking { git.refreshNow() }
+    }
+
+    private fun awaitReal(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline && !condition()) Thread.sleep(10)
+        assertTrue(condition(), "condition not met before the deadline")
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.commitRow(name: String): SemanticsNodeInteraction =
+        onNode(hasText(name) and hasAnyAncestor(hasTestTag(COMMIT_LIST_TAG)))
 
     private fun openTextProject(name: String, content: String): Pair<AppState, TextFileEditor> {
         val root = temp.resolve("editor-project")

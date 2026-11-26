@@ -27,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -37,13 +38,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import stride.app.actions.ComponentAction
 import stride.app.glass.nativeGlass
+import stride.app.keys.ActionId
 import stride.app.ui.CloseIcon
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.theme.capsuleGlass
 import stride.app.ui.theme.glassCapsule
 import stride.app.ui.theme.rememberSelectionAlpha
 import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowContextMenu
 import stride.app.ui.toolwindow.ListWindowRow
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 
@@ -60,6 +64,7 @@ fun FindToolWindow(
     onEscape: () -> Unit,
     modifier: Modifier = Modifier,
     replace: FindReplaceController? = null,
+    onContextMenu: ((Offset, Map<ActionId, ComponentAction>) -> Unit)? = null,
 ) {
     val tab = state.selectedTab
     val scope = rememberCoroutineScope()
@@ -194,6 +199,7 @@ fun FindToolWindow(
                     onEscape = onEscape,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     onSelectionChange = { selectedRow = it },
+                    contextMenu = onContextMenu?.let { ListWindowContextMenu(open = it) },
                 )
             }
         }

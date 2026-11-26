@@ -44,6 +44,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -55,6 +56,13 @@ import com.jediterm.terminal.TextStyle as JediTextStyle
 import com.jediterm.terminal.model.TerminalTextBuffer
 import org.jetbrains.skia.FilterBlurMode
 import org.jetbrains.skia.MaskFilter
+import stride.app.AppState
+import stride.app.actions.ActionGroups
+import stride.app.actions.ComponentAction
+import stride.app.actions.contextMenuRequest
+import stride.app.actions.openContextMenu
+import stride.app.keys.ActionId
+import stride.app.keys.KeyContext
 import stride.app.ui.LocalAnimationsEnabled
 import stride.app.ui.theme.DesignTokens
 import kotlin.math.floor
@@ -64,11 +72,23 @@ private val cellTextStyle = TextStyle(
     fontSize = DesignTokens.codeTextSize,
 )
 
+/** Test tag of the focusable terminal grid. */
+internal const val TERMINAL_TAG: String = "terminal"
+
 private data class CellColors(val foreground: Color, val background: Color, val bold: Boolean)
 
-/** Draws [session]'s screen and scrollback as a monospace grid, and forwards typing to it. */
+/**
+ * Draws [session]'s screen and scrollback as a monospace grid, and forwards typing to it. [state]
+ * is the app state the right-click menu opens against; it is optional only so the view can be
+ * rendered on its own, as the glass tests do.
+ */
 @Composable
-fun TerminalView(session: TerminalSession, modifier: Modifier = Modifier, focusRequests: Int = 0) {
+fun TerminalView(
+    session: TerminalSession,
+    modifier: Modifier = Modifier,
+    focusRequests: Int = 0,
+    state: AppState? = null,
+) {
     val focusRequester = remember { FocusRequester() }
     val clipboard = LocalClipboardManager.current
     val measurer = rememberTextMeasurer()
@@ -105,6 +125,27 @@ fun TerminalView(session: TerminalSession, modifier: Modifier = Modifier, focusR
         return true
     }
 
+    // A7: the terminal's Copy and Paste are its own ⌘C and ⌘V code, with the same clipboard.
+    fun openMenu(position: Offset) {
+        val app = state ?: return
+        openContextMenu(
+            app,
+            ActionGroups.TERMINAL_CONTEXT_MENU,
+            KeyContext.TERMINAL,
+            position,
+            mapOf(
+                ActionId.COPY to ComponentAction(
+                    enabled = selectionStart >= 0 && selectionEnd >= 0,
+                    run = { copySelection() },
+                ),
+                ActionId.PASTE to ComponentAction(
+                    enabled = clipboard.getText()?.text != null,
+                    run = { clipboard.getText()?.text?.let(session::write) },
+                ),
+            ),
+        )
+    }
+
     LaunchedEffect(focusRequests) {
         if (focusRequests > 0) {
             withFrameNanos { }
@@ -118,7 +159,10 @@ fun TerminalView(session: TerminalSession, modifier: Modifier = Modifier, focusR
     BoxWithConstraints(
         modifier
             .fillMaxSize()
+            // A5: the right press is consumed before the tap handler clears the selection.
+            .contextMenuRequest { position -> openMenu(position) }
             .focusRequester(focusRequester)
+            .testTag(TERMINAL_TAG)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 when {

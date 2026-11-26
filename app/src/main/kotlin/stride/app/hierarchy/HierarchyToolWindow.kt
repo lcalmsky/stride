@@ -7,9 +7,13 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
+import stride.app.actions.ComponentAction
+import stride.app.keys.ActionId
 import stride.app.ui.theme.DesignTokens
 import stride.app.ui.toolwindow.ListToolWindow
+import stride.app.ui.toolwindow.ListWindowContextMenu
 import stride.app.ui.toolwindow.ToolWindowEmptyState
 
 /**
@@ -24,6 +28,7 @@ fun HierarchyToolWindow(
     onOpen: (HierarchyNode) -> Unit,
     onEscape: () -> Unit,
     modifier: Modifier = Modifier,
+    onContextMenu: ((Offset, Map<ActionId, ComponentAction>) -> Unit)? = null,
 ) {
     val tree = state.tree
     if (tree == null) {
@@ -68,6 +73,7 @@ fun HierarchyToolWindow(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 onRight = state::moveRight,
                 onLeft = state::moveLeft,
+                contextMenu = onContextMenu?.let { ListWindowContextMenu(open = it) },
             )
         }
     }

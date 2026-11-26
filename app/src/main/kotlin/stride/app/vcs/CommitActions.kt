@@ -89,6 +89,19 @@ internal fun rollbackRows(rows: List<CommitRow>): List<CommitRow> =
     CommitModel.ordered(rows).filter { it.tracked && it.kind != ChangeKind.CONFLICTED }
 
 /**
+ * A3: the row the Commit window acts on, after syncing the window with the current changes, or
+ * `null` when the list is empty or the keyboard is elsewhere. The Rollback… and Show Diff rows and
+ * their updates both ask it, so the menu and the action cannot disagree.
+ */
+internal fun commitWindowSelectedRow(state: AppState): CommitRow? {
+    if (state.focus != KeyContext.COMMIT_WINDOW) return null
+    val session = state.session ?: return null
+    val window = session.commit
+    window.syncRows(commitRows(session, window))
+    return window.selectedRow()
+}
+
+/**
  * Opens the rollback confirmation with exactly one row checked: the Commit window's selected row,
  * or the selected editor's file from outside the window. An unsaved editor the Commit window has
  * not asked git about yet arrives a moment later.
@@ -113,6 +126,10 @@ fun openRollback(state: AppState): Boolean {
         null
     }
     window.syncRows(commitRows(session, window))
+    val selectedRow = if (fromWindow) commitWindowSelectedRow(state) else null
+    // A3: with no selected file row the window's Rollback… row is disabled, and the key that
+    // reaches here opens nothing either.
+    if (fromWindow && selectedRow == null) return false
     val rows = rollbackRows(window.rows)
     val editorPath = editor?.let {
         realPathOf(
@@ -122,7 +139,7 @@ fun openRollback(state: AppState): Boolean {
         )
     }
     val initial = if (fromWindow) {
-        window.selectedRow()?.path?.takeIf { path -> rows.any { it.path == path } }
+        selectedRow?.path?.takeIf { path -> rows.any { it.path == path } }
     } else {
         (treePath ?: editorPath)?.takeIf { path -> rows.any { it.path == path } }
     }
@@ -288,10 +305,7 @@ fun commitAndPush(state: AppState): Boolean {
  */
 fun showSelectedDiff(state: AppState): Boolean {
     if (state.focus != KeyContext.COMMIT_WINDOW) return showTargetDiff(state)
-    val session = state.session ?: return false
-    val window = session.commit
-    window.syncRows(commitRows(session))
-    val row = window.selectedRow() ?: return false
+    val row = commitWindowSelectedRow(state) ?: return false
     return openWorkingTreeDiff(state, row.path)
 }
 
