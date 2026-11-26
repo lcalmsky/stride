@@ -176,7 +176,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg)
             packageName = "strIDE"
-            packageVersion = "1.20.0"
+            packageVersion = "1.21.0"
             description = "A keyboard-driven code editor"
             vendor = "stride"
             // The native glass library rides in Contents/Resources; Compose exposes the
