@@ -125,6 +125,7 @@ fun ContextMenuPopup(
         when (row) {
             is MenuRow.Submenu -> openAt(index)
             is MenuRow.Action -> if (row.enabled) chooseMenuRow(state, request, row, chooseFolder)
+            is MenuRow.Command -> if (row.enabled) row.run()
             MenuRow.Separator -> Unit
         }
     }
@@ -138,6 +139,7 @@ fun ContextMenuPopup(
                 openAt(index)
             }
             row is MenuRow.Action && row.enabled -> selected = index
+            row is MenuRow.Command && row.enabled -> selected = index
         }
     }
 
@@ -272,9 +274,20 @@ private fun MenuPanel(
                         )
                     }
                     is MenuRow.Action -> MenuActionRow(
-                        row = row,
+                        text = row.text,
+                        shortcut = row.shortcut,
+                        enabled = row.enabled,
                         selected = index == selected,
                         tag = CONTEXT_MENU_ROW_TAG_PREFIX + row.action.name,
+                        onHover = { onHover(index) },
+                        onClick = { onRun(index) },
+                    )
+                    is MenuRow.Command -> MenuActionRow(
+                        text = row.text,
+                        shortcut = row.shortcut,
+                        enabled = row.enabled,
+                        selected = index == selected,
+                        tag = CONTEXT_MENU_ROW_TAG_PREFIX + "COMMAND-" + level + "-" + index,
                         onHover = { onHover(index) },
                         onClick = { onRun(index) },
                     )
@@ -295,7 +308,9 @@ private fun MenuPanel(
 
 @Composable
 private fun MenuActionRow(
-    row: MenuRow.Action,
+    text: String,
+    shortcut: String,
+    enabled: Boolean,
     selected: Boolean,
     tag: String,
     onHover: () -> Unit,
@@ -309,25 +324,25 @@ private fun MenuActionRow(
     MenuRowSurface(
         selected = selected,
         hovered = hovered,
-        enabled = row.enabled,
+        enabled = enabled,
         interaction = interaction,
         tag = tag,
         onPositioned = {},
         onClick = onClick,
     ) {
         Text(
-            row.text,
-            color = labelColor(selected, row.enabled),
+            text,
+            color = labelColor(selected, enabled),
             fontSize = DesignTokens.uiTextSize,
             fontFamily = DesignTokens.uiFont,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (row.shortcut.isNotEmpty()) {
+        if (shortcut.isNotEmpty()) {
             Spacer(Modifier.width(DesignTokens.space12))
             Text(
-                row.shortcut,
+                shortcut,
                 color = hintColor(selected),
                 fontSize = DesignTokens.smallTextSize,
                 fontFamily = DesignTokens.uiFont,
@@ -430,6 +445,7 @@ private fun menuRowsAt(rows: List<MenuRow>, path: List<Int>): List<MenuRow> {
 
 private fun MenuRow.choosable(): Boolean = when (this) {
     is MenuRow.Action -> enabled
+    is MenuRow.Command -> enabled
     is MenuRow.Submenu -> true
     MenuRow.Separator -> false
 }

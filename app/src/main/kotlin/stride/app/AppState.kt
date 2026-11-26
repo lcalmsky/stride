@@ -255,6 +255,18 @@ class AppState {
     var revealRequests by mutableStateOf(0)
         private set
 
+    /** M7: the folders opened before; tests may replace it with a node of their own. */
+    internal var recentProjects: RecentProjects = RecentProjects()
+
+    /** Test seam: the session [openFolder] builds; a throw leaves the folder out of the list. */
+    internal var openSession: (Path) -> ProjectSession = ProjectSession::open
+
+    /**
+     * M6: the terminal's Copy and Paste handlers while its view is composed; `null` elsewhere.
+     * The menu bar asks it only when the terminal has the keyboard.
+     */
+    var terminalMenuActions: (() -> Map<ActionId, ComponentAction>)? = null
+
     /** Clipboard for Copy Path, Copy Reference and Paste from History; replaced in tests. */
     var clipboard: TextClipboard = SystemTextClipboard
 
@@ -743,7 +755,10 @@ class AppState {
         // A new folder always starts on the global context: no modal focus from the previous
         // (possibly project-less) screen may outlive the switch.
         focus = KeyContext.GLOBAL
-        session = ProjectSession.open(path)
+        val opened = openSession(path)
+        session = opened
+        // M7: only an open that returned is recorded; a failure leaves the list alone.
+        recentProjects.record(opened.project.root)
     }
 
     fun closeSession() {

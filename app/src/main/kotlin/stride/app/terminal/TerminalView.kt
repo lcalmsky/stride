@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -126,6 +127,17 @@ fun TerminalView(
     }
 
     // A7: the terminal's Copy and Paste are its own ⌘C and ⌘V code, with the same clipboard.
+    fun menuActions(): Map<ActionId, ComponentAction> = mapOf(
+        ActionId.COPY to ComponentAction(
+            enabled = { selectionStart >= 0 && selectionEnd >= 0 },
+            run = { copySelection() },
+        ),
+        ActionId.PASTE to ComponentAction(
+            enabled = { clipboard.getText()?.text != null },
+            run = { clipboard.getText()?.text?.let(session::write) },
+        ),
+    )
+
     fun openMenu(position: Offset) {
         val app = state ?: return
         openContextMenu(
@@ -133,17 +145,23 @@ fun TerminalView(
             ActionGroups.TERMINAL_CONTEXT_MENU,
             KeyContext.TERMINAL,
             position,
-            mapOf(
-                ActionId.COPY to ComponentAction(
-                    enabled = { selectionStart >= 0 && selectionEnd >= 0 },
-                    run = { copySelection() },
-                ),
-                ActionId.PASTE to ComponentAction(
-                    enabled = { clipboard.getText()?.text != null },
-                    run = { clipboard.getText()?.text?.let(session::write) },
-                ),
-            ),
+            menuActions(),
         )
+    }
+
+    // M6: the menu bar asks this while the terminal is composed, and only the registration it
+    // made itself is cleared, so a disposed view cannot erase a newer one's handlers.
+    DisposableEffect(state, session) {
+        val app = state
+        if (app != null) {
+            val provider: () -> Map<ActionId, ComponentAction> = { menuActions() }
+            app.terminalMenuActions = provider
+            onDispose {
+                if (app.terminalMenuActions === provider) app.terminalMenuActions = null
+            }
+        } else {
+            onDispose { }
+        }
     }
 
     LaunchedEffect(focusRequests) {

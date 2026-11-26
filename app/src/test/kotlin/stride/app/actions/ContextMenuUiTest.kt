@@ -1793,6 +1793,7 @@ class ContextMenuUiTest {
         fun choosable(row: MenuRow) = when (row) {
             is MenuRow.Submenu -> true
             is MenuRow.Action -> row.enabled
+            is MenuRow.Command -> row.enabled
             MenuRow.Separator -> false
         }
         val rows = request.rows

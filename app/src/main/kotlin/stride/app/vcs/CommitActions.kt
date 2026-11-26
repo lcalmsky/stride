@@ -93,8 +93,8 @@ internal fun rollbackRows(rows: List<CommitRow>): List<CommitRow> =
  * `null` when the list is empty or the keyboard is elsewhere. The Rollback… and Show Diff rows and
  * their updates both ask it, so the menu and the action cannot disagree.
  */
-internal fun commitWindowSelectedRow(state: AppState): CommitRow? {
-    if (state.focus != KeyContext.COMMIT_WINDOW) return null
+internal fun commitWindowSelectedRow(state: AppState, focus: KeyContext = state.focus): CommitRow? {
+    if (focus != KeyContext.COMMIT_WINDOW) return null
     val session = state.session ?: return null
     val window = session.commit
     window.syncRows(commitRows(session, window))

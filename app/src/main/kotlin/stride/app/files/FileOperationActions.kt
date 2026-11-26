@@ -43,17 +43,17 @@ data class FileOperationRequest(
  * P4: the context a file action counts as coming from. The Actions tab dispatches with the search
  * popup still in `focus`, so it answers with the context Search Everywhere replaced.
  */
-internal fun fileOperationContext(state: AppState): KeyContext =
-    if (state.focus == KeyContext.SEARCH_POPUP) state.searchOpenedFrom else state.focus
+internal fun fileOperationContext(state: AppState, focus: KeyContext = state.focus): KeyContext =
+    if (focus == KeyContext.SEARCH_POPUP) state.searchOpenedFrom else focus
 
 /**
  * P4: the path an action works on. In the tree it is the tree selection, else the highlighted row
  * (the selected editor's file, else the root); elsewhere it is the selected editor's file.
  */
-internal fun fileOperationTarget(state: AppState): Path? {
+internal fun fileOperationTarget(state: AppState, focus: KeyContext = state.focus): Path? {
     val session = state.session ?: return null
     val root = session.project.root.toAbsolutePath().normalize()
-    if (fileOperationContext(state) != KeyContext.PROJECT_TREE) {
+    if (fileOperationContext(state, focus) != KeyContext.PROJECT_TREE) {
         return session.editors.selected?.file?.path?.toAbsolutePath()?.normalize()
     }
     return session.tree.selected
@@ -107,8 +107,8 @@ private fun newTargetDirectory(state: AppState): Path? {
 }
 
 /** The P4 target when it is a file an editor can open; `null` for a directory or no target. */
-internal fun openableFileTarget(state: AppState): Path? {
-    val target = fileOperationTarget(state) ?: return null
+internal fun openableFileTarget(state: AppState, focus: KeyContext = state.focus): Path? {
+    val target = fileOperationTarget(state, focus) ?: return null
     return target.takeUnless { Files.isDirectory(it, LinkOption.NOFOLLOW_LINKS) }
 }
 

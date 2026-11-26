@@ -17,6 +17,15 @@ data class GroupSubmenu(val text: String, val items: List<GroupItem>) : GroupIte
 /** A reference to another group, drawn as a submenu under [text] (IntelliJ's `<reference>`). */
 data class GroupReference(val groupId: String, val text: String) : GroupItem
 
+/** M6: a row that names a stroke; its action is what the stroke runs on the surface with keyboard. */
+data class GroupStroke(val stroke: String, val text: String) : GroupItem
+
+/** M7: a row group the app fills at resolve time, IntelliJ's runtime-filled group. */
+data class GroupGenerated(val kind: GeneratedRows) : GroupItem
+
+/** The generated row kinds a [GroupGenerated] item stands for. */
+enum class GeneratedRows { RECENT_PROJECTS }
+
 /** A named action group; [id] is IntelliJ's group id. */
 class ActionGroup(val id: String, val items: List<GroupItem>)
 
@@ -40,6 +49,18 @@ object ActionGroups {
     const val STRUCTURE_VIEW_POPUP_MENU: String = "StructureViewPopupMenu"
     const val HIERARCHY_POPUP_MENU: String = "HierarchyPopupMenu.Common"
     const val BOOKMARKS_TOOL_WINDOW_POPUP_MENU: String = "Bookmarks.ToolWindow.PopupMenu"
+    const val MAIN_MENU: String = "MainMenu"
+    const val FILE_MENU: String = "FileMenu"
+    const val EDIT_MENU: String = "EditMenu"
+    const val VIEW_MENU: String = "ViewMenu"
+    const val GO_TO_MENU: String = "GoToMenu"
+    const val CODE_MENU: String = "CodeMenu"
+    const val REFACTORING_MENU: String = "RefactoringMenu"
+    const val BUILD_MENU: String = "BuildMenu"
+    const val RUN_MENU: String = "RunMenu"
+    const val VCS_GROUPS: String = "VcsGroups"
+    const val WINDOW_MENU: String = "WindowMenu"
+    const val HELP_MENU: String = "HelpMenu"
 
     /** The shared Git submenu; each row calls what the matching VCS popup row calls (A8). */
     val gitContextMenu = ActionGroup(
@@ -269,6 +290,280 @@ object ActionGroups {
         ),
     )
 
+    /** M8: File, in IntelliJ's order; Recent Projects is the generated group (M7). */
+    val fileMenu = ActionGroup(
+        FILE_MENU,
+        listOf(
+            GroupAction(ActionId.NEW_ELEMENT, "New…"),
+            GroupAction(ActionId.OPEN_FOLDER, "Open…"),
+            GroupSubmenu("Recent Projects", listOf(GroupGenerated(GeneratedRows.RECENT_PROJECTS))),
+            GroupSeparator,
+            GroupAction(ActionId.SAVE),
+        ),
+    )
+
+    /** M8: Edit, with Cut, Copy, Paste and Delete as stroke rows (M6). */
+    val editMenu = ActionGroup(
+        EDIT_MENU,
+        listOf(
+            GroupAction(ActionId.UNDO),
+            GroupAction(ActionId.REDO),
+            GroupSeparator,
+            GroupStroke("meta X", "Cut"),
+            GroupStroke("meta C", "Copy"),
+            GroupAction(ActionId.COPY_PATHS, "Copy Paths"),
+            GroupSubmenu("Copy Path/Reference…", listOf(GroupAction(ActionId.COPY_REFERENCE))),
+            GroupStroke("meta V", "Paste"),
+            GroupAction(ActionId.PASTE_MULTIPLE, "Paste from History…"),
+            GroupStroke("BACK_SPACE", "Delete"),
+            GroupSeparator,
+            GroupAction(ActionId.FIND, "Find…"),
+            GroupAction(ActionId.REPLACE, "Replace…"),
+            GroupAction(ActionId.FIND_NEXT, "Find Next / Move to Next Occurrence"),
+            GroupAction(ActionId.FIND_PREVIOUS, "Find Previous / Move to Previous Occurrence"),
+            GroupAction(ActionId.SELECT_ALL_OCCURRENCES, "Select All Occurrences"),
+            GroupAction(ActionId.SELECT_NEXT_OCCURRENCE, "Add Selection for Next Occurrence"),
+            GroupAction(ActionId.UNSELECT_PREVIOUS_OCCURRENCE, "Unselect Occurrence"),
+            GroupSeparator,
+            GroupAction(ActionId.FIND_IN_PATH, "Find in Files…"),
+            GroupAction(ActionId.REPLACE_IN_PATH, "Replace in Files…"),
+            GroupAction(ActionId.FIND_USAGES),
+            GroupAction(ActionId.SHOW_USAGES),
+            GroupSeparator,
+            GroupAction(ActionId.HIGHLIGHT_USAGES_IN_FILE),
+            GroupSeparator,
+            GroupAction(ActionId.EDITOR_TOGGLE_COLUMN_MODE),
+            GroupAction(ActionId.EDITOR_SELECT_WORD, "Extend Selection"),
+            GroupAction(ActionId.EDITOR_UNSELECT_WORD, "Shrink Selection"),
+            GroupSeparator,
+            GroupAction(ActionId.EDITOR_TOGGLE_CASE),
+            GroupAction(ActionId.EDITOR_JOIN_LINES),
+            GroupAction(ActionId.EDITOR_DUPLICATE),
+            GroupSeparator,
+            GroupAction(ActionId.INDENT, "Indent Selection"),
+            GroupAction(ActionId.UNINDENT, "Unindent Line or Selection"),
+            GroupSeparator,
+            GroupAction(ActionId.TOGGLE_BOOKMARK),
+            GroupSeparator,
+            GroupAction(ActionId.SHOW_BOOKMARKS, "Show Bookmarks…"),
+        ),
+    )
+
+    /** M8: View; the Tool Windows submenu is IntelliJ's runtime-filled group. */
+    val viewMenu = ActionGroup(
+        VIEW_MENU,
+        listOf(
+            GroupSubmenu(
+                "Tool Windows",
+                listOf(
+                    GroupAction(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, "Project"),
+                    GroupAction(ActionId.ACTIVATE_GIT_TOOL_WINDOW, "Git"),
+                    GroupAction(ActionId.ACTIVATE_COMMIT_TOOL_WINDOW, "Commit"),
+                    GroupAction(ActionId.ACTIVATE_TERMINAL_TOOL_WINDOW, "Terminal"),
+                    GroupAction(ActionId.ACTIVATE_RUN_TOOL_WINDOW, "Run"),
+                    GroupAction(ActionId.ACTIVATE_PROBLEMS_TOOL_WINDOW, "Problems"),
+                    GroupAction(ActionId.ACTIVATE_STRUCTURE_TOOL_WINDOW, "Structure"),
+                    GroupAction(ActionId.ACTIVATE_BOOKMARKS_TOOL_WINDOW, "Bookmarks"),
+                    GroupAction(ActionId.ACTIVATE_FIND_TOOL_WINDOW, "Find"),
+                ),
+            ),
+            GroupSeparator,
+            GroupAction(ActionId.QUICK_DEFINITION, "Quick Definition"),
+            GroupAction(ActionId.QUICK_DOC, "Quick Documentation"),
+            GroupSeparator,
+            GroupAction(ActionId.PARAMETER_INFO, "Parameter Info"),
+            GroupAction(ActionId.SHOW_ERROR_DESCRIPTION, "Error Description"),
+            GroupAction(ActionId.EDIT_SOURCE, "Jump to Source"),
+            GroupSeparator,
+            GroupAction(ActionId.RECENT_FILES),
+            GroupAction(ActionId.RECENT_LOCATIONS),
+        ),
+    )
+
+    /** M8: Navigate (IntelliJ's `GoToMenu`). */
+    val goToMenu = ActionGroup(
+        GO_TO_MENU,
+        listOf(
+            GroupAction(ActionId.BACK),
+            GroupAction(ActionId.FORWARD),
+            GroupSeparator,
+            GroupAction(ActionId.SEARCH_EVERYWHERE),
+            GroupSeparator,
+            GroupAction(ActionId.GOTO_CLASS, "Go to Class…"),
+            GroupAction(ActionId.GOTO_FILE, "Go to File…"),
+            GroupAction(ActionId.GOTO_SYMBOL, "Go to Symbol…"),
+            GroupAction(ActionId.GOTO_LINE, "Go to Line:Column…"),
+            GroupSeparator,
+            GroupAction(ActionId.GOTO_NEXT_ERROR, "Next Highlighted Error"),
+            GroupAction(ActionId.GOTO_PREVIOUS_ERROR, "Previous Highlighted Error"),
+            GroupAction(ActionId.JUMP_TO_LAST_CHANGE),
+            GroupSeparator,
+            GroupAction(ActionId.METHOD_DOWN, "Next Method"),
+            GroupAction(ActionId.METHOD_UP, "Previous Method"),
+            GroupAction(ActionId.EDITOR_MATCH_BRACE, "Move Caret to Matching Brace"),
+            GroupSeparator,
+            GroupAction(ActionId.NEXT_CHANGE),
+            GroupAction(ActionId.PREVIOUS_CHANGE),
+            GroupSeparator,
+            GroupAction(ActionId.SELECT_IN_PROJECT_VIEW, "Select In…"),
+            GroupAction(ActionId.SHOW_NAV_BAR),
+            GroupSeparator,
+            GroupAction(ActionId.GOTO_DECLARATION, "Go to Declaration or Usages"),
+            GroupAction(ActionId.GOTO_IMPLEMENTATION, "Go to Implementation(s)"),
+            GroupAction(ActionId.GOTO_TYPE_DECLARATION),
+            GroupAction(ActionId.GOTO_SUPER_METHOD),
+            GroupAction(ActionId.GOTO_TEST),
+            GroupSeparator,
+            GroupAction(ActionId.FILE_STRUCTURE_POPUP),
+            GroupAction(ActionId.TYPE_HIERARCHY),
+            GroupAction(ActionId.CALL_HIERARCHY),
+        ),
+    )
+
+    /** M8: Code, with Code Completion and Folding as submenus. */
+    val codeMenu = ActionGroup(
+        CODE_MENU,
+        listOf(
+            GroupAction(ActionId.OVERRIDE_METHODS, "Override Methods…"),
+            GroupAction(ActionId.IMPLEMENT_METHODS, "Implement Methods…"),
+            GroupAction(ActionId.GENERATE, "Generate…"),
+            GroupSeparator,
+            GroupSubmenu(
+                "Code Completion",
+                listOf(
+                    GroupAction(ActionId.CODE_COMPLETION, "Basic"),
+                    GroupAction(ActionId.SMART_TYPE_COMPLETION, "Type-Matching"),
+                    GroupSeparator,
+                    GroupAction(ActionId.EDITOR_COMPLETE_STATEMENT),
+                    GroupSeparator,
+                    GroupAction(ActionId.HIPPIE_COMPLETION, "Cyclic Expand Word"),
+                ),
+            ),
+            GroupSeparator,
+            GroupAction(ActionId.SURROUND_WITH, "Surround With…"),
+            GroupAction(ActionId.UNWRAP, "Unwrap/Remove…"),
+            GroupSeparator,
+            GroupSubmenu(
+                "Folding",
+                listOf(
+                    GroupAction(ActionId.EXPAND_REGION),
+                    GroupAction(ActionId.EXPAND_ALL_REGIONS),
+                    GroupSeparator,
+                    GroupAction(ActionId.COLLAPSE_REGION),
+                    GroupAction(ActionId.COLLAPSE_ALL_REGIONS),
+                ),
+            ),
+            GroupSeparator,
+            GroupAction(ActionId.COMMENT_LINE),
+            GroupAction(ActionId.COMMENT_BLOCK),
+            GroupAction(ActionId.REFORMAT_CODE),
+            GroupAction(ActionId.OPTIMIZE_IMPORTS),
+            GroupSeparator,
+            GroupAction(ActionId.MOVE_STATEMENT_DOWN),
+            GroupAction(ActionId.MOVE_STATEMENT_UP),
+            GroupAction(ActionId.MOVE_LINE_DOWN),
+            GroupAction(ActionId.MOVE_LINE_UP),
+        ),
+    )
+
+    /** M8: Refactor. */
+    val refactoringMenu = ActionGroup(
+        REFACTORING_MENU,
+        listOf(
+            GroupAction(ActionId.REFACTOR_THIS, "Refactor This…"),
+            GroupAction(ActionId.RENAME_ELEMENT, "Rename…"),
+            GroupAction(ActionId.RENAME_FILE),
+            GroupSeparator,
+            GroupAction(ActionId.INTRODUCE_VARIABLE, "Introduce Variable…"),
+            GroupSeparator,
+            GroupAction(ActionId.EXTRACT_METHOD, "Extract Method…"),
+            GroupAction(ActionId.INLINE, "Inline…"),
+            GroupSeparator,
+            GroupAction(ActionId.MOVE_ELEMENT),
+            GroupAction(ActionId.COPY_ELEMENT),
+        ),
+    )
+
+    /** M8: Build. */
+    val buildMenu = ActionGroup(
+        BUILD_MENU,
+        listOf(GroupAction(ActionId.BUILD_PROJECT)),
+    )
+
+    /** M8: Run. */
+    val runMenu = ActionGroup(
+        RUN_MENU,
+        listOf(
+            GroupAction(ActionId.RUN_CONTEXT),
+            GroupSeparator,
+            GroupAction(ActionId.CHOOSE_RUN_CONFIGURATION, "Run…"),
+            GroupSeparator,
+            GroupAction(ActionId.STOP),
+        ),
+    )
+
+    /** M8: Git (IntelliJ's `VcsGroups`). */
+    val vcsGroups = ActionGroup(
+        VCS_GROUPS,
+        listOf(
+            GroupAction(ActionId.COMMIT),
+            GroupAction(ActionId.PUSH),
+            GroupAction(ActionId.UPDATE_PROJECT),
+            GroupAction(ActionId.FETCH),
+            GroupSeparator,
+            GroupAction(ActionId.SHOW_BRANCHES),
+            GroupAction(ActionId.NEW_BRANCH),
+            GroupSeparator,
+            GroupAction(ActionId.ACTIVATE_GIT_TOOL_WINDOW, "Show VCS Log"),
+            GroupSeparator,
+            GroupAction(ActionId.ROLLBACK_LINES),
+            GroupAction(ActionId.ROLLBACK_CHANGES),
+        ),
+    )
+
+    /** M8: Window. */
+    val windowMenu = ActionGroup(
+        WINDOW_MENU,
+        listOf(
+            GroupAction(ActionId.HIDE_ACTIVE_WINDOW, "Hide Active Tool Window"),
+            GroupAction(ActionId.HIDE_ALL_WINDOWS, "Hide All Tool Windows"),
+            GroupSeparator,
+            GroupAction(ActionId.NEXT_TAB, "Select Next Tab"),
+            GroupAction(ActionId.PREVIOUS_TAB, "Select Previous Tab"),
+            GroupAction(ActionId.CLOSE_TAB),
+            GroupAction(ActionId.CLOSE_OTHER_TABS),
+            GroupAction(ActionId.CLOSE_ALL_TABS),
+            GroupAction(ActionId.CLOSE_TABS_TO_THE_LEFT),
+            GroupAction(ActionId.CLOSE_TABS_TO_THE_RIGHT),
+            GroupSeparator,
+            GroupAction(ActionId.REOPEN_CLOSED_TAB),
+        ),
+    )
+
+    /** M8: Help. */
+    val helpMenu = ActionGroup(
+        HELP_MENU,
+        listOf(GroupAction(ActionId.GOTO_ACTION, "Find Action…")),
+    )
+
+    /** M3: the bar's eleven menus, in IntelliJ's order. */
+    val mainMenu = ActionGroup(
+        MAIN_MENU,
+        listOf(
+            GroupSubmenu("File", fileMenu.items),
+            GroupSubmenu("Edit", editMenu.items),
+            GroupSubmenu("View", viewMenu.items),
+            GroupSubmenu("Navigate", goToMenu.items),
+            GroupSubmenu("Code", codeMenu.items),
+            GroupSubmenu("Refactor", refactoringMenu.items),
+            GroupSubmenu("Build", buildMenu.items),
+            GroupSubmenu("Run", runMenu.items),
+            GroupSubmenu("Git", vcsGroups.items),
+            GroupSubmenu("Window", windowMenu.items),
+            GroupSubmenu("Help", helpMenu.items),
+        ),
+    )
+
     val all: List<ActionGroup> =
         listOf(
             gitContextMenu,
@@ -286,6 +581,18 @@ object ActionGroups {
             hierarchyPopupMenu,
             bookmarksToolWindowPopupMenu,
             problemsViewTreePopup,
+            mainMenu,
+            fileMenu,
+            editMenu,
+            viewMenu,
+            goToMenu,
+            codeMenu,
+            refactoringMenu,
+            buildMenu,
+            runMenu,
+            vcsGroups,
+            windowMenu,
+            helpMenu,
         )
 
     val byId: Map<String, ActionGroup> = all.associateBy { it.id }

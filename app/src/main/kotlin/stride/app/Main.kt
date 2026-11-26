@@ -14,11 +14,14 @@ import java.nio.file.Paths
 import java.util.logging.Level
 import java.util.logging.Logger
 import javax.swing.WindowConstants
+import stride.app.actions.installMainMenuBar
 import stride.app.glass.GlassRuntime
 import stride.app.glass.SystemAppearance
 import stride.app.keys.KeyRouter
+import stride.app.keys.Keymap
 import stride.app.keys.handleWindowKeyEvent
 import stride.app.ui.App
+import stride.app.ui.FolderChooserGuard
 import stride.app.ui.chooseFolder
 import stride.core.services.Application
 
@@ -33,6 +36,8 @@ fun main(args: Array<String>) {
     application {
         val state = remember { AppState() }
         val router = remember { KeyRouter(KeyRouter.isMacOs()) }
+        val keymap = remember { Keymap.forPlatform(KeyRouter.isMacOs()) }
+        val chooser = remember { FolderChooserGuard(::chooseFolder) }
         LaunchedEffect(Unit) {
             if (initialPath != null) {
                 runCatching { state.openFolder(Paths.get(initialPath)) }
@@ -47,7 +52,7 @@ fun main(args: Array<String>) {
         Window(
             visible = true,
             onPreviewKeyEvent = { event ->
-                handleWindowKeyEvent(event, router, state, ::chooseFolder)
+                handleWindowKeyEvent(event, router, state, chooser::choose)
             },
             onKeyEvent = { false },
             create = {
@@ -79,6 +84,8 @@ fun main(args: Array<String>) {
                             override fun windowLostFocus(event: WindowEvent) = Unit
                         },
                     )
+                    // M3: after the window exists, and only as the screen menu bar.
+                    installMainMenuBar(this, state, keymap, chooser)
                 }
             },
             dispose = { it.dispose() },
@@ -98,8 +105,8 @@ fun main(args: Array<String>) {
             }
             App(
                 state,
-                onOpenFolder = { chooseFolder()?.let(state::openFolder) },
-                chooseFolder = ::chooseFolder,
+                onOpenFolder = { chooser.choose()?.let(state::openFolder) },
+                chooseFolder = chooser::choose,
             )
         }
     }

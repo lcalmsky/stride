@@ -68,9 +68,14 @@ object SystemAppearance {
         if (System.getProperty(APPEARANCE_PROPERTY) == null) {
             System.setProperty(APPEARANCE_PROPERTY, "system")
         }
+        // M3: AquaMenuBarUI reads this when the bar's UI is created, so it must be set first.
+        if (System.getProperty(SCREEN_MENU_PROPERTY) == null) {
+            System.setProperty(SCREEN_MENU_PROPERTY, "true")
+        }
     }
 
     internal const val APPEARANCE_PROPERTY = "apple.awt.application.appearance"
+    internal const val SCREEN_MENU_PROPERTY = "apple.laf.useScreenMenuBar"
 
     fun start() {
         if (started) return

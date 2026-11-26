@@ -953,6 +953,10 @@ class TextFileEditor(
         return true
     }
 
+    /** Whether [selectAllOccurrences] would find something, judged without moving the carets. */
+    internal fun canSelectAllOccurrences(): Boolean =
+        MultiCaret.selectAllOccurrences(text, carets, wholeWords).found
+
     /** Selects every occurrence of the primary caret's word or selection; `false` when there is none. */
     fun selectAllOccurrences(): Boolean {
         val result = MultiCaret.selectAllOccurrences(text, carets, wholeWords)

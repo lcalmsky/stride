@@ -67,7 +67,7 @@ class Keymap(
 
     companion object {
         /** Contexts whose popup handles every key itself; GLOBAL must not fire through them. */
-        private val MODAL_CONTEXTS = setOf(KeyContext.SEARCH_POPUP, KeyContext.CONTEXT_POPUP, KeyContext.NAV_BAR)
+        internal val MODAL_CONTEXTS = setOf(KeyContext.SEARCH_POPUP, KeyContext.CONTEXT_POPUP, KeyContext.NAV_BAR)
 
         fun forPlatform(isMac: Boolean): Keymap =
             if (isMac) {

@@ -12,6 +12,7 @@ import stride.app.editor.optimizeImports
 import stride.app.files.NewKind
 import stride.app.files.copyFile
 import stride.app.files.cutFile
+import stride.app.files.fileOperationContext
 import stride.app.files.fileOperationTarget
 import stride.app.files.openFileInTerminal
 import stride.app.files.openableFileTarget
@@ -44,6 +45,7 @@ import stride.app.navigation.openParameterInfo
 import stride.app.navigation.openQuickDefinition
 import stride.app.navigation.openQuickDoc
 import stride.app.navigation.selectInProjectView
+import stride.app.navigation.selectedTextEditor
 import stride.app.navigation.showBookmarks
 import stride.app.navigation.showCallHierarchy
 import stride.app.navigation.showTypeHierarchy
@@ -63,6 +65,7 @@ import stride.app.run.mainConfigurationProblem
 import stride.app.run.openContextActions
 import stride.app.run.openRunConfigurationChooser
 import stride.app.vcs.commitAndPush
+import stride.app.vcs.commitWindowSelectedRow
 import stride.app.vcs.fetchFromVcs
 import stride.app.vcs.gotoChange
 import stride.app.vcs.openBranches
@@ -567,6 +570,121 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         }
         // The editor, and the Actions tab whose search popup already closed over it.
         else -> goToDeclaration(state)
+    }
+}
+
+/**
+ * M4: whether [dispatchAction] would return `true` for [action] in [focus], judged without
+ * running anything. Every `false` the dispatcher can return is judged here with the same
+ * predicate the dispatcher (or the function it calls) uses; [focus] stands in for
+ * `state.focus`, which this function never writes.
+ *
+ * A few actions judge a condition only while running (an `applyAction` result or a clipboard
+ * write); those return the dispatcher's structural condition instead, and none of them is a menu
+ * bar row.
+ */
+fun canDispatch(action: ActionId, state: AppState, focus: KeyContext): Boolean {
+    val session = state.session
+    val fileEditor = session?.editors?.selected as? TextFileEditor
+    val selectedText = selectedTextEditor(state)
+    return when (action) {
+        ActionId.COMMIT, ActionId.PUSH, ActionId.COMMIT_AND_PUSH, ActionId.UPDATE_PROJECT,
+        ActionId.FETCH, ActionId.SHOW_BRANCHES, ActionId.NEW_BRANCH,
+        ActionId.NEW_ELEMENT, ActionId.NEW_KOTLIN_FILE, ActionId.NEW_FILE, ActionId.NEW_DIRECTORY,
+        ActionId.MOVE_ELEMENT, ActionId.COPY_ELEMENT,
+        ActionId.REVEAL_IN_FINDER, ActionId.OPEN_IN_TERMINAL, ActionId.TOGGLE_AMEND,
+        ActionId.BACK, ActionId.FORWARD, ActionId.JUMP_TO_LAST_CHANGE, ActionId.SHOW_BOOKMARKS,
+        ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, ActionId.HIDE_ALL_WINDOWS,
+        ActionId.REOPEN_CLOSED_TAB, ActionId.CLOSE_OTHER_TABS, ActionId.CLOSE_ALL_TABS,
+        ActionId.CLOSE_TABS_TO_THE_LEFT, ActionId.CLOSE_TABS_TO_THE_RIGHT,
+        ActionId.RUN, ActionId.RUN_CONTEXT, ActionId.STOP, ActionId.RERUN,
+        ActionId.BUILD_PROJECT, ActionId.CHOOSE_RUN_CONFIGURATION,
+        -> session != null
+
+        ActionId.ROLLBACK_LINES, ActionId.NEXT_CHANGE, ActionId.PREVIOUS_CHANGE,
+        ActionId.HIPPIE_COMPLETION, ActionId.CODE_COMPLETION, ActionId.SMART_TYPE_COMPLETION,
+        ActionId.PASTE_MULTIPLE, ActionId.RENAME_ELEMENT, ActionId.SHOW_INTENTION_ACTIONS,
+        ActionId.TOGGLE_BOOKMARK,
+        -> session != null && fileEditor != null
+
+        ActionId.GOTO_NEXT_ERROR, ActionId.GOTO_PREVIOUS_ERROR, ActionId.SHOW_ERROR_DESCRIPTION,
+        ActionId.FIND, ActionId.REPLACE, ActionId.REFACTOR_THIS,
+        ActionId.INTRODUCE_VARIABLE, ActionId.EXTRACT_METHOD, ActionId.INLINE,
+        ActionId.GENERATE, ActionId.OVERRIDE_METHODS, ActionId.IMPLEMENT_METHODS,
+        ActionId.SURROUND_WITH, ActionId.UNWRAP, ActionId.REFORMAT_CODE, ActionId.OPTIMIZE_IMPORTS,
+        ActionId.EDITOR_TOGGLE_COLUMN_MODE, ActionId.EXPAND_REGION, ActionId.COLLAPSE_REGION,
+        ActionId.EXPAND_ALL_REGIONS, ActionId.COLLAPSE_ALL_REGIONS,
+        ActionId.SELECT_NEXT_OCCURRENCE, ActionId.UNSELECT_PREVIOUS_OCCURRENCE,
+        ActionId.EDITOR_CLONE_CARET_ABOVE, ActionId.EDITOR_CLONE_CARET_BELOW,
+        -> fileEditor != null
+
+        ActionId.SELECT_ALL_OCCURRENCES -> fileEditor != null && fileEditor.canSelectAllOccurrences()
+
+        ActionId.EDITOR_DUPLICATE, ActionId.EDITOR_DELETE_LINE, ActionId.COMMENT_LINE,
+        ActionId.COMMENT_BLOCK, ActionId.MOVE_LINE_UP, ActionId.MOVE_LINE_DOWN,
+        ActionId.GOTO_LINE, ActionId.INDENT, ActionId.UNINDENT,
+        ActionId.EDITOR_SELECT_WORD, ActionId.EDITOR_UNSELECT_WORD, ActionId.EDITOR_TOGGLE_CASE,
+        ActionId.EDITOR_JOIN_LINES, ActionId.EDITOR_START_NEW_LINE,
+        ActionId.EDITOR_START_NEW_LINE_BEFORE, ActionId.EDITOR_MATCH_BRACE,
+        ActionId.EDITOR_CODE_BLOCK_START, ActionId.EDITOR_CODE_BLOCK_END,
+        ActionId.METHOD_UP, ActionId.METHOD_DOWN, ActionId.MOVE_STATEMENT_UP,
+        ActionId.MOVE_STATEMENT_DOWN, ActionId.EDITOR_COMPLETE_STATEMENT,
+        ActionId.EDITOR_SCROLL_TO_CENTER,
+        -> fileEditor != null
+
+        ActionId.COPY_LINE, ActionId.CUT_LINE ->
+            fileEditor != null && (fileEditor.secondaryCarets.isNotEmpty() || fileEditor.value.selection.collapsed)
+
+        ActionId.GOTO_DECLARATION, ActionId.GOTO_IMPLEMENTATION, ActionId.GOTO_TYPE_DECLARATION,
+        ActionId.GOTO_SUPER_METHOD, ActionId.TYPE_HIERARCHY, ActionId.CALL_HIERARCHY,
+        -> session != null && selectedText != null
+
+        ActionId.FILE_STRUCTURE_POPUP, ActionId.FIND_USAGES, ActionId.SHOW_USAGES,
+        ActionId.HIGHLIGHT_USAGES_IN_FILE, ActionId.PARAMETER_INFO, ActionId.QUICK_DOC,
+        ActionId.QUICK_DEFINITION,
+        -> selectedText != null
+
+        ActionId.GOTO_TEST, ActionId.SELECT_IN_PROJECT_VIEW -> session != null && session.editors.selected != null
+
+        ActionId.COPY_PATHS, ActionId.COPY_REFERENCE -> when {
+            session == null -> false
+            fileOperationContext(state, focus) == KeyContext.PROJECT_TREE ->
+                fileOperationTarget(state, focus) != null
+            else -> session.editors.selected != null
+        }
+
+        ActionId.FIND_NEXT, ActionId.FIND_PREVIOUS ->
+            fileEditor != null && (fileEditor.usageHighlights.isNotEmpty() || state.findBar.visible)
+
+        ActionId.SHOW_DIFF -> when {
+            focus != KeyContext.COMMIT_WINDOW -> session != null
+            else -> commitWindowSelectedRow(state, focus) != null
+        }
+
+        ActionId.ROLLBACK_CHANGES -> session != null &&
+            (focus != KeyContext.COMMIT_WINDOW || commitWindowSelectedRow(state, focus) != null)
+
+        ActionId.VCS_POPUP -> focus != KeyContext.TERMINAL
+
+        ActionId.SHOW_NAV_BAR -> session != null && focus !in NON_NAV_BAR_CONTEXTS
+
+        ActionId.EDIT_SOURCE -> when (focus) {
+            KeyContext.LIST_WINDOW, KeyContext.COMMIT_WINDOW -> false
+            KeyContext.TERMINAL, KeyContext.RUN_WINDOW, KeyContext.FIND_BAR, KeyContext.EDITOR_FIELD -> false
+            KeyContext.GLOBAL -> fileEditor != null
+            KeyContext.PROJECT_TREE -> session != null
+            else -> session != null && selectedText != null
+        }
+
+        // A7: only a component action runs Copy and Paste; the key passes on.
+        ActionId.COPY, ActionId.PASTE -> false
+
+        ActionId.EDITOR_ESCAPE -> state.parameterInfo != null || (fileEditor != null && (
+            fileEditor.gotoLineVisible || fileEditor.secondaryCarets.isNotEmpty() ||
+                !fileEditor.value.selection.collapsed || fileEditor.usageHighlights.isNotEmpty()
+            ))
+
+        else -> true
     }
 }
 

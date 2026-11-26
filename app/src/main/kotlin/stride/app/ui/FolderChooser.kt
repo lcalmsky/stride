@@ -7,6 +7,24 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import javax.swing.JFileChooser
 
+/**
+ * M5: wraps [choose] so the menu bar knows its modal loop is up; a click reaching a row while the
+ * chooser is open is not a choice the user made.
+ */
+class FolderChooserGuard(private val dialog: () -> Path?) {
+    var isOpen: Boolean = false
+        private set
+
+    fun choose(): Path? {
+        isOpen = true
+        try {
+            return dialog()
+        } finally {
+            isOpen = false
+        }
+    }
+}
+
 /** Shows the platform folder chooser and returns the selected directory, or `null`. */
 fun chooseFolder(): Path? = if (KeyRouter.isMacOs()) {
     System.setProperty("apple.awt.fileDialogForDirectories", "true")

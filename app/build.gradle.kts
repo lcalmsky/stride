@@ -133,6 +133,7 @@ fun Test.strideTestDefaults() {
     systemProperty("stride.repoRoot", project.rootProject.projectDir.absolutePath)
     systemProperty("stride.git.disableDefaultExecutor", "true")
     systemProperty("stride.files.disableDefaultEffects", "true")
+    systemProperty("stride.recentProjects.disableDefaultStore", "true")
     systemProperty("stride.runIntegration", runIntegration.toString())
     systemProperty("stride.glass.library", nativeLibraryForTests)
     // The appearance-order test forks a fresh JVM; it must see the same test runtime classes.
