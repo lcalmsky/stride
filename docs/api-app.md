@@ -606,7 +606,7 @@ handler.
 ## Context menus and action groups
 
 The 20th round of #13 gives the app its first right-click menus: one menu popup, one definition of
-action groups that right-click menus, the main menu bar (the next round) and Find Action share,
+action groups that right-click menus, the main menu bar (Main menu bar) and Find Action share,
 menus on nine surfaces built from actions that already exist, and two small new behaviours
 (Close All Tabs and Close Tabs to the Left/Right; Run '<context>' from the tree and the test tree).
 The choices below were made under the user instruction of 2026-11-26 (recommended option
@@ -634,7 +634,7 @@ see the surface, not the menu.
 | New submenu rows | `Kotlin.NewFile`, `NewFile`, `NewDir` | A11 |
 | Shortcut column read from the keymap | — | A12 |
 
-Not included: the menu bar, the Run widget and tool window toolbars (the next round), a key that
+Not included: the menu bar (Main menu bar, the 23rd round), the Run widget and tool window toolbars, a key that
 opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differences list names.
 
 ### A2 Where groups live
@@ -659,7 +659,7 @@ opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differenc
   new actions of this round get names there. It does not read groups or enablement (IntelliJ shows
   the group path next to a result; not taken). Component actions (A7: `COPY`, `PASTE`) are left
   out of Find Action, which has no component to act on.
-- **The menu bar** (the next round) builds the macOS menus from groups in the same file with the
+- **The menu bar** (Main menu bar) builds the macOS menus from groups in the same file with the
   same row resolution (A3).
 
 ### A3 Rows: text, visibility and enablement
@@ -1068,8 +1068,8 @@ The contract:
   `SystemAppearance.prepareProcess` now sets the property too, before any Swing class loads. The
   bar is built in `Window(create = …)` after `ComposeWindow()` exists and installed with
   `setJMenuBar` only when the platform is macOS, the look and feel id is `Aqua` and the property
-  reads `true`. Otherwise nothing is installed: an in-window menu row is the rejected always-on
-  row.
+  reads `true` (`screenMenuBarApplies`, `installMainMenuBar` in `actions/MainMenuBar.kt`).
+  Otherwise nothing is installed: an in-window menu row is the rejected always-on row.
 - Tests build the bar but never attach it to a frame or call `addNotify`.
 
 ### M4 Rows: resolved when a menu opens, for display only
@@ -1092,21 +1092,27 @@ The contract:
 - **Modal contexts** (`SEARCH_POPUP`, `CONTEXT_POPUP`, `NAV_BAR`): every row is disabled, as no
   `GLOBAL` key answers there.
 - **Shortcut** (A12) with the same context: a row shows a key only when that key would run it from
-  the surface with the keyboard. ⌘N shows next to Code › Generate… in the editor and next to
-  File › New… in the tree, never both.
-- **Cost.** Opening reads app state only: no file system check, no git call, because AppKit's
-  main thread waits for it.
+  the surface with the keyboard. ⌘N shows next to Code › Generate… in the editor and nowhere in the
+  tree, where ⌘N is New; ⌥⌘Z shows next to Git › Uncommitted Changes › Rollback… in the Commit
+  window and not in the editor, where it is Rollback Lines.
+- **Cost.** AppKit's main thread waits while a menu opens, so opening reads app state and makes no
+  git call. The only disk reads are the cheap synchronous preconditions A3 already has (Run
+  '<context>' from the tree, A10; Jump to Source on a tree target that may be a directory); Recent
+  Projects rows are not checked until one is chosen.
 
 ### M5 Choosing a row
 
 - A click runs the item's `doClick` (`ScreenMenuItem.java:128-130`). Its listener resolves that
   one row again against the current state and `state.focus`; when the row is disabled now, or
-  hidden, nothing runs. The rows shown at open are display only.
+  hidden, nothing runs. Generated rows (M7) are resolved again the same way. The rows shown at
+  open are display only.
 - An enabled row runs its component action (A7) or `dispatchAction(action, state, chooseFolder)`,
   as its key would. Focus is not restored afterwards because it never left; an action that moves
   the keyboard keeps it where it put it.
 - **While the folder chooser is open no row runs.** The chooser's modal loop still dispatches menu
   events, and a nested chooser or a closed tab under it is not a choice the user made.
+  `FolderChooserGuard` (`ui/FolderChooser.kt`) wraps `chooseFolder`, and the key path, the
+  welcome screen and the bar share one instance, so the bar knows when any of them opened it.
 
 ### M6 Cut, Copy, Paste and Delete
 
@@ -1124,8 +1130,8 @@ With no action it is disabled and shows no key.
 | Others | by `canDispatch` | by `canDispatch` |
 
 The editor's handlers come from the selected `TextFileEditor.menuComponentActions`; the
-terminal's from a provider in `AppState` that `TerminalView` sets while composed and clears on
-dispose. No other surface registers handlers this round (M10).
+terminal's from `AppState.terminalMenuActions`, which `TerminalView` sets while composed and
+clears on dispose; its right-click menu and the provider share one definition. No other surface registers handlers this round (M10).
 
 ### M7 Recent Projects
 
@@ -1134,7 +1140,8 @@ dispose. No other surface registers handlers this round (M10).
   text is the folder name; names that occur twice show `name (~/parent)`. With no folder the
   submenu is hidden. IntelliJ's Manage Projects… is left out (M10).
 - **Group item.** A generated item (`GroupGenerated(RECENT_PROJECTS)`) resolves to rows that are
-  not actions: `MenuRow.Command(text, enabled, run)`. Context menus never contain it.
+  not actions: `MenuRow.Command(text, shortcut, enabled, run)` (the shortcut is always empty here).
+  Context menus never contain it.
 - **Choosing.** When the folder is no longer a directory the entry is dropped and the status line
   reads `Folder not found: <path>`; otherwise `state.openFolder(path)`, the path a folder chosen
   with Open… takes.
@@ -1153,9 +1160,217 @@ dispose. No other surface registers handlers this round (M10).
 
 ### M8 The eleven menus
 
-Rows follow IntelliJ's order and submenus in the dump. An IntelliJ row is kept when a stride
-`ActionId` does what it does; the rest are left out (M10). The row table is filled in when the
-groups are written.
+Rows follow IntelliJ's order in the dump. An IntelliJ group becomes a submenu when its XML says
+`popup="true"` (New, Paste, Find, Find Usages, Bookmarks, Tool Windows, Navigate in File, Code
+Completion, Folding, Extract/Introduce, Uncommitted Changes, Active Tool Window, Editor Tabs, Copy
+Path/Reference…); other groups spread their rows in place. An IntelliJ row is kept when a stride
+`ActionId` does what it does; the rest are left out (M10). The outline below, with a project and a
+Kotlin tab open and the keyboard in the editor, is also the expected string of the
+`the eleven menus have the dump's submenus and rows` test; Run '<context>' and Recent Projects
+are hidden there because there is nothing to run and no other folder.
+
+```text
+File >
+  New >
+    Kotlin Class/File
+    File
+    Directory
+  Open…
+  ---
+  Save All
+Edit >
+  Undo
+  Redo
+  ---
+  Cut
+  Copy
+  Copy Paths
+  Copy Path/Reference… >
+    Copy Reference
+  Paste >
+    Paste
+    Paste from History…
+  Delete
+  ---
+  Find >
+    Find…
+    Replace…
+    Find Next / Move to Next Occurrence
+    Find Previous / Move to Previous Occurrence
+    Select All Occurrences
+    Add Selection for Next Occurrence
+    Unselect Occurrence
+    ---
+    Find in Files…
+    Replace in Files…
+  Find Usages >
+    Find Usages
+    Show Usages
+    ---
+    Highlight Usages in File
+  ---
+  Column Selection Mode
+  Extend Selection
+  Shrink Selection
+  ---
+  Toggle Case
+  Join Lines
+  Duplicate Line or Selection
+  ---
+  Indent Selection
+  Unindent Line or Selection
+  ---
+  Bookmarks >
+    Toggle Bookmark
+    ---
+    Show Bookmarks…
+View >
+  Tool Windows >
+    Project
+    Git
+    Commit
+    Terminal
+    Run
+    Problems
+    Structure
+    Bookmarks
+    Find
+  ---
+  Quick Definition
+  Quick Documentation
+  ---
+  Parameter Info
+  Error Description
+  Jump to Source
+  ---
+  Recent Files
+  Recent Locations
+Navigate >
+  Back
+  Forward
+  ---
+  Search Everywhere
+  ---
+  Go to Class…
+  Go to File…
+  Go to Symbol…
+  Go to Line:Column…
+  ---
+  Next Highlighted Error
+  Previous Highlighted Error
+  Last Edit Location
+  ---
+  Navigate in File >
+    Next Method
+    Previous Method
+    Move Caret to Matching Brace
+    ---
+    Next Change
+    Previous Change
+  ---
+  Select in Project View
+  Jump to Navigation Bar
+  ---
+  Go to Declaration or Usages
+  Go to Implementation(s)
+  Go to Type Declaration
+  Go to Super Method
+  Go to Test
+  ---
+  File Structure
+  Type Hierarchy
+  Call Hierarchy
+Code >
+  Override Methods…
+  Implement Methods…
+  Generate…
+  ---
+  Code Completion >
+    Basic
+    Type-Matching
+    ---
+    Complete Current Statement
+    ---
+    Cyclic Expand Word
+  ---
+  Surround With…
+  Unwrap/Remove…
+  ---
+  Folding >
+    Expand
+    Expand All
+    ---
+    Collapse
+    Collapse All
+  ---
+  Comment with Line Comment
+  Comment with Block Comment
+  Reformat Code
+  Optimize Imports
+  ---
+  Move Statement Down
+  Move Statement Up
+  Move Line Down
+  Move Line Up
+Refactor >
+  Refactor This…
+  Rename…
+  Rename File…
+  ---
+  Extract/Introduce >
+    Introduce Variable…
+    ---
+    Extract Method…
+  Inline…
+  ---
+  Move…
+  Copy…
+Build >
+  Build Project
+Run >
+  Run…
+  ---
+  Stop
+Git >
+  Commit…
+  Push…
+  Update Project…
+  Fetch
+  ---
+  Branches…
+  New Branch…
+  ---
+  Show VCS Log
+  ---
+  Uncommitted Changes >
+    Rollback…
+  ---
+  VCS Operations Popup…
+Window >
+  Active Tool Window >
+    Hide Active Tool Window
+    Hide All Tool Windows
+  Editor Tabs >
+    Select Next Tab
+    Select Previous Tab
+    ---
+    Close Tab
+    Close Other Tabs
+    Close All Tabs
+    Close Tabs to the Left
+    Close Tabs to the Right
+    ---
+    Reopen Closed Tab
+Help >
+  Find Action…
+```
+
+- File › New ▸ holds A11's three rows, the rows IntelliJ's `NewGroup` puts there. ⌘N's New popup
+  has no row of its own here.
+- File › Open… is `OPEN_FOLDER`.
+- Navigate › Select in Project View sits where IntelliJ has Select In… (⌥F1 in both).
+- View › Tool Windows lists stride's tool windows; IntelliJ fills that group at runtime.
+- Run › Run '<context>' is `RUN_CONTEXT` with A3's text, at the place of IntelliJ's runner group.
 
 ### M9 Checks a headless test cannot make
 
@@ -1172,8 +1387,13 @@ groups are written.
 ### M10 Differences from IntelliJ
 
 - Shortcuts are part of the row text, not a right-aligned column of native glyphs (M2).
-- IntelliJ rows with no stride action are left out, among them Settings, Manage Projects…,
-  Minimize and Zoom (M8 fills in the list).
+- IntelliJ rows with no stride action are left out: Attach Project, Close Project, Settings and
+  file properties, Local History, Invalidate Caches, Pull, Merge, Rebase, Stash and Shelve, Select
+  All (the text field handles ⌘A), Find Word at Caret, Safe Delete, Debug, Minimize and Zoom, the
+  tool window tab rows of Active Tool Window, Manage Projects…. About and Quit are the JDK's app
+  menu.
+- Open… opens a folder only, and Select in Project View selects in the tree directly instead of
+  offering targets.
 - Only the editor and the terminal hand component actions to the menu bar; Jump to Source in a
   list window or the Commit window is disabled there, and F4 or ↩ in the window does it.
 
