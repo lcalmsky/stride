@@ -87,6 +87,25 @@ class GradleCommandTest {
     }
 
     @Test
+    fun `test args take no filter, one filter or a list of them`() {
+        assertEquals(listOf(":app:test"), GradleCommand.testArgs(":app"))
+        assertEquals(listOf(":app:test"), GradleCommand.testArgs(":app", emptyList()))
+        assertEquals(listOf(":test"), GradleCommand.testArgs("", emptyList()))
+        assertEquals(
+            listOf(":app:test", "--tests", "x.Y"),
+            GradleCommand.testArgs(":app", "x.Y"),
+        )
+        assertEquals(
+            GradleCommand.testArgs(":app", "x.Y"),
+            GradleCommand.testArgs(":app", listOf("x.Y")),
+        )
+        assertEquals(
+            listOf(":app:test", "--tests", "x.Y", "--tests", "x.Z"),
+            GradleCommand.testArgs(":app", listOf("x.Y", "x.Z")),
+        )
+    }
+
+    @Test
     fun `falls back to zsh when SHELL is missing`() {
         assertEquals("/bin/zsh", GradleCommand.shellOrDefault(null))
         assertEquals("/bin/zsh", GradleCommand.shellOrDefault(""))

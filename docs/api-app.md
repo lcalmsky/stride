@@ -1101,7 +1101,7 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `PREVIOUS_TAB` | GLOBAL | ⌘⇧[ , ⌃← | `PreviousTab` | :98, :99 |
 | `HIDE_ACTIVE_WINDOW` | RUN_WINDOW, TERMINAL, LIST_WINDOW | ⇧Esc | `HideActiveWindow` | :100 |
 | `RUN` | GLOBAL | ⌃R | `Run` | :109 |
-| `RUN_CONTEXT` | EDITOR | ⌃⇧R | `RunClass` | :111 |
+| `RUN_CONTEXT` | EDITOR, PROJECT_TREE | ⌃⇧R | `RunClass` | :121, :122 |
 | `STOP` | GLOBAL | ⌘F2 | `Stop` | :113 |
 | `RERUN` | RUN_WINDOW | ⌘R | `Rerun` | :115 |
 | `ACTIVATE_BOOKMARKS_TOOL_WINDOW` | GLOBAL | ⌘2 | `ActivateBookmarksToolWindow` | :117 |
@@ -5210,7 +5210,7 @@ caret and starts it. The four actions are:
 | ActionId | when | meaning |
 |---|---|---|
 | `RUN` | ⌃R in any context | rerun the selected tab, else run the test at the caret, else `Nothing to run here` |
-| `RUN_CONTEXT` | ⌃⇧R in the editor | run the test at the caret, else the file's main, else the reason or `Nothing to run here` |
+| `RUN_CONTEXT` | ⌃⇧R in the editor or the project tree | run the test at the caret, else the file's main, else the reason or `Nothing to run here`; in the tree the P4 target's test classes (A10) |
 | `STOP` | ⌘F2 | destroy the process tree |
 | `RERUN` | ⌘R in the Run window | rerun the selected tab's configuration, else `lastRun`, else `Nothing to rerun` |
 

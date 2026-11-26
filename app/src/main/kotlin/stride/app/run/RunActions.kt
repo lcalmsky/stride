@@ -12,11 +12,18 @@ import java.nio.file.Path
 /** Starts the test under the selected editor's caret. Returns `false` when there is none. */
 fun runAtCaret(state: AppState): Boolean {
     val session = state.session ?: return false
-    val editor = session.editors.selected as? TextFileEditor ?: return false
-    val target = TestLocator.locate(editor.value.text, editor.value.selection.start) ?: return false
-    if (!runTarget(session, editor.file.path, target)) return false
+    val configuration = caretTestConfiguration(state) ?: return false
+    session.project.service<RunManager>().run(configuration)
     state.toolWindows.activate("run")
     return true
+}
+
+/** The test run under the caret, or null when the caret is not on a test in a Gradle project. */
+fun caretTestConfiguration(state: AppState): RunConfiguration? {
+    val session = state.session ?: return null
+    val editor = session.editors.selected as? TextFileEditor ?: return null
+    val target = TestLocator.locate(editor.value.text, editor.value.selection.start) ?: return null
+    return testConfiguration(session, editor.file.path, target)
 }
 
 fun runTarget(state: AppState, file: Path, target: TestLocator.TestTarget): Boolean {

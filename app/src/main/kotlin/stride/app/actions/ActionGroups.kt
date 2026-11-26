@@ -98,6 +98,7 @@ object ActionGroups {
             GroupAction(ActionId.DELETE_ELEMENT),
             GroupSeparator,
             GroupAction(ActionId.BUILD_PROJECT),
+            GroupAction(ActionId.RUN_CONTEXT),
             GroupSubmenu(
                 "Open In",
                 listOf(
@@ -164,6 +165,7 @@ object ActionGroups {
             ),
             GroupAction(ActionId.GENERATE, "Generate…"),
             GroupSeparator,
+            GroupAction(ActionId.RUN_CONTEXT),
             GroupSubmenu(
                 "Open In",
                 listOf(
@@ -220,10 +222,12 @@ object ActionGroups {
         listOf(GroupAction(ActionId.SHOW_DIFF)),
     )
 
-    /** The Run window over a test row (A8); `Run '<node>'` joins it with A10. */
+    /** The Run window over a test row (A8); `Run '<node>'` joins it as a component action (A10). */
     val testTreePopupMenu = ActionGroup(
         TEST_TREE_POPUP_MENU,
         listOf(
+            GroupAction(ActionId.RUN_CONTEXT),
+            GroupSeparator,
             GroupAction(ActionId.RERUN),
             GroupAction(ActionId.STOP),
         ),

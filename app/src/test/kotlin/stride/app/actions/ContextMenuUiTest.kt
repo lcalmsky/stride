@@ -77,6 +77,7 @@ import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
 import stride.app.run.StartedProcess
+import stride.app.run.contextRun
 import stride.app.run.RUN_WINDOW_TAG
 import stride.app.terminal.FakeTtyConnector
 import stride.app.terminal.TERMINAL_TAG
@@ -851,6 +852,57 @@ class ContextMenuUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `the tree offers a run for a test source directory and none for main sources`() =
+        runComposeUiTest {
+            val root = temp.resolve("tree-run-project")
+            Files.createDirectories(root.resolve("app/src/test/kotlin/sample/orders"))
+            Files.createDirectories(root.resolve("app/src/main/kotlin/sample"))
+            Files.writeString(root.resolve("settings.gradle.kts"), "rootProject.name = \"sample\"\ninclude(\":app\")\n")
+            Files.writeString(root.resolve("build.gradle.kts"), "")
+            Files.writeString(root.resolve("app/build.gradle.kts"), "")
+            Files.writeString(
+                root.resolve("app/src/test/kotlin/sample/orders/OrderServiceTest.kt"),
+                "package sample.orders\n\nclass OrderServiceTest {\n    @Test\n    fun placesOrder() {\n    }\n}\n",
+            )
+            Files.writeString(root.resolve("app/src/main/kotlin/sample/Orders.kt"), "package sample\n")
+            val state = AppState()
+            try {
+                state.openFolder(root)
+                val session = requireNotNull(state.session)
+                session.tree.expand(VFile(root.resolve("app")))
+                session.tree.expand(VFile(root.resolve("app/src")))
+                setContent { ContextMenuHarness(state) }
+                waitForIdle()
+
+                session.tree.select(VFile(root.resolve("app/src/test")))
+                state.focus = KeyContext.PROJECT_TREE
+                val expected = requireNotNull(contextRun(state)).name
+
+                rightClick("test")
+                waitForMenu(state)
+                val runRow = requireNotNull(state.contextMenu).rows
+                    .filterIsInstance<MenuRow.Action>()
+                    .firstOrNull { it.action == ActionId.RUN_CONTEXT }
+                assertEquals("Run '$expected'", runRow?.text)
+                assertTrue(runRow?.enabled == true)
+
+                onRoot().performKeyInput { pressKey(Key.Escape) }
+                waitUntil(timeoutMillis = 5_000) { state.contextMenu == null }
+
+                rightClick("main")
+                waitForMenu(state)
+                assertTrue(
+                    requireNotNull(state.contextMenu).rows
+                        .filterIsInstance<MenuRow.Action>()
+                        .none { it.action == ActionId.RUN_CONTEXT },
+                )
+            } finally {
+                state.dispose()
+            }
+        }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `a right click on a git log row opens its menu without opening the diff`() = runComposeUiTest {
         val repo = threeCommits()
         val state = AppState()
@@ -923,6 +975,9 @@ class ContextMenuUiTest {
 
                 assertEquals(ActionGroups.TEST_TREE_POPUP_MENU, state.contextMenu?.groupId)
                 val rows = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+                // A10: the method row's run is the gutter's filter, built from the tree's Gradle path.
+                assertEquals("Run 'demo.DemoTest.adds'", rows.first { it.action == ActionId.RUN_CONTEXT }.text)
+                assertTrue(rows.first { it.action == ActionId.RUN_CONTEXT }.enabled)
                 // The run finished, so Rerun has a configuration and Stop has nothing to stop.
                 assertTrue(rows.first { it.action == ActionId.RERUN }.enabled)
                 assertFalse(rows.first { it.action == ActionId.STOP }.enabled)

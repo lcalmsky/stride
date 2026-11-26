@@ -33,8 +33,11 @@ object GradleCommand {
         if (element.any { it.isWhitespace() || it == '\'' || it == '"' }) "'$element'" else element
     }
 
-    fun testArgs(gradlePath: String, filter: String): List<String> =
-        listOf("$gradlePath:test", "--tests", filter)
+    /** `test` with no `--tests` when [filters] is empty, otherwise one `--tests` per filter. */
+    fun testArgs(gradlePath: String, filters: List<String> = emptyList()): List<String> =
+        listOf("$gradlePath:test") + filters.flatMap { listOf("--tests", it) }
+
+    fun testArgs(gradlePath: String, filter: String): List<String> = testArgs(gradlePath, listOf(filter))
 
     internal fun shellOrDefault(shell: String? = System.getenv("SHELL")): String =
         shell?.takeIf { it.isNotBlank() } ?: "/bin/zsh"

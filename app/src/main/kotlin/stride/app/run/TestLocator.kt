@@ -48,11 +48,39 @@ object TestLocator {
     }
 
     /**
+     * The fully qualified names of the classes in [text] that declare `@Test` methods, in file
+     * order, one per class.
+     */
+    fun testClasses(text: String): List<String> {
+        val lines = text.split("\n")
+        val packageName = PACKAGE.find(text)?.groupValues?.get(1)
+        val declarations = lines.mapIndexedNotNull { index, line ->
+            CLASS.find(line)?.let { index to it.groupValues[1] }
+        }
+        return declarations.mapIndexedNotNull { position, (start, className) ->
+            val end = declarations.getOrNull(position + 1)?.first ?: lines.size
+            val declaresTest = (start until end).any { index -> testMethodName(lines, index) != null }
+            if (!declaresTest) {
+                null
+            } else if (packageName.isNullOrEmpty()) {
+                className
+            } else {
+                "$packageName.$className"
+            }
+        }
+    }
+
+    /**
      * The Gradle project path for [file], e.g. `:plugins:lang-kotlin`. It is the path from
      * [root] to the nearest ancestor directory that holds a build file; `""` for the root.
      */
     fun gradleProjectPath(file: Path, root: Path): String? {
         val directory = gradleProjectDir(file, root) ?: return null
+        return gradleProjectPathOf(directory, root)
+    }
+
+    /** The Gradle project path for [directory] itself, e.g. `:app`; `""` for [root]. */
+    fun gradleProjectPathOf(directory: Path, root: Path): String {
         val absoluteRoot = root.toAbsolutePath().normalize()
         val absoluteDirectory = directory.toAbsolutePath().normalize()
         if (absoluteDirectory == absoluteRoot) return ""
@@ -64,11 +92,18 @@ object TestLocator {
         val absoluteRoot = root.toAbsolutePath().normalize()
         val absoluteFile = file.toAbsolutePath().normalize()
         if (!absoluteFile.startsWith(absoluteRoot)) return null
-        var directory: Path? = absoluteFile.parent
-        while (directory != null && directory.startsWith(absoluteRoot)) {
-            if (hasBuildFile(directory)) return directory
-            if (directory == absoluteRoot) break
-            directory = directory.parent
+        return gradleProjectDirOf(absoluteFile.parent ?: return null, root)
+    }
+
+    /** The nearest directory at or above [directory] under [root] that holds a build file. */
+    fun gradleProjectDirOf(directory: Path, root: Path): Path? {
+        val absoluteRoot = root.toAbsolutePath().normalize()
+        if (!directory.toAbsolutePath().normalize().startsWith(absoluteRoot)) return null
+        var current: Path? = directory.toAbsolutePath().normalize()
+        while (current != null && current.startsWith(absoluteRoot)) {
+            if (hasBuildFile(current)) return current
+            if (current == absoluteRoot) break
+            current = current.parent
         }
         return null
     }

@@ -137,6 +137,9 @@ fun RunToolWindow(
                         selectedClass = it
                         selected = null
                     },
+                    actionsFor = { classNode, method ->
+                        testTreeActions(manager, state, session, classNode, method)
+                    },
                     onContextMenu = { position, actions ->
                         openMenu(ActionGroups.TEST_TREE_POPUP_MENU, position, actions)
                     },
@@ -305,6 +308,32 @@ private fun TestTreePane(
             }
         }
     }
+}
+
+/** A10/A7: the test tree's `Run '<node>'` row, whose filters come from the row the menu opened on. */
+private fun testTreeActions(
+    manager: RunManager,
+    state: AppState?,
+    session: RunSession,
+    classNode: TestClassNode?,
+    method: TestMethodNode?,
+): Map<ActionId, ComponentAction> {
+    val className = method?.className ?: classNode?.className ?: return emptyMap()
+    val filter = method?.let { "$className.${it.name}" } ?: className
+    val configuration = testTreeConfiguration(session.configuration, className, method?.name)
+    return mapOf(
+        ActionId.RUN_CONTEXT to ComponentAction(
+            text = "Run '$filter'",
+            enabled = configuration != null,
+            run = {
+                configuration?.let { chosen ->
+                    manager.run(chosen)
+                    state?.statusMessage = null
+                    state?.toolWindows?.activate("run")
+                }
+            },
+        ),
+    )
 }
 
 @Composable

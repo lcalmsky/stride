@@ -57,11 +57,11 @@ import stride.app.run.MainLocator
 import stride.app.run.RunConfiguration
 import stride.app.run.RunKind
 import stride.app.run.RunManager
+import stride.app.run.contextRun
+import stride.app.run.editorRunConfiguration
 import stride.app.run.mainConfigurationProblem
 import stride.app.run.openContextActions
 import stride.app.run.openRunConfigurationChooser
-import stride.app.run.runAtCaret
-import stride.app.run.runMain
 import stride.app.vcs.commitAndPush
 import stride.app.vcs.fetchFromVcs
 import stride.app.vcs.gotoChange
@@ -477,9 +477,12 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         true
     }
     ActionId.RUN_CONTEXT -> {
-        if (state.session == null) return false
-        if (runContext(state)) {
+        val session = state.session ?: return false
+        val configuration = contextRun(state)?.configuration()
+        if (configuration != null) {
+            session.project.service<RunManager>().run(configuration)
             state.statusMessage = null
+            state.toolWindows.activate("run")
         } else {
             state.statusMessage = runContextProblem(state) ?: "Nothing to run here"
         }
@@ -558,13 +561,11 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
 
 /** The test at the caret, else the file's main or script entry point. */
 private fun runContext(state: AppState): Boolean {
-    if (runAtCaret(state)) return true
     val session = state.session ?: return false
-    val editor = session.editors.selected as? TextFileEditor ?: return false
-    val main = MainLocator.locate(editor.value.text, editor.file.name)
-    val started = runMain(session, editor.file.path, main)
-    if (started) state.toolWindows.activate("run")
-    return started
+    val configuration = editorRunConfiguration(state) ?: return false
+    session.project.service<RunManager>().run(configuration)
+    state.toolWindows.activate("run")
+    return true
 }
 
 /** The specific reason the selected file's main cannot run, when there is one. */

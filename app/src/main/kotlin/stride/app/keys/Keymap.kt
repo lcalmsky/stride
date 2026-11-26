@@ -119,6 +119,7 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     bind("control R", ActionId.RUN, KeyContext.GLOBAL)
     // RunClass control shift R (the last RunClass declaration)
     bind("control shift R", ActionId.RUN_CONTEXT, KeyContext.EDITOR)
+    bind("control shift R", ActionId.RUN_CONTEXT, KeyContext.PROJECT_TREE)
     // Stop control F2 (→meta)
     bind("meta F2", ActionId.STOP, KeyContext.GLOBAL)
     // Rerun meta R; the editor's meta R is Replace

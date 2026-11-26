@@ -8,6 +8,7 @@ import stride.app.files.openableFileTarget
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.run.RunManager
+import stride.app.run.contextRun
 import stride.app.vcs.commitWindowSelectedRow
 import stride.core.services.service
 
@@ -28,6 +29,7 @@ fun actionUpdate(action: ActionId, state: AppState): ActionUpdate = when (action
     ActionId.CLOSE_TABS_TO_THE_RIGHT -> tabUpdate(state) { it.canCloseTabsToTheRight() }
     ActionId.REOPEN_CLOSED_TAB -> tabUpdate(state) { it.hasClosedFiles() }
     ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF -> commitWindowUpdate(state)
+    ActionId.RUN_CONTEXT -> runContextUpdate(state)
     ActionId.RERUN -> runUpdate(state) { it.canRerun }
     ActionId.STOP -> runUpdate(state) { it.canStop }
     else -> ActionUpdate()
@@ -49,6 +51,16 @@ private fun tabUpdate(state: AppState, predicate: (FileEditorManager) -> Boolean
 private fun treeEditSource(state: AppState): ActionUpdate {
     if (fileOperationContext(state) != KeyContext.PROJECT_TREE) return ActionUpdate()
     return ActionUpdate(enabled = openableFileTarget(state) != null)
+}
+
+/**
+ * A3: the Run row exists where A10's resolver finds a run and shows its name. The Run window's
+ * test tree is the exception: its row is an A7 component action that brings its own text.
+ */
+private fun runContextUpdate(state: AppState): ActionUpdate {
+    if (state.focus == KeyContext.RUN_WINDOW) return ActionUpdate()
+    val run = contextRun(state) ?: return ActionUpdate(visible = false)
+    return ActionUpdate(text = "Run '${run.name}'")
 }
 
 /** A3: the two Commit window rows read the row the window has selected, inside the window only. */

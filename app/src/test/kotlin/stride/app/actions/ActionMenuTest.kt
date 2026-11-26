@@ -685,12 +685,16 @@ class ActionMenuTest {
             resolveMenu(ActionGroups.vcsLogContextMenu, KeyContext.LIST_WINDOW)
                 .filterIsInstance<MenuRow.Action>().map { it.action },
         )
-        for (group in listOf(ActionGroups.testTreePopupMenu, ActionGroups.consoleViewPopupMenu)) {
-            assertEquals(
-                listOf(ActionId.RERUN, ActionId.STOP),
-                resolveMenu(group, KeyContext.RUN_WINDOW).filterIsInstance<MenuRow.Action>().map { it.action },
-            )
-        }
+        assertEquals(
+            listOf(ActionId.RUN_CONTEXT, ActionId.RERUN, ActionId.STOP),
+            resolveMenu(ActionGroups.testTreePopupMenu, KeyContext.RUN_WINDOW)
+                .filterIsInstance<MenuRow.Action>().map { it.action },
+        )
+        assertEquals(
+            listOf(ActionId.RERUN, ActionId.STOP),
+            resolveMenu(ActionGroups.consoleViewPopupMenu, KeyContext.RUN_WINDOW)
+                .filterIsInstance<MenuRow.Action>().map { it.action },
+        )
         for (group in listOf(ActionGroups.usageViewPopupMenu, ActionGroups.structureViewPopupMenu,
             ActionGroups.hierarchyPopupMenu, ActionGroups.bookmarksToolWindowPopupMenu)) {
             assertEquals(
