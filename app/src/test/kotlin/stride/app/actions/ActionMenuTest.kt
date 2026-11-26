@@ -2,6 +2,9 @@ package stride.app.actions
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
@@ -11,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
@@ -19,9 +23,13 @@ import org.junit.jupiter.api.io.TempDir
 import stride.app.AppState
 import stride.app.ProjectSession
 import stride.app.editor.TextClipboard
+import stride.app.editor.ClipboardHistory
+import stride.app.editor.TextFileEditor
 import stride.app.files.FileOperationPage
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
+import stride.app.keys.KeyEventType
+import stride.app.keys.KeyRouter
 import stride.app.keys.MacKeymap
 import stride.app.keys.dispatchAction
 import stride.app.vcs.CliGitExecutor
@@ -376,6 +384,288 @@ class ActionMenuTest {
             assertTrue(dispatchAction(action, state) { null }, "$action was handed back")
         }
     }
+
+    @Test
+    fun `the editor menu follows A8 and trims its separators`() {
+        openProject("src/main/kotlin/api/OrderService.kt")
+        state.focus = KeyContext.EDITOR
+
+        val rows = resolveEditor()
+
+        assertEquals(
+            listOf(
+                "Show Context Actions",
+                null,
+                "Cut",
+                "Copy",
+                "Paste",
+                "Copy / Paste Special…",
+                "Column Selection Mode",
+                null,
+                "Find in Files…",
+                "Find Usages",
+                "Go To",
+                "Folding",
+                null,
+                "Refactor",
+                "Generate…",
+                null,
+                "Open In",
+            ),
+            rows.map { row -> if (row is MenuRow.Separator) null else (row as? MenuRow.Action)?.text ?: (row as MenuRow.Submenu).text },
+        )
+        assertEquals(
+            listOf("Declaration or Usages", "Implementation(s)", "Type Declaration", "Super Method", "Test"),
+            rows.submenu("Go To").rows.map { (it as MenuRow.Action).text },
+        )
+        assertEquals(
+            listOf("Expand", "Collapse", "Expand All", "Collapse All"),
+            rows.submenu("Folding").rows.map { (it as MenuRow.Action).text },
+        )
+        val refactor = rows.submenu("Refactor").rows
+        assertEquals(
+            listOf(
+                "Refactor This…",
+                "Rename…",
+                "Rename File…",
+                null,
+                "Introduce Variable…",
+                "Extract Method…",
+                "Inline…",
+            ),
+            refactor.map { (it as? MenuRow.Action)?.text },
+        )
+        assertEquals(listOf("Finder", "Terminal"), rows.submenu("Open In").rows.map { (it as MenuRow.Action).text })
+    }
+
+    @Test
+    fun `the editor menu shows the strokes of its Cut, Copy and Paste rows`() {
+        openProject("a.kt")
+        state.focus = KeyContext.EDITOR
+
+        val rows = resolveEditor()
+
+        assertEquals("⌘X", rows.action(ActionId.CUT_LINE).shortcut)
+        assertEquals("⌘C", rows.action(ActionId.COPY_LINE).shortcut)
+        assertEquals("⌘V", rows.action(ActionId.PASTE).shortcut)
+    }
+
+    @Test
+    fun `the gutter and tab menus follow A8`() {
+        val session = openProject("a.kt", "b.kt")
+        session.editors.openFile(VFile(session.tree.root.path.resolve("a.kt")))
+        state.focus = KeyContext.EDITOR
+
+        val gutter = resolveMenuRows(MacKeymap.keymap, state, ActionGroups.editorGutterPopupMenu)
+        assertEquals(
+            listOf(ActionId.TOGGLE_BOOKMARK, ActionId.SHOW_BOOKMARKS),
+            gutter.filterIsInstance<MenuRow.Action>().map { it.action },
+        )
+
+        val tabs = resolveMenuRows(MacKeymap.keymap, state, ActionGroups.editorTabPopupMenu)
+        assertEquals(
+            listOf(
+                "Close",
+                "Close Other Tabs",
+                "Close All Tabs",
+                "Close Tabs to the Left",
+                "Close Tabs to the Right",
+                null,
+                "Copy Path",
+                "Copy Reference",
+                null,
+                "Reopen Closed Tab",
+            ),
+            tabs.map { row ->
+                if (row is MenuRow.Separator) null else (row as MenuRow.Action).text
+            },
+        )
+        assertEquals("⌘W", tabs.action(ActionId.CLOSE_TAB).shortcut)
+    }
+
+    @Test
+    fun `close tabs to the left keeps the selected tab and fills the reopen order`() {
+        val session = openProject("a.kt", "b.kt", "c.kt", "d.kt")
+        val root = session.tree.root.path
+        val editors = session.editors
+        editors.openFile(VFile(root.resolve("a.kt")))
+        editors.openFile(VFile(root.resolve("b.kt")))
+        editors.openFile(VFile(root.resolve("c.kt")))
+        editors.openFile(VFile(root.resolve("d.kt")))
+        val c = editors.openFile(VFile(root.resolve("c.kt")))!!
+
+        editors.closeTabsToTheLeft()
+
+        assertEquals(listOf("c.kt", "d.kt"), editors.openFiles.map { it.file.name })
+        assertSame(c, editors.selected)
+        // The left tabs closed in tab order, so the rightmost reopens first.
+        assertEquals("b.kt", editors.reopenClosed()?.file?.name)
+        assertEquals("a.kt", editors.reopenClosed()?.file?.name)
+    }
+
+    @Test
+    fun `close tabs to the right keeps the selected tab and fills the reopen order`() {
+        val session = openProject("a.kt", "b.kt", "c.kt", "d.kt")
+        val root = session.tree.root.path
+        val editors = session.editors
+        editors.openFile(VFile(root.resolve("a.kt")))
+        editors.openFile(VFile(root.resolve("b.kt")))
+        editors.openFile(VFile(root.resolve("c.kt")))
+        editors.openFile(VFile(root.resolve("d.kt")))
+        val b = editors.openFile(VFile(root.resolve("b.kt")))!!
+
+        editors.closeTabsToTheRight()
+
+        assertEquals(listOf("a.kt", "b.kt"), editors.openFiles.map { it.file.name })
+        assertSame(b, editors.selected)
+        assertEquals("d.kt", editors.reopenClosed()?.file?.name)
+        assertEquals("c.kt", editors.reopenClosed()?.file?.name)
+    }
+
+    @Test
+    fun `close all leaves no tab and fills the reopen order in tab order`() {
+        val session = openProject("a.kt", "b.kt", "c.kt")
+        val root = session.tree.root.path
+        val editors = session.editors
+        editors.openFile(VFile(root.resolve("a.kt")))
+        editors.openFile(VFile(root.resolve("b.kt")))
+        editors.openFile(VFile(root.resolve("c.kt")))
+
+        editors.closeAll()
+
+        assertTrue(editors.openFiles.isEmpty())
+        assertNull(editors.selected)
+        assertEquals("c.kt", editors.reopenClosed()?.file?.name)
+        assertEquals("b.kt", editors.reopenClosed()?.file?.name)
+        assertEquals("a.kt", editors.reopenClosed()?.file?.name)
+        assertNull(editors.reopenClosed())
+    }
+
+    @Test
+    fun `the tab rows are enabled exactly when their action does something`() {
+        val session = openProject("a.kt", "b.kt", "c.kt")
+        val root = session.tree.root.path
+        val editors = session.editors
+        editors.openFile(VFile(root.resolve("a.kt")))
+        editors.openFile(VFile(root.resolve("b.kt")))
+        val c = editors.openFile(VFile(root.resolve("c.kt")))!!
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(tabRow(ActionId.CLOSE_TABS_TO_THE_LEFT).enabled)
+        assertFalse(tabRow(ActionId.CLOSE_TABS_TO_THE_RIGHT).enabled)
+        assertTrue(tabRow(ActionId.CLOSE_ALL_TABS).enabled)
+        assertTrue(tabRow(ActionId.CLOSE_OTHER_TABS).enabled)
+        assertFalse(tabRow(ActionId.REOPEN_CLOSED_TAB).enabled)
+
+        // A disabled row's dispatch changes nothing; an enabled one does.
+        assertTrue(dispatchAction(ActionId.CLOSE_TABS_TO_THE_RIGHT, state) { null })
+        assertEquals(listOf("a.kt", "b.kt", "c.kt"), editors.openFiles.map { it.file.name })
+        assertFalse(tabRow(ActionId.REOPEN_CLOSED_TAB).enabled)
+
+        assertTrue(dispatchAction(ActionId.CLOSE_TABS_TO_THE_LEFT, state) { null })
+        assertEquals(listOf("c.kt"), editors.openFiles.map { it.file.name })
+        assertSame(c, editors.selected)
+        assertFalse(tabRow(ActionId.CLOSE_OTHER_TABS).enabled)
+        assertTrue(tabRow(ActionId.REOPEN_CLOSED_TAB).enabled)
+
+        assertTrue(dispatchAction(ActionId.CLOSE_ALL_TABS, state) { null })
+        assertTrue(editors.openFiles.isEmpty())
+        assertNull(editors.selected)
+        assertFalse(tabRow(ActionId.CLOSE_ALL_TABS).enabled)
+        assertTrue(dispatchAction(ActionId.CLOSE_ALL_TABS, state) { null })
+        assertTrue(editors.openFiles.isEmpty())
+    }
+
+    @Test
+    fun `the editor menu disables cut and paste where the key would do nothing`() {
+        val root = temp.resolve("component-project")
+        Files.createDirectories(root)
+        val file = root.resolve("a.kt")
+        Files.writeString(file, "one")
+        val clipboard = RecordingClipboard().apply { text = "clip" }
+        val history = ClipboardHistory()
+        val editor = TextFileEditor(VFile(file), clipboard = clipboard)
+
+        val actions = editor.menuComponentActions(history)
+        assertTrue(actions.getValue(ActionId.CUT_LINE).enabled)
+        assertTrue(actions.getValue(ActionId.COPY_LINE).enabled)
+        assertTrue(actions.getValue(ActionId.PASTE).enabled)
+
+        clipboard.text = null
+        assertFalse(editor.menuComponentActions(history).getValue(ActionId.PASTE).enabled)
+
+        val readOnly = TextFileEditor(VFile(file), readOnly = true, clipboard = clipboard)
+        val readOnlyActions = readOnly.menuComponentActions(history)
+        assertFalse(readOnlyActions.getValue(ActionId.CUT_LINE).enabled)
+        assertFalse(readOnlyActions.getValue(ActionId.PASTE).enabled)
+        assertTrue(readOnlyActions.getValue(ActionId.COPY_LINE).enabled)
+    }
+
+    @Test
+    fun `the copy and paste component actions leave the key path alone`() {
+        openProject("a.kt")
+        val router = KeyRouter(isMac = true)
+
+        assertEquals(
+            ActionId.COPY_LINE,
+            router.route(KeyEventType.DOWN, Key.C, meta = true, focus = KeyContext.EDITOR),
+        )
+        assertEquals(
+            ActionId.COPY,
+            router.route(KeyEventType.DOWN, Key.C, meta = true, focus = KeyContext.TERMINAL),
+        )
+        assertFalse(dispatchAction(ActionId.COPY, state) { null })
+        assertEquals(
+            ActionId.PASTE,
+            router.route(KeyEventType.DOWN, Key.V, meta = true, focus = KeyContext.EDITOR),
+        )
+        assertFalse(dispatchAction(ActionId.PASTE, state) { null })
+        assertEquals(
+            ActionId.PASTE,
+            router.route(KeyEventType.DOWN, Key.V, meta = true, focus = KeyContext.TERMINAL),
+        )
+        assertFalse(dispatchAction(ActionId.PASTE, state) { null })
+    }
+
+    @Test
+    fun `no enabled editor row hands its key back to the component`() {
+        state.clipboard = RecordingClipboard()
+        val session = openProject("src/main/kotlin/api/OrderService.kt")
+        val file = session.tree.root.path.resolve("src/main/kotlin/api/OrderService.kt")
+        Files.writeString(file, "class OrderService\n")
+        val editor = session.editors.openFile(VFile(file)) as TextFileEditor
+        editor.updateValue(TextFieldValue("class OrderService\n", TextRange(6)))
+
+        val actions = resolveEditor().flatMap { it.leaves() }.filterIsInstance<MenuRow.Action>()
+            .filter { it.enabled }
+            .map { it.action }
+        assertTrue(actions.isNotEmpty())
+        // Finder, the shell and the component rows: A7 runs the latter through the surface.
+        val skipped = setOf(
+            ActionId.REVEAL_IN_FINDER,
+            ActionId.OPEN_IN_TERMINAL,
+            ActionId.CUT_LINE,
+            ActionId.COPY_LINE,
+            ActionId.PASTE,
+        )
+
+        for (action in actions) {
+            if (action in skipped) continue
+            state.fileOperation = null
+            state.contextMenu = null
+            state.findInPathVisible = false
+            state.focus = KeyContext.EDITOR
+            assertTrue(dispatchAction(action, state) { null }, "$action was handed back")
+        }
+    }
+
+    private fun resolveEditor(): List<MenuRow> {
+        state.focus = KeyContext.EDITOR
+        return resolveMenuRows(MacKeymap.keymap, state, ActionGroups.editorPopupMenu)
+    }
+
+    private fun tabRow(action: ActionId): MenuRow.Action =
+        resolveMenuRows(MacKeymap.keymap, state, ActionGroups.editorTabPopupMenu).action(action)
 
     private fun MenuRow.leaves(): List<MenuRow> = when (this) {
         is MenuRow.Submenu -> rows.flatMap { it.leaves() }

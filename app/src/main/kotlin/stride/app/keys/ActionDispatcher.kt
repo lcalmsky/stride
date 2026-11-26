@@ -322,11 +322,8 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
     ActionId.SELECT_IN_PROJECT_VIEW -> selectInProjectView(state)
     ActionId.REOPEN_CLOSED_TAB -> {
         val session = state.session ?: return false
-        if (session.editors.reopenClosed() == null) {
-            state.statusMessage = "No closed tab to reopen"
-        } else {
-            state.statusMessage = null
-        }
+        val reopened = if (session.editors.hasClosedFiles()) session.editors.reopenClosed() else null
+        state.statusMessage = if (reopened == null) "No closed tab to reopen" else null
         true
     }
     ActionId.CLOSE_OTHER_TABS -> {
@@ -334,6 +331,23 @@ fun dispatchAction(action: ActionId, state: AppState, chooseFolder: () -> Path?)
         session.editors.closeOthers()
         true
     }
+    ActionId.CLOSE_ALL_TABS -> {
+        val session = state.session ?: return false
+        session.editors.closeAll()
+        true
+    }
+    ActionId.CLOSE_TABS_TO_THE_LEFT -> {
+        val session = state.session ?: return false
+        session.editors.closeTabsToTheLeft()
+        true
+    }
+    ActionId.CLOSE_TABS_TO_THE_RIGHT -> {
+        val session = state.session ?: return false
+        session.editors.closeTabsToTheRight()
+        true
+    }
+    // A7: Copy and Paste are component actions; the key must reach the focused component.
+    ActionId.COPY, ActionId.PASTE -> false
     ActionId.TOGGLE_UI_FONT -> {
         state.statusMessage = "UI font: ${state.toggleUiFont().label}"
         true

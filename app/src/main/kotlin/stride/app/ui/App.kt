@@ -377,6 +377,12 @@ fun App(
                                         )
                                         clearUsageStatus(state)
                                     },
+                                    onTextContextMenu = { editor, position ->
+                                        openEditorContextMenu(state, editor, position)
+                                    },
+                                    onGutterContextMenu = { editor, position ->
+                                        openGutterContextMenu(state, editor, position)
+                                    },
                                     modifier = Modifier.fillMaxSize(),
                                     focusRequests = state.editorFocusRequests,
                                     leftInset = contentLeft,
@@ -464,6 +470,9 @@ fun App(
                             topInset = topInset,
                             rowHeight = topRowHeight,
                             dragInset = if (nativeGlass) DesignTokens.nativeTitleLightsInset else 0.dp,
+                            onTabContextMenu = { manager, editor, position ->
+                                openEditorTabContextMenu(state, manager, editor, position)
+                            },
                         )
                         BottomChromeRow(
                             session = session,
@@ -1416,6 +1425,7 @@ private fun TopChromeRow(
     manager: FileEditorManager?,
     onSearch: () -> Unit,
     leftInset: Dp,
+    onTabContextMenu: (FileEditorManager, FileEditor, Offset) -> Unit = { _, _, _ -> },
     topInset: Dp = DesignTokens.chromeInset,
     rowHeight: Dp = DesignTokens.capsuleHeight,
     dragInset: Dp = 0.dp,
@@ -1437,7 +1447,7 @@ private fun TopChromeRow(
             ProjectCapsule(projectName, rowHeight)
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 if (manager != null && manager.openFiles.isNotEmpty()) {
-                    TabGroup(manager, rowHeight, Modifier.align(Alignment.CenterStart))
+                    TabGroup(manager, rowHeight, Modifier.align(Alignment.CenterStart), onTabContextMenu)
                 }
             }
             SearchCapsule(onSearch, rowHeight)
@@ -1674,6 +1684,33 @@ private fun openTreeContextMenu(state: AppState, position: Offset) {
     openContextMenu(state, ActionGroups.PROJECT_VIEW_POPUP_MENU, KeyContext.PROJECT_TREE, position)
 }
 
+/** A4/A7: the editor's text menu, with its own Cut, Copy and Paste handlers. */
+private fun openEditorContextMenu(state: AppState, editor: TextFileEditor, position: Offset) {
+    openContextMenu(
+        state,
+        ActionGroups.EDITOR_POPUP_MENU,
+        KeyContext.EDITOR,
+        position,
+        editor.menuComponentActions(state.clipboardHistory),
+    )
+}
+
+/** A4: the gutter menu, opened from the editor's context. */
+private fun openGutterContextMenu(state: AppState, editor: TextFileEditor, position: Offset) {
+    openContextMenu(state, ActionGroups.EDITOR_GUTTER_POPUP_MENU, KeyContext.EDITOR, position)
+}
+
+/** A4/A5: a tab's menu opens on the tab it was pressed on, which the right press selects. */
+private fun openEditorTabContextMenu(
+    state: AppState,
+    manager: FileEditorManager,
+    editor: FileEditor,
+    position: Offset,
+) {
+    manager.openFile(editor.file)
+    openContextMenu(state, ActionGroups.EDITOR_TAB_POPUP_MENU, KeyContext.EDITOR, position)
+}
+
 /**
  * P2's keys the panel handles itself, because the keymap has no binding for these unmodified
  * strokes: ↑ ↓ move the selection, → and ← expand, collapse and walk to the child and parent,
@@ -1852,6 +1889,8 @@ private fun EditorArea(
     onChangeMarkClick: (TextFileEditor, LineHunk) -> Unit,
     onJump: (TextFileEditor) -> Unit,
     onTextChange: (TextFileEditor, List<TextChange>, Boolean, Int) -> Unit,
+    onTextContextMenu: (TextFileEditor, Offset) -> Unit,
+    onGutterContextMenu: (TextFileEditor, Offset) -> Unit,
     modifier: Modifier,
     focusRequests: Int = 0,
     leftInset: Dp = 0.dp,
@@ -1892,6 +1931,10 @@ private fun EditorArea(
                     selected.onJump = { onJump(selected) }
                     selected.onTextChange = { changes, recorded, recordIndex ->
                         onTextChange(selected, changes, recorded, recordIndex)
+                    }
+                    selected.onContextMenuRequest = { position -> onTextContextMenu(selected, position) }
+                    selected.onGutterContextMenuRequest = { position ->
+                        onGutterContextMenu(selected, position)
                     }
                 }
                 if (nativeGlass) {
@@ -1952,6 +1995,7 @@ private fun TabGroup(
     manager: FileEditorManager,
     height: Dp = DesignTokens.capsuleHeight,
     modifier: Modifier = Modifier,
+    onTabContextMenu: (FileEditorManager, FileEditor, Offset) -> Unit = { _, _, _ -> },
 ) {
     val scrollState = rememberScrollState()
     val groupShape = RoundedCornerShape(percent = 50)
@@ -2016,7 +2060,7 @@ private fun TabGroup(
                             if (tabBounds[key] != bounds) tabBounds = tabBounds + (key to bounds)
                         },
                     ) {
-                        TabItem(manager, editor)
+                        TabItem(manager, editor, onTabContextMenu)
                     }
                 }
             }
@@ -2025,7 +2069,11 @@ private fun TabGroup(
 }
 
 @Composable
-private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
+private fun TabItem(
+    manager: FileEditorManager,
+    editor: FileEditor,
+    onTabContextMenu: (FileEditorManager, FileEditor, Offset) -> Unit,
+) {
     val interaction = remember(editor.file.path) { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val active = editor === manager.selected
@@ -2047,6 +2095,8 @@ private fun TabItem(manager: FileEditorManager, editor: FileEditor) {
                 },
             )
             .hoverable(interaction)
+            // A5: a right press selects the tab and opens its menu; the close button never sees it.
+            .contextMenuRequest { position -> onTabContextMenu(manager, editor, position) }
             .clickable(interactionSource = interaction, indication = null) {
                 manager.openFile(editor.file)
             }

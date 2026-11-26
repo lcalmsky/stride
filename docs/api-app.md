@@ -366,7 +366,7 @@ the existing rows in the bindings table stays right.
 | F6 | `MOVE_ELEMENT` | — | none |
 | ⌫, ⌦, ⌘⌫ | `DELETE_ELEMENT` | ⌘⌫ `EDITOR_DELETE_LINE` in `EDITOR` | none |
 | F5 | `COPY_ELEMENT` | — | none |
-| ⌘X, ⌘C, ⌘V | `CUT_FILE`, `COPY_FILE`, `PASTE_FILE` | ⌘X/⌘C `CUT_LINE`/`COPY_LINE` in `EDITOR`; ⌘V unbound | none |
+| ⌘X, ⌘C, ⌘V | `CUT_FILE`, `COPY_FILE`, `PASTE_FILE` | ⌘X/⌘C `CUT_LINE`/`COPY_LINE` in `EDITOR`; ⌘V `PASTE` (A7, declined) | none |
 | F4 | (GLOBAL `EDIT_SOURCE`, P2) | — | — |
 
 The editor's ⌘N stays Generate; the two are separated by context alone. A stale context is the
@@ -920,9 +920,12 @@ target rule; ⌘N and ⌃↩ still open the list.
 
 ### A12 The shortcut column
 
-`menuShortcutText(keymap, action, context)` is the first stroke of `keymap.strokesFor(action)` (bind
-order) for which `keymap.actionFor(stroke, context) == action`, formatted by `formatKeyStroke` for
-the keymap's platform; empty when there is none. The column therefore shows only keys that would
+`menuShortcutText(keymap, action, context)` takes the strokes of `keymap.strokesFor(action)`, puts
+first the strokes whose first binding is this action (a stroke the editor bound earlier for
+another action ranks after them), and shows the first one for which
+`keymap.actionFor(stroke, context) == action`, formatted by `formatKeyStroke` for the keymap's
+platform; empty when there is none. (`strokesFor` returns the keymap's insertion order, so without
+the ranking the tree's Delete… would show the ⌘⌫ that Delete Line bound first.) The column therefore shows only keys that would
 run that action from the surface: Delete… shows ⌫ in the tree, the editor's Rollback… shows
 nothing because ⌥⌘Z is Rollback Lines there, and the Log's Show Diff shows nothing because ⌘D is
 bound in the Commit window only.
@@ -1030,6 +1033,7 @@ enum class ActionId {
     NEW_ELEMENT, RENAME_FILE, MOVE_ELEMENT, DELETE_ELEMENT, COPY_ELEMENT,
     CUT_FILE, COPY_FILE, PASTE_FILE, REVEAL_IN_FINDER, OPEN_IN_TERMINAL,
     NEW_KOTLIN_FILE, NEW_FILE, NEW_DIRECTORY,
+    COPY, PASTE, CLOSE_ALL_TABS, CLOSE_TABS_TO_THE_LEFT, CLOSE_TABS_TO_THE_RIGHT,
 }
 
 enum class KeyContext {
@@ -1075,7 +1079,10 @@ Tokens are case-insensitive; an unknown token throws `IllegalArgumentException`.
 stroke. `SEARCH_EVERYWHERE` carries no stroke: `DoubleModifierDetector` produces it.
 `REOPEN_CLOSED_TAB`, `CLOSE_OTHER_TABS`, `TOGGLE_UI_FONT`, `NEW_KOTLIN_FILE`, `NEW_FILE` and
 `NEW_DIRECTORY` also carry no stroke; the first three are reached from the Actions tab, the New
-rows from the project tree's New submenu (A11).
+rows from the project tree's New submenu (A11). `CLOSE_ALL_TABS`, `CLOSE_TABS_TO_THE_LEFT` and
+`CLOSE_TABS_TO_THE_RIGHT` carry no stroke either and are reached from the editor tab's menu (A9).
+`COPY` and `PASTE` are component actions (A7): the dispatcher declines them, so their strokes
+still reach the focused component.
 
 ### macOS bindings
 
@@ -1169,8 +1176,11 @@ The `Keymap.kt` column gives the `bind(` line in `MacKeymap`.
 | `QUICK_DEFINITION` | EDITOR | ⌥Space | `QuickImplementations` | :231 |
 | `SURROUND_WITH` | EDITOR | ⌥⌘T | `SurroundWith` | :233 |
 | `RENAME_ELEMENT` | EDITOR | ⇧F6 | `RenameElement` | :235 |
-| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :237 |
-| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :238 |
+| `COPY_LINE` | EDITOR | ⌘C | `$Copy` | :247 |
+| `CUT_LINE` | EDITOR | ⌘X | `$Cut` | :248 |
+| `PASTE` | EDITOR | ⌘V | `$Paste` | :251 |
+| `COPY` | TERMINAL | ⌘C | `$Copy` | :252 |
+| `PASTE` | TERMINAL | ⌘V | `$Paste` | :253 |
 | `GOTO_DECLARATION` | EDITOR | ⌘B | `GotoDeclaration` | :240 |
 | `BACK` | GLOBAL | ⌘[ , ⌘⌥← | `Back` | :242, :243 |
 | `FORWARD` | GLOBAL | ⌘] , ⌘⌥→ | `Forward` | :245, :246 |

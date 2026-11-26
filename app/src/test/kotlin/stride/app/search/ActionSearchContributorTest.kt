@@ -89,6 +89,20 @@ class ActionSearchContributorTest {
     }
 
     @Test
+    fun `copy and paste stay out of the actions tab`() {
+        val state = AppState()
+        try {
+            val contributor = contributor(state)
+
+            assertTrue(contributor.fetch("copy", 50).none { it.item.action == ActionId.COPY })
+            assertTrue(contributor.fetch("paste", 50).none { it.item.action == ActionId.PASTE })
+            assertTrue(contributor.fetch("close all", 10).any { it.item.action == ActionId.CLOSE_ALL_TABS })
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @Test
     fun `process closes the popup and runs the action through the dispatcher`() {
         val state = AppState()
         val root = temp.resolve("chosen")

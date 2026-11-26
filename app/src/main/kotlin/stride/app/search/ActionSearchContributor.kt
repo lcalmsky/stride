@@ -164,6 +164,11 @@ object ActionNames {
         ActionId.NEW_KOTLIN_FILE to "Kotlin Class/File",
         ActionId.NEW_FILE to "File",
         ActionId.NEW_DIRECTORY to "Directory",
+        ActionId.COPY to "Copy",
+        ActionId.PASTE to "Paste",
+        ActionId.CLOSE_ALL_TABS to "Close All Tabs",
+        ActionId.CLOSE_TABS_TO_THE_LEFT to "Close Tabs to the Left",
+        ActionId.CLOSE_TABS_TO_THE_RIGHT to "Close Tabs to the Right",
     )
 
     /** [action]'s name, falling back to the enum name for actions without an entry. */
@@ -190,9 +195,10 @@ class ActionSearchContributor(
 
     override val tab: SearchTab get() = SearchTab.ACTIONS
 
-    private val entries: List<ActionEntry> = ActionId.entries.map { action ->
-        ActionEntry(action, ActionNames.of(action), shortcut(action))
-    }
+    /** A2: Copy and Paste act on a component's own state, so Find Action leaves them out. */
+    private val entries: List<ActionEntry> = ActionId.entries
+        .filter { it != ActionId.COPY && it != ActionId.PASTE }
+        .map { action -> ActionEntry(action, ActionNames.of(action), shortcut(action)) }
 
     /** The clone actions are gestures, so their label comes from [KeyRouter], not the keymap. */
     private fun shortcut(action: ActionId): String = when (action) {

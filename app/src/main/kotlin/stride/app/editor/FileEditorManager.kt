@@ -248,15 +248,63 @@ class FileEditorManager(private val project: Project) : Disposable {
 
     /** Closes every tab except the selected one. */
     fun closeOthers() {
+        if (!canCloseOthers()) return
         val keep = selected ?: return
-        val others = openFilesState.filter { it !== keep }
-        for (editor in others) {
+        closeEditors(openFilesState.filter { it !== keep })
+        select(keep)
+    }
+
+    /** A3: whether Close Other Tabs has anything to close. */
+    fun canCloseOthers(): Boolean = selected != null && openFilesState.size > 1
+
+    /** A9: closes every tab; each closed file joins the reopen list in tab order. */
+    fun closeAll() {
+        if (!canCloseAll()) return
+        closeEditors(openFilesState.toList())
+        select(null)
+    }
+
+    /** A9: whether any tab is open. */
+    fun canCloseAll(): Boolean = openFilesState.isNotEmpty()
+
+    /** A9: closes the tabs before the selected one, which stays selected. */
+    fun closeTabsToTheLeft() {
+        if (!canCloseTabsToTheLeft()) return
+        val keep = selected ?: return
+        closeEditors(openFilesState.subList(0, openFilesState.indexOf(keep)).toList())
+        select(keep)
+    }
+
+    /** A9: whether the selected tab is not the first one. */
+    fun canCloseTabsToTheLeft(): Boolean = selectedIndex() > 0
+
+    /** A9: closes the tabs after the selected one, which stays selected. */
+    fun closeTabsToTheRight() {
+        if (!canCloseTabsToTheRight()) return
+        val keep = selected ?: return
+        closeEditors(openFilesState.subList(openFilesState.indexOf(keep) + 1, openFilesState.size).toList())
+        select(keep)
+    }
+
+    /** A9: whether the selected tab is not the last one. */
+    fun canCloseTabsToTheRight(): Boolean {
+        val index = selectedIndex()
+        return index >= 0 && index < openFilesState.lastIndex
+    }
+
+    /** A3: whether Reopen Closed Tab has a closed file to bring back. */
+    fun hasClosedFiles(): Boolean = closedFiles.isNotEmpty()
+
+    private fun selectedIndex(): Int = openFilesState.indexOfFirst { it === selected }
+
+    /** The loop Close Other Tabs and the A9 closers share, so every closed file joins the reopen list. */
+    private fun closeEditors(editors: List<FileEditor>) {
+        for (editor in editors) {
             openFilesState.remove(editor)
             rememberClosed(editor.file)
             detachMarks(editor)
             Disposer.dispose(editor)
         }
-        select(keep)
     }
 
     /** Reopens the most recently closed tab; `null` when no tab was closed. */

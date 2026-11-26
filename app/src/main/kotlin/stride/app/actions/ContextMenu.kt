@@ -128,7 +128,10 @@ fun closeContextMenu(state: AppState, request: ContextMenuRequest?) {
 private fun restoreSurfaceFocus(state: AppState, openedFrom: KeyContext) {
     when (openedFrom) {
         KeyContext.PROJECT_TREE -> state.focusProjectTree()
-        KeyContext.EDITOR, KeyContext.EDITOR_FIELD -> refocusEditor(state)
+        // The row may have swapped the tab (Close) or closed the last one (Close All); the editor
+        // area requests focus for the new field after the next frame, and with no text editor
+        // left the context falls back to GLOBAL, as a plain ⌘W on the last tab leaves it.
+        KeyContext.EDITOR, KeyContext.EDITOR_FIELD -> state.focusSelectedEditor()
         KeyContext.COMMIT_WINDOW, KeyContext.LIST_WINDOW, KeyContext.RUN_WINDOW, KeyContext.TERMINAL ->
             refocusAfterPopup(state, openedFrom)
         else -> refocusEditor(state)

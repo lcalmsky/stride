@@ -1,6 +1,7 @@
 package stride.app.actions
 
 import stride.app.AppState
+import stride.app.editor.FileEditorManager
 import stride.app.files.fileClipboardFilled
 import stride.app.files.fileOperationContext
 import stride.app.files.openableFileTarget
@@ -18,6 +19,11 @@ data class ActionUpdate(val visible: Boolean = true, val enabled: Boolean = true
 fun actionUpdate(action: ActionId, state: AppState): ActionUpdate = when (action) {
     ActionId.PASTE_FILE -> ActionUpdate(enabled = fileClipboardFilled(state))
     ActionId.EDIT_SOURCE -> treeEditSource(state)
+    ActionId.CLOSE_OTHER_TABS -> tabUpdate(state) { it.canCloseOthers() }
+    ActionId.CLOSE_ALL_TABS -> tabUpdate(state) { it.canCloseAll() }
+    ActionId.CLOSE_TABS_TO_THE_LEFT -> tabUpdate(state) { it.canCloseTabsToTheLeft() }
+    ActionId.CLOSE_TABS_TO_THE_RIGHT -> tabUpdate(state) { it.canCloseTabsToTheRight() }
+    ActionId.REOPEN_CLOSED_TAB -> tabUpdate(state) { it.hasClosedFiles() }
     else -> ActionUpdate()
 }
 
@@ -26,6 +32,12 @@ fun groupUpdate(groupId: String, state: AppState): ActionUpdate = when (groupId)
     ActionGroups.GIT_CONTEXT_MENU ->
         ActionUpdate(visible = state.session?.git?.snapshot?.repository != null)
     else -> ActionUpdate()
+}
+
+/** A3: a tab row's update asks the same predicate its action asks on [FileEditorManager]. */
+private fun tabUpdate(state: AppState, predicate: (FileEditorManager) -> Boolean): ActionUpdate {
+    val editors = state.session?.editors ?: return ActionUpdate()
+    return ActionUpdate(enabled = predicate(editors))
 }
 
 private fun treeEditSource(state: AppState): ActionUpdate {

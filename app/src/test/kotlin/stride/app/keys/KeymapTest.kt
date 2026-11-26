@@ -359,7 +359,10 @@ class KeymapTest {
         assertEquals(ActionId.PASTE_FILE, action("meta V", KeyContext.PROJECT_TREE))
         assertEquals(ActionId.CUT_LINE, action("meta X", KeyContext.EDITOR))
         assertEquals(ActionId.COPY_LINE, action("meta C", KeyContext.EDITOR))
-        assertNull(action("meta V", KeyContext.EDITOR))
+        // A7: the editor's paste is a component action; the dispatcher declines the stroke.
+        assertEquals(ActionId.PASTE, action("meta V", KeyContext.EDITOR))
+        assertEquals(ActionId.COPY, action("meta C", KeyContext.TERMINAL))
+        assertEquals(ActionId.PASTE, action("meta V", KeyContext.TERMINAL))
         // GLOBAL bindings still answer in the tree, which is not modal.
         assertEquals(ActionId.SAVE, action("meta S", KeyContext.PROJECT_TREE))
         assertEquals(ActionId.ACTIVATE_PROJECT_TOOL_WINDOW, action("meta 1", KeyContext.PROJECT_TREE))

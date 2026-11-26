@@ -1,6 +1,7 @@
 package stride.app.editor
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ContextMenuState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
 import androidx.compose.foundation.VerticalScrollbar
@@ -21,6 +22,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.LocalTextContextMenu
+import androidx.compose.foundation.text.TextContextMenu
 import androidx.compose.foundation.text.rememberTextFieldVerticalScrollState
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
@@ -70,8 +73,11 @@ import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isMetaPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -85,6 +91,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import stride.app.actions.ComponentAction
 import stride.app.keys.ActionId
 import stride.app.keys.KeyContext
 import stride.app.problems.FileProblem
@@ -245,6 +252,10 @@ class TextFileEditor(
     /** Reports the focus context of editor sub-fields, such as the goto-line input. */
     var onFocusContext: (KeyContext) -> Unit = {}
 
+    // Compose's text field deselects when a popup takes the keyboard. The menu acts on the
+    // selection the right press left, so a selection report while the menu is open is its noise.
+    private var menuHoldsSelection: Boolean = false
+
     val isReadOnly: Boolean get() = readOnly || forcedReadOnly
 
     var value: TextFieldValue by mutableStateOf(TextFieldValue(""))
@@ -317,6 +328,12 @@ class TextFileEditor(
 
     /** Called with the caret offset of a ⌘-click; the app turns it into Go to Declaration. */
     var onGoToDeclarationAt: ((Int) -> Unit)? = null
+
+    /** A4: called with a right press on the text in root coordinates, after A5 moved the caret. */
+    var onContextMenuRequest: ((Offset) -> Unit)? = null
+
+    /** A4: called with a right press on the gutter in root coordinates, after A5 moved the caret. */
+    var onGutterContextMenuRequest: ((Offset) -> Unit)? = null
 
     /** Attached to the text field so the find bar and popups can hand focus back to the caret. */
     val focusRequester = FocusRequester()
@@ -538,6 +555,8 @@ class TextFileEditor(
     /** A text field change: a selection-only change drops the secondary carets, a text change replicates into them. */
     internal fun onFieldValueChange(newValue: TextFieldValue) {
         if (newValue.text == text) {
+            if (menuHoldsSelection) return
+            menuHoldsSelection = false
             when {
                 newValue.selection != value.selection -> applyValue(snappedSelection(newValue), record = false)
                 newValue.composition != value.composition -> value = newValue
@@ -1229,6 +1248,83 @@ class TextFileEditor(
         selectionStep = false
     }
 
+    /**
+     * A7: the Cut, Copy and Paste rows the editor hands its menu. Cut and Paste are disabled in a
+     * read-only editor, and Paste while the clipboard holds no text.
+     */
+    internal fun menuComponentActions(history: ClipboardHistory): Map<ActionId, ComponentAction> = mapOf(
+        ActionId.CUT_LINE to ComponentAction(
+            enabled = !isReadOnly,
+            text = "Cut",
+            run = { cutForMenu()?.let(history::record) },
+        ),
+        ActionId.COPY_LINE to ComponentAction(
+            text = "Copy",
+            run = { copyForMenu()?.let(history::record) },
+        ),
+        ActionId.PASTE to ComponentAction(
+            enabled = !isReadOnly && clipboard.readText() != null,
+            text = "Paste",
+            run = { pasteForMenu() },
+        ),
+    )
+
+    /**
+     * A7: the editor menu's Copy row — the selection at every caret, else the line rule of the
+     * ⌘C key. Returns the text it copied, or `null` when the clipboard refused it.
+     */
+    internal fun copyForMenu(): String? {
+        if (secondaryCarets.isNotEmpty()) {
+            val copied = MultiCaret.copyText(text, carets).first
+            return if (copyLinesAtCarets(cut = false)) copied else null
+        }
+        val selection = value.selection
+        if (selection.collapsed) return copyLineForMenu(cut = false)
+        val chosen = text.substring(
+            selection.min.coerceIn(0, text.length),
+            selection.max.coerceIn(0, text.length),
+        )
+        return if (clipboard.writeText(chosen)) chosen else null
+    }
+
+    /** A7: the editor menu's Cut row, the same result as ⌘X. */
+    internal fun cutForMenu(): String? {
+        if (secondaryCarets.isNotEmpty()) {
+            val copied = MultiCaret.copyText(text, carets).first
+            return if (copyLinesAtCarets(cut = true)) copied else null
+        }
+        val selection = value.selection
+        if (selection.collapsed) return copyLineForMenu(cut = true)
+        val start = selection.min.coerceIn(0, text.length)
+        val end = selection.max.coerceIn(0, text.length)
+        val chosen = text.substring(start, end)
+        if (!clipboard.writeText(chosen)) return null
+        if (!isReadOnly) {
+            val newText = text.removeRange(start, end)
+            applyEdit(EditResult(newText, TextRange(start.coerceAtMost(newText.length))))
+        }
+        return chosen
+    }
+
+    /** A7: the editor menu's Paste row, the same result as ⌘V. `false` when there is nothing to paste. */
+    internal fun pasteForMenu(): Boolean {
+        val clip = clipboard.readText() ?: return false
+        if (pasteAtCarets(clip)) return true
+        if (isReadOnly) return true
+        val selection = value.selection
+        val start = selection.min.coerceIn(0, text.length)
+        val end = selection.max.coerceIn(0, text.length)
+        val newText = text.substring(0, start) + clip + text.substring(end)
+        applyEdit(EditResult(newText, TextRange(start + clip.length)))
+        return true
+    }
+
+    private fun copyLineForMenu(cut: Boolean): String? {
+        val range = EditActions.wholeLine(text, value.selection.start)
+        val line = text.substring(range.min, range.max)
+        return if (copyLine(cut)) line else null
+    }
+
     /** Copies the line at the caret, or cuts it when [cut]; a real selection is left to the field. */
     private fun copyLine(cut: Boolean): Boolean {
         if (secondaryCarets.isNotEmpty()) return copyLinesAtCarets(cut)
@@ -1552,6 +1648,8 @@ class TextFileEditor(
         val gutterSlices = remember(this) { LineSliceCache() }
         val latestLayout = rememberUpdatedState(layout)
         val latestFolds = rememberUpdatedState(foldView)
+        var fieldCoordinates by remember(this) { mutableStateOf<LayoutCoordinates?>(null) }
+        var gutterCoordinates by remember(this) { mutableStateOf<LayoutCoordinates?>(null) }
         val currentProblems = problems
         val latestProblems = rememberUpdatedState(problems)
         val lineCount = highlighter?.lineCount() ?: (text.count { it == '\n' } + 1)
@@ -1697,12 +1795,16 @@ class TextFileEditor(
                             handleColor = DesignTokens.accent,
                             backgroundColor = DesignTokens.selection,
                         ),
+                        // A7: the field keeps its content but loses the framework's own text menu,
+                        // which would otherwise also collapse the selection under a right press.
+                        LocalTextContextMenu provides EditorTextContextMenu,
                     ) {
                         BasicTextField(
                             value = currentValue,
                             onValueChange = ::onFieldValueChange,
                             modifier = Modifier
                                 .focusRequester(focusRequester)
+                                .onGloballyPositioned { fieldCoordinates = it }
                                 .widthIn(min = textMinWidth)
                                 .padding(
                                     start = leftPad + gutterWidth + DesignTokens.space16,
@@ -1848,6 +1950,7 @@ class TextFileEditor(
                                 )
                                 .onPreviewKeyEvent { event ->
                                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    menuHoldsSelection = false
                                     val command = CaretKeys.commandFor(
                                         key = event.key,
                                         meta = event.isMetaPressed,
@@ -1873,8 +1976,37 @@ class TextFileEditor(
                                             val event = awaitPointerEvent(PointerEventPass.Initial)
                                             if (event.type != PointerEventType.Press) continue
                                             val change = event.changes.firstOrNull { it.changedToDown() } ?: continue
+                                            menuHoldsSelection = false
                                             val textLayout = latestLayout.value ?: continue
                                             val modifiers = event.keyboardModifiers
+                                            // A5: the right press is cut off first, so no plain-press
+                                            // behaviour (fold expand, caret toggle, block, ⌘-click) runs.
+                                            val secondary = event.buttons.isSecondaryPressed
+                                            val controlPress = event.buttons.isPrimaryPressed &&
+                                                modifiers.isCtrlPressed
+                                            if (secondary || controlPress) {
+                                                change.consume()
+                                                val raw = textLayout.getOffsetForPosition(change.position)
+                                                    .coerceIn(0, textLayout.layoutInput.text.length)
+                                                val folds = latestFolds.value
+                                                val offset = (if (folds.isEmpty) raw else folds.toDoc(raw))
+                                                    .coerceIn(0, text.length)
+                                                val insideSelection = carets.any { caret ->
+                                                    !caret.collapsed && offset >= caret.min &&
+                                                        offset < caret.max
+                                                }
+                                                if (!insideSelection) {
+                                                    applyValue(
+                                                        TextFieldValue(text, TextRange(offset)),
+                                                        record = false,
+                                                    )
+                                                }
+                                                menuHoldsSelection = true
+                                                val root = fieldCoordinates?.localToRoot(change.position)
+                                                    ?: change.position
+                                                onContextMenuRequest?.invoke(root)
+                                                continue
+                                            }
                                             if (modifiers.isMetaPressed) {
                                                 val line = textLayout.getLineForVerticalPosition(change.position.y)
                                                 val inside = insideLine(
@@ -1974,6 +2106,7 @@ class TextFileEditor(
                     Modifier
                         .offset(x = leftPad)
                         .testTag("gutter")
+                        .onGloballyPositioned { gutterCoordinates = it }
                         .width(gutterWidth)
                         .height(gutterHeight)
                         .contentTint()
@@ -2007,7 +2140,34 @@ class TextFileEditor(
                         }
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
-                                while (true) awaitPointerEvent()
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    if (event.type != PointerEventType.Press) continue
+                                    val secondary = event.buttons.isSecondaryPressed
+                                    val controlPress = event.buttons.isPrimaryPressed &&
+                                        event.keyboardModifiers.isCtrlPressed
+                                    if (!secondary && !controlPress) continue
+                                    val local = event.changes.firstOrNull()?.position ?: continue
+                                    event.changes.forEach { it.consume() }
+                                    // A5: the caret moves to the line under the pointer unless it is
+                                    // already there; the run and change marks never see the press.
+                                    val rowHeightPx = with(density) { lineHeight.toPx() }
+                                    val row = (local.y / rowHeightPx).toInt()
+                                        .coerceIn(0, (contentLines - 1).coerceAtLeast(0))
+                                    val line = foldView.lineOfRow(row)
+                                    if (lineIndexAt(text, value.selection.start) != line) {
+                                        applyValue(
+                                            TextFieldValue(
+                                                text,
+                                                EditActions.gotoLine(text, line + 1),
+                                            ),
+                                            record = false,
+                                        )
+                                    }
+                                    menuHoldsSelection = true
+                                    val root = gutterCoordinates?.localToRoot(local) ?: local
+                                    onGutterContextMenuRequest?.invoke(root)
+                                }
                             }
                         }
                         .padding(end = 8.dp),
@@ -2495,6 +2655,22 @@ class TextFileEditor(
             ActionId.UNINDENT,
             ActionId.EDITOR_TOGGLE_CASE,
         )
+    }
+}
+
+/**
+ * A7: the editor's own menu replaces the framework's text menu. [Area] keeps the field's content
+ * and draws no menu of its own, so a right press leaves the selection to the stride menu.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private object EditorTextContextMenu : TextContextMenu {
+    @Composable
+    override fun Area(
+        manager: TextContextMenu.TextManager,
+        state: ContextMenuState,
+        content: @Composable () -> Unit,
+    ) {
+        content()
     }
 }
 

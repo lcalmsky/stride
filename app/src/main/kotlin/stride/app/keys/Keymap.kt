@@ -36,6 +36,7 @@ enum class ActionId {
     NEW_ELEMENT, RENAME_FILE, MOVE_ELEMENT, DELETE_ELEMENT, COPY_ELEMENT,
     CUT_FILE, COPY_FILE, PASTE_FILE, REVEAL_IN_FINDER, OPEN_IN_TERMINAL,
     NEW_KOTLIN_FILE, NEW_FILE, NEW_DIRECTORY,
+    COPY, PASTE, CLOSE_ALL_TABS, CLOSE_TABS_TO_THE_LEFT, CLOSE_TABS_TO_THE_RIGHT,
 }
 
 enum class KeyContext {
@@ -245,6 +246,11 @@ private fun macBindings(): Map<KeyStroke, List<Binding>> = buildMap {
     // $Copy and $Cut with an empty selection take the whole line
     bind("meta C", ActionId.COPY_LINE, KeyContext.EDITOR)
     bind("meta X", ActionId.CUT_LINE, KeyContext.EDITOR)
+    // A7: Copy and Paste exist only as component actions; the strokes still reach the component
+    // because the dispatcher declines them. The editor keeps COPY_LINE on meta C.
+    bind("meta V", ActionId.PASTE, KeyContext.EDITOR)
+    bind("meta C", ActionId.COPY, KeyContext.TERMINAL)
+    bind("meta V", ActionId.PASTE, KeyContext.TERMINAL)
     // GotoDeclaration meta B
     bind("meta B", ActionId.GOTO_DECLARATION, KeyContext.EDITOR)
     // Back meta OPEN_BRACKET; meta alt LEFT
