@@ -536,10 +536,12 @@ and the caches and git refresh as in P6.
   that cannot be read (the check refuses rather than writing into a running program). The tool
   window shows and takes the keyboard in every case. IntelliJ opens a new terminal tab here; tabs
   come with the terminal tabs item of the remaining order, which then replaces the `cd`.
-- **Test JVM.** The Trash, the Finder launch and the shell start are seams on the session's
-  `FileOperations` (and `TerminalSession`) that default to refusing when the system property
-  `stride.files.disableDefaultEffects` is `true`; the Gradle test tasks set it next to
-  `stride.git.disableDefaultExecutor`, so no test fills the real Trash or opens Finder.
+- **Test JVM.** The Trash and the Finder launch are seams on the session's `FileOperations`
+  that default to refusing (`moveToTrash` returns `false`, a reveal fails) when the system
+  property `stride.files.disableDefaultEffects` is `true`; the Gradle test tasks set it next to
+  `stride.git.disableDefaultExecutor`, so no test fills the real Trash or opens Finder. The
+  child-process check of Open in Terminal is a `TerminalSession` seam too; the shell start is
+  today's `PtyShell.start` with another directory.
 
 ### P12 Save All (⌘S)
 
