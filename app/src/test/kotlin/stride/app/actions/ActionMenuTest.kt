@@ -182,7 +182,7 @@ class ActionMenuTest {
     fun `a component action supplies its own text and enabled state`() {
         val group = ActionGroup("Test.Component", listOf(GroupAction(ActionId.EDIT_SOURCE)))
         openProject("a.kt")
-        val component = ComponentAction(enabled = false, text = "Jump to Source") {}
+        val component = ComponentAction(enabled = { false }, text = "Jump to Source") {}
 
         val rows = resolveMenuRows(
             MacKeymap.keymap,
@@ -194,6 +194,30 @@ class ActionMenuTest {
         val row = rows.single() as MenuRow.Action
         assertEquals("Jump to Source", row.text)
         assertFalse(row.enabled)
+    }
+
+    @Test
+    fun `a component action is asked once with the surface as its context`() {
+        openProject("a.kt")
+        val seen = mutableListOf<KeyContext>()
+        state.focus = KeyContext.EDITOR
+
+        assertTrue(
+            openContextMenu(
+                state,
+                ActionGroups.changesViewPopupMenu.id,
+                KeyContext.COMMIT_WINDOW,
+                Offset.Zero,
+                mapOf(
+                    ActionId.EDIT_SOURCE to ComponentAction(
+                        enabled = { seen += state.focus; true },
+                        run = {},
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(listOf(KeyContext.COMMIT_WINDOW), seen)
     }
 
     @Test
@@ -634,18 +658,18 @@ class ActionMenuTest {
         val editor = TextFileEditor(VFile(file), clipboard = clipboard)
 
         val actions = editor.menuComponentActions(history)
-        assertTrue(actions.getValue(ActionId.CUT_LINE).enabled)
-        assertTrue(actions.getValue(ActionId.COPY_LINE).enabled)
-        assertTrue(actions.getValue(ActionId.PASTE).enabled)
+        assertTrue(actions.getValue(ActionId.CUT_LINE).enabled())
+        assertTrue(actions.getValue(ActionId.COPY_LINE).enabled())
+        assertTrue(actions.getValue(ActionId.PASTE).enabled())
 
         clipboard.text = null
-        assertFalse(editor.menuComponentActions(history).getValue(ActionId.PASTE).enabled)
+        assertFalse(editor.menuComponentActions(history).getValue(ActionId.PASTE).enabled())
 
         val readOnly = TextFileEditor(VFile(file), readOnly = true, clipboard = clipboard)
         val readOnlyActions = readOnly.menuComponentActions(history)
-        assertFalse(readOnlyActions.getValue(ActionId.CUT_LINE).enabled)
-        assertFalse(readOnlyActions.getValue(ActionId.PASTE).enabled)
-        assertTrue(readOnlyActions.getValue(ActionId.COPY_LINE).enabled)
+        assertFalse(readOnlyActions.getValue(ActionId.CUT_LINE).enabled())
+        assertFalse(readOnlyActions.getValue(ActionId.PASTE).enabled())
+        assertTrue(readOnlyActions.getValue(ActionId.COPY_LINE).enabled())
     }
 
     @Test
@@ -828,9 +852,13 @@ class ActionMenuTest {
         assertTrue(session.editors.openFiles.isEmpty())
     }
 
-    /** The Commit window's menu as its surface opens it, with the component map it hands over. */
-    private fun commitMenuRows(): List<MenuRow.Action> {
+    /**
+     * The Commit window's menu as its surface opens it, with the component map it hands over and
+     * the keyboard on [before] when that map is built — before the menu puts it back on the surface.
+     */
+    private fun commitMenuRows(before: KeyContext): List<MenuRow.Action> {
         state.contextMenu = null
+        state.focus = before
         openContextMenu(
             state,
             ActionGroups.changesViewPopupMenu.id,
@@ -844,10 +872,12 @@ class ActionMenuTest {
     }
 
     private fun assertCommitRowsEnabled(rollback: Boolean, diff: Boolean, jump: Boolean) {
-        val rows = commitMenuRows()
-        assertEquals(rollback, rows.action(ActionId.ROLLBACK_CHANGES).enabled)
-        assertEquals(diff, rows.action(ActionId.SHOW_DIFF).enabled)
-        assertEquals(jump, rows.action(ActionId.EDIT_SOURCE).enabled)
+        for (before in listOf(KeyContext.COMMIT_WINDOW, KeyContext.EDITOR)) {
+            val rows = commitMenuRows(before)
+            assertEquals(rollback, rows.action(ActionId.ROLLBACK_CHANGES).enabled, before.name)
+            assertEquals(diff, rows.action(ActionId.SHOW_DIFF).enabled, before.name)
+            assertEquals(jump, rows.action(ActionId.EDIT_SOURCE).enabled, before.name)
+        }
     }
 
     @Test

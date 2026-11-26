@@ -1254,7 +1254,7 @@ class TextFileEditor(
      */
     internal fun menuComponentActions(history: ClipboardHistory): Map<ActionId, ComponentAction> = mapOf(
         ActionId.CUT_LINE to ComponentAction(
-            enabled = !isReadOnly,
+            enabled = { !isReadOnly },
             text = "Cut",
             run = { cutForMenu()?.let(history::record) },
         ),
@@ -1263,7 +1263,7 @@ class TextFileEditor(
             run = { copyForMenu()?.let(history::record) },
         ),
         ActionId.PASTE to ComponentAction(
-            enabled = !isReadOnly && clipboard.readText() != null,
+            enabled = { !isReadOnly && clipboard.readText() != null },
             text = "Paste",
             run = { pasteForMenu() },
         ),

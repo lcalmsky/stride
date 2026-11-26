@@ -6,9 +6,13 @@ import stride.app.keys.Keymap
 import stride.app.keys.menuShortcutText
 import stride.app.search.ActionNames
 
-/** A7: a row a surface runs through its own handler instead of the dispatcher. */
+/**
+ * A7: a row a surface runs through its own handler instead of the dispatcher. [enabled] is asked
+ * while the menu resolves its rows, after `state.focus` has been set to the surface the menu opens
+ * from, so a row cannot read a judgment the surface took before opening.
+ */
 class ComponentAction(
-    val enabled: Boolean = true,
+    val enabled: () -> Boolean = { true },
     val text: String? = null,
     val run: () -> Unit,
 )
@@ -54,7 +58,7 @@ private fun resolveItems(
                 action = item.action,
                 text = item.text ?: component?.text ?: update.text ?: ActionNames.of(item.action),
                 shortcut = menuShortcutText(keymap, item.action, state.focus),
-                enabled = component?.enabled ?: update.enabled,
+                enabled = component?.enabled?.invoke() ?: update.enabled,
             )
         }
         GroupSeparator -> MenuRow.Separator

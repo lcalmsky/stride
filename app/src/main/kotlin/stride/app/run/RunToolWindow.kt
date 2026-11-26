@@ -324,7 +324,7 @@ private fun testTreeActions(
     return mapOf(
         ActionId.RUN_CONTEXT to ComponentAction(
             text = "Run '$filter'",
-            enabled = configuration != null,
+            enabled = { configuration != null },
             run = {
                 configuration?.let { chosen ->
                     manager.run(chosen)

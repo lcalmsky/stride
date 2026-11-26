@@ -135,11 +135,11 @@ fun TerminalView(
             position,
             mapOf(
                 ActionId.COPY to ComponentAction(
-                    enabled = selectionStart >= 0 && selectionEnd >= 0,
+                    enabled = { selectionStart >= 0 && selectionEnd >= 0 },
                     run = { copySelection() },
                 ),
                 ActionId.PASTE to ComponentAction(
-                    enabled = clipboard.getText()?.text != null,
+                    enabled = { clipboard.getText()?.text != null },
                     run = { clipboard.getText()?.text?.let(session::write) },
                 ),
             ),

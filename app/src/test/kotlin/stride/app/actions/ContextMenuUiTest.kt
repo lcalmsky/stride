@@ -1452,6 +1452,109 @@ class ContextMenuUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `a commit menu the editor opened judges every row against the window`() = runComposeUiTest {
+        val repo = changedRepo()
+        val state = AppState()
+        try {
+            openRepository(repo, state)
+            val session = requireNotNull(state.session)
+            session.editors.openFile(VFile(repo.root.resolve("src/Other.kt")))
+            state.toggleToolWindow("commit", KeyContext.COMMIT_WINDOW)
+            setContent { ContextMenuHarness(state) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 2 }
+
+            // The user presses Esc in the window: the keyboard moves to the editor, the window stays.
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            fun assertKeyboardInEditor() {
+                assertEquals(KeyContext.EDITOR, state.focus)
+                assertTrue(state.toolWindows.visible)
+                assertEquals("commit", state.toolWindows.activeId)
+            }
+
+            fun assertEveryRow(enabled: Boolean) {
+                val rows = requireNotNull(state.contextMenu).rows.filterIsInstance<MenuRow.Action>()
+                for (action in listOf(ActionId.EDIT_SOURCE, ActionId.ROLLBACK_CHANGES, ActionId.SHOW_DIFF)) {
+                    assertEquals(enabled, rows.first { it.action == action }.enabled, action.name)
+                    val node = onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + action.name)
+                    if (enabled) node.assertIsEnabled() else node.assertIsNotEnabled()
+                }
+            }
+
+            fun openGroupMenu() {
+                assertKeyboardInEditor()
+                onNodeWithText("Changes (2)").performMouseInput { rightClick(center) }
+                waitForMenu(state)
+            }
+
+            fun backToEditor() {
+                assertEquals(KeyContext.COMMIT_WINDOW, state.focus)
+                onRoot().performKeyInput { pressKey(Key.Escape) }
+                waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+            }
+
+            // (iii) A file row keeps the judgment: the editor owns the keyboard, Jump to Source opens it.
+            assertKeyboardInEditor()
+            commitRow("Main.kt").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            assertEveryRow(true)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "Main.kt" }
+            assertEquals(KeyContext.EDITOR, state.focus)
+
+            // Select the other row, so (i)'s Jump to Source has a different file to open.
+            commitRow("Other.kt").performClick()
+            waitUntil(timeoutMillis = 5_000) {
+                runCatching { onNodeWithTag(COMMIT_LIST_TAG).assertIsFocused() }.isSuccess
+            }
+            assertEquals("Other.kt", session.commit.selectedRow()?.path?.fileName.toString())
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.EDITOR }
+
+            // (i) A live selection: all three rows are enabled, and each one carries out its effect.
+            openGroupMenu()
+            assertEveryRow(true)
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.EDIT_SOURCE.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { session.editors.selected?.file?.name == "Other.kt" }
+            assertEquals(KeyContext.EDITOR, state.focus)
+            assertNull(state.contextMenu)
+
+            openGroupMenu()
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.SHOW_DIFF.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.diffRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            backToEditor()
+
+            openGroupMenu()
+            onNodeWithTag(CONTEXT_MENU_ROW_TAG_PREFIX + ActionId.ROLLBACK_CHANGES.name).performClick()
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest != null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.CONTEXT_POPUP }
+            onRoot().performKeyInput { pressKey(Key.Escape) }
+            waitUntil(timeoutMillis = 5_000) { state.rollbackRequest == null }
+            waitUntil(timeoutMillis = 5_000) { state.focus == KeyContext.COMMIT_WINDOW }
+            backToEditor()
+
+            // (ii) A selection the list no longer holds disables every row from the editor too.
+            repo.git("checkout", "--", "src/Other.kt")
+            runBlocking { session.git.refreshNow() }
+            waitUntil(timeoutMillis = 5_000) { session.commit.rows.size == 1 }
+            assertNull(session.commit.selectedRow())
+            assertKeyboardInEditor()
+            onNodeWithText("Changes (1)").performMouseInput { rightClick(center) }
+            waitForMenu(state)
+            assertEveryRow(false)
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `two quick right clicks on a commit row open no editor`() = runComposeUiTest {
         val repo = changedRepo()
         val state = AppState()

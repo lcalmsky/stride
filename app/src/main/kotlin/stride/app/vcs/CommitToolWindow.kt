@@ -335,7 +335,7 @@ internal fun commitMenuActions(state: AppState): Map<ActionId, ComponentAction> 
     }
     return mapOf(
         ActionId.EDIT_SOURCE to ComponentAction(
-            enabled = commitWindowSelectedRow(state) != null,
+            enabled = { commitWindowSelectedRow(state) != null },
             run = open,
         ),
     )

@@ -60,7 +60,8 @@ fun submenuPosition(rowTopLeft: Offset, menuWidth: Float, submenuSize: Size, win
 
 /**
  * A4: opens [groupId] as the context menu of the surface whose context is [openedFrom]. The rows
- * resolve against the surface, which is why `state.focus` is [openedFrom] before and after; the
+ * resolve against the surface, which is why `state.focus` is [openedFrom] before and after; a
+ * component row's `enabled` is asked by that same resolution, so it sees the surface too. The
  * menu's container reports `CONTEXT_POPUP` once it has the keyboard.
  */
 fun openContextMenu(
