@@ -147,7 +147,7 @@ private fun branchRows(list: BranchList?, query: String): List<BranchesListRow> 
         is BranchList.Refused -> return listOf(BranchesListRow.Message(list.message))
         is BranchList.Ready -> Unit
     }
-    val ready = list as BranchList.Ready
+    val ready = list
     val matches = { text: String -> query.isEmpty() || text.contains(query, ignoreCase = true) }
     val local = ready.local.filter { matches(it.name) }
     val remote = ready.remote.filter { matches(it.display) }
@@ -237,7 +237,13 @@ fun BranchesPopup(request: BranchesRequest, state: AppState, onClose: () -> Unit
     val listIndex = nearestSelectable(listRows, current.selected)
     val popupMenuRows = remember(current.menu) { menuRows(current.menu) }
     val menuIndex = if (popupMenuRows.isEmpty()) -1 else current.selected.coerceIn(0, popupMenuRows.lastIndex)
-    val unsaved = session?.let { saveableEditors(it).size } ?: 0
+    val unsaved = remember(page, current.menu, session) {
+        if (page == BranchesPage.MENU || page == BranchesPage.NAME) {
+            session?.let { saveableEditors(it).size } ?: 0
+        } else {
+            0
+        }
+    }
 
     fun update(block: (BranchesRequest) -> BranchesRequest) {
         val now = state.branchesPopup ?: return
@@ -263,7 +269,6 @@ fun BranchesPopup(request: BranchesRequest, state: AppState, onClose: () -> Unit
         val from = now.selected.coerceIn(0, rows.lastIndex)
         update { it.copy(selected = (from + step).coerceIn(0, rows.lastIndex)) }
     }
-
 
     fun openNameTyped(row: Int?) {
         val now = state.branchesPopup ?: return
@@ -337,7 +342,11 @@ fun BranchesPopup(request: BranchesRequest, state: AppState, onClose: () -> Unit
                     selected = 0,
                 )
             }
-            BranchMenuRow.Delete -> runDeleteBranch(state, target.display, onClose)
+            BranchMenuRow.Delete -> {
+                if (fired) return
+                fired = true
+                runDeleteBranch(state, target.display, onClose)
+            }
             null -> Unit
         }
     }

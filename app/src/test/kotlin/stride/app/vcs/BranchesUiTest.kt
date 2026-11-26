@@ -32,6 +32,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.test.withKeyDown
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -319,6 +320,115 @@ class BranchesUiTest {
 
     @OptIn(ExperimentalTestApi::class)
     @Test
+    fun `pressing Delete twice deletes once and keeps the deleted message`() = runComposeUiTest {
+        val repo = repoWithSideBranch()
+        repo.git("branch", "merged")
+        val state = AppState()
+        try {
+            open(repo, state)
+            val plans = CountingPlanExecutor(CliGitExecutor(TEST_GIT, repo.environment), "refs/heads/merged")
+            state.session!!.git.executor = plans
+            setContent { KeyHarness(state) }
+            openBranchesFromVcs(state)
+
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            waitUntil(timeoutMillis = 5_000) { selectedName(state) == "merged" }
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.MENU }
+            waitPanelFocused()
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            press(Key.Enter)
+            press(Key.Enter)
+
+            waitUntil(timeoutMillis = 15_000) { state.branchesPopup == null }
+            waitUntil(timeoutMillis = 15_000) {
+                state.statusMessage?.startsWith("Deleted branch merged (was ") == true
+            }
+            assertEquals(1, plans.plans.get(), "the menu's Delete ran a second time")
+            assertTrue(repo.git("branch", "--list", "merged").trim().isEmpty())
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a checkout whose save fails reports the reason and never switches`() = runComposeUiTest {
+        val repo = repoWithSideBranch()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(main)) as TextFileEditor
+            editor.setText("mine\n")
+            assertTrue(main.toFile().setWritable(false), "the test file could not be made read-only")
+            setContent { KeyHarness(state) }
+            openBranchesFromVcs(state)
+
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            waitUntil(timeoutMillis = 5_000) { selectedName(state) == "side" }
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.MENU }
+            waitPanelFocused()
+            press(Key.Enter)
+
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage?.startsWith("Checkout failed: ") == true }
+            assertEquals("main", repo.git("rev-parse", "--abbrev-ref", "HEAD").trim())
+            assertNull(state.branchesPopup)
+            assertTrue(
+                state.session!!.git.console.none { it.write && it.command.startsWith("git switch") },
+                state.session!!.git.console.filter { it.write }.joinToString("\n") { it.command },
+            )
+        } finally {
+            main.toFile().setWritable(true)
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `a new branch whose save fails reports the reason and creates nothing`() = runComposeUiTest {
+        val repo = repoWithSideBranch()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(main)) as TextFileEditor
+            editor.setText("mine\n")
+            assertTrue(main.toFile().setWritable(false), "the test file could not be made read-only")
+            setContent { KeyHarness(state) }
+            openBranchesFromVcs(state)
+
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            waitUntil(timeoutMillis = 5_000) { selectedName(state) == "side" }
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.MENU }
+            waitPanelFocused()
+            press(Key.DirectionDown)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.selected == 1 }
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.NAME }
+
+            onNodeWithTag(BRANCHES_NAME_FIELD_TAG).performTextInput("fix-login")
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.name?.text == "fix-login" }
+            press(Key.Enter)
+
+            waitUntil(timeoutMillis = 5_000) { state.statusMessage?.startsWith("New branch failed: ") == true }
+            assertTrue(repo.git("branch", "--list", "fix-login").trim().isEmpty())
+            assertEquals("main", repo.git("rev-parse", "--abbrev-ref", "HEAD").trim())
+        } finally {
+            main.toFile().setWritable(true)
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
     fun `an unmerged branch opens the delete page and return force-deletes it`() = runComposeUiTest {
         val repo = repoWithUnmergedBranch()
         val state = AppState()
@@ -482,6 +592,40 @@ class BranchesUiTest {
                 exists("Saves 1 unsaved editors first"),
                 "an editor outside the project root was counted",
             )
+        } finally {
+            state.dispose()
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun `the unsaved count is read again when the menu is reopened`() = runComposeUiTest {
+        val repo = repoWithSideBranch()
+        val state = AppState()
+        val main = repo.root.resolve("src/Main.kt")
+        try {
+            open(repo, state)
+            val editor = state.session!!.editors.openFile(VFile(main)) as TextFileEditor
+            setContent { KeyHarness(state) }
+            openBranchesFromVcs(state)
+
+            press(Key.DirectionDown)
+            press(Key.DirectionDown)
+            waitUntil(timeoutMillis = 5_000) { selectedName(state) == "side" }
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.MENU }
+            waitPanelFocused()
+            waitForIdle()
+            assertFalse(exists("Saves 1 unsaved editors first"))
+
+            press(Key.Escape)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.LIST }
+            editor.setText("mine\n")
+            press(Key.Enter)
+            waitUntil(timeoutMillis = 5_000) { state.branchesPopup?.page == BranchesPage.MENU }
+            waitForIdle()
+
+            assertTrue(exists("Saves 1 unsaved editors first"))
         } finally {
             state.dispose()
         }
@@ -741,6 +885,19 @@ class BranchesUiTest {
 }
 
 private fun rowTag(name: String): String = BRANCH_ROW_TAG_PREFIX + name
+
+/** Counts the merged-count reads [GitService.deletePlan] runs for [branchRef]. */
+private class CountingPlanExecutor(
+    private val delegate: GitExecutor,
+    private val branchRef: String,
+) : GitExecutor {
+    val plans = AtomicInteger()
+
+    override fun run(command: GitCommand): GitResult {
+        if (command.args.firstOrNull() == "rev-list" && branchRef in command.args) plans.incrementAndGet()
+        return delegate.run(command)
+    }
+}
 
 @OptIn(ExperimentalTestApi::class)
 private fun ComposeUiTest.exists(text: String): Boolean =

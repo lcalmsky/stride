@@ -874,7 +874,7 @@ class GitService(private val project: Project) : Disposable {
                 timeouts.read,
             ),
         )
-        val ref = upstream.stdoutText().trim()
+        val ref = upstream.stdoutText().trimEnd('\n', '\r')
         if (upstream.ok && ref.isNotEmpty() && refExists(repository, ref)) return shortRef(ref) to ref
         return "HEAD" to "HEAD"
     }
@@ -884,7 +884,9 @@ class GitService(private val project: Project) : Disposable {
         BranchNames.problem(name, emptyList())?.let { return it }
         val format = readQuiet(GitCommand(listOf("check-ref-format", "--branch", name), repository.root, timeouts.read))
         // `@{-1}` passes the command but expands to another name; git stays the judge of the rest.
-        if (!format.ok || format.stdoutText().trim() != name) return "$name is not a valid branch name"
+        if (!format.ok || format.stdoutText().trimEnd('\n', '\r') != name) {
+            return "$name is not a valid branch name"
+        }
         if (refExists(repository, "refs/heads/$name")) return "A branch named $name already exists"
         return null
     }
@@ -1422,7 +1424,7 @@ class GitService(private val project: Project) : Disposable {
 
     private suspend fun currentBranch(): String? {
         val result = readQuiet(GitCommand(listOf("symbolic-ref", "--short", "-q", "HEAD"), projectRoot, timeouts.read))
-        return result.stdoutText().trim().takeIf { result.ok && it.isNotEmpty() }
+        return result.stdoutText().trimEnd('\n', '\r').takeIf { result.ok && it.isNotEmpty() }
     }
 
     /** The remote and remote ref the branch tracks, or `null` when it has no upstream. */
@@ -1439,16 +1441,16 @@ class GitService(private val project: Project) : Disposable {
             ),
         )
         if (!result.ok) return null
-        val fields = result.stdoutText().trimEnd('\n').split('\u0000')
-        val remote = fields.getOrNull(0)?.trim().orEmpty()
-        val remoteRef = fields.getOrNull(1)?.trim().orEmpty()
+        val fields = result.stdoutText().trimEnd('\n', '\r').split('\u0000')
+        val remote = fields.getOrNull(0).orEmpty()
+        val remoteRef = fields.getOrNull(1).orEmpty()
         return if (remote.isEmpty() || remoteRef.isEmpty()) null else remote to remoteRef
     }
 
     private suspend fun remotes(): List<String> {
         val result = readQuiet(GitCommand(listOf("remote"), projectRoot, timeouts.read))
         if (!result.ok) return emptyList()
-        return result.stdoutText().lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        return result.stdoutText().lineSequence().map { it.trimEnd('\r') }.filter { it.isNotEmpty() }.toList()
     }
 
     /** Whether the upstream's remote-tracking ref is still in the local repository. */
@@ -1575,7 +1577,7 @@ class GitService(private val project: Project) : Disposable {
         )
         if (!result.ok) return PushedState.Failed(describe(result, timeouts.read))
         val ref = result.stdoutText().lineSequence()
-            .map { it.trim() }
+            .map { it.trimEnd('\r') }
             .firstOrNull { it.isNotEmpty() && !it.endsWith("/HEAD") }
             ?: return PushedState.NotPushed
         return PushedState.Pushed(

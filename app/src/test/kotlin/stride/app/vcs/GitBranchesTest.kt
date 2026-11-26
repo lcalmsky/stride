@@ -1068,6 +1068,57 @@ class GitBranchesTest {
         assertEquals(name, check.stdout.trim())
     }
 
+    @Test
+    fun `a name with a trailing em space is created and checked out`() {
+        val fixture = fixture()
+        val name = "a\u2003"
+
+        val created = withService(fixture.repo) { it.createBranch(name, null, checkout = false) }
+        assertTrue(created.ok, created.message)
+        assertEquals("Created $name from HEAD", created.message)
+        assertEquals(fixture.head(), fixture.branchId(name))
+
+        val checkedOut = withService(fixture.repo) { it.checkout(BranchTarget.Local(name)) }
+
+        assertTrue(checkedOut.ok, checkedOut.message)
+        assertEquals("Checked out $name", checkedOut.message)
+        assertEquals("refs/heads/$name", fixture.repo.git("symbolic-ref", "HEAD").removeSuffix("\n"))
+    }
+
+    @Test
+    fun `a merged count that cannot be read refuses the delete`() {
+        val fixture = fixture()
+        fixture.repo.git("branch", "topic")
+
+        val plan = withFailing(fixture.repo, "rev-list", "boom") { it.deletePlan("topic") }
+
+        assertEquals(DeletePlan.Refused("Delete failed: boom"), plan)
+    }
+
+    @Test
+    fun `a switch that fails reports Checkout failed with its first line`() {
+        val fixture = fixture()
+        fixture.localBranch("topic")
+
+        val result = withFailing(fixture.repo, "switch", "boom") { it.checkout(BranchTarget.Local("topic")) }
+
+        assertFalse(result.ok)
+        assertEquals("Checkout failed: boom", result.message)
+        assertEquals("refs/heads/main", fixture.repo.git("symbolic-ref", "HEAD").trim())
+    }
+
+    @Test
+    fun `a detached HEAD whose orphan count cannot be read refuses the checkout`() {
+        val fixture = fixture()
+        fixture.localBranch("topic")
+        fixture.repo.git("checkout", "-q", "--detach")
+
+        val result = withFailing(fixture.repo, "rev-list", "boom") { it.checkout(BranchTarget.Local("topic")) }
+
+        assertFalse(result.ok)
+        assertEquals("Checkout failed: boom", result.message)
+    }
+
     /** Runs [block] against [repo] with every command whose first argument is [name] failing. */
     private fun <T> withFailing(
         repo: TestGitRepo,
