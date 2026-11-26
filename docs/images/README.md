@@ -24,6 +24,7 @@ README 가 쓰는 그림 목록입니다. 모두 `UiSnapshotTest` 가 헤드리�
 - `diff.png` 수정한 줄에서 연 HEAD ↔ Local 한 열 diff 팝업 (`27-diff.png`)
 - `branches.png` 로컬·원격 브랜치와 업스트림 표시가 보이는 브랜치 팝업 (`28-branches.png`)
 - `files.png` 키보드로 고른 트리 폴더 위에 연 파일 작업 New 팝업 (`29-files.png`)
+- `context-menu.png` 트리 폴더 우클릭으로 연 메뉴와 New 하위 메뉴 (`30-context-menu.png`)
 
 한국어판과 영어판 README 가 같은 그림을 씁니다. `UiSnapshotTest` 의 시나리오가 바뀌면 `app/build/ui-snapshots/` 의 PNG 를 이 디렉터리로 다시 복사합니다.
 
