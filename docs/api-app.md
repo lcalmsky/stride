@@ -707,7 +707,10 @@ opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differenc
 - **No pass-through rows.** `dispatchAction` returning `false` means "let the key reach the
   component"; a menu click has no key to pass on. A row whose dispatch would return `false` on its
   surface is a component action instead, and tests treat a `false` from a dispatched menu row as a
-  failure.
+  failure, on every surface and in several states (caret on an identifier, on an empty line, at the
+  end, other file kinds, read-only; tree target file, directory, root, inside and outside git).
+  Find Usages and Go to Declaration with no identifier at the caret therefore report
+  `No identifier at the caret` instead of passing the key on, from their keys as well.
 - **Where the keyboard goes after.** When the action left a popup that owns the keyboard
   (`popupOwnsFocus`), that popup captured `openedFrom` and returns there when it closes. Otherwise,
   when `state.focus` is still `openedFrom`, the surface gets Compose focus back (editor:
@@ -899,9 +902,10 @@ configuration or nothing.
 - **Project tree** (new; ⌃⇧R is bound in `PROJECT_TREE` as in IntelliJ). The P4 target, read from
   the disk, because Gradle compiles the disk:
   - a file in a Gradle project's `test` source set (`src/test/kotlin` or `src/test/java`) that
-    declares test classes: `<gradle path>:test` with one `--tests <class>` per test class, each
-    name built from the file's `package` line. Name: the class's simple name for one class,
-    otherwise `Tests in '<file name>'`;
+    declares test classes (a class with at least one `@Test fun`, read by `TestLocator`, so Kotlin
+    only): `<gradle path>:test` with one `--tests <class>` per test class, each name built from
+    the file's `package` line. Name: the class's simple name for one class, otherwise
+    `Tests in '<file name>'` with the extension;
   - the Gradle project's directory, `src`, `src/test` or `src/test/<language>`, when `src/test`
     exists: `<gradle path>:test` with no filter. Name: `Tests in '<directory name>'`;
   - a directory under `src/test/<language>/`: one `--tests <class>` per test class in the files
@@ -942,7 +946,8 @@ bound in the Commit window only.
   from the editor opens with an empty query instead of the selection.
 - Text fields other than the editor keep the framework's text menu (A7).
 - Closing tabs drops unsaved edits (A9).
-- Run '<context>' from the tree does not cover a build root without its own `src/test` (A10).
+- Run '<context>' from the tree does not cover a build root without its own `src/test`, and it
+  does not see Java test files, because stride's test locator reads Kotlin `@Test fun` only (A10).
 
 ## Search Everywhere
 
