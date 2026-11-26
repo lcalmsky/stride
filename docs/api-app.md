@@ -596,11 +596,346 @@ handler.
 - Copy and Paste use stride's own file clipboard, not the system clipboard, so Finder cannot paste
   a file copied in the tree and the tree cannot paste one copied in Finder.
 - Navigation history, edit locations, Find and Problems results and run configurations keep the old
-  path after a rename or move; the tree's Copy Path ⇧⌘C still copies the selected editor's path.
+  path after a rename or move. (The tree's Copy Path ⇧⌘C copied the selected editor's path until
+  the 20th round; it now copies the tree target, A4.)
 - No progress or cancel for a large copy or delete; both block the window while they run.
 - A copy or New that fails midway leaves what it already wrote; the tree shows it.
 - A case-only rename of a tracked file on a case-insensitive volume is not seen by git (P5).
 - Open in Terminal writes `cd` into the one shell instead of opening a tab (P11).
+
+## Context menus and action groups
+
+The 20th round of #13 gives the app its first right-click menus: one menu popup, one definition of
+action groups that right-click menus, the main menu bar (the next round) and Find Action share,
+menus on nine surfaces built from actions that already exist, and two small new behaviours
+(Close All Tabs and Close Tabs to the Left/Right; Run '<context>' from the tree and the test tree).
+The choices below were made under the user instruction of 2026-11-26 (recommended option
+applied). The IntelliJ sources are the menu dump `.claude/handoff/13-r18-idea-menus.txt` and the
+key table `13-r18-idea-keys.tsv`.
+
+The rule every section below follows: **a menu row runs its action exactly as if the action's key
+were pressed on the surface the menu was opened from.** Target rules (P4, the Commit window's
+selected row, the Find window branch of `CLOSE_TAB`) and every popup's return context therefore
+see the surface, not the menu.
+
+### A1 What this round includes
+
+| Item | IntelliJ | stride |
+|---|---|---|
+| Menu popup: submenus, shortcut column, disabled rows, separators, ↑ ↓ → ← ↩ Esc | `ActionPopupMenu` | A6 |
+| Group definition shared by right-click, the menu bar and Find Action | `<group>`, `<reference>`, `add-to-group` | A2 |
+| Row text, visibility and enablement | `AnAction.update`, `override-text` | A3 |
+| How a row runs and where the keyboard goes after | `ActionPopupMenu` over the component's data context | A4 |
+| Right-click and the selection | — | A5 |
+| Rows that act on a component's own state | `CopyProvider`, `PasteProvider`, `Navigatable` from the data context | A7 |
+| Editor, project tree, editor tab, gutter, Commit window list, Git Log, Run window, terminal, list tool windows | `EditorPopupMenu`, `ProjectViewPopupMenu`, `EditorTabPopupMenu`, `EditorGutterPopupMenu`, `ChangesViewPopupMenu`, `Vcs.Log.ContextMenu`, `ConsoleView.PopupMenu`, `TestTreePopupMenu`, `Terminal.*ContextMenu`, `UsageView.Popup`, `ProblemsView.ToolWindow.TreePopup`, `StructureViewPopupMenu`, `HierarchyPopupMenu.Common` | A8 |
+| Close All Tabs, Close Tabs to the Left, Close Tabs to the Right | `CloseAllEditors`, `CloseAllToTheLeft`, `CloseAllToTheRight` | A9 |
+| Run '<context>' in the editor, the tree and the test tree | `RunClass` ⌃⇧R, `RunContextGroup` | A10 |
+| New submenu rows | `Kotlin.NewFile`, `NewFile`, `NewDir` | A11 |
+| Shortcut column read from the keymap | — | A12 |
+
+Not included: the menu bar, the Run widget and tool window toolbars (the next round), a key that
+opens the menu (IntelliJ `ShowPopupMenu`), and every row the handoff's differences list names.
+
+### A2 Where groups live
+
+- **A code definition inside `:app`**: `stride.app.actions.ActionGroups`. A group has a stable id
+  (IntelliJ's group id: `EditorPopupMenu`, `ProjectViewPopupMenu`, `Git.ContextMenu`, …) and
+  items in IntelliJ's order: an action (an `ActionId`, with an optional text for this place,
+  IntelliJ's `override-text`), a separator, a submenu (text and items), or a reference to another
+  group (IntelliJ `<reference>`). The Git submenu is one group referenced from the editor, tree and
+  Commit window menus.
+- **Not an extension point or a descriptor file.** `ActionId` is a closed enum in `:app` and no
+  plugin contributes an action, so an extension point would have nothing to add and a descriptor
+  would only add a parser. When plugins get actions, an extension point appends to these groups by
+  id and anchor, IntelliJ's `add-to-group` shape. Rejected as well: one hard-coded row list per
+  surface, which the menu bar and Find Action could not share.
+- **Later rounds add their rows here**, in IntelliJ's order and in the same round as the action:
+  Annotate and Show History (C3) into the Git submenu, the gutter and the tab menu; Split rows
+  (editor split) into the tab and editor menus; Debug rows (debugger) into the editor and gutter
+  menus; Copy Revision Number and the rest (C7) into the Git Log menu; New Tab, Close Tab and
+  Clear Terminal into the terminal menu (the next round).
+- **Find Action** keeps listing every `ActionId` with its `ActionNames` text and `shortcutText`;
+  new actions of this round get names there. It does not read groups or enablement (IntelliJ shows
+  the group path next to a result; not taken). Component actions (A7: `COPY`, `PASTE`) are left
+  out of Find Action, which has no component to act on.
+- **The menu bar** (the next round) builds the macOS menus from groups in the same file with the
+  same row resolution (A3).
+
+### A3 Rows: text, visibility and enablement
+
+- **When.** Rows resolve once, when the menu opens, against the app state with `state.focus` set
+  to the surface's context (A4). A row is `visible`, `enabled` and has a `text`.
+- **Text.** The group item's place text, otherwise `ActionNames.of(action)`. A row with dynamic
+  text (Run '<name>') takes it from its update.
+- **One update per action**, `actionUpdate(action, state)` in `actions/ActionUpdates.kt`. The
+  default is visible and enabled: the action itself reports in the status bar when it cannot run,
+  the same as its key. An action gets an update only when its own code has a cheap synchronous
+  precondition, and **the update calls the same predicate function the action calls**, so the
+  menu and the action cannot disagree. Checks that need git or the disk asynchronously (`git.busy`,
+  pushed commits) stay in the action.
+- **Hidden or disabled.** Hidden when the row's subject does not exist here (the Git submenu
+  outside a repository, Run '<name>' with nothing to run); disabled when it exists but cannot run
+  now. A disabled row is drawn dimmed and cannot be chosen.
+- **Separators.** Leading, trailing and repeated separators that hidden rows leave are dropped,
+  and an empty submenu is hidden.
+
+| Action | Update |
+|---|---|
+| `CLOSE_OTHER_TABS` | disabled with one tab |
+| `CLOSE_ALL_TABS` | disabled with no tab |
+| `CLOSE_TABS_TO_THE_LEFT` / `_RIGHT` | disabled when the selected tab is first / last |
+| `REOPEN_CLOSED_TAB` | disabled when no tab was closed |
+| `PASTE_FILE` | disabled while stride's file clipboard (P10) is empty |
+| `EDIT_SOURCE` in the tree | disabled when the target is a directory |
+| `RUN_CONTEXT` | hidden when A10 finds nothing to run; text `Run '<name>'` |
+| `RERUN` | disabled when there is no previous run |
+| `STOP` | disabled when nothing runs |
+| `ROLLBACK_CHANGES`, `SHOW_DIFF` in the Commit window | disabled with no selected file row |
+| Git submenu (`Git.ContextMenu`) | hidden outside a git repository |
+| Component actions (A7) | the surface's own `enabled` |
+
+### A4 How a row runs: the surface context
+
+- **Opening.** A right-click (a secondary-button press, or a primary press with ⌃ held, the macOS
+  convention) on a surface applies A5's selection rule, records `openedFrom` (the surface's
+  `KeyContext`) and the surface, sets `state.focus = openedFrom`, resolves the rows and opens the
+  menu (`state.contextMenu`). The menu's container reports `CONTEXT_POPUP`, which is modal.
+- **Choosing a row.** The menu is cleared and `state.focus = openedFrom` is set before the row
+  runs, in the same call. A component action (A7) runs through the surface's handler; every other
+  row runs through `dispatchAction(action, state, chooseFolder)`, as its key would.
+- **No pass-through rows.** `dispatchAction` returning `false` means "let the key reach the
+  component"; a menu click has no key to pass on. A row whose dispatch would return `false` on its
+  surface is a component action instead, and tests treat a `false` from a dispatched menu row as a
+  failure.
+- **Where the keyboard goes after.** When the action left a popup that owns the keyboard
+  (`popupOwnsFocus`), that popup captured `openedFrom` and returns there when it closes. Otherwise,
+  when `state.focus` is still `openedFrom`, the surface gets Compose focus back (editor:
+  `refocusEditor`; tree: `focusProjectTree`; tool windows: `refocusAfterPopup`). When the action
+  moved the keyboard itself (Jump to Source opens the editor), it stays where the action put it.
+  Esc and a click outside the menu close it and give the surface the keyboard back.
+- The Commit window adds `state.contextMenu` to its `popupOpen` set (14th round rule), and
+  `popupOwnsFocus` lists it.
+- **P4 does not change.** It reads `state.focus`, which is the surface when a row runs. Four
+  actions now follow P4 in the tree as well: `COPY_PATHS` and `COPY_REFERENCE` copy the tree
+  target's project-relative path (Copy Reference of a file without a line), `ROLLBACK_CHANGES`
+  pre-checks the tree target when it is a changed file, and `SHOW_DIFF` outside the Commit window
+  opens the working-tree diff of the P4 target file through the function the VCS popup's Show Diff
+  row calls. P14's line about Copy Path in the tree is closed by this.
+
+### A5 Right-click and the selection
+
+IntelliJ selects the row under a right-click before the menu opens. A right press never runs the
+surface's primary-press behaviour (toggle, open, caret toggle, block selection, fold expand,
+terminal selection clear, double-click open).
+
+| Surface | Right-click |
+|---|---|
+| Project tree row | selects the row; no toggle, no open. Below the last row: selection unchanged |
+| Editor text | inside a selection (any caret's): unchanged; elsewhere: the caret moves to the pointer like a plain press (secondary carets cleared) without expanding a fold placeholder |
+| Gutter | the caret moves to the start of the line under the pointer unless it is already on that line (stride's line actions read the caret line; IntelliJ reads the line at the pointer) |
+| Editor tab | selects the tab, so every tab row acts on it |
+| Commit window file row | selects the row; its check box is unchanged. Group rows: unchanged |
+| Git Log row | selects the commit |
+| Run window test row | selects the class or method row; the console: unchanged |
+| Terminal | the selection is kept |
+| List tool window row | selects the row. An empty window opens no menu |
+
+### A6 The menu popup
+
+- **Placement.** The top-left corner sits at the pointer in window coordinates. The menu flips
+  left or up when it would cross the window edge, and a menu taller than the window scrolls. A
+  submenu opens beside its row, top-aligned, on the right unless that crosses the edge.
+- **Drawing.** `popupPanel(key = "context-menu-<level>")`. Each row shows its text on the left
+  and its shortcut (A12) on the right in the popup's secondary text role, a submenu row shows `▸`,
+  a disabled row uses the secondary role for its text, and separators are thin lines. The menu uses
+  existing text roles only. The selected row uses the selection signal of the other popups.
+- **Keys.** ↑ ↓ move between choosable rows, skipping separators and disabled rows, and wrap
+  around. → or ↩ on a submenu row opens it with its first choosable row selected; ← closes the
+  innermost submenu and does nothing at the top level; ↩ on an action row runs it; Esc closes the
+  whole menu.
+- **Mouse.** Hover selects a row, hovering a submenu row opens it, a click on an action row runs
+  it, and a click outside closes the menu.
+- No type-ahead and no mnemonics.
+
+### A7 Component actions
+
+Some rows act on state that only a component holds: the text field's selection, the terminal's
+selected rows, a list window's index, the Git Log entries, the Run window's test tree. The surface
+hands the menu a handler for those actions when it opens it (`ComponentAction(enabled, text?,
+run)` per `ActionId`), IntelliJ's data-context providers. **The handler and the component's own key
+path call the same function.**
+
+- **New `ActionId`s `COPY` and `PASTE`** (IntelliJ `$Copy`, `$Paste`) exist only as component
+  actions. `dispatchAction` returns `false` for them, so a stroke still reaches the focused
+  component exactly as today. They are bound for the shortcut column only: `meta C` → `COPY` and
+  `meta V` → `PASTE` in `TERMINAL`, `meta V` → `PASTE` in `EDITOR`. No key path changes.
+- **Editor**: `CUT_LINE`, `COPY_LINE` and `PASTE` rows (text Cut, Copy, Paste) do what ⌘X, ⌘C and
+  ⌘V do: the selection when there is one, including secondary carets, otherwise the line rule of
+  Cut Line and Copy Line. Cut and Paste are disabled in a read-only editor; Paste is disabled when
+  the clipboard holds no text.
+- **Terminal**: Copy (disabled without a selection) and Paste (disabled when the clipboard holds no
+  text) run the terminal's ⌘C and ⌘V code.
+- **List tool windows**: Jump to Source (`EDIT_SOURCE`) opens the selected row through the
+  window's own open callback; Problems' Show Quick-Fixes (`SHOW_INTENTION_ACTIONS`) opens the
+  problem, then the ⌥↩ popup at it.
+- **Commit window**: Jump to Source opens the selected row (`openCommitRow`, what F4 does).
+- **Git Log**: Show Diff opens the selected commit's diff (`openCommitDiff`, what ↩ does).
+- **Run window test tree**: Run '<node>' (A10).
+- **Text fields.** The editor's text field replaces the framework's own text menu (Compose
+  `TextContextMenu`) with the editor menu. Other text fields (the commit message, the find bar,
+  popup name fields, the Run console input) keep the framework's menu.
+
+### A8 The nine menus
+
+Rows in IntelliJ's order; `—` is a separator. The shortcut column follows A12, so some rows show
+no key on some surfaces.
+
+**Editor** (`EditorPopupMenu`, over the text and over a selection)
+
+| Row | Action |
+|---|---|
+| Show Context Actions | `SHOW_INTENTION_ACTIONS` |
+| — | |
+| Cut, Copy, Paste | `CUT_LINE`, `COPY_LINE`, `PASTE` (A7) |
+| Copy / Paste Special ▸ Copy Reference, Paste from History… | `COPY_REFERENCE`, `PASTE_MULTIPLE` |
+| Column Selection Mode | `EDITOR_TOGGLE_COLUMN_MODE` |
+| — | |
+| Find in Files… | `FIND_IN_PATH` |
+| Find Usages | `FIND_USAGES` |
+| Go To ▸ Declaration or Usages, Implementation(s), Type Declaration, Super Method, Test | `GOTO_DECLARATION`, `GOTO_IMPLEMENTATION`, `GOTO_TYPE_DECLARATION`, `GOTO_SUPER_METHOD`, `GOTO_TEST` |
+| Folding ▸ Expand, Collapse, Expand All, Collapse All | `EXPAND_REGION`, `COLLAPSE_REGION`, `EXPAND_ALL_REGIONS`, `COLLAPSE_ALL_REGIONS` |
+| — | |
+| Refactor ▸ Refactor This…, Rename…, Rename File…, —, Introduce Variable…, Extract Method…, Inline… | `REFACTOR_THIS`, `RENAME_ELEMENT`, `RENAME_FILE`, `INTRODUCE_VARIABLE`, `EXTRACT_METHOD`, `INLINE` |
+| Generate… | `GENERATE` |
+| — | |
+| Run '<name>' | `RUN_CONTEXT` (A10) |
+| Open In ▸ Finder, Terminal | `REVEAL_IN_FINDER`, `OPEN_IN_TERMINAL` |
+| — | |
+| Git ▸ | `Git.ContextMenu` |
+
+**Git submenu** (`Git.ContextMenu`, shared): Commit… (`COMMIT`), Rollback… (`ROLLBACK_CHANGES`),
+Show Diff (`SHOW_DIFF`), —, Push… (`PUSH`), Update Project… (`UPDATE_PROJECT`), Fetch (`FETCH`), —,
+Branches… (`SHOW_BRANCHES`), New Branch… (`NEW_BRANCH`). Each row calls what the matching VCS
+popup row calls.
+
+**Project tree** (`ProjectViewPopupMenu`)
+
+| Row | Action |
+|---|---|
+| New ▸ Kotlin Class/File, File, Directory | `NEW_KOTLIN_FILE`, `NEW_FILE`, `NEW_DIRECTORY` (A11) |
+| — | |
+| Cut, Copy | `CUT_FILE`, `COPY_FILE` |
+| Copy Path/Reference… ▸ Copy Path, Copy Reference | `COPY_PATHS`, `COPY_REFERENCE` (A4) |
+| Paste | `PASTE_FILE` |
+| Edit Source | `EDIT_SOURCE` |
+| — | |
+| Find in Files…, Replace in Files… | `FIND_IN_PATH`, `REPLACE_IN_PATH` |
+| — | |
+| Rename… | `RENAME_FILE` |
+| Refactor ▸ Move…, Copy… | `MOVE_ELEMENT`, `COPY_ELEMENT` |
+| — | |
+| Delete… | `DELETE_ELEMENT` |
+| — | |
+| Build Project | `BUILD_PROJECT` |
+| Run '<name>' | `RUN_CONTEXT` (A10) |
+| Open In ▸ Finder, Terminal | `REVEAL_IN_FINDER`, `OPEN_IN_TERMINAL` |
+| — | |
+| Git ▸ | `Git.ContextMenu` |
+
+**Editor tab** (`EditorTabPopupMenu`): Close (`CLOSE_TAB`), Close Other Tabs, Close All Tabs,
+Close Tabs to the Left, Close Tabs to the Right (A9), —, Copy Path, Copy Reference, —, Reopen
+Closed Tab.
+
+**Gutter** (`EditorGutterPopupMenu`): Toggle Bookmark (`TOGGLE_BOOKMARK`), Show Bookmarks
+(`SHOW_BOOKMARKS`).
+
+**Commit window file list** (`ChangesViewPopupMenu`): Rollback… (`ROLLBACK_CHANGES`), Show Diff
+(`SHOW_DIFF`), Jump to Source (`EDIT_SOURCE`, A7), —, Git ▸.
+
+**Git window Log** (`Vcs.Log.ContextMenu`): Show Diff (A7). The Console tab opens no menu.
+
+**Run window** (`TestTreePopupMenu` over a test row, `ConsoleView.PopupMenu` elsewhere): Run
+'<node>' (test rows only, A10), —, Rerun (`RERUN`), Stop (`STOP`).
+
+**Terminal** (`Terminal.ReworkedTerminalContextMenu`): Copy, Paste (A7).
+
+**List tool windows**: Find, Structure, Hierarchy and Bookmarks: Jump to Source (A7). Problems:
+Show Quick-Fixes, Jump to Source (A7).
+
+The gutter, Git Log, Run window and terminal menus are thin by design: their other IntelliJ rows
+belong to rounds that have not run (Annotate in C3, the Log rows in C7, Clear and Select All with
+the terminal tabs) or to the differences list. Rerun and Stop sit on IntelliJ's Run toolbar rather
+than in its menu; stride lists them in the Run window menu as well.
+
+Rows left out because the stride action reads the selected editor or caret instead of the clicked
+item, which would act on the wrong file: tree Find Usages, Reformat Code and Optimize Imports;
+Structure and Hierarchy Find Usages, Rename, Delete, Reformat Code, Optimize Imports and the VCS
+rows; the Find window's Copy Path/Reference.
+
+### A9 Close All Tabs, Close Tabs to the Left, Close Tabs to the Right
+
+- New `ActionId`s `CLOSE_ALL_TABS`, `CLOSE_TABS_TO_THE_LEFT`, `CLOSE_TABS_TO_THE_RIGHT`, Find Action
+  names `Close All Tabs`, `Close Tabs to the Left`, `Close Tabs to the Right`, no strokes (the
+  macOS keymap has none).
+- Left and Right are relative to the selected tab, which a right-click on a tab selects. The
+  selected tab stays selected; Close All leaves no tab and the keyboard goes to the tree or the
+  editor area as after ⌘W on the last tab.
+- They share Close Other Tabs' loop: every closed file joins Reopen Closed Tab's list in tab order,
+  and unsaved edits are dropped without a confirmation, as ⌘W and Close Other Tabs drop them today.
+  IntelliJ saves documents instead; stride's close keeps its present meaning.
+
+### A10 Run '<context>'
+
+`RUN_CONTEXT` (⌃⇧R, IntelliJ `RunClass`, "run the context configuration") gets one resolver that
+both its row (visibility, text `Run '<name>'`) and the action use: it returns the run
+configuration or nothing.
+
+- **Editor**: as today, the test at the caret, otherwise the file's main.
+- **Project tree** (new; ⌃⇧R is bound in `PROJECT_TREE` as in IntelliJ). The P4 target, read from
+  the disk, because Gradle compiles the disk:
+  - a file in a Gradle project's `test` source set (`src/test/kotlin` or `src/test/java`) that
+    declares test classes: `<gradle path>:test` with one `--tests <class>` per test class, each
+    name built from the file's `package` line. Name: the class's simple name for one class,
+    otherwise `Tests in '<file name>'`;
+  - the Gradle project's directory, `src`, `src/test` or `src/test/<language>`, when `src/test`
+    exists: `<gradle path>:test` with no filter. Name: `Tests in '<directory name>'`;
+  - a directory under `src/test/<language>/`: one `--tests <class>` per test class in the files
+    under it, from each file's `package` line, not from the directory names (Kotlin allows them to
+    differ). Name: `Tests in '<directory name>'`;
+  - anything else (main sources, a directory with no test class, the root of a build whose root
+    project has no `src/test`): nothing, so the row is hidden and ⌃⇧R reads `Nothing to run here`.
+- **Run window test tree** (component action): a class row runs `--tests <class>`, a method row
+  `--tests <class>.<method>`, named like a gutter run.
+- `GradleCommand.testArgs` takes a list of filters. The recent list keeps one entry per
+  configuration identity, so the same directory run twice is one entry.
+- The Find Action name stays `Run Test at Caret`.
+
+### A11 New submenu
+
+New `ActionId`s `NEW_KOTLIN_FILE`, `NEW_FILE`, `NEW_DIRECTORY` (IntelliJ `Kotlin.NewFile`,
+`NewFile`, `NewDir`), named after the New popup's rows (`Kotlin Class/File`, `File`, `Directory`),
+no strokes. Each opens the 19th round's New popup directly at that kind's name page, with P7's
+target rule; ⌘N and ⌃↩ still open the list.
+
+### A12 The shortcut column
+
+`menuShortcutText(keymap, action, context)` is the first stroke of `keymap.strokesFor(action)` (bind
+order) for which `keymap.actionFor(stroke, context) == action`, formatted by `formatKeyStroke` for
+the keymap's platform; empty when there is none. The column therefore shows only keys that would
+run that action from the surface: Delete… shows ⌫ in the tree, the editor's Rollback… shows
+nothing because ⌥⌘Z is Rollback Lines there, and the Log's Show Diff shows nothing because ⌘D is
+bound in the Commit window only.
+
+### A13 Differences from IntelliJ
+
+- No key opens a menu, and menus have no type-ahead or mnemonics.
+- The rows A8 leaves out, and the thin gutter, Git Log, Run window and terminal menus (A8).
+- Find in Files from the tree searches the whole project, not the directory, and Find in Files
+  from the editor opens with an empty query instead of the selection.
+- Text fields other than the editor keep the framework's text menu (A7).
+- Closing tabs drops unsaved edits (A9).
+- Run '<context>' from the tree does not cover a build root without its own `src/test` (A10).
 
 ## Search Everywhere
 
